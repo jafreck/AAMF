@@ -185,31 +185,6 @@ async function launchAgent(invocation: AgentInvocation): Promise<AgentResult> {
 }
 ```
 
-### Fallback Mode (API-Based)
-
-Since `copilot --agent <name>` may not exist yet as a native CLI command, implement a **fallback mode** that:
-
-1. Reads the agent's `.agent.md` file from the configured `agentDir`
-2. Extracts the system prompt (the markdown body)
-3. Builds a user message containing the context file contents
-4. Calls the Copilot / OpenAI / Anthropic API directly using `fetch`
-5. Writes the response to the expected output file(s)
-6. Returns an `AgentResult`
-
-This fallback should be selectable via `copilot.mode: "cli" | "api"` in the config.
-
-For API mode, add to the config schema:
-
-```typescript
-copilot: z.object({
-  mode: z.enum(['cli', 'api']).default('cli'),
-  apiEndpoint: z.string().optional(),    // for API mode
-  apiKey: z.string().optional(),         // env var: AAMF_API_KEY
-  apiModel: z.string().optional(),       // e.g. 'claude-sonnet-4-20250514'
-  // ... existing fields ...
-})
-```
-
 ## 3. Context Builder (`agents/context-builder.ts`)
 
 Each agent invocation needs a **minimal, focused context file** — this is critical for context window management.
@@ -667,7 +642,7 @@ Write tests with Vitest:
 
 6. **Token budget as a circuit breaker.** If a token budget is set and exceeded, pause the migration (checkpoint current state) and inform the user. Do not silently continue.
 
-7. **Zero coupling to specific Copilot CLI.** The `agent-launcher` should be pluggable via the config's `copilot.mode` field. Start with `api` mode using direct HTTP calls to a model API, and design the `cli` mode interface so it can be filled in when a native `copilot --agent` command becomes available.
+7. **CLI-only agent execution.** The `agent-launcher` always spawns agents via the Copilot CLI (`copilot --agent <name>`). There is no API fallback mode.
 
 ## 15. README.md
 
