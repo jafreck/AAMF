@@ -41,14 +41,30 @@ export class AgentLauncher {
     const timeout = invocation.timeout ?? this.config.copilot.timeout;
     const cliCommand = this.config.copilot.cliCommand;
 
+    // Build the prompt that instructs the agent to read its context file
+    const prompt = `Read your context file at: ${invocation.contextFile}\nExecute the task described in the context. Write all output files to the paths specified in the context.`;
+
     const args = [
       '--agent', invocation.agent,
-      '--context', invocation.contextFile,
+      '-p', prompt,
+      '--allow-all-tools',
+      '--allow-all-paths',
+      '--no-ask-user',
+      '-s',
     ];
 
     if (this.config.copilot.model) {
       args.push('--model', this.config.copilot.model);
     }
+
+    // Grant access to source and output directories
+    if (this.config.source.path) {
+      args.push('--add-dir', this.config.source.path);
+    }
+    if (this.config.target.outputPath) {
+      args.push('--add-dir', this.config.target.outputPath);
+    }
+    args.push('--add-dir', invocation.progressDir);
 
     // Add additional args
     if (invocation.additionalArgs) {

@@ -57,7 +57,7 @@ describe('AgentLauncher', () => {
     expect(AgentLauncher).toBeDefined();
   });
 
-  it('should construct CLI arguments including --agent, --context, and --model', async () => {
+  it('should construct CLI arguments including --agent, -p prompt, --model, and operational flags', async () => {
     const script = await createScript('echo-args.sh', 'echo "ARGS:$@"\nexit 0');
     const launcher = makeLauncher(script, 'gpt-4o');
     const { contextFile, progressDir } = await prepareInvocation('cli-args');
@@ -80,10 +80,13 @@ describe('AgentLauncher', () => {
     const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
     expect(logContent).toContain('--agent');
     expect(logContent).toContain('code-migrator');
-    expect(logContent).toContain('--context');
+    expect(logContent).toContain('-p');
     expect(logContent).toContain(contextFile);
     expect(logContent).toContain('--model');
     expect(logContent).toContain('gpt-4o');
+    expect(logContent).toContain('--allow-all-tools');
+    expect(logContent).toContain('--no-ask-user');
+    expect(logContent).toContain('-s');
   });
 
   it('should inject environment variables into spawned process', async () => {
