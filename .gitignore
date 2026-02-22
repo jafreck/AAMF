@@ -29,6 +29,10 @@ npm-debug.log*
 # Coverage
 coverage/
 
+# Runtime artifacts
+.aamf/
+tmp/
+
 # Misc
 *.tgz
 .cache/

@@ -59,10 +59,10 @@ Phase 7: Documentation     ──→ documentation-writer
 
 ## Progress Tracking
 
-All progress is tracked in `.copilot/migration/{projectName}/`:
+All progress is tracked in `.aamf/migration/{projectName}/`:
 
 ```
-.copilot/migration/{projectName}/
+.aamf/migration/{projectName}/
 ├── progress.md                  # Live status dashboard
 ├── checkpoints.json             # Resume state for orchestrator
 ├── impact-assessment.md         # Phase 1 output

@@ -23,8 +23,8 @@
   },
   "copilot": {
     "cliCommand": "copilot",
-    "model": "claude-sonnet-4",
+    "model": "claude-sonnet-4.6",
     "agentDir": "../../../../.github/agents",
-    "timeout": 120000
+    "timeout": 300000
   }
 }

@@ -6,7 +6,7 @@ import { writeJson, ensureDir } from '../util/fs.js';
 /** Options for building an agent context file. */
 export interface ContextBuildOptions {
   config: MigrationConfig;
-  /** Progress directory, e.g. .copilot/migration/{projectName} */
+  /** Progress directory, e.g. .aamf/migration/{projectName} */
   progressDir: string;
   phase: number;
   taskId?: string;

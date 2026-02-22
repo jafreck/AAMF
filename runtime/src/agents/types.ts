@@ -41,7 +41,7 @@ export interface AgentInvocation {
   /** Absolute or workspace-relative path to the context JSON file. */
   contextFile: string;
 
-  /** Progress directory, typically `.copilot/migration/{projectName}`. */
+  /** Progress directory, typically `.aamf/migration/{projectName}`. */
   progressDir: string;
 
   /** Migration phase number (1-based). */

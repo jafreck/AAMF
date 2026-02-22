@@ -72,7 +72,7 @@ describe('AgentLauncher', () => {
 
     expect(result.success).toBe(true);
 
-    const logDir = join(projectRoot, '.copilot', 'migration', config.projectName, 'logs');
+    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
     const logFiles = await readdir(logDir);
     const agentLog = logFiles.find(f => f.startsWith('code-migrator-cli-args'));
     expect(agentLog).toBeDefined();
@@ -110,7 +110,7 @@ describe('AgentLauncher', () => {
 
     expect(result.success).toBe(true);
 
-    const logDir = join(projectRoot, '.copilot', 'migration', config.projectName, 'logs');
+    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
     const logFiles = await readdir(logDir);
     const agentLog = logFiles.find(f => f.startsWith('impact-assessor-env-test'));
     expect(agentLog).toBeDefined();
@@ -283,7 +283,7 @@ describe('AgentLauncher', () => {
       taskId: 'log-001',
     });
 
-    const logDir = join(projectRoot, '.copilot', 'migration', config.projectName, 'logs');
+    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
     const logFiles = await readdir(logDir);
     const agentLog = logFiles.find(f => f.startsWith('code-migrator-log-001-') && f.endsWith('.log'));
     expect(agentLog).toBeDefined();
@@ -309,7 +309,7 @@ describe('AgentLauncher', () => {
       additionalArgs: { foo: 'bar' },
     });
 
-    const logDir = join(projectRoot, '.copilot', 'migration', config.projectName, 'logs');
+    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
     const logFiles = await readdir(logDir);
     const agentLog = logFiles.find(f => f.startsWith('code-migrator-args-001'));
     expect(agentLog).toBeDefined();

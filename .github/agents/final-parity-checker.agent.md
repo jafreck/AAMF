@@ -48,7 +48,7 @@ Per-task parity verification catches issues within individual files but can miss
 
 ## Output
 
-Write to `.copilot/migration/{projectName}/final-parity-report.md`:
+Write to `.aamf/migration/{projectName}/final-parity-report.md`:
 
 ```markdown
 # Final Parity Report: {projectName}

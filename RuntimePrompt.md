@@ -141,7 +141,7 @@ This is the **critical bridge** between the runtime and the agent prompt files. 
 export interface AgentInvocation {
   agent: AgentName;              // e.g. 'impact-assessor'
   contextFile: string;           // path to the context JSON/MD file created for this invocation
-  progressDir: string;           // .copilot/migration/{projectName}
+  progressDir: string;           // .aamf/migration/{projectName}
   phase?: number;
   taskId?: string;
   additionalArgs?: Record<string, string>;
@@ -175,7 +175,7 @@ async function launchAgent(invocation: AgentInvocation): Promise<AgentResult> {
   //    - env: inherited + AAMF_PROGRESS_DIR, AAMF_PHASE, AAMF_TASK_ID
   //
   // 3. Stream stdout/stderr to log files under:
-  //    .copilot/migration/{projectName}/logs/{agent}-{taskId}-{timestamp}.log
+  //    .aamf/migration/{projectName}/logs/{agent}-{taskId}-{timestamp}.log
   //
   // 4. Enforce timeout — kill the process if it exceeds the configured limit
   //
@@ -231,7 +231,7 @@ Build context per agent type (examples):
 
 **Critical**: The context file must contain **file paths, not file contents**. The agents themselves read the files. This is the primary mechanism for context window discipline at the runtime layer.
 
-Write each context file to `.copilot/migration/{projectName}/contexts/{agent}-{taskId}-{timestamp}.json`.
+Write each context file to `.aamf/migration/{projectName}/contexts/{agent}-{taskId}-{timestamp}.json`.
 
 ## 4. Checkpoint System (`core/checkpoint.ts`)
 
@@ -531,7 +531,7 @@ program.parse();
 
 - Structured log output with levels: `debug`, `info`, `warn`, `error`
 - Console output with color (chalk) and spinners (ora) for interactive use
-- File logging under `.copilot/migration/{projectName}/logs/`
+- File logging under `.aamf/migration/{projectName}/logs/`
 - Per-agent log files: `{agent}-{taskId}-{timestamp}.log` captures full stdout/stderr
 - A `migration.log` that captures all runtime events in a structured format
 
@@ -632,7 +632,7 @@ Write tests with Vitest:
 
 1. **No agent logic in the runtime.** The runtime manages processes and files. It does NOT implement any migration analysis, code generation, or verification logic. That's all in the agent prompts.
 
-2. **File-based IPC only.** Agents communicate exclusively through files in `.copilot/migration/{projectName}/`. The runtime writes context files before launching agents and reads output files after they complete.
+2. **File-based IPC only.** Agents communicate exclusively through files in `.aamf/migration/{projectName}/`. The runtime writes context files before launching agents and reads output files after they complete.
 
 3. **Atomic file operations.** All writes to `checkpoints.json` and `progress.md` must be atomic (write to `.tmp` then rename) to prevent corruption on crash.
 

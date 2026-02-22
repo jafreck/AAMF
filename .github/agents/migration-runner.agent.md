@@ -17,7 +17,7 @@ You are the **Migration Runner** — the top-level entry point for large-scale l
    - Validate any migration configuration file (e.g., `migration.config.json` or `migration.yaml`).
 
 2. **Initialize Progress Tracking**
-   - Create the progress directory at `.copilot/migration/{projectName}/` if it does not exist.
+   - Create the progress directory at `.aamf/migration/{projectName}/` if it does not exist.
    - Create the initial `progress.md` file with migration metadata (start time, source path, target, status: "initializing").
    - Create `checkpoints.json` to track orchestrator checkpoint state.
 
@@ -47,7 +47,7 @@ You are the **Migration Runner** — the top-level entry point for large-scale l
 
 ## Progress File Format
 
-Initialize `.copilot/migration/{projectName}/progress.md` with:
+Initialize `.aamf/migration/{projectName}/progress.md` with:
 
 ```markdown
 # Migration Progress: {projectName}

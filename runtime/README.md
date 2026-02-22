@@ -170,7 +170,7 @@ runtime/src/
 
 The runtime writes several artifacts to track migration progress:
 
-- **`progress.md`** — Human-readable progress report, updated after each phase. Located at `.copilot/migration/{projectName}/progress.md`.
+- **`progress.md`** — Human-readable progress report, updated after each phase. Located at `.aamf/migration/{projectName}/progress.md`.
 - **`checkpoint.json`** — Machine-readable snapshot of migration state, enabling `--resume`. Located alongside `progress.md`.
 - **Per-agent logs** — Each agent invocation writes stdout/stderr to the `logs/` directory with timestamped filenames.
 - **`migration.log`** — Unified log of all runtime events (phase transitions, task completions, errors, timing).
@@ -195,7 +195,7 @@ In addition to their markdown output, agents can (and should) write a structured
 {progressDir}/results/{agent}-{taskId}.result.json
 ```
 
-For example: `.copilot/migration/my-project/results/code-migrator-task-001.result.json`
+For example: `.aamf/migration/my-project/results/code-migrator-task-001.result.json`
 
 ### JSON Schema
 

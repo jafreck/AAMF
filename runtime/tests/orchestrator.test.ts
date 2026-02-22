@@ -97,7 +97,7 @@ async function setupOrchestrator(
 ) {
   const config = createMockConfig(configOverrides);
   const logger = createSilentLogger(tempDir);
-  const progressDir = join(tempDir, '.copilot', 'migration', config.projectName);
+  const progressDir = join(tempDir, '.aamf', 'migration', config.projectName);
   await ensureDir(progressDir);
 
   const checkpoint = new CheckpointManager(progressDir, logger);
@@ -159,7 +159,7 @@ describe('MigrationOrchestrator', () => {
 
       const config = createMockConfig();
       const logger = createSilentLogger(tempDir);
-      const progressDir = join(tempDir, '.copilot', 'migration', config.projectName);
+      const progressDir = join(tempDir, '.aamf', 'migration', config.projectName);
       await ensureDir(progressDir);
 
       // Pre-populate checkpoint with phases 1–3 complete
@@ -351,7 +351,7 @@ describe('MigrationOrchestrator', () => {
         },
       });
 
-      const progressDir = join(tempDir, '.copilot', 'migration', config.projectName);
+      const progressDir = join(tempDir, '.aamf', 'migration', config.projectName);
       await ensureDir(progressDir);
 
       const checkpoint = new CheckpointManager(progressDir, logger);

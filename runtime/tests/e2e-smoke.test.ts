@@ -8,8 +8,10 @@ import { fileExists } from '../src/util/fs.js';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const fixtureDir = join(__dirname, 'fixtures', 'tiny-python-project');
 const configPath = join(fixtureDir, 'migration.config.json');
-const progressDir = join(fixtureDir, '.copilot', 'migration', 'tiny-calc-migration');
-const outputDir = join(fixtureDir, 'tmp', 'e2e-output');
+const aamfRoot = join(fixtureDir, '.aamf');
+const progressDir = join(aamfRoot, 'migration', 'tiny-calc-migration');
+const tmpRoot = join(fixtureDir, 'tmp');
+const outputDir = join(tmpRoot, 'e2e-output');
 
 /**
  * End-to-end smoke test that exercises the full pipeline with a real
@@ -28,14 +30,14 @@ const runE2E = process.env.AAMF_E2E === '1';
 describe.skipIf(!runE2E)('E2E Smoke Test', () => {
   beforeAll(async () => {
     // Clean up any previous run artefacts
-    await rm(progressDir, { recursive: true, force: true });
-    await rm(outputDir, { recursive: true, force: true });
+    await rm(aamfRoot, { recursive: true, force: true });
+    await rm(tmpRoot, { recursive: true, force: true });
   });
 
   afterAll(async () => {
-    // Clean up artefacts created during the test
-    await rm(progressDir, { recursive: true, force: true });
-    await rm(outputDir, { recursive: true, force: true });
+    // Clean up artefacts created during the test (even after failures)
+    await rm(aamfRoot, { recursive: true, force: true });
+    await rm(tmpRoot, { recursive: true, force: true });
   });
 
   it('should initialize the runtime from the fixture config', async () => {

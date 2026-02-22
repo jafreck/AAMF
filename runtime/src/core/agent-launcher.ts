@@ -20,7 +20,7 @@ export class AgentLauncher {
     private readonly projectRoot: string,
     private readonly logger: Logger,
   ) {
-    this.logDir = join(projectRoot, '.copilot', 'migration', config.projectName, 'logs');
+    this.logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
   }
 
   /** Launch an agent invocation and return the result */

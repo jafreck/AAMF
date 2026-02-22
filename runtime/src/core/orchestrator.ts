@@ -56,7 +56,7 @@ export class MigrationOrchestrator {
     projectRoot: string,
     singlePhase?: number,
   ) {
-    this.progressDir = join(projectRoot, '.copilot', 'migration', config.projectName);
+    this.progressDir = join(projectRoot, '.aamf', 'migration', config.projectName);
     this.contextBuilder = new ContextBuilder(config, this.progressDir);
     this.tokenTracker = new TokenTracker();
     this.singlePhase = singlePhase;
@@ -450,16 +450,19 @@ export class MigrationOrchestrator {
     }
 
     const finalProgress = queue.getProgress();
+    const deadlocked = finalProgress.remaining > 0;
     return {
       phase: 4,
       name: 'Iterative Migration',
-      success: finalProgress.blocked === 0,
+      success: finalProgress.blocked === 0 && !deadlocked,
       outputPath: this.config.target.outputPath,
       duration: Date.now() - start,
       error:
-        finalProgress.blocked > 0
-          ? `${finalProgress.blocked} task(s) blocked after max retries`
-          : undefined,
+        deadlocked
+          ? `${finalProgress.remaining} task(s) deadlocked — unresolvable dependencies`
+          : finalProgress.blocked > 0
+            ? `${finalProgress.blocked} task(s) blocked after max retries`
+            : undefined,
     };
   }
 

@@ -22,13 +22,13 @@ Execute these phases in order. On resume, skip completed phases (read from `chec
 ### Phase 1: Impact Assessment & Cost Estimation
 - Launch: `impact-assessor`
 - Input: Source codebase path, target specification
-- Output: `.copilot/migration/{projectName}/impact-assessment.md`
+- Output: `.aamf/migration/{projectName}/impact-assessment.md`
 - Parallelizable: YES (read-only)
 
 ### Phase 2: Investigation & Knowledge Base Construction
 - Launch: `knowledge-builder`
 - Input: Source codebase path, impact assessment results
-- Output: `.copilot/migration/{projectName}/knowledge-base/` directory containing per-module and per-file documentation
+- Output: `.aamf/migration/{projectName}/knowledge-base/` directory containing per-module and per-file documentation
 - Parallelizable: YES (read-only)
 - **Important**: Large files (>500 lines) must be individually documented via `large-file-analyzer` for piecemeal migration.
 
@@ -36,7 +36,7 @@ Execute these phases in order. On resume, skip completed phases (read from `chec
 - Launch: `migration-planner` (spawns multiple investigator instances)
 - Launch: `adjudicator` (to select the best plan from competing proposals)
 - Input: Knowledge base, impact assessment
-- Output: `.copilot/migration/{projectName}/migration-plan.md`
+- Output: `.aamf/migration/{projectName}/migration-plan.md`
 - **Important**: Large files identified in Phase 2 must be broken into separate migration tasks.
 
 ### Phase 4: Code Migration (Iterative Loop)
@@ -52,7 +52,7 @@ Serial execution required for code-writing. Parity verification is read-only and
 ### Phase 5: Final Parity Check
 - Launch: `final-parity-checker`
 - Input: Entire migrated codebase + original codebase
-- Output: `.copilot/migration/{projectName}/final-parity-report.md`
+- Output: `.aamf/migration/{projectName}/final-parity-report.md`
 - If gaps/stubs/differences found → Loop back to Phase 4 for targeted fixes.
 
 ### Phase 6: End-to-End Test Crafting
@@ -63,7 +63,7 @@ Serial execution required for code-writing. Parity verification is read-only and
 ### Phase 7: Documentation
 - Launch: `documentation-writer`
 - Input: Migrated codebase, knowledge base, migration plan, parity reports
-- Output: `.copilot/migration/{projectName}/documentation/` and inline docs
+- Output: `.aamf/migration/{projectName}/documentation/` and inline docs
 
 ## Sub-Agents (launched via CLI)
 
@@ -87,7 +87,7 @@ All agents are invoked as headless, out-of-process CLI calls:
 ```
 copilot --agent <agent-name> \
   --context <context-file-path> \
-  --progress-dir .copilot/migration/{projectName} \
+  --progress-dir .aamf/migration/{projectName} \
   --phase <phase-id> \
   --task <task-id>
 ```
@@ -114,7 +114,7 @@ copilot --agent <agent-name> \
 
 ## Progress Tracking
 
-Update `.copilot/migration/{projectName}/progress.md` after every phase transition and significant sub-phase event. Include:
+Update `.aamf/migration/{projectName}/progress.md` after every phase transition and significant sub-phase event. Include:
 - Current phase and task
 - Completion percentages
 - Any failures with timestamps

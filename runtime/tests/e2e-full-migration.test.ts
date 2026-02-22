@@ -8,8 +8,10 @@ import { fileExists } from '../src/util/fs.js';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const fixtureDir = join(__dirname, 'fixtures', 'tiny-python-project');
 const configPath = join(fixtureDir, 'migration.config.json');
-const progressDir = join(fixtureDir, '.copilot', 'migration', 'tiny-calc-migration');
-const outputDir = join(fixtureDir, 'tmp', 'e2e-output');
+const aamfRoot = join(fixtureDir, '.aamf');
+const progressDir = join(aamfRoot, 'migration', 'tiny-calc-migration');
+const tmpRoot = join(fixtureDir, 'tmp');
+const outputDir = join(tmpRoot, 'e2e-output');
 
 /**
  * Full end-to-end migration test that runs ALL 7 phases against the
@@ -30,8 +32,8 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
 
   beforeAll(async () => {
     // Clean up any previous run artefacts
-    await rm(progressDir, { recursive: true, force: true });
-    await rm(outputDir, { recursive: true, force: true });
+    await rm(aamfRoot, { recursive: true, force: true });
+    await rm(tmpRoot, { recursive: true, force: true });
 
     // Run the full migration (all phases, no phase filter)
     const runtime = new MigrationRuntime();
@@ -40,12 +42,12 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
       logLevel: 'info',
     });
     result = await runtime.run();
-  }, 600_000); // 10-minute timeout for a full migration
+  }, 900_000); // 15-minute timeout for a full migration
 
   afterAll(async () => {
-    // Clean up artefacts created during the test
-    await rm(progressDir, { recursive: true, force: true });
-    await rm(outputDir, { recursive: true, force: true });
+    // Clean up artefacts created during the test (even after failures)
+    await rm(aamfRoot, { recursive: true, force: true });
+    await rm(tmpRoot, { recursive: true, force: true });
   });
 
   // ── Overall result ───────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ The orchestrator should not launch subagents, but instad launch a headless, out-
 
 Read-only agents may be parallelized where possible, but serial code writing is acceptable.
 
-Progress needs to be tracked and observable throughout inside (.copilot/migration/{projectName}).
+Progress needs to be tracked and observable throughout inside (.aamf/migration/{projectName}).
 
 During the phase of building a knowledge base, special attention needs to be paid to large files which should be documented so they can be migrated piecemeal. Then, during the planning stage, those files should be migrated as separate tasks.
 

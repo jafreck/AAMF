@@ -41,7 +41,7 @@ You are the **Impact Assessor** — a read-only analysis agent that evaluates a 
 
 ## Output
 
-Write the full assessment to `.copilot/migration/{projectName}/impact-assessment.md`:
+Write the full assessment to `.aamf/migration/{projectName}/impact-assessment.md`:
 
 ```markdown
 # Impact Assessment: {projectName}

@@ -42,7 +42,7 @@ You are the **Documentation Writer** — responsible for producing comprehensive
 ## Output Structure
 
 ```
-.copilot/migration/{projectName}/documentation/
+.aamf/migration/{projectName}/documentation/
 ├── architecture-guide.md       # High-level architecture
 ├── api-reference.md            # Public API documentation
 ├── migration-summary.md        # What was migrated and how

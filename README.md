@@ -74,7 +74,7 @@ Every agent runs **out-of-process**. The runtime never calls an LLM directly dur
      └─ `copilot --agent <name> --context <path> [--model <model>]`
 
 3. Environment variables are injected:
-     AAMF_PROGRESS_DIR   → .copilot/migration/{projectName}
+     AAMF_PROGRESS_DIR   → .aamf/migration/{projectName}
      AAMF_CONTEXT_FILE   → path to the context JSON
      AAMF_PHASE          → current phase number
      AAMF_TASK_ID        → task identifier (Phase 4)
@@ -136,7 +136,7 @@ A single `impact-assessor` invocation scans the source tree and produces `impact
 
 ### Phase 2 — Knowledge Base Construction
 
-The `knowledge-builder` agent documents all modules, producing a structured knowledge base under `.copilot/migration/{project}/knowledge-base/`. Files exceeding the large-file threshold are then analyzed in **parallel** by multiple `large-file-analyzer` instances (up to `maxParallelAgents` concurrent).
+The `knowledge-builder` agent documents all modules, producing a structured knowledge base under `.aamf/migration/{project}/knowledge-base/`. Files exceeding the large-file threshold are then analyzed in **parallel** by multiple `large-file-analyzer` instances (up to `maxParallelAgents` concurrent).
 
 ### Phase 3 — Migration Planning
 
@@ -174,7 +174,7 @@ The runtime writes a final summary to the progress file and returns a `Migration
 
 ### Checkpointing & Resume
 
-All state is persisted to `.copilot/migration/{projectName}/checkpoint.json` after every phase completion and task completion. The checkpoint records:
+All state is persisted to `.aamf/migration/{projectName}/checkpoint.json` after every phase completion and task completion. The checkpoint records:
 
 - Current phase and task
 - Completed phases and tasks
@@ -222,10 +222,10 @@ The `CostEstimator` provides approximate USD cost estimates using per-model pric
 
 ## Progress Observability
 
-All migration state is observable in `.copilot/migration/{projectName}/`:
+All migration state is observable in `.aamf/migration/{projectName}/`:
 
 ```
-.copilot/migration/{projectName}/
+.aamf/migration/{projectName}/
 ├── checkpoint.json              # Full pipeline state
 ├── checkpoint.backup.json       # Previous checkpoint
 ├── progress.md                  # Human-readable status dashboard

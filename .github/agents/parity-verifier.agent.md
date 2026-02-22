@@ -40,7 +40,7 @@ You are the **Parity Verifier** — a read-only analysis agent that checks wheth
 
 ## Output
 
-Write to `.copilot/migration/{projectName}/parity-reports/task-{taskId}.md`:
+Write to `.aamf/migration/{projectName}/parity-reports/task-{taskId}.md`:
 
 ```markdown
 # Parity Report: Task {taskId}
@@ -101,7 +101,7 @@ None — this is a **leaf agent**.
 In addition to the markdown parity report above, you **must** write a structured JSON result file at:
 
 ```
-.copilot/migration/{projectName}/results/parity-verifier-{taskId}.result.json
+.aamf/migration/{projectName}/results/parity-verifier-{taskId}.result.json
 ```
 
 The JSON must conform to this schema:

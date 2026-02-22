@@ -28,7 +28,7 @@ You are the **E2E Test Crafter** — a coordinating agent that plans comprehensi
   - Scenarios to cover (preconditions, actions, expected outcomes)
   - Both happy paths and critical failure paths
   - Testing framework and conventions to use
-- Write all suite briefs to `.copilot/migration/{projectName}/e2e-test-plan.md`
+- Write all suite briefs to `.aamf/migration/{projectName}/e2e-test-plan.md`
 
 ### 3. Delegate Suite Writing
 - For each suite in the plan, launch a `test-writer` agent via CLI with:
@@ -81,9 +81,9 @@ Each suite brief in the test plan should follow this template:
 
 ## Output
 
-1. `.copilot/migration/{projectName}/e2e-test-plan.md` — the full test strategy and suite briefs
+1. `.aamf/migration/{projectName}/e2e-test-plan.md` — the full test strategy and suite briefs
 2. Test files in the target project's test directory (written by `test-writer` sub-agents)
-3. Update `.copilot/migration/{projectName}/progress.md`:
+3. Update `.aamf/migration/{projectName}/progress.md`:
 
 ```markdown
 ## End-to-End Tests
@@ -117,7 +117,7 @@ Invocation per suite:
 ```
 copilot --agent test-writer \
   --context <suite-brief-path> \
-  --progress-dir .copilot/migration/{projectName} \
+  --progress-dir .aamf/migration/{projectName} \
   --test-type e2e \
   --suite <suite-name>
 ```

@@ -55,7 +55,7 @@ You are the **Test Writer** — responsible for writing unit tests for freshly m
 ## Output
 
 1. Test files written to the target project's test directory
-2. Update `.copilot/migration/{projectName}/progress.md`:
+2. Update `.aamf/migration/{projectName}/progress.md`:
 
 ```markdown
 ### Tests for Task {taskId}

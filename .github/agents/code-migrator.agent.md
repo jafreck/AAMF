@@ -81,7 +81,7 @@ After writing migrated code:
 
 ## Output
 
-Update `.copilot/migration/{projectName}/progress.md` with task result:
+Update `.aamf/migration/{projectName}/progress.md` with task result:
 
 ```markdown
 ### Task {id}: {name}
@@ -98,7 +98,7 @@ Update `.copilot/migration/{projectName}/progress.md` with task result:
 In addition to the markdown output above, you **must** write a structured JSON result file at:
 
 ```
-.copilot/migration/{projectName}/results/code-migrator-{taskId}.result.json
+.aamf/migration/{projectName}/results/code-migrator-{taskId}.result.json
 ```
 
 The JSON must conform to this schema:

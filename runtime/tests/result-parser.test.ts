@@ -140,6 +140,52 @@ Just notes.
       ResultParser.parseMigrationPlanContent(content, log);
       expect(log.info).toHaveBeenCalledWith(expect.stringContaining('1 tasks OK'));
     });
+
+    it('should reject non-canonical "Task N:" headers', () => {
+      const content = `## Task 1: Migrate Constants Module
+
+**Description:** Migrate the constants module
+**Complexity:** simple
+
+**Source Files:**
+- constants.py
+
+**Target Files:**
+- src/constants.ts
+`;
+      const log = silentLogger();
+      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      // Non-canonical header format should not parse into tasks
+      expect(tasks).toHaveLength(0);
+    });
+
+    it('should only accept task-NNN dependency references', () => {
+      const content = `## Task: task-001 - Module A
+
+**Description:** First task
+**Complexity:** simple
+
+**Source Files:**
+- src/a.py
+
+**Dependencies:** none
+
+## Task: task-002 - Module B
+
+**Description:** Second task
+**Complexity:** simple
+
+**Source Files:**
+- src/b.py
+
+**Dependencies:** task-001, Task 3 (some-file.ts)
+`;
+      const log = silentLogger();
+      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      expect(tasks).toHaveLength(2);
+      // Only the canonical task-001 reference should be kept
+      expect(tasks[1]?.dependencies).toEqual(['task-001']);
+    });
   });
 
   describe('TaskResultSchema', () => {

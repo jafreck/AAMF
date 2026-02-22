@@ -67,7 +67,7 @@ When scope reduction is the chosen strategy:
 
 ## Output
 
-Update `.copilot/migration/{projectName}/progress.md` with recovery details:
+Update `.aamf/migration/{projectName}/progress.md` with recovery details:
 
 ```markdown
 ### Failure Recovery: Task {taskId}

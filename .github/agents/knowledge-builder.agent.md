@@ -52,7 +52,7 @@ The knowledge base must serve as a **context-efficient substitute for reading so
 
 ## Output Structure
 
-Create all files under `.copilot/migration/{projectName}/knowledge-base/`:
+Create all files under `.aamf/migration/{projectName}/knowledge-base/`:
 
 ```
 knowledge-base/
@@ -79,7 +79,7 @@ Launch `large-file-analyzer` for each file identified as >500 lines:
 ```
 copilot --agent large-file-analyzer \
   --context <file-path> \
-  --progress-dir .copilot/migration/{projectName} \
+  --progress-dir .aamf/migration/{projectName} \
   --output knowledge-base/large-files/{file-name}.analysis.md
 ```
 

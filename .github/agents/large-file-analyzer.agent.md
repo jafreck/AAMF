@@ -46,7 +46,7 @@ Your decomposition document is the blueprint that the `migration-planner` uses t
 
 ## Output
 
-Write to `.copilot/migration/{projectName}/knowledge-base/large-files/{file-name}.analysis.md`:
+Write to `.aamf/migration/{projectName}/knowledge-base/large-files/{file-name}.analysis.md`:
 
 ```markdown
 # Large File Analysis: {file-path}

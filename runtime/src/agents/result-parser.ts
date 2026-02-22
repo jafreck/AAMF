@@ -185,9 +185,11 @@ export class ResultParser {
   /**
    * Parse an individual task block into a {@link MigrationTask}, or `null`
    * if the block does not contain a recognisable task header.
+   *
+   * Expects the canonical format produced by the migration-planner agent:
+   *   "task-001 - Some Name" or "task-001: Some Name"
    */
   private static parseTaskBlock(block: string): MigrationTask | null {
-    // Parse task ID from the first line: "task-001 - Some Name" or "task-001: Some Name"
     const headerMatch = block.match(/^(task-\d+)\s*[-:]\s*(.+)/m);
     if (!headerMatch) return null;
 
@@ -198,8 +200,13 @@ export class ResultParser {
     const sourceFiles = ResultParser.extractListItems(block, /source\s*files?/i);
     // Target files
     const targetFiles = ResultParser.extractListItems(block, /target\s*files?/i);
-    // Dependencies
-    const dependencies = ResultParser.extractListItems(block, /dependenc/i);
+    // Dependencies — only accept canonical task-NNN references
+    const rawDeps = ResultParser.extractListItems(block, /dependenc/i);
+    const dependencies = rawDeps
+      .flatMap(dep => {
+        const refs = dep.match(/task-\d+/gi);
+        return refs ? refs.map(d => d.toLowerCase()) : [];
+      });
     // Knowledge base reference
     const kbMatch = block.match(
       /knowledge[\s-]*base[\s-]*(?:ref|reference)?:?\s*[`"]?([^\n`"]+)/i,
