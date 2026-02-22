@@ -6,6 +6,14 @@ Typical use cases include porting a 100k+ line Python monolith to TypeScript, a 
 
 ---
 
+## Projects Ported Using AAMF
+
+| Project | Source | Target | Model | Repository |
+|---------|--------|--------|-------|------------|
+| lz4 compression library | C | Rust | claude-sonnet-4.6 | [jafreck/lz4r](https://github.com/jafreck/lz4r) |
+
+---
+
 ## How It Works
 
 AAMF treats the migration as a pipeline of **7 sequential phases**, each driven by purpose-built agents defined as `.agent.md` prompt files. The runtime never performs reasoning itself — it is pure execution machinery that launches agents, feeds them minimal context, collects their output, and decides what to run next.
@@ -29,16 +37,16 @@ AAMF treats the migration as a pipeline of **7 sequential phases**, each driven 
 │                      └───────────┘                                  │
 │                            │                                        │
 │              ┌─────────────┼─────────────┐                          │
-│              ▼             ▼             ▼                           │
+│              ▼             ▼             ▼                          │
 │         copilot CLI   copilot CLI   copilot CLI                     │
 │         (agent A)     (agent B)     (agent C)                       │
-│              │             │             │                           │
+│              │             │             │                          │
 │              └─────────────┼─────────────┘                          │
 │                            ▼                                        │
 │                      ResultParser                                   │
 │                            │                                        │
 │              ┌─────────────┼─────────────┐                          │
-│              ▼             ▼             ▼                           │
+│              ▼             ▼             ▼                          │
 │         Checkpoint    ProgressWriter  TokenTracker                  │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
@@ -373,14 +381,6 @@ runtime/
         ├── sample-checkpoint.json
         └── sample-migration-plan.md
 ```
-
----
-
-## Projects Ported Using AAMF
-
-| Project | Source | Target | Repository |
-|---------|--------|--------|------------|
-| lz4 compression library | C | Rust | [jafreck/lz4r](https://github.com/jafreck/lz4r) |
 
 ---
 
