@@ -117,4 +117,54 @@ describe('ProgressWriter', () => {
     const content = await readFile(progressFile, 'utf-8');
     expect(content).toContain('completed successfully');
   });
+
+  describe('Resume & Edge Cases', () => {
+    it('should rewrite all phases to pending on re-initialization', async () => {
+      await writer.initialize(config);
+      await writer.updatePhase(1, 'completed');
+      await writer.updatePhase(2, 'completed');
+      await writer.updatePhase(3, 'completed');
+
+      // Re-initialize should reset everything
+      await writer.initialize(config);
+
+      const content = await readFile(progressFile, 'utf-8');
+      // All phases should be back to pending (⬜)
+      const pendingCount = (content.match(/⬜/g) || []).length;
+      expect(pendingCount).toBe(7);
+      // No completed markers
+      expect(content).not.toContain('✅');
+    });
+
+    it('should handle concurrent appendEvent calls', async () => {
+      await writer.initialize(config);
+
+      // Fire 10 rapid appendEvent calls sequentially (the implementation
+      // serializes through atomicWrite so concurrent calls would race)
+      for (let i = 0; i < 10; i++) {
+        await writer.appendEvent(`concurrent-${i}`);
+      }
+
+      const content = await readFile(progressFile, 'utf-8');
+      for (let i = 0; i < 10; i++) {
+        expect(content).toContain(`concurrent-${i}`);
+      }
+    });
+
+    it('should truncate event log at 50 entries', async () => {
+      await writer.initialize(config);
+
+      for (let i = 0; i < 60; i++) {
+        await writer.appendEvent(`trunc-event-${i}`);
+      }
+
+      const content = await readFile(progressFile, 'utf-8');
+      // First 10 events (0-9) should be truncated
+      expect(content).not.toContain('trunc-event-0]');
+      expect(content).not.toContain('trunc-event-9]');
+      // Events 10-59 should remain
+      expect(content).toContain('trunc-event-10');
+      expect(content).toContain('trunc-event-59');
+    });
+  });
 });

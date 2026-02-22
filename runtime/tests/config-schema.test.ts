@@ -57,4 +57,73 @@ describe('MigrationConfigSchema', () => {
     const result = MigrationConfigSchema.safeParse(full);
     expect(result.success).toBe(true);
   });
+
+  describe('Additional Validation', () => {
+    it('should reject maxRetriesPerTask above 5', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { maxRetriesPerTask: 6 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject maxRetriesPerTask of 0', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { maxRetriesPerTask: 0 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject maxParallelAgents of 0', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { maxParallelAgents: 0 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept empty source.path (string validation only)', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        source: { path: '', language: 'python' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject projectName with spaces', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        projectName: 'has space',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject projectName with uppercase', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        projectName: 'HasUppercase',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject projectName with underscores', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        projectName: 'has_underscore',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should strip unknown fields from parsed result', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        foo: 'bar',
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect((result.data as Record<string, unknown>)['foo']).toBeUndefined();
+      }
+    });
+  });
 });
