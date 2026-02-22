@@ -1,0 +1,32 @@
+{
+  "projectName": "lz4-to-rust",
+  "source": {
+    "path": "./lz4-src/lz4-1.10.0/lib",
+    "language": "c",
+    "entryPoints": ["lz4.c"],
+    "excludePatterns": [".git", "*.o", "*.lo", "*.la", "*.pc", "Makefile*", "*.md"]
+  },
+  "target": {
+    "language": "rust",
+    "framework": "stable",
+    "outputPath": "./tmp/lz4-rust-output",
+    "testFramework": "cargo-test",
+    "buildCommand": "cargo build",
+    "testCommand": "cargo test"
+  },
+  "options": {
+    "maxParallelAgents": 3,
+    "maxRetriesPerTask": 2,
+    "largeFileThreshold": 500,
+    "maxLinesPerTask": 500,
+    "tokenBudget": 500000,
+    "dryRun": false,
+    "resume": false
+  },
+  "copilot": {
+    "cliCommand": "copilot",
+    "model": "claude-sonnet-4.6",
+    "agentDir": "../../../../.github/agents",
+    "timeout": 300000
+  }
+}

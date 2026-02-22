@@ -1,0 +1,32 @@
+{
+  "projectName": "sqlite-to-csharp-net9",
+  "source": {
+    "path": "./sqlite-src/sqlite-autoconf-3510200",
+    "language": "c",
+    "entryPoints": ["sqlite3.c"],
+    "excludePatterns": [".git", "*.o", "*.lo", "*.la", "*.pc", "Makefile*", "config.*", "libtool", "stamp-*"]
+  },
+  "target": {
+    "language": "csharp",
+    "framework": "net9.0",
+    "outputPath": "./tmp/sqlite-csharp-output",
+    "testFramework": "xunit",
+    "buildCommand": "dotnet build",
+    "testCommand": "dotnet test"
+  },
+  "options": {
+    "maxParallelAgents": 3,
+    "maxRetriesPerTask": 2,
+    "largeFileThreshold": 500,
+    "maxLinesPerTask": 500,
+    "tokenBudget": 500000,
+    "dryRun": false,
+    "resume": false
+  },
+  "copilot": {
+    "cliCommand": "copilot",
+    "model": "claude-sonnet-4.6",
+    "agentDir": "../../../../.github/agents",
+    "timeout": 300000
+  }
+}
