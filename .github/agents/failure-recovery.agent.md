@@ -1,7 +1,7 @@
 ---
 name: Failure Recovery
 description: "Diagnoses migration failures, develops fix strategies, and attempts scope reduction when tasks cannot be completed as planned."
-tools: ["codebase", "terminal", "editFiles"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Failure Recovery

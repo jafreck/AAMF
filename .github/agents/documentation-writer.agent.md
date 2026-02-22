@@ -1,7 +1,7 @@
 ---
 name: Documentation Writer
 description: "Produces comprehensive documentation for the migrated codebase including architecture guides, API docs, and migration notes."
-tools: ["codebase", "terminal", "editFiles"]
+tools: ["read", "edit", "search"]
 ---
 
 # Documentation Writer

@@ -1,7 +1,7 @@
 ---
 name: Final Parity Checker
 description: "Performs a comprehensive post-migration audit to ensure the entire migrated codebase is complete with no gaps, stubs, or behavioral differences."
-tools: ["codebase", "terminal"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Final Parity Checker

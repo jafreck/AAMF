@@ -57,18 +57,23 @@ export async function loadConfig(configPath: string): Promise<MigrationConfig> {
   config.target.outputPath = resolve(baseDir, config.target.outputPath);
   config.copilot.agentDir = resolve(baseDir, config.copilot.agentDir);
 
-  // ---------- freeze & return ----------
-  return deepFreeze(config);
+  return config;
 }
 
 /**
- * Recursively freeze an object and all nested objects / arrays.
+ * Create a mutable shallow-ish clone of a config, merging CLI overrides
+ * into `options` without mutating the original.
  */
-function deepFreeze<T extends object>(obj: T): Readonly<T> {
-  for (const value of Object.values(obj)) {
-    if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
-      deepFreeze(value as object);
-    }
-  }
-  return Object.freeze(obj);
+export function applyOverrides(
+  config: MigrationConfig,
+  overrides: { dryRun?: boolean; resume?: boolean },
+): MigrationConfig {
+  return {
+    ...config,
+    options: {
+      ...config.options,
+      ...(overrides.dryRun !== undefined && { dryRun: overrides.dryRun }),
+      ...(overrides.resume !== undefined && { resume: overrides.resume }),
+    },
+  };
 }

@@ -1,7 +1,7 @@
 ---
 name: Adjudicator
 description: "Evaluates competing proposals (plans, solutions, approaches) and makes a reasoned decision on which to adopt."
-tools: ["codebase", "terminal"]
+tools: ["read", "edit", "search"]
 ---
 
 # Adjudicator

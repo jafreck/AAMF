@@ -18,7 +18,7 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.maxParallelAgents).toBe(3);
     expect(result.options.maxRetriesPerTask).toBe(3);
     expect(result.options.dryRun).toBe(false);
-    expect(result.copilot.mode).toBe('cli');
+    expect(result.copilot.cliCommand).toBe('copilot');
     expect(result.copilot.timeout).toBe(300000);
   });
 
@@ -52,7 +52,7 @@ describe('MigrationConfigSchema', () => {
       source: { ...validConfig.source, entryPoints: ['main.py'], excludePatterns: ['venv'] },
       target: { ...validConfig.target, framework: 'express', testFramework: 'vitest' },
       options: { maxParallelAgents: 5, tokenBudget: 1000000 },
-      copilot: { mode: 'api', apiEndpoint: 'https://api.example.com', apiModel: 'gpt-4o' },
+      copilot: { cliCommand: 'copilot', model: 'gpt-4o', agentDir: '.github/agents', timeout: 300000 },
     };
     const result = MigrationConfigSchema.safeParse(full);
     expect(result.success).toBe(true);

@@ -1,7 +1,7 @@
 ---
 name: Impact Assessor
 description: "Analyzes a legacy codebase to assess migration impact, estimate cost/effort, and identify risks."
-tools: ["codebase", "terminal"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Impact Assessor

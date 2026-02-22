@@ -33,6 +33,12 @@ export class Logger {
   private taskId?: string;
   private dirReady = false;
 
+  /**
+   * Write queue — serializes appendFile calls so they never interleave
+   * and tracks pending writes so they can be awaited on shutdown.
+   */
+  private writeChain: Promise<void> = Promise.resolve();
+
   constructor(opts: LoggerOptions);
   constructor(parent: Logger, source: string);
   constructor(optsOrParent: LoggerOptions | Logger, source?: string) {
@@ -43,6 +49,8 @@ export class Logger {
       this.consoleEnabled = optsOrParent.consoleEnabled;
       this.dirReady = optsOrParent.dirReady;
       this.source = source!;
+      // Share the write chain with parent so all children serialize through one queue
+      this.writeChain = optsOrParent.writeChain;
     } else {
       this.logDir = optsOrParent.logDir;
       this.minLevel = LEVEL_PRIORITY[optsOrParent.level];
@@ -129,8 +137,15 @@ export class Logger {
       console.log(line);
     }
 
-    // fire-and-forget append — keeps the sync call-site API simple
-    void this.appendEntry(entry);
+    // Queue the write — serialized through writeChain to prevent interleaving
+    this.writeChain = this.writeChain
+      .then(() => this.appendEntry(entry))
+      .catch(() => {/* best-effort: swallow write errors to keep the chain alive */});
+  }
+
+  /** Await all pending log writes. Call during graceful shutdown. */
+  async flush(): Promise<void> {
+    await this.writeChain;
   }
 
   private async appendEntry(entry: LogEntry): Promise<void> {

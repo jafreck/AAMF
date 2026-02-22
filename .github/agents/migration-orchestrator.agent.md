@@ -1,7 +1,7 @@
 ---
 name: Migration Orchestrator
 description: "Coordinates all phases of a large-scale legacy codebase migration with checkpointing and resume capability."
-tools: ["codebase", "terminal", "editFiles"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Migration Orchestrator

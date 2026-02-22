@@ -1,7 +1,7 @@
 ---
 name: Migration Planner
 description: "Creates a detailed, ordered migration plan by analyzing the knowledge base and producing task breakdowns for code migration."
-tools: ["codebase", "terminal", "editFiles"]
+tools: ["read", "edit", "search"]
 ---
 
 # Migration Planner

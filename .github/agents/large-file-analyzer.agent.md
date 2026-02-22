@@ -1,7 +1,7 @@
 ---
 name: Large File Analyzer
 description: "Analyzes large source files (>500 lines) to produce detailed decomposition documents enabling piecemeal migration."
-tools: ["codebase", "terminal"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Large File Analyzer

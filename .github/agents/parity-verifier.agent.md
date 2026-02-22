@@ -1,7 +1,7 @@
 ---
 name: Parity Verifier
 description: "Verifies behavioral parity between original source code and migrated target code."
-tools: ["codebase", "terminal"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Parity Verifier

@@ -42,6 +42,7 @@ export class MigrationOrchestrator {
   private readonly contextBuilder: ContextBuilder;
   private readonly tokenTracker: TokenTracker;
   private readonly progressDir: string;
+  private readonly singlePhase?: number;
 
   constructor(
     private readonly config: MigrationConfig,
@@ -50,10 +51,12 @@ export class MigrationOrchestrator {
     private readonly progress: ProgressWriter,
     private readonly logger: Logger,
     projectRoot: string,
+    singlePhase?: number,
   ) {
     this.progressDir = join(projectRoot, '.copilot', 'migration', config.projectName);
     this.contextBuilder = new ContextBuilder(config, this.progressDir);
     this.tokenTracker = new TokenTracker();
+    this.singlePhase = singlePhase;
   }
 
   // ─── Public API ──────────────────────────────────────────────────────
@@ -72,7 +75,16 @@ export class MigrationOrchestrator {
     const phaseResults: PhaseResult[] = [];
     let aborted = false;
 
-    for (const phase of PHASES) {
+    // Determine which phases to execute
+    const phasesToRun = this.singlePhase
+      ? PHASES.filter(p => p.id === this.singlePhase)
+      : PHASES;
+
+    if (this.singlePhase) {
+      this.logger.info(`Running single phase: ${this.singlePhase}`);
+    }
+
+    for (const phase of phasesToRun) {
       // Skip already-completed phases on resume
       if (phase.id < resumePoint.phase) {
         phaseResults.push({

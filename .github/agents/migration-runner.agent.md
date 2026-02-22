@@ -1,7 +1,7 @@
 ---
 name: Migration Runner
 description: "Top-level entry point that launches and manages the migration orchestrator for large-scale legacy codebase migrations."
-tools: ["codebase", "terminal", "editFiles"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Migration Runner

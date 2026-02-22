@@ -18,9 +18,7 @@
     "chalk": "^5",
     "commander": "^12",
     "date-fns": "^3",
-    "ora": "^8",
     "p-limit": "^6.2.0",
-    "p-queue": "^8",
     "zod": "^3.23"
   },
   "devDependencies": {

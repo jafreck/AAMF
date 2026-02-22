@@ -1,7 +1,7 @@
 ---
 name: Code Migrator
 description: "Migrates source code from legacy to target platform according to a specific task in the migration plan."
-tools: ["codebase", "terminal", "editFiles"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Code Migrator

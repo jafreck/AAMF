@@ -1,7 +1,7 @@
 ---
 name: Test Writer
 description: "Writes unit tests for migrated code to verify correctness and prevent regressions."
-tools: ["codebase", "terminal", "editFiles"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Test Writer

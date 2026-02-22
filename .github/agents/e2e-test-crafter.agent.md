@@ -1,7 +1,7 @@
 ---
 name: E2E Test Crafter
 description: "Plans and coordinates end-to-end test suites for the fully migrated codebase, delegating individual suite writing to test-writer agents."
-tools: ["codebase", "terminal", "editFiles"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # E2E Test Crafter

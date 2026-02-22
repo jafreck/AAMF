@@ -1,13 +1,15 @@
 import { resolve, join, dirname } from 'node:path';
-import { loadConfig } from '../config/loader.js';
+import { loadConfig, applyOverrides } from '../config/loader.js';
 import { MigrationConfig } from '../config/schema.js';
 import { MigrationOrchestrator } from './orchestrator.js';
 import { CheckpointManager } from './checkpoint.js';
 import { AgentLauncher } from './agent-launcher.js';
 import { ProgressWriter } from './progress.js';
+import { PHASES } from './phase-registry.js';
 import { Logger } from '../logging/logger.js';
 import { MigrationResult } from '../agents/types.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
+import { fileExists } from '../util/fs.js';
 
 export interface RuntimeOptions {
   configPath: string;
@@ -25,20 +27,19 @@ export class MigrationRuntime {
   private launcher!: AgentLauncher;
   private progressDir!: string;
   private projectRoot!: string;
-  private runningAgentPids: Set<number> = new Set();
+  private phase?: number;
 
   async initialize(options: RuntimeOptions): Promise<void> {
     // 1. Load config
-    this.config = await loadConfig(options.configPath);
+    const rawConfig = await loadConfig(options.configPath);
     this.projectRoot = dirname(resolve(options.configPath));
 
-    // Apply CLI overrides
-    if (options.dryRun) {
-      (this.config as any).options = { ...this.config.options, dryRun: true };
-    }
-    if (options.resume) {
-      (this.config as any).options = { ...this.config.options, resume: true };
-    }
+    // Apply CLI overrides immutably
+    this.config = applyOverrides(rawConfig, {
+      dryRun: options.dryRun,
+      resume: options.resume,
+    });
+    this.phase = options.phase;
 
     // 2. Setup directories
     this.progressDir = join(this.projectRoot, '.copilot', 'migration', this.config.projectName);
@@ -60,10 +61,13 @@ export class MigrationRuntime {
     // 6. Create agent launcher
     this.launcher = new AgentLauncher(this.config, this.projectRoot, this.logger);
 
+    // 7. Validate agent files exist
+    await this.validateAgentFiles();
+
     this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName}`);
     this.logger.info(`Source: ${this.config.source.language} → Target: ${this.config.target.language}`);
 
-    // 7. Setup graceful shutdown
+    // 8. Setup graceful shutdown
     this.setupShutdownHandlers();
   }
 
@@ -99,9 +103,13 @@ export class MigrationRuntime {
       this.progress,
       this.logger,
       this.projectRoot,
+      this.phase,
     );
 
     const result = await orchestrator.run();
+
+    // Flush any buffered log entries before returning
+    await this.logger.flush();
 
     // Print summary
     this.printSummary(result);
@@ -188,10 +196,30 @@ export class MigrationRuntime {
     return `${s}s`;
   }
 
+  private async validateAgentFiles(): Promise<void> {
+    const agentDir = this.config.copilot.agentDir;
+    const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
+    const missing: string[] = [];
+
+    for (const agent of allAgents) {
+      const agentPath = join(agentDir, `${agent}.agent.md`);
+      if (!(await fileExists(agentPath))) {
+        missing.push(agentPath);
+      }
+    }
+
+    if (missing.length > 0) {
+      throw new Error(
+        `Missing agent file(s) — migration cannot proceed:\n${missing.map(p => `  - ${p}`).join('\n')}`,
+      );
+    }
+  }
+
   private setupShutdownHandlers(): void {
     const handler = async (signal: string) => {
       this.logger.warn(`Received ${signal} — shutting down gracefully`);
       try {
+        await this.logger.flush();
         await this.checkpoint.save(this.checkpoint.getState());
         await this.progress.appendEvent(`Migration interrupted by ${signal}`);
       } catch {

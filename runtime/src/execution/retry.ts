@@ -5,6 +5,10 @@ import { Logger } from '../logging/logger.js';
 export interface RetryOptions {
   /** Maximum number of attempts before considering the task failed. */
   maxAttempts: number;
+  /** Initial backoff delay in milliseconds (default: 1000). */
+  initialDelayMs?: number;
+  /** Maximum backoff delay in milliseconds (default: 30000). */
+  maxDelayMs?: number;
   /** Called after each failed attempt (before the next retry). */
   onRetry?: (attempt: number, error: string) => Promise<void>;
   /**
@@ -37,8 +41,25 @@ export type RetryResult = AgentResult & {
 export class RetryExecutor {
   constructor(private launcher: AgentLauncherFn, private logger: Logger) {}
 
-  /** Execute with retries. Returns the result of the last attempt. */
+  /**
+   * Calculate backoff delay with exponential increase and jitter.
+   * delay = min(initialDelay * 2^(attempt-1) + random jitter, maxDelay)
+   */
+  private calculateBackoff(attempt: number, initialDelayMs: number, maxDelayMs: number): number {
+    const exponential = initialDelayMs * Math.pow(2, attempt - 1);
+    const jitter = Math.random() * initialDelayMs * 0.5;
+    return Math.min(exponential + jitter, maxDelayMs);
+  }
+
+  /** Sleep for a given number of milliseconds. */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /** Execute with retries and exponential backoff. Returns the result of the last attempt. */
   async executeWithRetry(invocation: AgentInvocation, options: RetryOptions): Promise<RetryResult> {
+    const initialDelayMs = options.initialDelayMs ?? 1_000;
+    const maxDelayMs = options.maxDelayMs ?? 30_000;
     let lastResult: AgentResult | null = null;
     let recoveryAttempted = false;
 
@@ -53,8 +74,14 @@ export class RetryExecutor {
 
       this.logger.warn(`Attempt ${attempt} failed: ${lastResult.error ?? 'unknown error'}`);
 
-      if (attempt < options.maxAttempts && options.onRetry) {
-        await options.onRetry(attempt, lastResult.error ?? 'unknown error');
+      if (attempt < options.maxAttempts) {
+        if (options.onRetry) {
+          await options.onRetry(attempt, lastResult.error ?? 'unknown error');
+        }
+
+        const delay = this.calculateBackoff(attempt, initialDelayMs, maxDelayMs);
+        this.logger.info(`Backing off ${Math.round(delay)}ms before retry ${attempt + 1}`);
+        await this.sleep(delay);
       }
     }
 

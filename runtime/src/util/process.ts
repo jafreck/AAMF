@@ -1,4 +1,5 @@
-import { spawn, type SpawnOptions } from 'node:child_process';
+import { spawn, execFile, type SpawnOptions } from 'node:child_process';
+import { platform } from 'node:os';
 
 /** Result returned after a spawned child process completes. */
 export interface SpawnResult {
@@ -76,13 +77,29 @@ export async function spawnWithTimeout(
 /**
  * Kill a process and its children.
  *
+ * On Windows, uses `taskkill /T /F /PID` for tree kill.
  * On Unix, sending a signal to a negative PID targets the entire process group.
- * Falls back to killing just the PID if the group kill fails (e.g. process
- * already exited or is not a group leader).
+ * Falls back to killing just the PID if the group/tree kill fails.
  */
 export async function killProcessTree(pid: number): Promise<void> {
+  if (platform() === 'win32') {
+    return new Promise<void>((resolve) => {
+      execFile('taskkill', ['/T', '/F', '/PID', String(pid)], (err) => {
+        if (err) {
+          // taskkill failed — try direct kill as fallback
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch {
+            // Process already exited; nothing to do.
+          }
+        }
+        resolve();
+      });
+    });
+  }
+
+  // Unix: negative PID kills the entire process group.
   try {
-    // Negative PID kills the entire process group on Unix.
     process.kill(-pid, 'SIGKILL');
   } catch {
     // Process group kill failed — try killing the individual process.

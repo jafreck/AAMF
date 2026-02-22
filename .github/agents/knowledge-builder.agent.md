@@ -1,7 +1,7 @@
 ---
 name: Knowledge Builder
 description: "Investigates a legacy codebase and builds a structured knowledge base documenting its architecture, patterns, and behaviors."
-tools: ["codebase", "terminal", "editFiles"]
+tools: ["read", "edit", "search", "execute"]
 ---
 
 # Knowledge Builder
