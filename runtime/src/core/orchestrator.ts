@@ -447,6 +447,16 @@ export class MigrationOrchestrator {
       // Execute batch concurrently
       const batchPromises = batch.map(task => this.executeTask(task, retryExec, queue));
       await Promise.allSettled(batchPromises);
+
+      // If a task is still blocked after exhausting all recovery attempts,
+      // halt Phase 4 so the user can inspect and fix the issue before resuming.
+      const progress = queue.getProgress();
+      if (progress.blocked > 0) {
+        this.logger.error(
+          `${progress.blocked} task(s) blocked after max retries — halting Phase 4`,
+        );
+        break;
+      }
     }
 
     const finalProgress = queue.getProgress();
@@ -588,42 +598,121 @@ export class MigrationOrchestrator {
     if (parityResult) this.recordTokens(parityResult, 4);
     if (testResult) this.recordTokens(testResult, 4);
 
+    // b2. Check parity result and retry if non-minor issues found
+    const maxParityRetries = this.config.options.maxRetriesPerTask;
+    let parityPassed = await this.checkParityResult(task.id);
+
+    if (!parityPassed) {
+      for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
+        this.logger.warn(
+          `Parity check failed for ${task.id}, recovery attempt ${attempt}/${maxParityRetries}`,
+        );
+
+        // Launch failure-recovery with parity report
+        const parityReportPath = join(
+          this.progressDir,
+          'parity-reports',
+          `${task.id}.md`,
+        );
+        const recoveryCtx = await this.contextBuilder.buildContext(
+          'failure-recovery',
+          4,
+          task.id,
+          {
+            failureReport: parityReportPath,
+            sourceFile: task.sourceFiles[0],
+            targetFile: task.targetFiles[0],
+            kbEntry: task.knowledgeBaseRef,
+            attemptNumber: attempt,
+          },
+        );
+        const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
+        const recoveryResult = await this.launcher.launchAgent(recoveryInv);
+        this.recordTokens(recoveryResult, 4);
+
+        if (!recoveryResult.success) {
+          this.logger.warn(`Failure-recovery failed for ${task.id} on attempt ${attempt}`);
+          continue;
+        }
+
+        // Re-run code-migrator with the recovery context
+        const reMigrateCtx = await this.contextBuilder.buildContext(
+          'code-migrator',
+          4,
+          task.id,
+          {
+            sourceFiles: task.sourceFiles,
+            targetFiles: task.targetFiles,
+            kbEntry: task.knowledgeBaseRef,
+          },
+        );
+        const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
+        const reMigrateResult = await this.launcher.launchAgent(reMigrateInv);
+        this.recordTokens(reMigrateResult, 4);
+
+        if (!reMigrateResult.success) {
+          this.logger.warn(`Re-migration failed for ${task.id} on attempt ${attempt}`);
+          continue;
+        }
+
+        // Re-run parity-verifier
+        const reParityCtx = await this.contextBuilder.buildContext(
+          'parity-verifier',
+          4,
+          task.id,
+          {
+            sourceFile: task.sourceFiles[0],
+            targetFile: task.targetFiles[0],
+          },
+        );
+        const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
+        const reParityResult = await this.launcher.launchAgent(reParityInv);
+        this.recordTokens(reParityResult, 4);
+
+        parityPassed = await this.checkParityResult(task.id);
+        if (parityPassed) {
+          this.logger.info(`Parity recovered for ${task.id} on attempt ${attempt}`);
+          break;
+        }
+      }
+
+      // After exhausting retries, check if only minor issues remain
+      if (!parityPassed) {
+        const hasBlockingIssues = await this.hasNonMinorParityIssues(task.id);
+        if (hasBlockingIssues) {
+          queue.markBlocked(task.id);
+          await this.checkpoint.blockTask(task.id);
+          await this.progress.updateTask(task.id, 'blocked', {
+            error: 'parity check failed with critical/major issues after max retries',
+          });
+          this.logger.event({
+            type: 'task-blocked',
+            taskId: task.id,
+            name: task.name,
+            reason: 'parity verification failed with non-minor issues',
+          });
+          return;
+        }
+        this.logger.info(
+          `Parity for ${task.id} has only minor issues after retries, proceeding`,
+        );
+      }
+    }
+
     // c2. Run build command if configured
     if (this.config.target.buildCommand) {
-      const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
-      if (!buildResult.success) {
-        queue.markBlocked(task.id);
-        await this.checkpoint.blockTask(task.id);
-        await this.progress.updateTask(task.id, 'blocked', {
-          error: buildResult.error,
-        });
-        this.logger.event({
-          type: 'task-blocked',
-          taskId: task.id,
-          name: task.name,
-          reason: buildResult.error ?? 'build command failed',
-        });
-        return;
-      }
+      const buildOk = await this.runCommandWithRecovery(
+        'build', this.config.target.buildCommand, task, queue,
+      );
+      if (!buildOk) return;
     }
 
     // c3. Run test command if configured
     if (this.config.target.testCommand) {
-      const testCmdResult = await this.runCommand('test', this.config.target.testCommand, task.id);
-      if (!testCmdResult.success) {
-        queue.markBlocked(task.id);
-        await this.checkpoint.blockTask(task.id);
-        await this.progress.updateTask(task.id, 'blocked', {
-          error: testCmdResult.error,
-        });
-        this.logger.event({
-          type: 'task-blocked',
-          taskId: task.id,
-          name: task.name,
-          reason: testCmdResult.error ?? 'test command failed',
-        });
-        return;
-      }
+      const testOk = await this.runCommandWithRecovery(
+        'test', this.config.target.testCommand, task, queue,
+      );
+      if (!testOk) return;
     }
 
     // d. Complete task
@@ -775,9 +864,14 @@ export class MigrationOrchestrator {
 
     try {
       // Use shell mode to handle complex commands
+      const resolvedPath = this.launcher.getResolvedPath();
       const result = await spawnWithTimeout('sh', ['-c', command], {
         cwd: this.config.target.outputPath,
         timeout,
+        env: {
+          ...process.env,
+          ...(resolvedPath ? { PATH: resolvedPath } : {}),
+        },
       });
 
       // Log the output
@@ -803,7 +897,133 @@ export class MigrationOrchestrator {
     }
   }
 
+  /**
+   * Run a build or test command with a recovery loop.
+   *
+   * When the command fails the method launches `failure-recovery` with the
+   * error output, then re-runs `code-migrator`, and retries the command.
+   * After exhausting `maxRetriesPerTask` attempts it marks the task blocked.
+   *
+   * Returns `true` if the command eventually passes, `false` if blocked.
+   */
+  private async runCommandWithRecovery(
+    label: string,
+    command: string,
+    task: MigrationTask,
+    queue: TaskQueue,
+  ): Promise<boolean> {
+    const maxAttempts = this.config.options.maxRetriesPerTask;
+
+    // Initial attempt
+    let cmdResult = await this.runCommand(label, command, task.id);
+    if (cmdResult.success) return true;
+
+    // Recovery loop
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      this.logger.warn(
+        `${label} failed for ${task.id}, recovery attempt ${attempt}/${maxAttempts}: ${cmdResult.error}`,
+      );
+
+      // 1. Launch failure-recovery with the error output
+      const recoveryCtx = await this.contextBuilder.buildContext(
+        'failure-recovery',
+        4,
+        task.id,
+        {
+          failureReport: cmdResult.error,
+          failureType: label,
+          sourceFile: task.sourceFiles[0],
+          targetFile: task.targetFiles[0],
+          kbEntry: task.knowledgeBaseRef,
+          attemptNumber: attempt,
+        },
+      );
+      const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
+      const recoveryResult = await this.launcher.launchAgent(recoveryInv);
+      this.recordTokens(recoveryResult, 4);
+
+      if (!recoveryResult.success) {
+        this.logger.warn(`Failure-recovery agent failed for ${task.id} on attempt ${attempt}`);
+        continue;
+      }
+
+      // 2. Re-migrate with the fixed context
+      const reMigrateCtx = await this.contextBuilder.buildContext(
+        'code-migrator',
+        4,
+        task.id,
+        {
+          sourceFiles: task.sourceFiles,
+          targetFiles: task.targetFiles,
+          kbEntry: task.knowledgeBaseRef,
+        },
+      );
+      const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
+      const reMigrateResult = await this.launcher.launchAgent(reMigrateInv);
+      this.recordTokens(reMigrateResult, 4);
+
+      if (!reMigrateResult.success) {
+        this.logger.warn(`Re-migration failed for ${task.id} on ${label} recovery attempt ${attempt}`);
+        continue;
+      }
+
+      // 3. Re-run the command
+      cmdResult = await this.runCommand(label, command, task.id);
+      if (cmdResult.success) {
+        this.logger.info(`${label} recovered for ${task.id} on attempt ${attempt}`);
+        return true;
+      }
+    }
+
+    // Exhausted retries — block the task
+    queue.markBlocked(task.id);
+    await this.checkpoint.blockTask(task.id);
+    await this.progress.updateTask(task.id, 'blocked', {
+      error: cmdResult.error,
+    });
+    this.logger.event({
+      type: 'task-blocked',
+      taskId: task.id,
+      name: task.name,
+      reason: cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`,
+    });
+    return false;
+  }
+
   // ─── Helpers ─────────────────────────────────────────────────────────
+
+  /**
+   * Check if the parity-verifier sidecar result indicates a pass.
+   * Returns `true` if parity is 'pass', or if no sidecar file exists (assume pass).
+   */
+  private async checkParityResult(taskId: string): Promise<boolean> {
+    const result = await ResultParser.readTaskResultJson(
+      this.progressDir,
+      'parity-verifier',
+      taskId,
+    );
+    if (!result) return true; // No sidecar → assume pass
+    if (result.parity === 'pass') return true;
+    if (result.parity === 'partial') {
+      // Partial is a pass if all issues are minor
+      return result.issues.every((i) => i.severity === 'minor');
+    }
+    return false;
+  }
+
+  /**
+   * Check if the parity sidecar has any non-minor (critical/major) issues.
+   * Returns `false` if no sidecar exists or all issues are minor.
+   */
+  private async hasNonMinorParityIssues(taskId: string): Promise<boolean> {
+    const result = await ResultParser.readTaskResultJson(
+      this.progressDir,
+      'parity-verifier',
+      taskId,
+    );
+    if (!result) return false;
+    return result.issues.some((i) => i.severity !== 'minor');
+  }
 
   private buildInvocation(
     agent: AgentName,

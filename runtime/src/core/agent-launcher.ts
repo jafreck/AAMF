@@ -2,10 +2,43 @@ import { join } from 'node:path';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { AgentInvocation, AgentResult } from '../agents/types.js';
 import { MigrationConfig } from '../config/schema.js';
-import { spawnWithTimeout } from '../util/process.js';
+import { spawnWithTimeout, resolveLoginPath } from '../util/process.js';
 import { ensureDir, atomicWrite, fileExists } from '../util/fs.js';
 import { ResultParser } from '../agents/result-parser.js';
 import { Logger } from '../logging/logger.js';
+
+/**
+ * Strip VS Code / Electron IPC environment variables so that `copilot` CLI
+ * invocations don't register with the running VS Code instance and instead
+ * run in a truly headless, out-of-process mode.
+ */
+function stripVSCodeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const stripped: NodeJS.ProcessEnv = {};
+  const blocklist = [
+    'VSCODE_IPC_HOOK_CLI',
+    'VSCODE_IPC_HOOK',
+    'VSCODE_GIT_IPC_HANDLE',
+    'VSCODE_GIT_ASKPASS_NODE',
+    'VSCODE_GIT_ASKPASS_EXTRA_ARGS',
+    'VSCODE_GIT_ASKPASS_MAIN',
+    'VSCODE_INJECTION',
+    'VSCODE_PID',
+    'VSCODE_CWD',
+    'VSCODE_NLS_CONFIG',
+    'VSCODE_HANDLES_SIGPIPE',
+    'VSCODE_HANDLES_UNCAUGHT_ERRORS',
+    'ELECTRON_RUN_AS_NODE',
+    'ELECTRON_NO_ASAR',
+    'GIT_ASKPASS',
+    'TERM_PROGRAM',          // Often set to 'vscode'
+  ];
+  for (const [key, value] of Object.entries(env)) {
+    if (!blocklist.includes(key) && !key.startsWith('VSCODE_')) {
+      stripped[key] = value;
+    }
+  }
+  return stripped;
+}
 
 /**
  * The critical bridge between the runtime and agent prompt files.
@@ -14,6 +47,13 @@ import { Logger } from '../logging/logger.js';
 export class AgentLauncher {
   private readonly logDir: string;
   private lastInvocationTime = 0;
+  private resolvedPath: string | undefined;
+  private initialized = false;
+
+  /** Return the resolved PATH (after init), or undefined if not resolved. */
+  getResolvedPath(): string | undefined {
+    return this.resolvedPath;
+  }
 
   constructor(
     private readonly config: MigrationConfig,
@@ -21,6 +61,32 @@ export class AgentLauncher {
     private readonly logger: Logger,
   ) {
     this.logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+  }
+
+  /**
+   * Resolve the user's login-shell PATH based on the `environment` config.
+   * Must be called once before the first `launchAgent` invocation.
+   */
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    const envCfg = this.config.environment;
+
+    if (envCfg.inheritShellPath) {
+      this.logger.info('Resolving PATH from login shell…');
+      this.resolvedPath = await resolveLoginPath({
+        shell: envCfg.shell,
+        extraPath: envCfg.extraPath,
+      });
+      this.logger.debug(`Resolved PATH: ${this.resolvedPath}`);
+    } else if (envCfg.extraPath.length > 0) {
+      // Not inheriting login PATH, but still apply extraPath on top of current PATH
+      const home = process.env.HOME ?? '';
+      const expanded = envCfg.extraPath.map(p => p.replace(/^~(?=\/|$)/, home));
+      this.resolvedPath = [...expanded, process.env.PATH ?? ''].join(':');
+      this.logger.debug(`Extended PATH with extraPath entries: ${this.resolvedPath}`);
+    }
+
+    this.initialized = true;
   }
 
   /** Launch an agent invocation and return the result */
@@ -74,7 +140,8 @@ export class AgentLauncher {
     }
 
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...stripVSCodeEnv(process.env),
+      ...(this.resolvedPath ? { PATH: this.resolvedPath } : {}),
       AAMF_PROGRESS_DIR: invocation.progressDir,
       AAMF_CONTEXT_FILE: invocation.contextFile,
     };

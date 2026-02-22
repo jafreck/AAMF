@@ -1,5 +1,5 @@
 import { spawn, execFile, type SpawnOptions } from 'node:child_process';
-import { platform } from 'node:os';
+import { platform, homedir } from 'node:os';
 
 /** Result returned after a spawned child process completes. */
 export interface SpawnResult {
@@ -109,4 +109,49 @@ export async function killProcessTree(pid: number): Promise<void> {
       // Process already exited; nothing to do.
     }
   }
+}
+
+/**
+ * Resolve the PATH that a user's login shell would see.
+ *
+ * Spawns the given shell (or `$SHELL`, or `/bin/sh`) with `-l -c 'echo $PATH'`
+ * to capture the fully-initialised PATH, including entries added by
+ * `~/.zshrc`, `~/.bashrc`, `~/.cargo/env`, etc.
+ *
+ * The resolved PATH can optionally be extended with `extraPath` entries,
+ * which are prepended so they take priority.
+ *
+ * On failure (e.g. shell not found), falls back to the current `process.env.PATH`.
+ */
+export async function resolveLoginPath(options: {
+  /** Shell binary to invoke for login PATH resolution. */
+  shell?: string;
+  /** Additional directories to prepend to the resolved PATH. Supports ~ expansion. */
+  extraPath?: string[];
+  /** Timeout in ms for the shell invocation (default 5 000). */
+  timeout?: number;
+} = {}): Promise<string> {
+  const shell = options.shell ?? process.env.SHELL ?? '/bin/sh';
+  const timeout = options.timeout ?? 5_000;
+  const home = homedir();
+
+  let resolvedPath = process.env.PATH ?? '';
+
+  try {
+    const result = await spawnWithTimeout(shell, ['-l', '-c', 'echo "$PATH"'], { timeout });
+    const output = result.stdout.trim();
+    if (result.exitCode === 0 && output.length > 0) {
+      resolvedPath = output;
+    }
+  } catch {
+    // Shell invocation failed — keep current PATH as fallback.
+  }
+
+  // Prepend extraPath entries (with ~ expansion)
+  if (options.extraPath && options.extraPath.length > 0) {
+    const expanded = options.extraPath.map(p => p.replace(/^~(?=\/|$)/, home));
+    resolvedPath = [...expanded, resolvedPath].join(':');
+  }
+
+  return resolvedPath;
 }

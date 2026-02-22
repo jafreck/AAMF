@@ -171,9 +171,9 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
   }, 10_800_000); // 3-hour timeout — ~5–7 K lines of C, 7 phases × many LLM round-trips
 
   afterAll(async () => {
-    // Clean up migration artefacts (keep downloaded source for cache)
-    await rm(aamfRoot, { recursive: true, force: true });
-    await rm(outputDir, { recursive: true, force: true });
+    // KEEP migrated output for manual review — skip cleanup
+    // await rm(aamfRoot, { recursive: true, force: true });
+    // await rm(outputDir, { recursive: true, force: true });
   });
 
   // ── Source verification ──────────────────────────────────────────────────

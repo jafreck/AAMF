@@ -474,6 +474,221 @@ describe('MigrationOrchestrator', () => {
 
       expect(result.blockedTasks).toContain('task-001');
     });
+
+    it('should invoke failure-recovery when parity-verifier finds critical issues', async () => {
+      let parityCallCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'parity-verifier') {
+          parityCallCount++;
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 2,
+            largeFileThreshold: 500,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+          },
+        },
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+
+      // Write a parity sidecar with critical issues (will be read after parity-verifier runs)
+      await ensureDir(join(progressDir, 'results'));
+      await writeFile(
+        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: ['parity-reports/task-001.md'],
+          parity: 'fail',
+          issues: [
+            {
+              severity: 'critical',
+              description: 'Missing error handling in auth flow',
+              sourceLocation: 'src/auth.py:45',
+              targetLocation: 'src/auth.ts:52',
+            },
+          ],
+        }),
+      );
+
+      await orchestrator.run();
+
+      const recoveryInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'failure-recovery' && i.phase === 4,
+      );
+      expect(recoveryInvocations.length).toBeGreaterThan(0);
+    });
+
+    it('should not trigger recovery when parity has only minor issues', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+
+      // Write a parity sidecar with only minor issues
+      await ensureDir(join(progressDir, 'results'));
+      await writeFile(
+        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: ['parity-reports/task-001.md'],
+          parity: 'partial',
+          issues: [
+            {
+              severity: 'minor',
+              description: 'Slightly different API surface',
+            },
+          ],
+        }),
+      );
+
+      const result = await orchestrator.run();
+
+      // No failure-recovery should be invoked for parity
+      const recoveryForParity = mockLauncher.invocations.filter(
+        (i) => i.agent === 'failure-recovery' && i.phase === 4,
+      );
+      expect(recoveryForParity).toHaveLength(0);
+      expect(result.success).toBe(true);
+    });
+
+    it('should allow task completion when only minor issues remain after retries', async () => {
+      let migratorAttempt = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          migratorAttempt++;
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 1,
+            largeFileThreshold: 500,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+          },
+        },
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+
+      // Write a parity sidecar with major issues that downgrade to minor after retry
+      // but since the file persists, we simulate "only minor remaining"
+      await ensureDir(join(progressDir, 'results'));
+      await writeFile(
+        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: ['parity-reports/task-001.md'],
+          parity: 'partial',
+          issues: [
+            {
+              severity: 'major',
+              description: 'Missing validation logic',
+            },
+            {
+              severity: 'minor',
+              description: 'Slightly different API surface',
+            },
+          ],
+        }),
+      );
+
+      const result = await orchestrator.run();
+
+      // Task should be blocked because major issues remain after max retries
+      expect(result.blockedTasks).toContain('task-001');
+    });
   });
 
   // ─── Phase 5 Loop-back ─────────────────────────────────────────────

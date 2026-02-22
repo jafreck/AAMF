@@ -3,8 +3,18 @@
   "source": {
     "path": "./lz4-src/lz4-1.10.0/lib",
     "language": "c",
-    "entryPoints": ["lz4.c"],
-    "excludePatterns": [".git", "*.o", "*.lo", "*.la", "*.pc", "Makefile*", "*.md"]
+    "entryPoints": [
+      "lz4.c"
+    ],
+    "excludePatterns": [
+      ".git",
+      "*.o",
+      "*.lo",
+      "*.la",
+      "*.pc",
+      "Makefile*",
+      "*.md"
+    ]
   },
   "target": {
     "language": "rust",
@@ -21,12 +31,12 @@
     "maxLinesPerTask": 500,
     "tokenBudget": 500000,
     "dryRun": false,
-    "resume": false
+    "resume": true
   },
   "copilot": {
     "cliCommand": "copilot",
     "model": "claude-sonnet-4.6",
     "agentDir": "../../../../.github/agents",
-    "timeout": 300000
+    "timeout": 1800000
   }
 }

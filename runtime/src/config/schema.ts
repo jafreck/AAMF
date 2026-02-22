@@ -41,6 +41,23 @@ export const MigrationConfigSchema = z.object({
       }),
     ).optional().describe('Per-model cost overrides (USD per 1M tokens)'),
   }).default({}),
+  environment: z.object({
+    /** Whether to resolve PATH from a login shell at startup (default: true). */
+    inheritShellPath: z.boolean().default(true),
+    /**
+     * Shell binary to use for login-PATH resolution.
+     * Defaults to the $SHELL environment variable, falling back to /bin/sh.
+     * Examples: '/bin/zsh', '/bin/bash', '/usr/bin/fish'
+     */
+    shell: z.string().optional(),
+    /**
+     * Additional directories to prepend to PATH for agent subprocesses.
+     * Useful when tools like rustc, cargo, etc. live in non-standard locations.
+     * Evaluated after login-shell resolution (if enabled), so these take priority.
+     * Supports ~ for home directory expansion.
+     */
+    extraPath: z.array(z.string()).default([]),
+  }).default({}),
 });
 
 export type MigrationConfig = z.infer<typeof MigrationConfigSchema>;

@@ -87,11 +87,16 @@ export function createMockConfig(overrides?: Partial<MigrationConfig>): Migratio
       maxLinesPerTask: 500,
       dryRun: false,
       resume: false,
+      invocationDelayMs: 0,
     },
     copilot: {
       cliCommand: 'copilot',
       agentDir: '.github/agents',
       timeout: 300_000,
+    },
+    environment: {
+      inheritShellPath: false,
+      extraPath: [],
     },
     ...overrides,
   };

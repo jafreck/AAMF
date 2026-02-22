@@ -60,6 +60,7 @@ export class MigrationRuntime {
 
     // 6. Create agent launcher
     this.launcher = new AgentLauncher(this.config, this.projectRoot, this.logger);
+    await this.launcher.init();
 
     // 7. Validate agent files exist
     await this.validateAgentFiles();
