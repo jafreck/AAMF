@@ -1,0 +1,37 @@
+{
+  "projectName": "test-migration",
+  "version": 1,
+  "currentPhase": 4,
+  "currentTask": "task-003",
+  "completedPhases": [1, 2, 3],
+  "completedTasks": ["task-001", "task-002"],
+  "failedTasks": [
+    {
+      "taskId": "task-003",
+      "attempts": 2,
+      "lastError": "Parity check failed: missing error handling",
+      "recoveryAttempted": false
+    }
+  ],
+  "blockedTasks": [],
+  "phaseOutputs": {
+    "1": ".copilot/migration/test-migration/impact-assessment.md",
+    "2": ".copilot/migration/test-migration/knowledge-base",
+    "3": ".copilot/migration/test-migration/migration-plan.md"
+  },
+  "tokenUsage": {
+    "total": 125000,
+    "byPhase": { "1": 15000, "2": 45000, "3": 25000, "4": 40000 },
+    "byAgent": {
+      "impact-assessor": 15000,
+      "knowledge-builder": 30000,
+      "large-file-analyzer": 15000,
+      "migration-planner": 25000,
+      "code-migrator": 30000,
+      "parity-verifier": 10000
+    }
+  },
+  "startedAt": "2025-01-15T10:30:00.000Z",
+  "lastCheckpoint": "2025-01-15T12:45:00.000Z",
+  "resumeCount": 0
+}
