@@ -376,6 +376,14 @@ runtime/
 
 ---
 
+## Projects Ported Using AAMF
+
+| Project | Source | Target | Repository |
+|---------|--------|--------|------------|
+| lz4 compression library | C | Rust | [jafreck/lz4r](https://github.com/jafreck/lz4r) |
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
