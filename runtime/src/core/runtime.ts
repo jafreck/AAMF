@@ -42,7 +42,7 @@ export class MigrationRuntime {
     this.phase = options.phase;
 
     // 2. Setup directories
-    this.progressDir = join(this.projectRoot, '.copilot', 'migration', this.config.projectName);
+    this.progressDir = join(this.projectRoot, '.aamf', 'migration', this.config.projectName);
     const logDir = join(this.progressDir, 'logs');
 
     // 3. Create logger
