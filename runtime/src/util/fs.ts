@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile, rename, stat, readdir, copyFile as fsCopyFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { dirname, join, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -69,4 +70,22 @@ export async function listFiles(dirPath: string, pattern?: string): Promise<stri
 export async function copyFile(src: string, dest: string): Promise<void> {
   await ensureDir(dirname(dest));
   await fsCopyFile(src, dest);
+}
+
+/**
+ * Count the number of lines in a file by streaming it in chunks and
+ * counting newline characters. Does not read the entire file into memory.
+ */
+export async function countFileLines(filePath: string): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    let count = 0;
+    const stream = createReadStream(filePath);
+    stream.on('data', (chunk: Buffer) => {
+      for (let i = 0; i < chunk.length; i++) {
+        if (chunk[i] === 0x0a) count++;
+      }
+    });
+    stream.on('end', () => resolve(count));
+    stream.on('error', (err) => reject(err));
+  });
 }

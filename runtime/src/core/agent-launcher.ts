@@ -13,6 +13,7 @@ import { Logger } from '../logging/logger.js';
  */
 export class AgentLauncher {
   private readonly logDir: string;
+  private lastInvocationTime = 0;
 
   constructor(
     private readonly config: MigrationConfig,
@@ -24,6 +25,14 @@ export class AgentLauncher {
 
   /** Launch an agent invocation and return the result */
   async launchAgent(invocation: AgentInvocation): Promise<AgentResult> {
+    const delay = this.config.options.invocationDelayMs;
+    if (delay > 0) {
+      const elapsed = Date.now() - this.lastInvocationTime;
+      if (elapsed < delay) {
+        await new Promise(resolve => setTimeout(resolve, delay - elapsed));
+      }
+    }
+    this.lastInvocationTime = Date.now();
     return this.launchCliMode(invocation);
   }
 

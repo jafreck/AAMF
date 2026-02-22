@@ -26,6 +26,7 @@ export const MigrationConfigSchema = z.object({
     tokenBudget: z.number().int().optional(),
     dryRun: z.boolean().default(false),
     resume: z.boolean().default(false),
+    invocationDelayMs: z.number().int().min(0).default(0),
   }).default({}),
   copilot: z.object({
     cliCommand: z.string().default('copilot'),

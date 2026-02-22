@@ -8,6 +8,7 @@ import {
   AgentResult,
   AgentName,
   MigrationResult,
+  MigrationTask,
   PhaseResult,
 } from '../agents/types.js';
 import { ContextBuilder } from '../agents/context-builder.js';
@@ -17,8 +18,10 @@ import { ParallelExecutor } from '../execution/parallel-executor.js';
 import { TaskQueue } from '../execution/task-queue.js';
 import { RetryExecutor } from '../execution/retry.js';
 import { TokenTracker } from '../budget/token-tracker.js';
+import { CostEstimator } from '../budget/cost-estimator.js';
 import { Logger } from '../logging/logger.js';
-import { fileExists } from '../util/fs.js';
+import { fileExists, countFileLines, atomicWrite } from '../util/fs.js';
+import { spawnWithTimeout } from '../util/process.js';
 
 /** Error thrown when a critical phase fails. */
 export class MigrationError extends Error {
@@ -365,6 +368,52 @@ export class MigrationOrchestrator {
       };
     }
 
+    // 1b. Validate maxLinesPerTask
+    const maxLines = this.config.options.maxLinesPerTask;
+    for (const task of tasks) {
+      if (task.lineRange) continue;
+      for (const src of task.sourceFiles) {
+        try {
+          const fullPath = join(this.config.source.path, src);
+          const lineCount = await countFileLines(fullPath);
+          if (lineCount > maxLines) {
+            this.logger.warn(
+              `Task "${task.id}" source file "${src}" has ${lineCount} lines, exceeding maxLinesPerTask (${maxLines})`,
+            );
+          }
+        } catch {
+          // File may not exist; skip silently
+        }
+      }
+    }
+
+    // 1c. Cost projection
+    const taskCount = tasks.length;
+    const avgTokensPerTask = 5000;
+    const estimatedTotalTokens = taskCount * avgTokensPerTask * 3; // migrator + parity + test-writer
+    const model = this.config.copilot.model ?? 'gpt-4o';
+    const estimator = new CostEstimator();
+    const projected = estimator.estimateFromTotal(model, estimatedTotalTokens);
+
+    this.logger.info(
+      `Phase 4: ${taskCount} tasks, estimated ~${estimatedTotalTokens.toLocaleString()} tokens, ` +
+      `projected cost: ${CostEstimator.formatCost(projected.total)} (${model})`,
+    );
+    await this.progress.appendEvent(
+      `Phase 4 projection: ${taskCount} tasks, ~${CostEstimator.formatCost(projected.total)} estimated`,
+    );
+
+    // Check if projected usage would exceed budget
+    if (this.config.options.tokenBudget) {
+      const currentUsage = this.tokenTracker.getTotal();
+      if (currentUsage + estimatedTotalTokens > this.config.options.tokenBudget) {
+        this.logger.warn(
+          `Projected Phase 4 usage (${estimatedTotalTokens.toLocaleString()}) plus current usage ` +
+          `(${currentUsage.toLocaleString()}) exceeds budget (${this.config.options.tokenBudget.toLocaleString()})`,
+        );
+      }
+    }
+
     // 2. Topological sort
     const sortedTasks = TaskQueue.topologicalSort(tasks);
 
@@ -387,117 +436,17 @@ export class MigrationOrchestrator {
         break;
       }
 
-      for (const task of readyTasks) {
-        this.logger.event({ type: 'task-started', taskId: task.id, name: task.name });
-        await this.checkpoint.setCurrentTask(task.id);
-        await this.progress.updateTask(task.id, 'in-progress');
+      // Select non-overlapping batch for parallel execution
+      const batch = MigrationOrchestrator.selectNonOverlappingBatch(
+        readyTasks,
+        this.config.options.maxParallelAgents,
+      );
 
-        // a. Code migration with retry
-        const migratorCtx = await this.contextBuilder.buildContext(
-          'code-migrator',
-          4,
-          task.id,
-          {
-            sourceFiles: task.sourceFiles,
-            targetFiles: task.targetFiles,
-            kbEntry: task.knowledgeBaseRef,
-          },
-        );
-        const migratorInv = this.buildInvocation('code-migrator', migratorCtx, 4, task.id);
+      this.logger.info(`Executing batch of ${batch.length} task(s) in parallel (${readyTasks.length} ready)`);
 
-        const migratorResult = await retryExec.executeWithRetry(migratorInv, {
-          maxAttempts: this.config.options.maxRetriesPerTask,
-          onRetry: async (attempt, error) => {
-            this.logger.warn(`Retry ${attempt} for ${task.id}: ${error}`);
-            await this.checkpoint.failTask(task.id, error, attempt, false);
-          },
-          onExhausted: async (taskId, lastError) => {
-            // Escalate to failure-recovery agent
-            const recoveryCtx = await this.contextBuilder.buildContext(
-              'failure-recovery',
-              4,
-              taskId,
-              {
-                failureReport: lastError,
-                sourceFile: task.sourceFiles[0],
-                targetFile: task.targetFiles[0],
-                kbEntry: task.knowledgeBaseRef,
-                attemptNumber: this.config.options.maxRetriesPerTask,
-              },
-            );
-            return this.buildInvocation('failure-recovery', recoveryCtx, 4, taskId);
-          },
-        });
-
-        this.recordTokens(migratorResult, 4);
-
-        if (!migratorResult.success) {
-          queue.markBlocked(task.id);
-          await this.checkpoint.blockTask(task.id);
-          await this.progress.updateTask(task.id, 'blocked', {
-            error: migratorResult.error,
-          });
-          this.logger.event({
-            type: 'task-blocked',
-            taskId: task.id,
-            name: task.name,
-            reason: migratorResult.error ?? 'max retries exceeded',
-          });
-          continue;
-        }
-
-        // b–c. Parity + test-writer in parallel
-        const parityCtx = await this.contextBuilder.buildContext(
-          'parity-verifier',
-          4,
-          task.id,
-          {
-            sourceFile: task.sourceFiles[0],
-            targetFile: task.targetFiles[0],
-          },
-        );
-        const testCtx = await this.contextBuilder.buildContext(
-          'test-writer',
-          4,
-          task.id,
-          {
-            targetFile: task.targetFiles[0],
-            kbEntry: task.knowledgeBaseRef,
-            testType: 'unit',
-          },
-        );
-
-        const parallel = new ParallelExecutor(
-          2,
-          (inv) => this.launcher.launchAgent(inv),
-          this.logger,
-        );
-        const [parityResult, testResult] = await parallel.executeAll([
-          this.buildInvocation('parity-verifier', parityCtx, 4, task.id),
-          this.buildInvocation('test-writer', testCtx, 4, task.id),
-        ]);
-        if (parityResult) this.recordTokens(parityResult, 4);
-        if (testResult) this.recordTokens(testResult, 4);
-
-        // d. Complete task
-        queue.complete(task.id);
-        await this.checkpoint.completeTask(task.id);
-
-        const progress = queue.getProgress();
-        await this.progress.updateTask(task.id, 'completed', {
-          sourceFiles: task.sourceFiles,
-          targetFiles: task.targetFiles,
-        });
-        this.logger.event({
-          type: 'task-completed',
-          taskId: task.id,
-          name: task.name,
-          duration: migratorResult.duration,
-        });
-        this.logger.info(
-          `Task progress: ${progress.completed}/${progress.total} (${progress.blocked} blocked)`,
-        );
-      }
+      // Execute batch concurrently
+      const batchPromises = batch.map(task => this.executeTask(task, retryExec, queue));
+      await Promise.allSettled(batchPromises);
     }
 
     const finalProgress = queue.getProgress();
@@ -512,6 +461,186 @@ export class MigrationOrchestrator {
           ? `${finalProgress.blocked} task(s) blocked after max retries`
           : undefined,
     };
+  }
+
+  // ─── Phase 4 Helpers ─────────────────────────────────────────────────
+
+  /**
+   * Select a batch of tasks from the ready list that don't share target files.
+   * Tasks sharing target files must run sequentially to avoid write conflicts.
+   */
+  private static selectNonOverlappingBatch(
+    readyTasks: MigrationTask[],
+    maxBatchSize: number,
+  ): MigrationTask[] {
+    const batch: MigrationTask[] = [];
+    const claimedFiles = new Set<string>();
+
+    for (const task of readyTasks) {
+      if (batch.length >= maxBatchSize) break;
+
+      const hasOverlap = task.targetFiles.some(f => claimedFiles.has(f));
+      if (!hasOverlap) {
+        batch.push(task);
+        for (const f of task.targetFiles) claimedFiles.add(f);
+      }
+    }
+
+    return batch;
+  }
+
+  private async executeTask(
+    task: MigrationTask,
+    retryExec: RetryExecutor,
+    queue: TaskQueue,
+  ): Promise<void> {
+    this.logger.event({ type: 'task-started', taskId: task.id, name: task.name });
+    await this.checkpoint.setCurrentTask(task.id);
+    await this.progress.updateTask(task.id, 'in-progress');
+
+    // a. Code migration with retry
+    const migratorCtx = await this.contextBuilder.buildContext(
+      'code-migrator',
+      4,
+      task.id,
+      {
+        sourceFiles: task.sourceFiles,
+        targetFiles: task.targetFiles,
+        kbEntry: task.knowledgeBaseRef,
+      },
+    );
+    const migratorInv = this.buildInvocation('code-migrator', migratorCtx, 4, task.id);
+
+    const migratorResult = await retryExec.executeWithRetry(migratorInv, {
+      maxAttempts: this.config.options.maxRetriesPerTask,
+      onRetry: async (attempt, error) => {
+        this.logger.warn(`Retry ${attempt} for ${task.id}: ${error}`);
+        await this.checkpoint.failTask(task.id, error, attempt, false);
+      },
+      onExhausted: async (taskId, lastError) => {
+        // Escalate to failure-recovery agent
+        const recoveryCtx = await this.contextBuilder.buildContext(
+          'failure-recovery',
+          4,
+          taskId,
+          {
+            failureReport: lastError,
+            sourceFile: task.sourceFiles[0],
+            targetFile: task.targetFiles[0],
+            kbEntry: task.knowledgeBaseRef,
+            attemptNumber: this.config.options.maxRetriesPerTask,
+          },
+        );
+        return this.buildInvocation('failure-recovery', recoveryCtx, 4, taskId);
+      },
+    });
+
+    this.recordTokens(migratorResult, 4);
+
+    if (!migratorResult.success) {
+      queue.markBlocked(task.id);
+      await this.checkpoint.blockTask(task.id);
+      await this.progress.updateTask(task.id, 'blocked', {
+        error: migratorResult.error,
+      });
+      this.logger.event({
+        type: 'task-blocked',
+        taskId: task.id,
+        name: task.name,
+        reason: migratorResult.error ?? 'max retries exceeded',
+      });
+      return;
+    }
+
+    // b–c. Parity + test-writer in parallel
+    const parityCtx = await this.contextBuilder.buildContext(
+      'parity-verifier',
+      4,
+      task.id,
+      {
+        sourceFile: task.sourceFiles[0],
+        targetFile: task.targetFiles[0],
+      },
+    );
+    const testCtx = await this.contextBuilder.buildContext(
+      'test-writer',
+      4,
+      task.id,
+      {
+        targetFile: task.targetFiles[0],
+        kbEntry: task.knowledgeBaseRef,
+        testType: 'unit',
+      },
+    );
+
+    const parallel = new ParallelExecutor(
+      2,
+      (inv) => this.launcher.launchAgent(inv),
+      this.logger,
+    );
+    const [parityResult, testResult] = await parallel.executeAll([
+      this.buildInvocation('parity-verifier', parityCtx, 4, task.id),
+      this.buildInvocation('test-writer', testCtx, 4, task.id),
+    ]);
+    if (parityResult) this.recordTokens(parityResult, 4);
+    if (testResult) this.recordTokens(testResult, 4);
+
+    // c2. Run build command if configured
+    if (this.config.target.buildCommand) {
+      const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
+      if (!buildResult.success) {
+        queue.markBlocked(task.id);
+        await this.checkpoint.blockTask(task.id);
+        await this.progress.updateTask(task.id, 'blocked', {
+          error: buildResult.error,
+        });
+        this.logger.event({
+          type: 'task-blocked',
+          taskId: task.id,
+          name: task.name,
+          reason: buildResult.error ?? 'build command failed',
+        });
+        return;
+      }
+    }
+
+    // c3. Run test command if configured
+    if (this.config.target.testCommand) {
+      const testCmdResult = await this.runCommand('test', this.config.target.testCommand, task.id);
+      if (!testCmdResult.success) {
+        queue.markBlocked(task.id);
+        await this.checkpoint.blockTask(task.id);
+        await this.progress.updateTask(task.id, 'blocked', {
+          error: testCmdResult.error,
+        });
+        this.logger.event({
+          type: 'task-blocked',
+          taskId: task.id,
+          name: task.name,
+          reason: testCmdResult.error ?? 'test command failed',
+        });
+        return;
+      }
+    }
+
+    // d. Complete task
+    queue.complete(task.id);
+    await this.checkpoint.completeTask(task.id);
+
+    const progress = queue.getProgress();
+    await this.progress.updateTask(task.id, 'completed', {
+      sourceFiles: task.sourceFiles,
+      targetFiles: task.targetFiles,
+    });
+    this.logger.event({
+      type: 'task-completed',
+      taskId: task.id,
+      name: task.name,
+      duration: migratorResult.duration,
+    });
+    this.logger.info(
+      `Task progress: ${progress.completed}/${progress.total} (${progress.blocked} blocked)`,
+    );
   }
 
   // ─── Phase 5: Final Parity Verification ──────────────────────────────
@@ -627,6 +756,48 @@ export class MigrationOrchestrator {
       outputPath: this.progressDir,
       duration: Date.now() - start,
     };
+  }
+
+  /**
+   * Run an external command (build or test) and return success/failure.
+   * Logs output to the agent log directory.
+   */
+  private async runCommand(
+    label: string,
+    command: string,
+    taskId: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    const timeout = this.config.copilot.timeout;
+    this.logger.info(`Running ${label} command for task ${taskId}: ${command}`);
+
+    try {
+      // Use shell mode to handle complex commands
+      const result = await spawnWithTimeout('sh', ['-c', command], {
+        cwd: this.config.target.outputPath,
+        timeout,
+      });
+
+      // Log the output
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const logPath = join(this.progressDir, 'logs', `${label}-${taskId}-${timestamp}.log`);
+      const logContent = `=== COMMAND: ${command} ===\n=== EXIT CODE: ${result.exitCode} ===\n\n=== STDOUT ===\n${result.stdout}\n\n=== STDERR ===\n${result.stderr}\n`;
+      await atomicWrite(logPath, logContent);
+
+      if (result.exitCode !== 0 || result.killed) {
+        const error = result.killed
+          ? `${label} command timed out after ${timeout}ms`
+          : `${label} command failed (exit code ${result.exitCode}): ${result.stderr.slice(0, 500)}`;
+        this.logger.error(error);
+        return { success: false, error };
+      }
+
+      this.logger.info(`${label} command succeeded for task ${taskId}`);
+      return { success: true };
+    } catch (err) {
+      const error = `${label} command error: ${err instanceof Error ? err.message : String(err)}`;
+      this.logger.error(error);
+      return { success: false, error };
+    }
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────

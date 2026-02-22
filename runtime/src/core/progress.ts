@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { atomicWrite, ensureDir } from '../util/fs.js';
 import { MigrationConfig } from '../config/schema.js';
+import { CheckpointState } from './checkpoint.js';
 
 export interface TaskDetails {
   sourceFiles?: string[];
@@ -32,6 +33,53 @@ export class ProgressWriter {
     this.phases.set(7, { name: 'Completion', status: 'pending' });
 
     await this.write(config.projectName);
+  }
+
+  /** Reconstruct progress state from a checkpoint (used on resume). */
+  reconstructFromCheckpoint(state: CheckpointState): void {
+    // Ensure phase definitions exist
+    const phaseNames = ['Impact Assessment', 'Knowledge Base Construction', 'Migration Planning', 'Iterative Migration', 'Final Parity Verification', 'E2E Testing & Documentation', 'Completion'];
+    for (let i = 0; i < phaseNames.length; i++) {
+      if (!this.phases.has(i + 1)) {
+        this.phases.set(i + 1, { name: phaseNames[i], status: 'pending' });
+      }
+    }
+
+    // Mark completed phases
+    for (const phaseId of state.completedPhases) {
+      const phase = this.phases.get(phaseId);
+      if (phase) phase.status = 'completed';
+    }
+
+    // Mark current phase as in-progress
+    if (state.currentPhase <= 7) {
+      const current = this.phases.get(state.currentPhase);
+      if (current) current.status = 'in-progress';
+    }
+
+    // Mark completed tasks
+    for (const taskId of state.completedTasks) {
+      this.tasks.set(taskId, { status: 'completed' });
+    }
+
+    // Mark blocked tasks
+    for (const taskId of state.blockedTasks) {
+      this.tasks.set(taskId, { status: 'blocked' });
+    }
+
+    // Mark failed tasks
+    for (const failed of state.failedTasks) {
+      this.tasks.set(failed.taskId, { status: 'failed', details: { error: failed.lastError } });
+    }
+
+    // Restore token usage
+    this.tokenUsage.total = state.tokenUsage.total;
+
+    // Set total tasks count from checkpoint data
+    this.totalTasks = state.completedTasks.length + state.blockedTasks.length + state.failedTasks.length;
+
+    // Add resume event
+    this.events.push(`[${new Date().toISOString()}] Resumed from checkpoint (resume #${state.resumeCount})`);
   }
 
   /** Update current phase status */

@@ -78,6 +78,10 @@ export class MigrationRuntime {
     // Initialize progress
     if (!this.config.options.resume) {
       await this.progress.initialize(this.config);
+    } else {
+      // Reconstruct progress state from checkpoint on resume
+      const state = this.checkpoint.getState();
+      this.progress.reconstructFromCheckpoint(state);
     }
 
     // Dry run: just validate and log
