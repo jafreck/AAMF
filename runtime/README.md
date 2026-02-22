@@ -185,6 +185,61 @@ The runtime writes several artifacts to track migration progress:
 | **Checkpoint corruption** | The runtime automatically falls back to the most recent backup checkpoint. If both are corrupted, use `npx aamf reset` and restart. |
 | **Agent not found** | Ensure `.agent.md` files exist in the directory specified by `copilot.agentDir`. |
 
+## Structured JSON Agent Output (Sidecar)
+
+In addition to their markdown output, agents can (and should) write a structured JSON sidecar file alongside each task result. The runtime checks for the sidecar first; if it exists and validates, it is used in place of markdown parsing.
+
+### Sidecar Location
+
+```
+{progressDir}/results/{agent}-{taskId}.result.json
+```
+
+For example: `.copilot/migration/my-project/results/code-migrator-task-001.result.json`
+
+### JSON Schema
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `taskId` | `string` | **Yes** | Unique task identifier, e.g. `"task-001"`. |
+| `agent` | `string` | **Yes** | Name of the agent that produced this result. |
+| `status` | `"completed" \| "failed" \| "needs-review"` | **Yes** | Outcome of the task execution. |
+| `outputFiles` | `string[]` | No | Files created or modified by the agent. Defaults to `[]`. |
+| `parity` | `"pass" \| "partial" \| "fail"` | No | Parity verification result (set by parity-verifier). |
+| `issues` | `Issue[]` | No | List of issues found. Defaults to `[]`. |
+| `issues[].severity` | `"critical" \| "major" \| "minor"` | Yes (if issue) | Severity of the issue. |
+| `issues[].description` | `string` | Yes (if issue) | Description of the issue. |
+| `issues[].sourceLocation` | `string` | No | File and line in the source code. |
+| `issues[].targetLocation` | `string` | No | File and line in the target code. |
+| `metrics` | `object` | No | Optional execution metrics. |
+| `metrics.linesOfCode` | `number` | No | Lines of code produced. |
+| `metrics.tokensUsed` | `number` | No | Tokens consumed during execution. |
+| `metrics.durationMs` | `number` | No | Wall-clock duration in milliseconds. |
+| `notes` | `string` | No | Free-form notes about the task execution. |
+
+### Example
+
+```json
+{
+  "taskId": "task-001",
+  "agent": "code-migrator",
+  "status": "completed",
+  "outputFiles": ["src/auth/login.ts", "src/auth/session.ts"],
+  "parity": "pass",
+  "issues": [],
+  "metrics": {
+    "linesOfCode": 245,
+    "tokensUsed": 8500,
+    "durationMs": 42000
+  },
+  "notes": "Migrated login and session modules. Used express-session instead of Flask-Session."
+}
+```
+
+### Agent Prompt Authors
+
+When writing `.agent.md` prompts, instruct agents to write **both** their standard markdown output and a `.result.json` sidecar. The runtime validates the JSON against a Zod schema (`TaskResultSchema` in `result-parser.ts`). If the sidecar is missing or fails validation, the runtime falls back to markdown parsing.
+
 ## Development
 
 ```bash

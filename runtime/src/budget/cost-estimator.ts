@@ -5,23 +5,77 @@
 
 /** Pricing per 1 M tokens (USD) for input and output. */
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  'gpt-4o': { input: 2.50, output: 10.00 },
-  'gpt-4o-mini': { input: 0.15, output: 0.60 },
-  'gpt-4-turbo': { input: 10.00, output: 30.00 },
-  'claude-sonnet-4-20250514': { input: 3.00, output: 15.00 },
-  'claude-3-5-haiku': { input: 0.80, output: 4.00 },
-  'claude-opus-4-20250514': { input: 15.00, output: 75.00 },
+  // Claude models
+  'claude-sonnet-4.6': { input: 3.00, output: 15.00 },
+  'claude-sonnet-4.5': { input: 3.00, output: 15.00 },
+  'claude-haiku-4.5': { input: 0.80, output: 4.00 },
+  'claude-opus-4.6': { input: 15.00, output: 75.00 },
+  'claude-opus-4.6-fast': { input: 15.00, output: 75.00 },
+  'claude-opus-4.5': { input: 15.00, output: 75.00 },
+  'claude-sonnet-4': { input: 3.00, output: 15.00 },
+  // Gemini models
+  'gemini-3-pro-preview': { input: 3.50, output: 10.50 },
+  // GPT models
+  'gpt-5.3-codex': { input: 5.00, output: 15.00 },
+  'gpt-5.2-codex': { input: 5.00, output: 15.00 },
+  'gpt-5.2': { input: 5.00, output: 15.00 },
+  'gpt-5.1-codex-max': { input: 10.00, output: 30.00 },
+  'gpt-5.1-codex': { input: 5.00, output: 15.00 },
+  'gpt-5.1': { input: 5.00, output: 15.00 },
+  'gpt-5.1-codex-mini': { input: 1.50, output: 6.00 },
+  'gpt-5-mini': { input: 0.30, output: 1.20 },
+  'gpt-4.1': { input: 2.50, output: 10.00 },
 };
+
+/** Default fallback pricing when a model is unknown and no overrides exist. */
+const DEFAULT_PRICING: { input: number; output: number } = { input: 5.00, output: 15.00 };
+
+/** Per-model cost override from user configuration. */
+export interface CostOverride {
+  input: number;
+  output: number;
+}
 
 /**
  * Estimates the monetary cost of LLM API calls based on token counts
  * and per-model pricing tables.
+ *
+ * Resolution order:
+ * 1. User-supplied `costOverrides` (from config)
+ * 2. Built-in `MODEL_PRICING` table
+ * 3. Generic default ($5/$15 per 1M tokens) with a log warning
  */
 export class CostEstimator {
+  private readonly overrides: Record<string, CostOverride>;
+  private readonly warnedModels = new Set<string>();
+
+  constructor(costOverrides?: Record<string, CostOverride>) {
+    this.overrides = costOverrides ?? {};
+  }
+
+  /**
+   * Resolve pricing for a given model using the three-tier fallback chain.
+   */
+  private resolvePricing(model: string): { input: number; output: number } {
+    // 1. Check user overrides
+    if (this.overrides[model]) return this.overrides[model];
+    // 2. Check built-in table
+    if (MODEL_PRICING[model]) return MODEL_PRICING[model];
+    // 3. Fall back to default and warn once
+    if (!this.warnedModels.has(model)) {
+      this.warnedModels.add(model);
+      console.warn(
+        `[CostEstimator] Unknown model "${model}" — using default pricing ($${DEFAULT_PRICING.input}/$${DEFAULT_PRICING.output} per 1M tokens). ` +
+        `Consider adding costOverrides for this model in your config.`,
+      );
+    }
+    return DEFAULT_PRICING;
+  }
+
   /**
    * Estimate cost given explicit prompt and completion token counts.
    *
-   * @param model - Model identifier (falls back to `gpt-4o` pricing if unknown).
+   * @param model - Model identifier.
    * @param promptTokens - Number of input / prompt tokens.
    * @param completionTokens - Number of output / completion tokens.
    * @returns Breakdown of input, output, and total cost in USD.
@@ -31,7 +85,7 @@ export class CostEstimator {
     promptTokens: number,
     completionTokens: number,
   ): { input: number; output: number; total: number } {
-    const pricing = MODEL_PRICING[model] ?? MODEL_PRICING['gpt-4o']!;
+    const pricing = this.resolvePricing(model);
     const input = (promptTokens / 1_000_000) * pricing.input;
     const output = (completionTokens / 1_000_000) * pricing.output;
     return { input, output, total: input + output };

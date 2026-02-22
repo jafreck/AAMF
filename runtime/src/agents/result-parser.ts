@@ -1,5 +1,42 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { z } from 'zod';
 import { MigrationTask } from './types.js';
+import { fileExists, readJson } from '../util/fs.js';
+
+/**
+ * JSON schema for structured agent task results (sidecar `.result.json`).
+ */
+export const TaskResultSchema = z.object({
+  taskId: z.string().min(1),
+  agent: z.string().min(1),
+  status: z.enum(['completed', 'failed', 'needs-review']),
+  outputFiles: z.array(z.string()).default([]),
+  parity: z.enum(['pass', 'partial', 'fail']).optional(),
+  issues: z.array(z.object({
+    severity: z.enum(['critical', 'major', 'minor']),
+    description: z.string(),
+    sourceLocation: z.string().optional(),
+    targetLocation: z.string().optional(),
+  })).default([]),
+  metrics: z.object({
+    linesOfCode: z.number().int().optional(),
+    tokensUsed: z.number().int().optional(),
+    durationMs: z.number().int().optional(),
+  }).optional(),
+  notes: z.string().optional(),
+});
+
+export type TaskResult = z.infer<typeof TaskResultSchema>;
+
+/** Summary of parsing outcomes for a migration plan. */
+export interface ParseSummary {
+  totalParsed: number;
+  failedBlocks: number;
+  failedBlockHeaders: string[];
+  duplicateIds: string[];
+  danglingDependencies: Array<{ taskId: string; missingDeps: string[] }>;
+}
 
 /**
  * Parses agent output files into structured results.
@@ -7,6 +44,8 @@ import { MigrationTask } from './types.js';
  * Handles migration-plan.md → {@link MigrationTask}[] conversion,
  * token-usage extraction from agent stdout/stderr, and final parity
  * report parsing for required fixes.
+ *
+ * Also supports structured JSON sidecar outputs (`.result.json`).
  */
 export class ResultParser {
   /**
@@ -21,19 +60,126 @@ export class ResultParser {
 
   /**
    * Parse raw migration-plan markdown content into {@link MigrationTask}[].
+   * Performs validation, deduplication, and dependency checking.
    * @param content - The full markdown string of the migration plan.
+   * @param log - Optional logger callback for warnings/errors (defaults to console).
    */
-  static parseMigrationPlanContent(content: string): MigrationTask[] {
+  static parseMigrationPlanContent(
+    content: string,
+    log?: { warn: (msg: string) => void; error: (msg: string) => void; info: (msg: string) => void },
+  ): MigrationTask[] {
+    const logger = log ?? { warn: console.warn, error: console.error, info: console.info };
     const tasks: MigrationTask[] = [];
+    const failedBlockHeaders: string[] = [];
+
     // Split on task headers like "## Task: task-001 - Module Name"
     // or "### task-001: Module Name"
     const taskBlocks = content.split(/^#{2,3}\s+(?:Task:\s*)?/m).filter(Boolean);
 
     for (const block of taskBlocks) {
       const task = ResultParser.parseTaskBlock(block);
-      if (task) tasks.push(task);
+      if (task) {
+        // Validate required fields
+        const warnings: string[] = [];
+        if (!task.id) {
+          logger.error(`Task block has empty id, skipping`);
+          const headerLine = block.split('\n')[0]?.trim() ?? '(unknown)';
+          failedBlockHeaders.push(headerLine);
+          continue;
+        }
+        if (!task.name) {
+          logger.error(`Task ${task.id} has empty name, skipping`);
+          const headerLine = block.split('\n')[0]?.trim() ?? '(unknown)';
+          failedBlockHeaders.push(headerLine);
+          continue;
+        }
+        if (task.sourceFiles.length === 0) {
+          logger.error(`Task ${task.id} has no source files, skipping`);
+          const headerLine = block.split('\n')[0]?.trim() ?? '(unknown)';
+          failedBlockHeaders.push(headerLine);
+          continue;
+        }
+
+        // Warn for missing optional fields
+        if (!task.knowledgeBaseRef) warnings.push('knowledgeBaseRef');
+        if (task.acceptanceCriteria.length === 0) warnings.push('acceptanceCriteria');
+        if (task.parityChecks.length === 0) warnings.push('parityChecks');
+        if (warnings.length > 0) {
+          logger.warn(`Task ${task.id} is missing optional fields: ${warnings.join(', ')}`);
+        }
+
+        tasks.push(task);
+      } else {
+        // Block didn't match task header pattern — not necessarily an error
+        // (could be a preamble or non-task heading)
+        const headerLine = block.split('\n')[0]?.trim() ?? '(unknown)';
+        // Only count as failed if it looks like it was *trying* to be a task
+        if (/task/i.test(headerLine)) {
+          failedBlockHeaders.push(headerLine);
+        }
+      }
     }
-    return tasks;
+
+    // Duplicate ID detection – keep first occurrence
+    const seenIds = new Set<string>();
+    const duplicateIds: string[] = [];
+    const deduped: MigrationTask[] = [];
+    for (const task of tasks) {
+      if (seenIds.has(task.id)) {
+        logger.error(`Duplicate task ID "${task.id}" — keeping first occurrence, discarding duplicate`);
+        duplicateIds.push(task.id);
+      } else {
+        seenIds.add(task.id);
+        deduped.push(task);
+      }
+    }
+
+    // Dependency validation – check that all referenced deps exist
+    const validIds = new Set(deduped.map(t => t.id));
+    const danglingDeps: Array<{ taskId: string; missingDeps: string[] }> = [];
+    for (const task of deduped) {
+      const missing = task.dependencies.filter(dep => dep !== 'none' && !validIds.has(dep));
+      if (missing.length > 0) {
+        logger.warn(`Task ${task.id} references non-existent dependencies: ${missing.join(', ')}`);
+        danglingDeps.push({ taskId: task.id, missingDeps: missing });
+      }
+    }
+
+    // Error summary
+    logger.info(
+      `Migration plan parsed: ${deduped.length} tasks OK, ${failedBlockHeaders.length} blocks failed` +
+      (duplicateIds.length > 0 ? `, ${duplicateIds.length} duplicate IDs removed` : '') +
+      (danglingDeps.length > 0 ? `, ${danglingDeps.length} tasks with dangling dependencies` : ''),
+    );
+    if (failedBlockHeaders.length > 0) {
+      logger.warn(`Unparseable block headers: ${failedBlockHeaders.join('; ')}`);
+    }
+
+    return deduped;
+  }
+
+  /**
+   * Read a structured JSON sidecar result file for a given agent/task.
+   * Returns the validated `TaskResult` or `undefined` if the file doesn't
+   * exist or fails validation.
+   *
+   * @param progressDir - The migration progress directory.
+   * @param agent - Agent name.
+   * @param taskId - Task identifier.
+   */
+  static async readTaskResultJson(
+    progressDir: string,
+    agent: string,
+    taskId: string,
+  ): Promise<TaskResult | undefined> {
+    const sidecarPath = join(progressDir, 'results', `${agent}-${taskId}.result.json`);
+    if (!(await fileExists(sidecarPath))) return undefined;
+    try {
+      const raw = await readJson<unknown>(sidecarPath);
+      return TaskResultSchema.parse(raw);
+    } catch {
+      return undefined;
+    }
   }
 
   /**

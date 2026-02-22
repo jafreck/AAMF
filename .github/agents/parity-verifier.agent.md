@@ -96,6 +96,41 @@ None — this is a **leaf agent**.
   3. Third pass: Edge cases and static analysis
 - Write each section of the report as you complete it.
 
+## Structured JSON Sidecar (Required)
+
+In addition to the markdown parity report above, you **must** write a structured JSON result file at:
+
+```
+.copilot/migration/{projectName}/results/parity-verifier-{taskId}.result.json
+```
+
+The JSON must conform to this schema:
+
+```json
+{
+  "taskId": "task-001",
+  "agent": "parity-verifier",
+  "status": "completed",
+  "outputFiles": ["parity-reports/task-001.md"],
+  "parity": "pass",
+  "issues": [
+    {
+      "severity": "minor",
+      "description": "Missing null check in handleLogin",
+      "sourceLocation": "src/auth/login.py:45",
+      "targetLocation": "src/auth/login.ts:52"
+    }
+  ],
+  "notes": "Overall parity is good with one minor gap."
+}
+```
+
+- `status`: one of `"completed"`, `"failed"`, `"needs-review"`
+- `parity`: one of `"pass"`, `"partial"`, `"fail"`
+- `issues[].severity`: one of `"critical"`, `"major"`, `"minor"`
+
+The runtime reads this file first. If it is missing or invalid, the runtime falls back to parsing the markdown report.
+
 ## Constraints
 
 - This is a **read-only** agent. Do not modify any code files.

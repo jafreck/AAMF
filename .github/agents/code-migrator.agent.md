@@ -93,6 +93,40 @@ Update `.copilot/migration/{projectName}/progress.md` with task result:
 - **Notes**: {any migration decisions, concerns, or assumptions}
 ```
 
+### Structured JSON Sidecar (Required)
+
+In addition to the markdown output above, you **must** write a structured JSON result file at:
+
+```
+.copilot/migration/{projectName}/results/code-migrator-{taskId}.result.json
+```
+
+The JSON must conform to this schema:
+
+```json
+{
+  "taskId": "task-001",
+  "agent": "code-migrator",
+  "status": "completed",
+  "outputFiles": ["src/auth/login.ts"],
+  "parity": "pass",
+  "issues": [],
+  "metrics": {
+    "linesOfCode": 150,
+    "tokensUsed": 5000,
+    "durationMs": 30000
+  },
+  "notes": "Migration notes here"
+}
+```
+
+- `status`: one of `"completed"`, `"failed"`, `"needs-review"`
+- `parity`: one of `"pass"`, `"partial"`, `"fail"` (set after parity verification)
+- `issues`: array of `{ severity, description, sourceLocation?, targetLocation? }`
+- `severity`: one of `"critical"`, `"major"`, `"minor"`
+
+The runtime reads this file first. If it is missing or invalid, the runtime falls back to parsing your markdown output.
+
 ## Context Window Management
 
 - **Only read the files specified in your task** — never browse the broader codebase.

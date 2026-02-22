@@ -18,6 +18,7 @@ export class ProgressWriter {
   private totalTasks: number = 0;
   private tokenUsage: { total: number } = { total: 0 };
   private startTime: Date = new Date();
+  private agentStatuses: Map<string, string> = new Map();
 
   constructor(private filePath: string) {}
 
@@ -115,6 +116,19 @@ export class ProgressWriter {
     await this.writeCurrentState();
   }
 
+  /**
+   * Record which agent is currently active (or clear it).
+   * Appears in progress.md so observers see live agent activity.
+   */
+  async setAgentStatus(agent: string, status: string | null): Promise<void> {
+    if (status === null) {
+      this.agentStatuses.delete(agent);
+    } else {
+      this.agentStatuses.set(agent, status);
+    }
+    await this.writeCurrentState();
+  }
+
   /** Write completion summary */
   async finalize(result: { success: boolean; failedTasks: string[]; blockedTasks: string[]; totalDuration: number }): Promise<void> {
     await this.appendEvent(result.success ? 'Migration completed successfully!' : 'Migration completed with issues.');
@@ -146,6 +160,15 @@ export class ProgressWriter {
       md += `| ${id} | ${phase.name} | ${statusIcon} ${phase.status} | ${phase.notes ?? ''} |\n`;
     }
     md += '\n';
+
+    // Active agents
+    if (this.agentStatuses.size > 0) {
+      md += `## Active Agents\n\n`;
+      for (const [agent, agentStatus] of this.agentStatuses) {
+        md += `- **${agent}**: ${agentStatus}\n`;
+      }
+      md += '\n';
+    }
 
     // Task progress bar (Phase 4)
     if (this.totalTasks > 0) {

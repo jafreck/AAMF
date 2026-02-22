@@ -391,8 +391,8 @@ export class MigrationOrchestrator {
     const taskCount = tasks.length;
     const avgTokensPerTask = 5000;
     const estimatedTotalTokens = taskCount * avgTokensPerTask * 3; // migrator + parity + test-writer
-    const model = this.config.copilot.model ?? 'gpt-4o';
-    const estimator = new CostEstimator();
+    const model = this.config.copilot.model ?? 'claude-sonnet-4';
+    const estimator = new CostEstimator(this.config.copilot.costOverrides);
     const projected = estimator.estimateFromTotal(model, estimatedTotalTokens);
 
     this.logger.info(

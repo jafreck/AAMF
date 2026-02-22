@@ -33,6 +33,13 @@ export const MigrationConfigSchema = z.object({
     model: z.string().optional(),
     agentDir: z.string().default('.github/agents'),
     timeout: z.number().int().default(300_000),
+    costOverrides: z.record(
+      z.string(),
+      z.object({
+        input: z.number().min(0).describe('Cost per 1M input tokens in USD'),
+        output: z.number().min(0).describe('Cost per 1M output tokens in USD'),
+      }),
+    ).optional().describe('Per-model cost overrides (USD per 1M tokens)'),
   }).default({}),
 });
 

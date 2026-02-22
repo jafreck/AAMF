@@ -1,0 +1,30 @@
+{
+  "projectName": "tiny-calc-migration",
+  "source": {
+    "path": "./tests/fixtures/tiny-python-project",
+    "language": "python",
+    "entryPoints": ["main.py"],
+    "excludePatterns": ["__pycache__"]
+  },
+  "target": {
+    "language": "typescript",
+    "framework": "none",
+    "outputPath": "./tmp/e2e-output",
+    "testFramework": "vitest"
+  },
+  "options": {
+    "maxParallelAgents": 1,
+    "maxRetriesPerTask": 1,
+    "largeFileThreshold": 500,
+    "maxLinesPerTask": 500,
+    "tokenBudget": 100000,
+    "dryRun": false,
+    "resume": false
+  },
+  "copilot": {
+    "cliCommand": "copilot",
+    "model": "claude-sonnet-4",
+    "agentDir": "../../../../.github/agents",
+    "timeout": 120000
+  }
+}

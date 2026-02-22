@@ -84,6 +84,44 @@ export class AgentLauncher {
     const startTime = Date.now();
     this.logger.info(`Launching CLI agent: ${cliCommand} ${args.join(' ')}`);
 
+    // ── Heartbeat & output-directory watcher ─────────────────────────
+    const HEARTBEAT_INTERVAL_MS = 30_000;
+    const OUTPUT_POLL_INTERVAL_MS = 10_000;
+    const agentName = invocation.agent;
+    const seenFiles = new Set<string>();
+
+    const heartbeatTimer = setInterval(() => {
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      this.logger.info(`Agent ${agentName} still running (${elapsed}s elapsed)`);
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // Poll for new output files appearing in the agent's expected output directory
+    const outputPollTimer = setInterval(async () => {
+      try {
+        const context = JSON.parse(await readFile(invocation.contextFile, 'utf-8')) as { outputPath?: string };
+        if (context.outputPath && await fileExists(context.outputPath)) {
+          const s = await stat(context.outputPath);
+          if (s.isDirectory()) {
+            const files = await readdir(context.outputPath);
+            for (const f of files) {
+              if (!seenFiles.has(f)) {
+                seenFiles.add(f);
+                this.logger.info(`Agent ${agentName} produced new file: ${f}`);
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore polling errors — context file may not exist yet
+      }
+    }, OUTPUT_POLL_INTERVAL_MS);
+
+    const stopTimers = () => {
+      clearInterval(heartbeatTimer);
+      clearInterval(outputPollTimer);
+    };
+    // ────────────────────────────────────────────────────────────────
+
     try {
       const result = await spawnWithTimeout(cliCommand, args, {
         cwd: this.projectRoot,
@@ -91,6 +129,7 @@ export class AgentLauncher {
         timeout,
       });
 
+      stopTimers();
       const duration = Date.now() - startTime;
 
       // Write agent log
@@ -120,6 +159,7 @@ export class AgentLauncher {
 
       return agentResult;
     } catch (err) {
+      stopTimers();
       const duration = Date.now() - startTime;
       return {
         agent: invocation.agent,

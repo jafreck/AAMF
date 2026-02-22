@@ -171,8 +171,8 @@ export class MigrationRuntime {
     console.log(`Duration: ${this.formatDuration(result.totalDuration)}`);
     console.log(`Token Usage: ${result.tokenUsage.total.toLocaleString()}`);
     
-    const model = this.config.copilot.model ?? 'gpt-4o';
-    const estimator = new CostEstimator();
+    const model = this.config.copilot.model ?? 'claude-sonnet-4';
+    const estimator = new CostEstimator(this.config.copilot.costOverrides);
     const cost = estimator.estimateFromTotal(model, result.tokenUsage.total);
     console.log(`Estimated Cost: ${CostEstimator.formatCost(cost.total)}`);
 
