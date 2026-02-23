@@ -62,6 +62,10 @@ export class MockAgentLauncher {
     this.invocations.push(inv);
     return this.fn(inv);
   }
+  /** Mock: returns undefined since tests don't resolve shell PATH. */
+  getResolvedPath(): string | undefined {
+    return undefined;
+  }
 }
 
 // ─── Mock Config ─────────────────────────────────────────────────────────────
@@ -88,6 +92,10 @@ export function createMockConfig(overrides?: Partial<MigrationConfig>): Migratio
       dryRun: false,
       resume: false,
       invocationDelayMs: 0,
+      buildConcurrency: 1,
+      continueOnBlocked: true,
+      maxBlockedTasks: 0,
+      maxInfraRetries: 3,
     },
     copilot: {
       cliCommand: 'copilot',

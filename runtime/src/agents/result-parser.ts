@@ -279,11 +279,15 @@ export class ResultParser {
         continue;
       }
       if (inSection) {
-        const listMatch = line.match(/^\s*[-*•]\s+(.+)/);
-        if (listMatch) {
-          items.push(listMatch[1]!.trim().replace(/`/g, ''));
-        } else if (line.match(/^\s*$/) || line.match(/^#{1,4}\s/) || line.match(/^\*\*/)) {
+        // Stop section at blank lines, headings, or bold labels (even if preceded by a bullet)
+        const stripped = line.replace(/^\s*[-*•]\s+/, '');
+        if (line.match(/^\s*$/) || line.match(/^#{1,4}\s/) || /^\*\*/.test(stripped)) {
           inSection = false;
+        } else {
+          const listMatch = line.match(/^\s*[-*•]\s+(.+)/);
+          if (listMatch) {
+            items.push(listMatch[1]!.trim().replace(/`/g, ''));
+          }
         }
       }
     }

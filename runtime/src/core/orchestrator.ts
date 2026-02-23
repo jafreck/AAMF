@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
 import { CheckpointManager } from './checkpoint.js';
 import { AgentLauncher } from './agent-launcher.js';
@@ -23,6 +24,48 @@ import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
 
+// ─── Infrastructure Error Detection ──────────────────────────────────────────
+
+/**
+ * Language/build-system-agnostic patterns that indicate a transient
+ * infrastructure failure rather than a code-quality problem.
+ *
+ * These errors should be retried with simple backoff — they don't benefit
+ * from the expensive failure-recovery agent pipeline.
+ */
+const INFRASTRUCTURE_ERROR_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
+  // File lock contention (Cargo, NuGet, Gradle, pip, npm, generic)
+  { pattern: /blocking waiting for file lock/i, label: 'file-lock' },
+  { pattern: /could not acquire lock/i, label: 'file-lock' },
+  { pattern: /lock file .* is locked/i, label: 'file-lock' },
+  { pattern: /ELOCK|ELOCKED/i, label: 'file-lock' },
+  // Process killed / out of memory
+  { pattern: /signal:\s*killed|SIGKILL|killed by signal 9/i, label: 'process-killed' },
+  { pattern: /out of memory|OOM|Cannot allocate memory/i, label: 'oom' },
+  // Disk / filesystem errors
+  { pattern: /no space left on device|ENOSPC/i, label: 'disk-full' },
+  { pattern: /read-only file system|EROFS/i, label: 'fs-readonly' },
+  // Network / download errors (package registries)
+  { pattern: /network error|connection (refused|reset|timed out)/i, label: 'network' },
+  { pattern: /could not resolve host|DNS resolution failed/i, label: 'network' },
+  { pattern: /failed to download|registry .* unavailable/i, label: 'network' },
+  // Timeout
+  { pattern: /timed? ?out|deadline exceeded/i, label: 'timeout' },
+  // Permission errors (typically environment misconfiguration)
+  { pattern: /permission denied|EACCES/i, label: 'permission' },
+];
+
+/**
+ * Check whether an error string matches known infrastructure failure patterns.
+ * Returns the label of the matched pattern, or `undefined` for code-quality errors.
+ */
+export function classifyError(errorOutput: string): string | undefined {
+  for (const { pattern, label } of INFRASTRUCTURE_ERROR_PATTERNS) {
+    if (pattern.test(errorOutput)) return label;
+  }
+  return undefined;
+}
+
 /** Error thrown when a critical phase fails. */
 export class MigrationError extends Error {
   constructor(
@@ -46,6 +89,14 @@ export class MigrationOrchestrator {
   private readonly tokenTracker: TokenTracker;
   private readonly progressDir: string;
   private readonly singlePhase?: number;
+  /**
+   * Semaphore that limits concurrent build/test command executions.
+   * Separate from `maxParallelAgents` so that agent code-generation can
+   * proceed in full parallel while verification commands that share a
+   * build artifact directory (Cargo target/, .NET bin/, Go cache, etc.)
+   * are serialised to avoid file-lock contention.
+   */
+  private readonly buildLimiter: ReturnType<typeof pLimit>;
 
   constructor(
     private readonly config: MigrationConfig,
@@ -60,6 +111,10 @@ export class MigrationOrchestrator {
     this.contextBuilder = new ContextBuilder(config, this.progressDir);
     this.tokenTracker = new TokenTracker();
     this.singlePhase = singlePhase;
+
+    const bc = config.options.buildConcurrency ?? 1;
+    // 0 means unlimited → use maxParallelAgents
+    this.buildLimiter = pLimit(bc === 0 ? config.options.maxParallelAgents : bc);
   }
 
   // ─── Public API ──────────────────────────────────────────────────────
@@ -429,10 +484,21 @@ export class MigrationOrchestrator {
       this.logger,
     );
 
+    const continueOnBlocked = this.config.options.continueOnBlocked ?? true;
+    const maxBlockedTasks = this.config.options.maxBlockedTasks ?? 0; // 0 = unlimited
+
     while (!queue.isComplete()) {
       const readyTasks = queue.getReady();
       if (readyTasks.length === 0) {
-        this.logger.error('Deadlock: no tasks are ready but queue is not complete');
+        const progress = queue.getProgress();
+        if (progress.blocked > 0 && progress.remaining > 0) {
+          this.logger.error(
+            `Deadlock: ${progress.remaining} task(s) remain but none are ready ` +
+            `(${progress.blocked} blocked — their dependents cannot proceed)`,
+          );
+        } else if (progress.remaining > 0) {
+          this.logger.error('Deadlock: no tasks are ready but queue is not complete');
+        }
         break;
       }
 
@@ -448,14 +514,24 @@ export class MigrationOrchestrator {
       const batchPromises = batch.map(task => this.executeTask(task, retryExec, queue));
       await Promise.allSettled(batchPromises);
 
-      // If a task is still blocked after exhausting all recovery attempts,
-      // halt Phase 4 so the user can inspect and fix the issue before resuming.
+      // Check blocked-task policy
       const progress = queue.getProgress();
       if (progress.blocked > 0) {
-        this.logger.error(
-          `${progress.blocked} task(s) blocked after max retries — halting Phase 4`,
+        if (!continueOnBlocked) {
+          this.logger.error(
+            `${progress.blocked} task(s) blocked after max retries — halting Phase 4 (continueOnBlocked=false)`,
+          );
+          break;
+        }
+        if (maxBlockedTasks > 0 && progress.blocked >= maxBlockedTasks) {
+          this.logger.error(
+            `${progress.blocked} task(s) blocked — reached maxBlockedTasks (${maxBlockedTasks}), halting Phase 4`,
+          );
+          break;
+        }
+        this.logger.warn(
+          `${progress.blocked} task(s) blocked, continuing with remaining ready tasks`,
         );
-        break;
       }
     }
 
@@ -479,8 +555,13 @@ export class MigrationOrchestrator {
   // ─── Phase 4 Helpers ─────────────────────────────────────────────────
 
   /**
-   * Select a batch of tasks from the ready list that don't share target files.
+   * Select a batch of tasks from the ready list that don't share target files
+   * or target directories.
+   *
    * Tasks sharing target files must run sequentially to avoid write conflicts.
+   * Tasks sharing a common output directory are also considered overlapping
+   * because build systems (Cargo, MSBuild, Go, Gradle, etc.) typically hold
+   * directory-level locks on artifact/build-cache paths.
    */
   private static selectNonOverlappingBatch(
     readyTasks: MigrationTask[],
@@ -488,15 +569,28 @@ export class MigrationOrchestrator {
   ): MigrationTask[] {
     const batch: MigrationTask[] = [];
     const claimedFiles = new Set<string>();
+    const claimedDirs = new Set<string>();
 
     for (const task of readyTasks) {
       if (batch.length >= maxBatchSize) break;
 
-      const hasOverlap = task.targetFiles.some(f => claimedFiles.has(f));
-      if (!hasOverlap) {
-        batch.push(task);
-        for (const f of task.targetFiles) claimedFiles.add(f);
-      }
+      // Check file-level overlap
+      const hasFileOverlap = task.targetFiles.some(f => claimedFiles.has(f));
+      if (hasFileOverlap) continue;
+
+      // Check directory-level overlap: extract parent dir from each target file
+      const taskDirs = new Set(
+        task.targetFiles.map(f => {
+          const lastSlash = f.lastIndexOf('/');
+          return lastSlash >= 0 ? f.substring(0, lastSlash) : '.';
+        }),
+      );
+      const hasDirOverlap = [...taskDirs].some(d => claimedDirs.has(d));
+      if (hasDirOverlap) continue;
+
+      batch.push(task);
+      for (const f of task.targetFiles) claimedFiles.add(f);
+      for (const d of taskDirs) claimedDirs.add(d);
     }
 
     return batch;
@@ -853,56 +947,72 @@ export class MigrationOrchestrator {
   /**
    * Run an external command (build or test) and return success/failure.
    * Logs output to the agent log directory.
+   *
+   * The command is executed through the build semaphore so that concurrent
+   * build/test invocations don't exceed `buildConcurrency`.
    */
   private async runCommand(
     label: string,
     command: string,
     taskId: string,
-  ): Promise<{ success: boolean; error?: string }> {
-    const timeout = this.config.copilot.timeout;
-    this.logger.info(`Running ${label} command for task ${taskId}: ${command}`);
+  ): Promise<{ success: boolean; error?: string; infraError?: string }> {
+    return this.buildLimiter(async () => {
+      const timeout = this.config.copilot.timeout;
+      this.logger.info(`Running ${label} command for task ${taskId}: ${command}`);
 
-    try {
-      // Use shell mode to handle complex commands
-      const resolvedPath = this.launcher.getResolvedPath();
-      const result = await spawnWithTimeout('sh', ['-c', command], {
-        cwd: this.config.target.outputPath,
-        timeout,
-        env: {
-          ...process.env,
-          ...(resolvedPath ? { PATH: resolvedPath } : {}),
-        },
-      });
+      try {
+        // Use shell mode to handle complex commands
+        const resolvedPath = this.launcher.getResolvedPath();
+        const result = await spawnWithTimeout('sh', ['-c', command], {
+          cwd: this.config.target.outputPath,
+          timeout,
+          env: {
+            ...process.env,
+            ...(resolvedPath ? { PATH: resolvedPath } : {}),
+          },
+        });
 
-      // Log the output
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const logPath = join(this.progressDir, 'logs', `${label}-${taskId}-${timestamp}.log`);
-      const logContent = `=== COMMAND: ${command} ===\n=== EXIT CODE: ${result.exitCode} ===\n\n=== STDOUT ===\n${result.stdout}\n\n=== STDERR ===\n${result.stderr}\n`;
-      await atomicWrite(logPath, logContent);
+        // Log the output
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const logPath = join(this.progressDir, 'logs', `${label}-${taskId}-${timestamp}.log`);
+        const logContent = `=== COMMAND: ${command} ===\n=== EXIT CODE: ${result.exitCode} ===\n\n=== STDOUT ===\n${result.stdout}\n\n=== STDERR ===\n${result.stderr}\n`;
+        await atomicWrite(logPath, logContent);
 
-      if (result.exitCode !== 0 || result.killed) {
-        const error = result.killed
-          ? `${label} command timed out after ${timeout}ms`
-          : `${label} command failed (exit code ${result.exitCode}): ${result.stderr.slice(0, 500)}`;
-        this.logger.error(error);
-        return { success: false, error };
+        if (result.exitCode !== 0 || result.killed) {
+          const errorText = result.killed
+            ? `${label} command timed out after ${timeout}ms`
+            : `${label} command failed (exit code ${result.exitCode}): ${result.stderr.slice(0, 500)}`;
+          this.logger.error(errorText);
+
+          // Classify the error: infrastructure vs. code quality
+          const combinedOutput = `${result.stdout}\n${result.stderr}`;
+          const infraLabel = classifyError(combinedOutput);
+
+          return { success: false, error: errorText, infraError: infraLabel };
+        }
+
+        this.logger.info(`${label} command succeeded for task ${taskId}`);
+        return { success: true };
+      } catch (err) {
+        const errorText = `${label} command error: ${err instanceof Error ? err.message : String(err)}`;
+        this.logger.error(errorText);
+        const infraLabel = classifyError(errorText);
+        return { success: false, error: errorText, infraError: infraLabel };
       }
-
-      this.logger.info(`${label} command succeeded for task ${taskId}`);
-      return { success: true };
-    } catch (err) {
-      const error = `${label} command error: ${err instanceof Error ? err.message : String(err)}`;
-      this.logger.error(error);
-      return { success: false, error };
-    }
+    });
   }
 
   /**
    * Run a build or test command with a recovery loop.
    *
-   * When the command fails the method launches `failure-recovery` with the
-   * error output, then re-runs `code-migrator`, and retries the command.
-   * After exhausting `maxRetriesPerTask` attempts it marks the task blocked.
+   * Infrastructure errors (file locks, OOM, network, etc.) are retried with
+   * simple exponential backoff and do **not** consume the `maxRetriesPerTask`
+   * budget or invoke the expensive failure-recovery agent.
+   *
+   * Genuine code-quality failures go through the full recovery pipeline:
+   * `failure-recovery` → `code-migrator` → re-run command.
+   *
+   * After exhausting all retry budgets the task is marked blocked.
    *
    * Returns `true` if the command eventually passes, `false` if blocked.
    */
@@ -913,12 +1023,37 @@ export class MigrationOrchestrator {
     queue: TaskQueue,
   ): Promise<boolean> {
     const maxAttempts = this.config.options.maxRetriesPerTask;
+    const maxInfraRetries = this.config.options.maxInfraRetries ?? 3;
 
     // Initial attempt
     let cmdResult = await this.runCommand(label, command, task.id);
     if (cmdResult.success) return true;
 
-    // Recovery loop
+    // Infrastructure retry loop — simple backoff, no recovery agent
+    let infraAttempt = 0;
+    while (cmdResult.infraError && infraAttempt < maxInfraRetries) {
+      infraAttempt++;
+      const backoffMs = Math.min(1000 * Math.pow(2, infraAttempt - 1), 30_000);
+      this.logger.warn(
+        `${label} failed for ${task.id} with infrastructure error "${cmdResult.infraError}", ` +
+        `infra retry ${infraAttempt}/${maxInfraRetries} (backoff ${backoffMs}ms)`,
+      );
+      await new Promise(resolve => setTimeout(resolve, backoffMs));
+
+      cmdResult = await this.runCommand(label, command, task.id);
+      if (cmdResult.success) {
+        this.logger.info(
+          `${label} recovered for ${task.id} after infra retry ${infraAttempt}`,
+        );
+        return true;
+      }
+    }
+
+    // If we're still failing with an infra error after exhausting infra retries,
+    // fall through to the code-quality recovery loop (it may still help).
+    if (cmdResult.success) return true;
+
+    // Code-quality recovery loop — full failure-recovery → code-migrator pipeline
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       this.logger.warn(
         `${label} failed for ${task.id}, recovery attempt ${attempt}/${maxAttempts}: ${cmdResult.error}`,
