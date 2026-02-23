@@ -248,6 +248,11 @@ describe('MigrationOrchestrator', () => {
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
         },
       });
 
@@ -317,6 +322,11 @@ describe('MigrationOrchestrator', () => {
           tokenBudget: 1000,
           dryRun: false,
           resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
         },
       });
 
@@ -348,6 +358,11 @@ describe('MigrationOrchestrator', () => {
           tokenBudget: 1000,
           dryRun: false,
           resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
         },
       });
 
@@ -443,6 +458,11 @@ describe('MigrationOrchestrator', () => {
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
         },
       });
 
@@ -495,6 +515,11 @@ describe('MigrationOrchestrator', () => {
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
           },
         },
       );
@@ -632,6 +657,11 @@ describe('MigrationOrchestrator', () => {
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
           },
         },
       );

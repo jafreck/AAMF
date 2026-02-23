@@ -27,6 +27,34 @@ export const MigrationConfigSchema = z.object({
     dryRun: z.boolean().default(false),
     resume: z.boolean().default(false),
     invocationDelayMs: z.number().int().min(0).default(0),
+    /**
+     * Maximum number of concurrent build/test commands per output path.
+     * Agent code-generation runs at `maxParallelAgents` concurrency, but
+     * verification commands (build, test) are limited to this value to
+     * avoid file-lock contention in build systems (Cargo, MSBuild, Go, etc.).
+     * Set to 0 for unlimited (same as maxParallelAgents). Default: 1.
+     */
+    buildConcurrency: z.number().int().min(0).max(10).default(1),
+    /**
+     * Whether to continue executing independent tasks when one is blocked.
+     * When `true` (default), the orchestrator skips blocked tasks and their
+     * dependents, continuing with any remaining ready tasks.
+     * When `false`, Phase 4 halts on the first blocked task.
+     */
+    continueOnBlocked: z.boolean().default(true),
+    /**
+     * Maximum number of blocked tasks before Phase 4 is halted.
+     * Only applies when `continueOnBlocked` is `true`. Default: unlimited (0).
+     */
+    maxBlockedTasks: z.number().int().min(0).default(0),
+    /**
+     * Maximum infrastructure-error retries before invoking failure-recovery.
+     * Infrastructure errors (file locks, timeouts, disk-full, OOM) are
+     * retried with simple backoff — they don't consume `maxRetriesPerTask`
+     * budget and don't invoke the failure-recovery agent.
+     * Default: 3.
+     */
+    maxInfraRetries: z.number().int().min(0).max(10).default(3),
   }).default({}),
   copilot: z.object({
     cliCommand: z.string().default('copilot'),

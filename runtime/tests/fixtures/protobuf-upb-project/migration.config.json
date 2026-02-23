@@ -1,57 +1,38 @@
 {
-  "projectName": "lz4-to-rust",
+  "projectName": "protobuf-upb-to-rust",
   "source": {
-    "path": "./lz4-src/lz4-1.10.0",
+    "path": "./protobuf-src/protobuf-33.5/upb/upb",
     "language": "c",
     "entryPoints": [
-      "lib/lz4.c",
-      "programs/lz4cli.c"
+      "decode.c",
+      "encode.c"
     ],
     "excludePatterns": [
       ".git",
-      ".github",
-      ".circleci",
       "*.o",
       "*.lo",
       "*.la",
       "*.pc",
-      "*.rc.in",
       "Makefile*",
       "*.md",
-      "*.1",
-      "*.yml",
-      "build/**",
-      "contrib/**",
-      "doc/**",
-      "ossfuzz/**",
-      "tests/**",
-      "examples/**",
-      "dll/**",
-      "CODING_STYLE",
-      "INSTALL",
-      "SECURITY.md",
-      "NEWS",
-      "LICENSE",
-      "COPYING",
-      ".clang-format",
-      ".gitignore",
-      ".gitattributes"
+      "*_test.c",
+      "fuzz"
     ]
   },
   "target": {
     "language": "rust",
     "framework": "stable",
-    "outputPath": "./tmp/lz4-rust-output",
+    "outputPath": "./tmp/protobuf-upb-rust-output",
     "testFramework": "cargo-test",
     "buildCommand": "cargo build",
     "testCommand": "cargo test"
   },
   "options": {
-    "maxParallelAgents": 5,
+    "maxParallelAgents": 3,
     "maxRetriesPerTask": 2,
     "largeFileThreshold": 500,
     "maxLinesPerTask": 500,
-    "tokenBudget": 1000000,
+    "tokenBudget": 3000000,
     "dryRun": false,
     "resume": true
   },

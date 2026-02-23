@@ -18,6 +18,10 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.maxParallelAgents).toBe(3);
     expect(result.options.maxRetriesPerTask).toBe(3);
     expect(result.options.dryRun).toBe(false);
+    expect(result.options.buildConcurrency).toBe(1);
+    expect(result.options.continueOnBlocked).toBe(true);
+    expect(result.options.maxBlockedTasks).toBe(0);
+    expect(result.options.maxInfraRetries).toBe(3);
     expect(result.copilot.cliCommand).toBe('copilot');
     expect(result.copilot.timeout).toBe(300000);
   });
@@ -124,6 +128,54 @@ describe('MigrationConfigSchema', () => {
       if (result.success) {
         expect((result.data as Record<string, unknown>)['foo']).toBeUndefined();
       }
+    });
+
+    it('should reject buildConcurrency above 10', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { buildConcurrency: 11 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept buildConcurrency of 0 (unlimited)', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { buildConcurrency: 0 },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject negative buildConcurrency', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { buildConcurrency: -1 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept continueOnBlocked as false', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { continueOnBlocked: false },
+      });
+      expect(result.options.continueOnBlocked).toBe(false);
+    });
+
+    it('should accept maxBlockedTasks', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { maxBlockedTasks: 5 },
+      });
+      expect(result.options.maxBlockedTasks).toBe(5);
+    });
+
+    it('should reject maxInfraRetries above 10', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { maxInfraRetries: 11 },
+      });
+      expect(result.success).toBe(false);
     });
   });
 });
