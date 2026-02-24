@@ -2,7 +2,25 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ResultParser, TaskResultSchema } from '../src/agents/result-parser.js';
+import {
+  ResultParser,
+  TaskResultSchema,
+  AamfOutputBase,
+  MigrationOrchestratorOutput,
+  ImpactAssessorOutput,
+  KnowledgeBuilderOutput,
+  LargeFileAnalyzerOutput,
+  MigrationPlannerOutput,
+  AdjudicatorOutput,
+  CodeMigratorOutput,
+  ParityVerifierOutput,
+  TestWriterOutput,
+  FailureRecoveryOutput,
+  FinalParityCheckerOutput,
+  E2eTestCrafterOutput,
+  DocumentationWriterOutput,
+  MigrationRunnerOutput,
+} from '../src/agents/result-parser.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 

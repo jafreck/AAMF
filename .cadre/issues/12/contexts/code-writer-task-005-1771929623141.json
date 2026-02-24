@@ -1,0 +1,32 @@
+{
+  "agent": "code-writer",
+  "issueNumber": 12,
+  "projectName": "aamf",
+  "repository": "jafreck/AAMF",
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "phase": 3,
+  "taskId": "task-005",
+  "config": {
+    "commands": {
+      "install": "cd runtime && npm install",
+      "build": "cd runtime && npm run build",
+      "test": "cd runtime && npm test"
+    }
+  },
+  "inputFiles": [
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-005.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/tests/helpers/mocks.ts"
+  ],
+  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+  "payload": {
+    "taskId": "task-005",
+    "files": [
+      "runtime/tests/helpers/mocks.ts"
+    ],
+    "acceptanceCriteria": [
+      "All mock `AgentResult` factory functions/objects include `outputParsed: false` as a default",
+      "No TypeScript compilation errors in the helpers module",
+      "Existing tests that import mocks continue to pass without modification"
+    ]
+  }
+}
