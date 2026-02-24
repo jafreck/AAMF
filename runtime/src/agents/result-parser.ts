@@ -22,7 +22,7 @@ export const AamfOutputBase = z.object({
     total: z.number().int(),
   }).optional(),
   notes: z.string().optional(),
-});
+}).passthrough();
 
 export type AamfOutputBaseType = z.infer<typeof AamfOutputBase>;
 

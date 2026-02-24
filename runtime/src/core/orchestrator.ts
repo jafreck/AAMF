@@ -1196,12 +1196,8 @@ export class MigrationOrchestrator {
   }
 
   private recordTokens(result: AgentResult, phase: number): void {
-    // Prefer tokenUsage from structuredOutput over the field set by regex-based parsing
-    const tokenUsage =
-      (result.structuredOutput?.['tokenUsage'] as { total: number } | undefined) ??
-      result.tokenUsage;
-    if (tokenUsage) {
-      this.tokenTracker.record(result.agent, phase, tokenUsage.total);
+    if (result.tokenUsage) {
+      this.tokenTracker.record(result.agent, phase, result.tokenUsage.total);
     }
   }
 }
