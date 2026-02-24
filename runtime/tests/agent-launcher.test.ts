@@ -446,7 +446,6 @@ describe('AgentLauncher', () => {
     it('should warn via logger when aamf-json block is absent', async () => {
       const script = await createScript('no-aamf-warn.sh', 'echo "no block"\nexit 0');
       const warnSpy = vi.spyOn(logger, 'warn');
-      const launcher = new AgentLauncher(config, projectRoot, logger);
       const cfg2 = createMockConfig({
         copilot: { cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
       });

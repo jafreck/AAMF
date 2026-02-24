@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { MigrationTask } from './types.js';
 import { fileExists, readJson } from '../util/fs.js';
 
+export const MISSING_BLOCK_ERROR = 'missing aamf-json block';
+
 // ─── AamfOutput Schemas ───────────────────────────────────────────────────────
 
 /**
@@ -239,7 +241,7 @@ export class ResultParser {
     }
 
     if (!lastMatch) {
-      return { parsed: false, error: 'missing aamf-json block' };
+      return { parsed: false, error: MISSING_BLOCK_ERROR };
     }
 
     let raw: unknown;

@@ -6,6 +6,7 @@ import { spawnWithTimeout, resolveLoginPath } from '../util/process.js';
 import { ensureDir, atomicWrite, fileExists } from '../util/fs.js';
 import {
   ResultParser,
+  MISSING_BLOCK_ERROR,
   MigrationOrchestratorOutput,
   ImpactAssessorOutput,
   KnowledgeBuilderOutput,
@@ -270,7 +271,7 @@ export class AgentLauncher {
         if (parseResult.data.tokenUsage) {
           agentResult.tokenUsage = parseResult.data.tokenUsage;
         }
-      } else if (parseResult.error === 'missing aamf-json block') {
+      } else if (parseResult.error === MISSING_BLOCK_ERROR) {
         // Block absent — warn but leave success unchanged
         this.logger.warn(`Agent ${invocation.agent} did not emit an aamf-json block`);
         agentResult.outputParsed = false;
