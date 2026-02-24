@@ -136,3 +136,42 @@ When any agent invocation fails:
 - Only maintain: progress.md, checkpoints.json, phase output summaries (impact report, knowledge base index, migration plan).
 - When passing context to sub-agents, provide only the relevant slice (e.g., for a code-migrator task, pass only that task's plan section and relevant knowledge base entries, not the entire knowledge base).
 - Use file references (paths) instead of inline content wherever possible.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track orchestrator phase transitions and overall migration progress. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "migration-orchestrator",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<paths to progress.md and checkpoints.json updated>"],
+  "currentPhase": 0,
+  "completedTasks": ["<task-NNN>"],
+  "failedTasks": ["<task-NNN>"],
+  "overallStatus": "<in-progress | completed | blocked>",
+  "notes": "<summary of current state, any blocked tasks, and next steps>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "migration-orchestrator",
+  "status": "completed",
+  "outputFiles": [
+    ".aamf/migration/my-project/progress.md",
+    ".aamf/migration/my-project/checkpoints.json"
+  ],
+  "currentPhase": 7,
+  "completedTasks": ["task-001", "task-002", "task-003"],
+  "failedTasks": [],
+  "overallStatus": "completed",
+  "notes": "All 7 phases completed successfully. Final parity check passed. Documentation written."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

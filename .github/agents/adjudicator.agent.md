@@ -69,3 +69,39 @@ Option B keeps configuration centralized in one place, reducing the risk of inco
 ### Risks
 - Misconfigured overrides could silently apply incorrect values; mitigate by adding validation at startup and clear error messages for missing required keys.
 ```
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record the decision. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "adjudicator",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<paths to any files written, or empty array>"],
+  "selectedOption": "<option label, e.g. Option A>",
+  "rationale": "<one-sentence summary of why this option was chosen>",
+  "tradeoffs": ["<trade-off 1>", "<trade-off 2>"],
+  "risks": ["<risk 1>", "<risk 2>"],
+  "notes": "<optional additional context>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "adjudicator",
+  "status": "completed",
+  "outputFiles": [],
+  "selectedOption": "Option B",
+  "rationale": "Option B centralizes configuration and reduces maintenance burden while aligning with existing project conventions.",
+  "tradeoffs": ["Slightly more complex merge logic", "Developers must learn override precedence rules"],
+  "risks": ["Misconfigured overrides could silently apply incorrect values"],
+  "notes": "Option A was rejected due to high duplication risk across environments."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

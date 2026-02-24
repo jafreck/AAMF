@@ -116,3 +116,37 @@ None — this is a **leaf agent**.
 - This is a **read-only** agent. Do not modify any files except the output analysis document.
 - Be precise with line numbers — the migration planner depends on them.
 - If the file is so large (>2000 lines) that even sectional reading is difficult, process it in two passes: first a structural pass (signatures only), then a behavioral pass (reading bodies of complex sections only).
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record large file analysis results. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "large-file-analyzer",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<path to the analysis document written>"],
+  "linesOfCode": 0,
+  "topLevelDeclarations": 0,
+  "chunksRecommended": 0,
+  "notes": "<summary of the file's structure and any special migration considerations>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "large-file-analyzer",
+  "status": "completed",
+  "outputFiles": [".aamf/migration/my-project/knowledge-base/large-files/payment-processor.analysis.md"],
+  "linesOfCode": 1240,
+  "topLevelDeclarations": 18,
+  "chunksRecommended": 4,
+  "notes": "File contains three loosely coupled responsibility groups: validation, processing, and reporting. Chunk 1 (validation utils) has no internal dependencies and should be migrated first."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

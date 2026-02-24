@@ -71,3 +71,37 @@ Create intermediate directories as needed.
 - Do NOT modify source files — only create or modify files under `tests/`
 - Do NOT introduce new dependencies; use only packages already in `package.json`
 - Run `npx vitest run` and confirm all tests pass before writing your result summary
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track test writing results. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "test-writer",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<test file paths written or modified>"],
+  "testsWritten": 0,
+  "testsPassed": 0,
+  "testsFailed": 0,
+  "notes": "<any important notes about test coverage or skipped cases>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "test-writer",
+  "status": "completed",
+  "outputFiles": ["tests/auth/login.test.ts"],
+  "testsWritten": 8,
+  "testsPassed": 8,
+  "testsFailed": 0,
+  "notes": "Covered happy path, invalid credentials, and token expiry edge cases."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

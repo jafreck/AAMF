@@ -163,3 +163,39 @@ copilot --agent adjudicator \
 - Dependency ordering must be acyclic — verify this before finalizing.
 - Tasks should be small enough that a single code-migrator invocation can handle each one without context saturation (aim for <500 lines of source per task, <200 for complex code).
 - The plan must be deterministic — given the same inputs, it should produce equivalent plans.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record migration planning results. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "migration-planner",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<path to migration plan file written>"],
+  "totalTasks": 0,
+  "simpleCount": 0,
+  "moderateCount": 0,
+  "complexCount": 0,
+  "notes": "<summary of the chosen strategy and any planning trade-offs>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "migration-planner",
+  "status": "completed",
+  "outputFiles": [".aamf/migration/my-project/migration-plan.md"],
+  "totalTasks": 24,
+  "simpleCount": 10,
+  "moderateCount": 9,
+  "complexCount": 5,
+  "notes": "Bottom-up strategy selected by adjudicator. Auth module deferred to task-022 due to broad dependency surface. Two large files decomposed into 3 tasks each."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

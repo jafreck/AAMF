@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm, readFile, readdir, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -317,5 +317,170 @@ describe('AgentLauncher', () => {
     const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
     expect(logContent).toContain('--foo');
     expect(logContent).toContain('bar');
+  });
+
+  describe('aamf-json output parsing', () => {
+    it('should populate structuredOutput and set outputParsed: true when a valid aamf-json block is emitted', async () => {
+      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'code-migrator' });
+      const script = await createScript('valid-aamf.sh', [
+        `echo 'some output'`,
+        `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('aamf-valid-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'aamf-valid-001',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputParsed).toBe(true);
+      expect(result.structuredOutput).toBeDefined();
+      expect(result.structuredOutput?.status).toBe('completed');
+      expect(result.structuredOutput?.agent).toBe('code-migrator');
+      expect(result.parseError).toBeUndefined();
+    });
+
+    it('should leave success unchanged and set outputParsed: false when no aamf-json block is emitted', async () => {
+      const script = await createScript('no-aamf.sh', 'echo "no structured output here"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('aamf-missing-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'aamf-missing-001',
+      });
+
+      // exit code 0 → success should remain true
+      expect(result.success).toBe(true);
+      expect(result.outputParsed).toBe(false);
+      expect(result.structuredOutput).toBeUndefined();
+      expect(result.parseError).toBeUndefined();
+    });
+
+    it('should force success: false and set parseError when aamf-json block is present but schema-invalid', async () => {
+      // wrong agent literal → schema validation fails
+      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'impact-assessor' });
+      const script = await createScript('bad-aamf.sh', [
+        `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('aamf-invalid-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',  // schema expects agent === 'code-migrator'
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'aamf-invalid-001',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.outputParsed).toBe(false);
+      expect(result.parseError).toBeDefined();
+      expect(result.parseError!.length).toBeGreaterThan(0);
+    });
+
+    it('should force success: false and set parseError when aamf-json block contains malformed JSON', async () => {
+      const script = await createScript('malformed-aamf.sh', [
+        `printf '\`\`\`aamf-json\\n{not valid json}\\n\`\`\`\\n'`,
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('aamf-malformed-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'aamf-malformed-001',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.outputParsed).toBe(false);
+      expect(result.parseError).toBeDefined();
+    });
+
+    it('should prefer tokenUsage from structuredOutput over regex-parsed tokenUsage', async () => {
+      const structured = JSON.stringify({
+        status: 'completed',
+        agent: 'code-migrator',
+        tokenUsage: { prompt: 999, completion: 888, total: 1887 },
+      });
+      const script = await createScript('token-aamf.sh', [
+        // Also emit regex-parseable token lines (different values)
+        'echo "prompt_tokens: 100"',
+        'echo "completion_tokens: 50"',
+        'echo "total_tokens: 150"',
+        `printf '\`\`\`aamf-json\\n${structured}\\n\`\`\`\\n'`,
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('aamf-token-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'aamf-token-001',
+      });
+
+      expect(result.outputParsed).toBe(true);
+      // Must use the structured tokenUsage, not the regex-parsed values
+      expect(result.tokenUsage?.prompt).toBe(999);
+      expect(result.tokenUsage?.completion).toBe(888);
+      expect(result.tokenUsage?.total).toBe(1887);
+    });
+
+    it('should warn via logger when aamf-json block is absent', async () => {
+      const script = await createScript('no-aamf-warn.sh', 'echo "no block"\nexit 0');
+      const warnSpy = vi.spyOn(logger, 'warn');
+      const launcher = new AgentLauncher(config, projectRoot, logger);
+      const cfg2 = createMockConfig({
+        copilot: { cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
+      });
+      const launcher2 = new AgentLauncher(cfg2, projectRoot, logger);
+      const { contextFile, progressDir } = await prepareInvocation('aamf-warn-001');
+
+      await launcher2.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'aamf-warn-001',
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('aamf-json block'));
+      warnSpy.mockRestore();
+    });
+
+    it('should leave success: false unchanged when agent exits non-zero and no aamf-json block', async () => {
+      const script = await createScript('fail-no-aamf.sh', 'echo "error" >&2\nexit 1');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('aamf-fail-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'aamf-fail-001',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.outputParsed).toBe(false);
+      expect(result.parseError).toBeUndefined();
+    });
   });
 });

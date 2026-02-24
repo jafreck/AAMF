@@ -132,3 +132,40 @@ Each module document should follow this template:
 - Do not modify source code files.
 - Accuracy is critical — downstream agents trust the knowledge base as ground truth.
 - When uncertain about behavior, note the uncertainty explicitly rather than guessing.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record knowledge base construction results. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "knowledge-builder",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<paths to knowledge base files written>"],
+  "modulesDocumented": 0,
+  "largeFilesAnalyzed": 0,
+  "notes": "<summary of coverage and any modules that could not be fully documented>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "knowledge-builder",
+  "status": "completed",
+  "outputFiles": [
+    ".aamf/migration/my-project/knowledge-base/index.md",
+    ".aamf/migration/my-project/knowledge-base/architecture.md",
+    ".aamf/migration/my-project/knowledge-base/modules/auth.md",
+    ".aamf/migration/my-project/knowledge-base/large-files/payment-processor.analysis.md"
+  ],
+  "modulesDocumented": 12,
+  "largeFilesAnalyzed": 2,
+  "notes": "All modules documented. Two files exceeded 500 lines and were delegated to large-file-analyzer."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

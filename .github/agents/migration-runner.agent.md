@@ -68,3 +68,38 @@ Initialize `.aamf/migration/{projectName}/progress.md` with:
 - If configuration validation fails, write the error to progress.md and terminate with a clear message.
 - If the orchestrator CLI invocation fails to launch, retry once. On second failure, record the error and terminate.
 - Never attempt to perform migration work yourself — always delegate to the orchestrator.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to confirm the migration runner's initialization and handoff. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "migration-runner",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<paths to progress.md and checkpoints.json initialized>"],
+  "projectName": "<name of the migration project>",
+  "orchestratorLaunched": true,
+  "notes": "<any validation errors or startup issues>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "migration-runner",
+  "status": "completed",
+  "outputFiles": [
+    ".aamf/migration/my-project/progress.md",
+    ".aamf/migration/my-project/checkpoints.json"
+  ],
+  "projectName": "my-project",
+  "orchestratorLaunched": true,
+  "notes": "Configuration validated successfully. Orchestrator launched with context path migration.config.json."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

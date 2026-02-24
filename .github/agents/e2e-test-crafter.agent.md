@@ -139,3 +139,45 @@ copilot --agent test-writer \
 - Each suite should be scoped so a single `test-writer` can handle it without context saturation (aim for <10 scenarios per suite).
 - The full E2E suite should run in a reasonable time (<5 minutes if possible).
 - Use test fixtures and factories for data setup rather than hardcoding values.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record E2E test crafting results. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "e2e-test-crafter",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<test plan path and any test files written>"],
+  "suitesPlanned": 0,
+  "suitesCompleted": 0,
+  "scenariosTotal": 0,
+  "scenariosPassing": 0,
+  "scenariosFailing": 0,
+  "notes": "<summary of test coverage and any failures reported for recovery>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "e2e-test-crafter",
+  "status": "completed",
+  "outputFiles": [
+    ".aamf/migration/my-project/e2e-test-plan.md",
+    "tests/e2e/auth.test.ts",
+    "tests/e2e/data-flow.test.ts"
+  ],
+  "suitesPlanned": 5,
+  "suitesCompleted": 5,
+  "scenariosTotal": 32,
+  "scenariosPassing": 30,
+  "scenariosFailing": 2,
+  "notes": "Two failing scenarios in the concurrent-access suite routed to failure-recovery."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

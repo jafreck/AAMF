@@ -137,3 +137,51 @@ The runtime reads this file first. If it is missing or invalid, the runtime fall
 - Report facts, not opinions. If behavior differs, describe exactly how, don't suggest fixes.
 - Be thorough but proportional — a one-line utility function needs less analysis than a 200-line business logic method.
 - When in doubt about behavioral equivalence, flag it as ⚠️ rather than assuming ✅.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track parity verification results. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "parity-verifier",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<path to parity report written>"],
+  "taskId": "<task-NNN>",
+  "parity": "<pass | partial | fail>",
+  "issues": [
+    {
+      "severity": "<critical | major | minor>",
+      "description": "<what differs>",
+      "sourceLocation": "<file:line, optional>",
+      "targetLocation": "<file:line, optional>"
+    }
+  ],
+  "notes": "<summary of overall parity findings>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "parity-verifier",
+  "status": "completed",
+  "outputFiles": ["parity-reports/task-001.md"],
+  "taskId": "task-001",
+  "parity": "partial",
+  "issues": [
+    {
+      "severity": "minor",
+      "description": "Missing null check in handleLogin",
+      "sourceLocation": "src/auth/login.py:45",
+      "targetLocation": "src/auth/login.ts:52"
+    }
+  ],
+  "notes": "Overall parity is good; one minor gap in null handling flagged for review."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.
