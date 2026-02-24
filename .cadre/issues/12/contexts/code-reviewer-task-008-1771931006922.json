@@ -1,0 +1,82 @@
+{
+  "agent": "code-reviewer",
+  "issueNumber": 12,
+  "projectName": "aamf",
+  "repository": "jafreck/AAMF",
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "phase": 3,
+  "taskId": "task-008",
+  "config": {
+    "commands": {
+      "install": "cd runtime && npm install",
+      "build": "cd runtime && npm run build",
+      "test": "cd runtime && npm test"
+    }
+  },
+  "inputFiles": [
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/diff-task-008.patch",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-008.md"
+  ],
+  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/review-task-008.md",
+  "payload": {
+    "taskId": "task-008",
+    "acceptanceCriteria": [
+      "E2E smoke and full-migration tests compile without TypeScript errors",
+      "Tests that assert on `AgentResult` shape include the new fields",
+      "All e2e tests pass or are skipped consistent with existing skip behaviour"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "verdict": {
+        "type": "string",
+        "enum": [
+          "pass",
+          "needs-fixes"
+        ]
+      },
+      "issues": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "line": {
+              "type": "number"
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "error",
+                "warning",
+                "suggestion"
+              ]
+            },
+            "description": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "file",
+            "severity",
+            "description"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "summary": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "verdict",
+      "issues",
+      "summary"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
