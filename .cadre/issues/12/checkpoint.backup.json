@@ -1,0 +1,27 @@
+{
+  "issueNumber": 12,
+  "version": 1,
+  "currentPhase": 1,
+  "currentTask": null,
+  "completedPhases": [
+    1
+  ],
+  "completedTasks": [],
+  "failedTasks": [],
+  "blockedTasks": [],
+  "phaseOutputs": {
+    "1": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/scout-report.md"
+  },
+  "gateResults": {},
+  "tokenUsage": {
+    "total": 0,
+    "byPhase": {},
+    "byAgent": {}
+  },
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "branchName": "cadre/issue-12",
+  "baseCommit": "0064e4ce6a0b77de3855cc122ab7b80adf1004a8",
+  "startedAt": "2026-02-24T10:30:12.383Z",
+  "lastCheckpoint": "2026-02-24T10:32:46.305Z",
+  "resumeCount": 0
+}

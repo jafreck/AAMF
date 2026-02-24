@@ -1,0 +1,86 @@
+{
+  "agent": "codebase-scout",
+  "issueNumber": 12,
+  "projectName": "aamf",
+  "repository": "jafreck/AAMF",
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "phase": 1,
+  "config": {
+    "commands": {
+      "install": "cd runtime && npm install",
+      "build": "cd runtime && npm run build",
+      "test": "cd runtime && npm test"
+    }
+  },
+  "inputFiles": [
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/analysis.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/repo-file-tree.txt"
+  ],
+  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/scout-report.md",
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "relevantFiles": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "dependencyMap": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "testFiles": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "estimatedChanges": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "linesEstimate": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "path",
+            "linesEstimate"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "relevantFiles",
+      "dependencyMap",
+      "testFiles",
+      "estimatedChanges"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}
