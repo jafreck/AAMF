@@ -1,0 +1,25 @@
+{
+  "agent": "fix-surgeon",
+  "issueNumber": 12,
+  "projectName": "aamf",
+  "repository": "jafreck/AAMF",
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "phase": 3,
+  "taskId": "task-001",
+  "config": {
+    "commands": {
+      "install": "cd runtime && npm install",
+      "build": "cd runtime && npm run build",
+      "test": "cd runtime && npm test"
+    }
+  },
+  "inputFiles": [
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/build-failure-task-001-0.txt",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/src/agents/types.ts"
+  ],
+  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+  "payload": {
+    "taskId": "task-001",
+    "issueType": "build"
+  }
+}

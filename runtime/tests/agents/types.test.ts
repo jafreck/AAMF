@@ -1,0 +1,261 @@
+import { describe, it, expect } from 'vitest';
+import type {
+  AgentResult,
+  AgentInvocation,
+  AgentContext,
+  MigrationTask,
+  MigrationResult,
+  PhaseResult,
+  FailedTask,
+  TaskDetails,
+} from '../../src/agents/types.js';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function makeBaseAgentResult(overrides?: Partial<AgentResult>): AgentResult {
+  return {
+    agent: 'code-migrator',
+    exitCode: 0,
+    success: true,
+    outputFiles: [],
+    duration: 100,
+    outputParsed: false,
+    ...overrides,
+  };
+}
+
+// ─── AgentResult ──────────────────────────────────────────────────────────────
+
+describe('AgentResult', () => {
+  describe('outputParsed field', () => {
+    it('should be false when output was not parsed', () => {
+      const result = makeBaseAgentResult({ outputParsed: false });
+      expect(result.outputParsed).toBe(false);
+    });
+
+    it('should be true when output was successfully parsed', () => {
+      const result = makeBaseAgentResult({ outputParsed: true });
+      expect(result.outputParsed).toBe(true);
+    });
+  });
+
+  describe('structuredOutput field', () => {
+    it('should be undefined when not provided', () => {
+      const result = makeBaseAgentResult();
+      expect(result.structuredOutput).toBeUndefined();
+    });
+
+    it('should hold arbitrary key-value data when parsed successfully', () => {
+      const structured = { tasks: ['task-001', 'task-002'], count: 2 };
+      const result = makeBaseAgentResult({
+        outputParsed: true,
+        structuredOutput: structured,
+      });
+      expect(result.structuredOutput).toEqual(structured);
+      expect(result.structuredOutput?.['tasks']).toEqual(['task-001', 'task-002']);
+      expect(result.structuredOutput?.['count']).toBe(2);
+    });
+
+    it('should support nested objects', () => {
+      const nested = { meta: { version: '1.0', phase: 3 } };
+      const result = makeBaseAgentResult({
+        outputParsed: true,
+        structuredOutput: nested,
+      });
+      expect(result.structuredOutput?.['meta']).toEqual({ version: '1.0', phase: 3 });
+    });
+  });
+
+  describe('parseError field', () => {
+    it('should be undefined when not provided', () => {
+      const result = makeBaseAgentResult();
+      expect(result.parseError).toBeUndefined();
+    });
+
+    it('should carry an error message when output parsing failed', () => {
+      const result = makeBaseAgentResult({
+        outputParsed: false,
+        parseError: 'No aamf-json block found in agent output',
+      });
+      expect(result.parseError).toBe('No aamf-json block found in agent output');
+    });
+  });
+
+  describe('combination: successful parse', () => {
+    it('should have outputParsed=true, structuredOutput set, and no parseError', () => {
+      const result = makeBaseAgentResult({
+        outputParsed: true,
+        structuredOutput: { key: 'value' },
+      });
+      expect(result.outputParsed).toBe(true);
+      expect(result.structuredOutput).toBeDefined();
+      expect(result.parseError).toBeUndefined();
+    });
+  });
+
+  describe('combination: failed parse', () => {
+    it('should have outputParsed=false, no structuredOutput, and parseError set', () => {
+      const result = makeBaseAgentResult({
+        outputParsed: false,
+        parseError: 'Malformed JSON in aamf-json block',
+      });
+      expect(result.outputParsed).toBe(false);
+      expect(result.structuredOutput).toBeUndefined();
+      expect(result.parseError).toBe('Malformed JSON in aamf-json block');
+    });
+  });
+
+  describe('existing fields', () => {
+    it('should include required fields: agent, exitCode, success, outputFiles, duration', () => {
+      const result = makeBaseAgentResult();
+      expect(result.agent).toBe('code-migrator');
+      expect(result.exitCode).toBe(0);
+      expect(result.success).toBe(true);
+      expect(result.outputFiles).toEqual([]);
+      expect(result.duration).toBe(100);
+    });
+
+    it('should support optional taskId, tokenUsage, and error fields', () => {
+      const result = makeBaseAgentResult({
+        taskId: 'task-001',
+        tokenUsage: { prompt: 100, completion: 50, total: 150 },
+        error: 'agent stderr',
+      });
+      expect(result.taskId).toBe('task-001');
+      expect(result.tokenUsage?.total).toBe(150);
+      expect(result.error).toBe('agent stderr');
+    });
+  });
+});
+
+// ─── AgentInvocation ─────────────────────────────────────────────────────────
+
+describe('AgentInvocation', () => {
+  it('should construct with required fields only', () => {
+    const inv: AgentInvocation = {
+      agent: 'impact-assessor',
+      contextFile: '/tmp/context.json',
+      progressDir: '/tmp/progress',
+    };
+    expect(inv.agent).toBe('impact-assessor');
+    expect(inv.contextFile).toBe('/tmp/context.json');
+    expect(inv.progressDir).toBe('/tmp/progress');
+    expect(inv.phase).toBeUndefined();
+    expect(inv.taskId).toBeUndefined();
+    expect(inv.timeout).toBeUndefined();
+  });
+
+  it('should support all optional fields', () => {
+    const inv: AgentInvocation = {
+      agent: 'code-migrator',
+      contextFile: '/tmp/context.json',
+      progressDir: '/tmp/progress',
+      phase: 3,
+      taskId: 'task-001',
+      additionalArgs: { '--dry-run': 'true' },
+      timeout: 60_000,
+    };
+    expect(inv.phase).toBe(3);
+    expect(inv.taskId).toBe('task-001');
+    expect(inv.additionalArgs?.['--dry-run']).toBe('true');
+    expect(inv.timeout).toBe(60_000);
+  });
+});
+
+// ─── AgentContext ─────────────────────────────────────────────────────────────
+
+describe('AgentContext', () => {
+  it('should construct with all required fields', () => {
+    const ctx: AgentContext = {
+      agent: 'knowledge-builder',
+      projectName: 'my-project',
+      phase: 2,
+      config: {
+        source: { path: '/src', language: 'python' },
+        target: { language: 'typescript', outputPath: '/out' },
+      },
+      inputFiles: ['src/foo.py'],
+      outputPath: '/out',
+    };
+    expect(ctx.agent).toBe('knowledge-builder');
+    expect(ctx.phase).toBe(2);
+    expect(ctx.config.source.language).toBe('python');
+    expect(ctx.taskId).toBeUndefined();
+    expect(ctx.payload).toBeUndefined();
+  });
+});
+
+// ─── MigrationTask ────────────────────────────────────────────────────────────
+
+describe('MigrationTask', () => {
+  it('should construct with all required fields', () => {
+    const task: MigrationTask = {
+      id: 'task-001',
+      name: 'Migrate auth module',
+      sourceFiles: ['src/auth.py'],
+      targetFiles: ['src/auth.ts'],
+      knowledgeBaseRef: 'kb/auth.md',
+      dependencies: [],
+      complexity: 'moderate',
+      description: 'Migrates the auth module',
+      acceptanceCriteria: ['tests pass'],
+      parityChecks: ['check-auth'],
+    };
+    expect(task.id).toBe('task-001');
+    expect(task.complexity).toBe('moderate');
+    expect(task.lineRange).toBeUndefined();
+  });
+
+  it('should accept all complexity values', () => {
+    const complexities: MigrationTask['complexity'][] = ['simple', 'moderate', 'complex'];
+    for (const complexity of complexities) {
+      const task: MigrationTask = {
+        id: 'task-x',
+        name: 'Task',
+        sourceFiles: [],
+        targetFiles: [],
+        knowledgeBaseRef: '',
+        dependencies: [],
+        complexity,
+        description: '',
+        acceptanceCriteria: [],
+        parityChecks: [],
+      };
+      expect(task.complexity).toBe(complexity);
+    }
+  });
+});
+
+// ─── FailedTask ───────────────────────────────────────────────────────────────
+
+describe('FailedTask', () => {
+  it('should construct with all required fields', () => {
+    const failed: FailedTask = {
+      taskId: 'task-001',
+      attempts: 2,
+      lastError: 'Process exited with code 1',
+      recoveryAttempted: false,
+    };
+    expect(failed.taskId).toBe('task-001');
+    expect(failed.attempts).toBe(2);
+    expect(failed.recoveryAttempted).toBe(false);
+  });
+});
+
+// ─── TaskDetails ──────────────────────────────────────────────────────────────
+
+describe('TaskDetails', () => {
+  it('should allow all fields to be optional', () => {
+    const details: TaskDetails = {};
+    expect(details.sourceFiles).toBeUndefined();
+    expect(details.targetFiles).toBeUndefined();
+    expect(details.parityScore).toBeUndefined();
+    expect(details.testsGenerated).toBeUndefined();
+    expect(details.error).toBeUndefined();
+  });
+
+  it('should hold a parityScore between 0 and 1', () => {
+    const details: TaskDetails = { parityScore: 0.95 };
+    expect(details.parityScore).toBe(0.95);
+  });
+});

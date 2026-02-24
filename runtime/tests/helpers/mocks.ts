@@ -28,6 +28,7 @@ export function createMockLauncher(
       outputFiles: [],
       duration: 100,
       tokenUsage: { prompt: 500, completion: 200, total: 700 },
+      outputParsed: false,
     };
 
     if (typeof overrides === 'function') {
