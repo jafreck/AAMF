@@ -1,0 +1,195 @@
+diff --git a/.cadre/issues/12/checkpoint.backup.json b/.cadre/issues/12/checkpoint.backup.json
+index 16c1a3c..1e262a3 100644
+--- a/.cadre/issues/12/checkpoint.backup.json
++++ b/.cadre/issues/12/checkpoint.backup.json
+@@ -2,7 +2,7 @@
+   "issueNumber": 12,
+   "version": 1,
+   "currentPhase": 3,
+-  "currentTask": "task-004",
++  "currentTask": null,
+   "completedPhases": [
+     1,
+     2
+@@ -13,7 +13,8 @@
+     "task-002",
+     "task-006",
+     "task-009",
+-    "task-003"
++    "task-003",
++    "task-004"
+   ],
+   "failedTasks": [],
+   "blockedTasks": [],
+@@ -46,6 +47,6 @@
+   "branchName": "cadre/issue-12",
+   "baseCommit": "0064e4ce6a0b77de3855cc122ab7b80adf1004a8",
+   "startedAt": "2026-02-24T10:30:12.383Z",
+-  "lastCheckpoint": "2026-02-24T10:51:33.633Z",
++  "lastCheckpoint": "2026-02-24T10:58:31.355Z",
+   "resumeCount": 0
+ }
+diff --git a/.cadre/issues/12/checkpoint.json b/.cadre/issues/12/checkpoint.json
+index 1e262a3..359f4e8 100644
+--- a/.cadre/issues/12/checkpoint.json
++++ b/.cadre/issues/12/checkpoint.json
+@@ -2,7 +2,7 @@
+   "issueNumber": 12,
+   "version": 1,
+   "currentPhase": 3,
+-  "currentTask": null,
++  "currentTask": "task-007",
+   "completedPhases": [
+     1,
+     2
+@@ -47,6 +47,6 @@
+   "branchName": "cadre/issue-12",
+   "baseCommit": "0064e4ce6a0b77de3855cc122ab7b80adf1004a8",
+   "startedAt": "2026-02-24T10:30:12.383Z",
+-  "lastCheckpoint": "2026-02-24T10:58:31.355Z",
++  "lastCheckpoint": "2026-02-24T10:58:31.464Z",
+   "resumeCount": 0
+ }
+diff --git a/.cadre/issues/12/contexts/code-writer-task-007-1771930711465.json b/.cadre/issues/12/contexts/code-writer-task-007-1771930711465.json
+new file mode 100644
+index 0000000..48003f5
+--- /dev/null
++++ b/.cadre/issues/12/contexts/code-writer-task-007-1771930711465.json
+@@ -0,0 +1,34 @@
++{
++  "agent": "code-writer",
++  "issueNumber": 12,
++  "projectName": "aamf",
++  "repository": "jafreck/AAMF",
++  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
++  "phase": 3,
++  "taskId": "task-007",
++  "config": {
++    "commands": {
++      "install": "cd runtime && npm install",
++      "build": "cd runtime && npm run build",
++      "test": "cd runtime && npm test"
++    }
++  },
++  "inputFiles": [
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-007.md",
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/tests/agent-launcher.test.ts",
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/tests/orchestrator.test.ts"
++  ],
++  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
++  "payload": {
++    "taskId": "task-007",
++    "files": [
++      "runtime/tests/agent-launcher.test.ts",
++      "runtime/tests/orchestrator.test.ts"
++    ],
++    "acceptanceCriteria": [
++      "`agent-launcher.test.ts` includes tests for: valid aamf-json output sets `outputParsed: true`; missing block sets `outputParsed: false` with exit-code-based success preserved; invalid block sets `outputParsed: false`, `parseError`, and `success: false`",
++      "`orchestrator.test.ts` mock `AgentResult` objects include `outputParsed` and phase handler assertions reflect structured-output consumption",
++      "All existing and new tests pass when running `npm test`"
++    ]
++  }
++}
+diff --git a/.cadre/issues/12/contexts/test-writer-task-007-1771930785970.json b/.cadre/issues/12/contexts/test-writer-task-007-1771930785970.json
+new file mode 100644
+index 0000000..13cab97
+--- /dev/null
++++ b/.cadre/issues/12/contexts/test-writer-task-007-1771930785970.json
+@@ -0,0 +1,30 @@
++{
++  "agent": "test-writer",
++  "issueNumber": 12,
++  "projectName": "aamf",
++  "repository": "jafreck/AAMF",
++  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
++  "phase": 3,
++  "taskId": "task-007",
++  "config": {
++    "commands": {
++      "install": "cd runtime && npm install",
++      "build": "cd runtime && npm run build",
++      "test": "cd runtime && npm test"
++    }
++  },
++  "inputFiles": [
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/checkpoint.backup.json",
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/checkpoint.json",
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/progress.md",
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/code-writer-task-007-1771930711465.json",
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-007.md",
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks/task-007-result.md",
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-007.md"
++  ],
++  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
++  "payload": {
++    "taskId": "task-007",
++    "testFramework": "unknown"
++  }
++}
+diff --git a/.cadre/issues/12/progress.md b/.cadre/issues/12/progress.md
+index 9d04de3..6fe18bb 100644
+--- a/.cadre/issues/12/progress.md
++++ b/.cadre/issues/12/progress.md
+@@ -3,7 +3,7 @@
+ ## Pipeline Status
+ - **Current Phase**: 3/5
+ - **Token Usage**: 0
+-- **Last Updated**: 2026-02-24T10:51:33.632Z
++- **Last Updated**: 2026-02-24T10:58:31.463Z
+ 
+ ## Phases
+ 
+@@ -34,6 +34,7 @@
+ | task-006 | task-006 | ✅ completed |
+ | task-009 | task-009 | ✅ completed |
+ | task-003 | task-003 | ✅ completed |
++| task-004 | task-004 | ✅ completed |
+ 
+ ## Event Log
+ 
+@@ -57,4 +58,6 @@
+ - `10:47:54` Task task-006 completed
+ - `10:49:50` Task task-009 completed
+ - `10:51:33` Task task-003 completed
++- `10:51:33` Task task-004 started: Refactor Orchestrator Phase Handlers to Use structuredOutput
++- `10:58:31` Task task-004 completed
+ 
+diff --git a/.cadre/issues/12/task-task-007.md b/.cadre/issues/12/task-task-007.md
+new file mode 100644
+index 0000000..2979d61
+--- /dev/null
++++ b/.cadre/issues/12/task-task-007.md
+@@ -0,0 +1,10 @@
++# Task: task-007 - Update Agent Launcher and Orchestrator Unit Tests
++
++**Description:** Update `agent-launcher.test.ts` to exercise the new post-execution parsing path and update `orchestrator.test.ts` mock expectations and phase handler assertions to reflect the structured output flow.
++**Files:** runtime/tests/agent-launcher.test.ts, runtime/tests/orchestrator.test.ts
++**Dependencies:** task-003, task-004, task-005
++**Complexity:** moderate
++**Acceptance Criteria:**
++- `agent-launcher.test.ts` includes tests for: valid aamf-json output sets `outputParsed: true`; missing block sets `outputParsed: false` with exit-code-based success preserved; invalid block sets `outputParsed: false`, `parseError`, and `success: false`
++- `orchestrator.test.ts` mock `AgentResult` objects include `outputParsed` and phase handler assertions reflect structured-output consumption
++- All existing and new tests pass when running `npm test`
+\ No newline at end of file
+diff --git a/.cadre/tasks/task-007-result.md b/.cadre/tasks/task-007-result.md
+new file mode 100644
+index 0000000..d8ea8f1
+--- /dev/null
++++ b/.cadre/tasks/task-007-result.md
+@@ -0,0 +1,16 @@
++# Task Result: task-007 - Update Agent Launcher and Orchestrator Unit Tests
++
++## Changes Made
++- No source changes required. Both test files already contain all required tests and the mock helpers already include `outputParsed` in base `AgentResult` objects.
++
++## Files Modified
++- (none)
++
++## Files Created
++- (none)
++
++## Notes
++- `runtime/tests/agent-launcher.test.ts` already contains the `aamf-json output parsing` describe block covering: valid block sets `outputParsed: true`, missing block sets `outputParsed: false` with exit-code-based success preserved, invalid schema sets `outputParsed: false` + `parseError` + `success: false`, malformed JSON sets same, token precedence from structuredOutput, logger warn when block absent, and non-zero exit with no block.
++- `runtime/tests/orchestrator.test.ts` already contains the `structuredOutput Integration` describe block with mock `AgentResult` objects including `outputParsed` and phase handler assertions for phase 3→4 structured task consumption, phase 5 structured fix consumption, empty fixes short-circuit, and tokenUsage precedence.
++- `runtime/tests/helpers/mocks.ts` already includes `outputParsed: false` in the base `AgentResult` returned by `createMockLauncher`.
++- All 324 tests pass (`npm test` exit code 0).
