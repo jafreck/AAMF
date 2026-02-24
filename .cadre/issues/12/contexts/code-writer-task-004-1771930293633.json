@@ -1,0 +1,34 @@
+{
+  "agent": "code-writer",
+  "issueNumber": 12,
+  "projectName": "aamf",
+  "repository": "jafreck/AAMF",
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "phase": 3,
+  "taskId": "task-004",
+  "config": {
+    "commands": {
+      "install": "cd runtime && npm install",
+      "build": "cd runtime && npm run build",
+      "test": "cd runtime && npm test"
+    }
+  },
+  "inputFiles": [
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-004.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/src/core/orchestrator.ts"
+  ],
+  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+  "payload": {
+    "taskId": "task-004",
+    "files": [
+      "runtime/src/core/orchestrator.ts"
+    ],
+    "acceptanceCriteria": [
+      "Phase 4 migration-planner handler reads tasks from `structuredOutput` when `outputParsed` is `true`, falls back to `ResultParser.parseMigrationPlan` with a warning when not",
+      "Phase 5 final-parity-checker handler reads fixes from `structuredOutput` when `outputParsed` is `true`, falls back to `ResultParser.parseFinalParityReport` with a warning when not",
+      "Token recording prefers `structuredOutput.tokenUsage` over the existing `tokenUsage` field when both are available",
+      "All existing integration paths continue to work when `outputParsed` is `false`",
+      "TypeScript build passes with no errors"
+    ]
+  }
+}
