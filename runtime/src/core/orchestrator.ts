@@ -376,9 +376,6 @@ export class MigrationOrchestrator {
       };
     }
 
-    // Store for Phase 4 to consume via structuredOutput
-    this.phase3PlanResult = planResult;
-
     // 2. Check if adjudicator is needed (competing strategies)
     const adjudicationFile = join(this.progressDir, 'competing-strategies.md');
     if (await fileExists(adjudicationFile)) {
@@ -389,6 +386,12 @@ export class MigrationOrchestrator {
       const adjInv = this.buildInvocation('adjudicator', adjCtx, 3);
       const adjResult = await this.launcher.launchAgent(adjInv);
       this.recordTokens(adjResult, 3);
+      // Adjudicator may have rewritten migration-plan.md; clear pre-adjudication
+      // structured output so Phase 4 reads the updated file instead.
+      this.phase3PlanResult = undefined;
+    } else {
+      // Store for Phase 4 to consume via structuredOutput
+      this.phase3PlanResult = planResult;
     }
 
     const outputPath = join(this.progressDir, 'migration-plan.md');
