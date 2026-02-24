@@ -1,0 +1,34 @@
+{
+  "agent": "code-writer",
+  "issueNumber": 12,
+  "projectName": "aamf",
+  "repository": "jafreck/AAMF",
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "phase": 3,
+  "taskId": "task-006",
+  "config": {
+    "commands": {
+      "install": "cd runtime && npm install",
+      "build": "cd runtime && npm run build",
+      "test": "cd runtime && npm test"
+    }
+  },
+  "inputFiles": [
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-006.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/tests/result-parser.test.ts",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/tests/aamf-output-schema.test.ts"
+  ],
+  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+  "payload": {
+    "taskId": "task-006",
+    "files": [
+      "runtime/tests/result-parser.test.ts",
+      "runtime/tests/aamf-output-schema.test.ts"
+    ],
+    "acceptanceCriteria": [
+      "`result-parser.test.ts` includes tests for: valid block (extracts last when multiple exist), missing block, malformed JSON block, and schema validation failure",
+      "`runtime/tests/aamf-output-schema.test.ts` is created with at least one valid and one invalid case for each of the 14 per-agent schemas",
+      "All new tests pass when running `npm test`"
+    ]
+  }
+}

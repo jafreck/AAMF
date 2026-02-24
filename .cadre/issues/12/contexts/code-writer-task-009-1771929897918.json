@@ -1,0 +1,59 @@
+{
+  "agent": "code-writer",
+  "issueNumber": 12,
+  "projectName": "aamf",
+  "repository": "jafreck/AAMF",
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "phase": 3,
+  "taskId": "task-009",
+  "config": {
+    "commands": {
+      "install": "cd runtime && npm install",
+      "build": "cd runtime && npm run build",
+      "test": "cd runtime && npm test"
+    }
+  },
+  "inputFiles": [
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-009.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/adjudicator.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/code-migrator.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/parity-verifier.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/test-writer.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/failure-recovery.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/final-parity-checker.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/e2e-test-crafter.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/documentation-writer.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/migration-runner.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/impact-assessor.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/knowledge-builder.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/large-file-analyzer.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/migration-planner.agent.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.github/agents/migration-orchestrator.agent.md"
+  ],
+  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+  "payload": {
+    "taskId": "task-009",
+    "files": [
+      ".github/agents/adjudicator.agent.md",
+      ".github/agents/code-migrator.agent.md",
+      ".github/agents/parity-verifier.agent.md",
+      ".github/agents/test-writer.agent.md",
+      ".github/agents/failure-recovery.agent.md",
+      ".github/agents/final-parity-checker.agent.md",
+      ".github/agents/e2e-test-crafter.agent.md",
+      ".github/agents/documentation-writer.agent.md",
+      ".github/agents/migration-runner.agent.md",
+      ".github/agents/impact-assessor.agent.md",
+      ".github/agents/knowledge-builder.agent.md",
+      ".github/agents/large-file-analyzer.agent.md",
+      ".github/agents/migration-planner.agent.md",
+      ".github/agents/migration-orchestrator.agent.md"
+    ],
+    "acceptanceCriteria": [
+      "Each of the 14 agent files has an `## Output Format` section",
+      "Each section includes the `aamf-json` block requirement description, JSON schema fields (base + agent-specific), a concrete valid example, and a non-conformance warning",
+      "The `aamf-json` block must be described as the last fenced code block in the agent's output",
+      "No existing content in any file is removed or altered"
+    ]
+  }
+}

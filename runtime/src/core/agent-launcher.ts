@@ -1,11 +1,46 @@
 import { join } from 'node:path';
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { AgentInvocation, AgentResult } from '../agents/types.js';
+import { AgentInvocation, AgentName, AgentResult } from '../agents/types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { spawnWithTimeout, resolveLoginPath } from '../util/process.js';
 import { ensureDir, atomicWrite, fileExists } from '../util/fs.js';
-import { ResultParser } from '../agents/result-parser.js';
+import {
+  ResultParser,
+  MigrationOrchestratorOutput,
+  ImpactAssessorOutput,
+  KnowledgeBuilderOutput,
+  LargeFileAnalyzerOutput,
+  MigrationPlannerOutput,
+  AdjudicatorOutput,
+  CodeMigratorOutput,
+  ParityVerifierOutput,
+  TestWriterOutput,
+  FailureRecoveryOutput,
+  FinalParityCheckerOutput,
+  E2eTestCrafterOutput,
+  DocumentationWriterOutput,
+  MigrationRunnerOutput,
+} from '../agents/result-parser.js';
 import { Logger } from '../logging/logger.js';
+import { z } from 'zod';
+
+/** Map each known agent name to its Zod output schema. */
+const agentOutputSchemas: Record<AgentName, z.ZodTypeAny> = {
+  'migration-orchestrator': MigrationOrchestratorOutput,
+  'impact-assessor': ImpactAssessorOutput,
+  'knowledge-builder': KnowledgeBuilderOutput,
+  'large-file-analyzer': LargeFileAnalyzerOutput,
+  'migration-planner': MigrationPlannerOutput,
+  'adjudicator': AdjudicatorOutput,
+  'code-migrator': CodeMigratorOutput,
+  'parity-verifier': ParityVerifierOutput,
+  'test-writer': TestWriterOutput,
+  'failure-recovery': FailureRecoveryOutput,
+  'final-parity-checker': FinalParityCheckerOutput,
+  'e2e-test-crafter': E2eTestCrafterOutput,
+  'documentation-writer': DocumentationWriterOutput,
+  'migration-runner': MigrationRunnerOutput,
+};
 
 /**
  * Strip VS Code / Electron IPC environment variables so that `copilot` CLI
@@ -224,6 +259,27 @@ export class AgentLauncher {
             ? result.stderr || `Exit code ${result.exitCode}`
             : undefined,
       };
+
+      // Parse structured aamf-json output block from stdout
+      const schema = agentOutputSchemas[invocation.agent];
+      const parseResult = ResultParser.parseAamfOutput(result.stdout, schema);
+      if (parseResult.parsed) {
+        agentResult.structuredOutput = parseResult.data as Record<string, unknown>;
+        agentResult.outputParsed = true;
+        // Prefer tokenUsage from structured output over regex-based parsing
+        if (parseResult.data.tokenUsage) {
+          agentResult.tokenUsage = parseResult.data.tokenUsage;
+        }
+      } else if (parseResult.error === 'missing aamf-json block') {
+        // Block absent — warn but leave success unchanged
+        this.logger.warn(`Agent ${invocation.agent} did not emit an aamf-json block`);
+        agentResult.outputParsed = false;
+      } else {
+        // Block present but malformed or invalid — force failure
+        agentResult.outputParsed = false;
+        agentResult.parseError = parseResult.error;
+        agentResult.success = false;
+      }
 
       return agentResult;
     } catch (err) {

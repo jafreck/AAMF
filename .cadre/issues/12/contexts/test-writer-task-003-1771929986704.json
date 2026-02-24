@@ -1,0 +1,38 @@
+{
+  "agent": "test-writer",
+  "issueNumber": 12,
+  "projectName": "aamf",
+  "repository": "jafreck/AAMF",
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "phase": 3,
+  "taskId": "task-003",
+  "config": {
+    "commands": {
+      "install": "cd runtime && npm install",
+      "build": "cd runtime && npm run build",
+      "test": "cd runtime && npm test"
+    }
+  },
+  "inputFiles": [
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/checkpoint.backup.json",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/checkpoint.json",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/progress.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/src/core/agent-launcher.ts",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/code-writer-task-003-1771929897918.json",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/code-writer-task-006-1771929897918.json",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/code-writer-task-009-1771929897918.json",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/test-writer-task-006-1771929969032.json",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-003.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-006.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-009.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks/task-003-result.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks/task-006-result.md",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/tests/aamf-output-schema.test.ts",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-003.md"
+  ],
+  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+  "payload": {
+    "taskId": "task-003",
+    "testFramework": "unknown"
+  }
+}
