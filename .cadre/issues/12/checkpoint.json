@@ -1,13 +1,14 @@
 {
   "issueNumber": 12,
   "version": 1,
-  "currentPhase": 4,
+  "currentPhase": 5,
   "currentTask": null,
   "completedPhases": [
     1,
     2,
     3,
-    4
+    4,
+    5
   ],
   "completedTasks": [
     "task-001",
@@ -26,7 +27,8 @@
     "1": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/scout-report.md",
     "2": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/implementation-plan.md",
     "3": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/implementation-plan.md",
-    "4": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/integration-report.md"
+    "4": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/integration-report.md",
+    "5": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/pr-content.md"
   },
   "gateResults": {
     "1": {
@@ -63,6 +65,6 @@
   "branchName": "cadre/issue-12",
   "baseCommit": "0064e4ce6a0b77de3855cc122ab7b80adf1004a8",
   "startedAt": "2026-02-24T10:30:12.383Z",
-  "lastCheckpoint": "2026-02-24T11:04:07.659Z",
+  "lastCheckpoint": "2026-02-24T11:05:12.056Z",
   "resumeCount": 0
 }
