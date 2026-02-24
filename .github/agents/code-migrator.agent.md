@@ -142,3 +142,54 @@ The runtime reads this file first. If it is missing or invalid, the runtime fall
 - Never modify source files.
 - Never skip behavior — if something is hard to migrate, attempt it and flag for review.
 - Bill of materials: you must account for every function, class, constant, and type in your source scope.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track migration task results. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "code-migrator",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<target file paths written>"],
+  "taskId": "<task-NNN>",
+  "parity": "<pass | partial | fail>",
+  "issues": [
+    {
+      "severity": "<critical | major | minor>",
+      "description": "<what the issue is>",
+      "sourceLocation": "<file:line, optional>",
+      "targetLocation": "<file:line, optional>"
+    }
+  ],
+  "metrics": {
+    "linesOfCode": 0,
+    "tokensUsed": 0,
+    "durationMs": 0
+  },
+  "notes": "<migration decisions, concerns, or assumptions>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "code-migrator",
+  "status": "completed",
+  "outputFiles": ["src/auth/login.ts"],
+  "taskId": "task-001",
+  "parity": "pass",
+  "issues": [],
+  "metrics": {
+    "linesOfCode": 150,
+    "tokensUsed": 5000,
+    "durationMs": 30000
+  },
+  "notes": "Used TypeScript discriminated union instead of Python exception hierarchy; behavior is equivalent."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

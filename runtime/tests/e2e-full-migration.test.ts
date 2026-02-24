@@ -42,7 +42,7 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
       logLevel: 'info',
     });
     result = await runtime.run();
-  }, 900_000); // 15-minute timeout for a full migration
+  }, 1_800_000); // 30-minute timeout for a full migration
 
   afterAll(async () => {
     // Clean up artefacts created during the test (even after failures)

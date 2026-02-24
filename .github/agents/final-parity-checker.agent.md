@@ -117,3 +117,41 @@ This agent inevitably needs to scan a large codebase. Manage context aggressivel
 - Be thorough but systematic — use automated scanning (grep, find, compiler) before manual inspection.
 - The orchestrator will route any failures back through `code-migrator` + `failure-recovery` for fixes.
 - Prioritize issues by severity: missing functionality > stubs > pattern inconsistency.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record the final parity audit outcome. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "final-parity-checker",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<path to final parity report written>"],
+  "missingFiles": 0,
+  "stubsFound": 0,
+  "buildPassed": true,
+  "testsPassed": 0,
+  "testsFailed": 0,
+  "notes": "<overall verdict and summary of issues found>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "final-parity-checker",
+  "status": "completed",
+  "outputFiles": [".aamf/migration/my-project/final-parity-report.md"],
+  "missingFiles": 0,
+  "stubsFound": 2,
+  "buildPassed": true,
+  "testsPassed": 147,
+  "testsFailed": 3,
+  "notes": "Two stub implementations found in utils/legacy-compat.ts. Three test failures related to timezone handling — routed to failure-recovery."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

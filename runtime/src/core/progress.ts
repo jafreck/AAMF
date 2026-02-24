@@ -42,7 +42,7 @@ export class ProgressWriter {
     const phaseNames = ['Impact Assessment', 'Knowledge Base Construction', 'Migration Planning', 'Iterative Migration', 'Final Parity Verification', 'E2E Testing & Documentation', 'Completion'];
     for (let i = 0; i < phaseNames.length; i++) {
       if (!this.phases.has(i + 1)) {
-        this.phases.set(i + 1, { name: phaseNames[i], status: 'pending' });
+        this.phases.set(i + 1, { name: phaseNames[i]!, status: 'pending' });
       }
     }
 

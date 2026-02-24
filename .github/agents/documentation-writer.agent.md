@@ -86,3 +86,40 @@ None — this is a **leaf agent**.
 - Keep documentation proportional — more detail for complex modules, less for simple utilities.
 - All documentation should be written in Markdown for consistency.
 - Include the date and migration version in the documentation header.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track documentation writing results. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "documentation-writer",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<paths to all documentation files written>"],
+  "documentsWritten": 0,
+  "notes": "<summary of documentation produced and any known gaps>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "documentation-writer",
+  "status": "completed",
+  "outputFiles": [
+    ".aamf/migration/my-project/documentation/architecture-guide.md",
+    ".aamf/migration/my-project/documentation/api-reference.md",
+    ".aamf/migration/my-project/documentation/migration-summary.md",
+    ".aamf/migration/my-project/documentation/developer-guide.md",
+    ".aamf/migration/my-project/documentation/known-issues.md",
+    ".aamf/migration/my-project/documentation/decision-log.md"
+  ],
+  "documentsWritten": 6,
+  "notes": "Inline doc comments added to all public APIs. Two deferred items noted in known-issues.md."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

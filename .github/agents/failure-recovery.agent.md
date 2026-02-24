@@ -115,3 +115,41 @@ Update `.aamf/migration/{projectName}/progress.md` with recovery details:
 - Never modify source (pre-migration) files.
 - Your fixes must maintain parity with the source for all non-deferred functionality.
 - Keep fixes minimal — don't refactor or improve code beyond what's needed to resolve the failure.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track failure recovery outcomes. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "failure-recovery",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<paths to any files modified or written>"],
+  "taskId": "<task-NNN>",
+  "failureType": "<parity | build | test | blocked>",
+  "strategyApplied": "<name of the fix strategy chosen>",
+  "attempts": 0,
+  "scopeReduced": false,
+  "notes": "<summary of root cause, fix applied, and outcome>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "failure-recovery",
+  "status": "completed",
+  "outputFiles": ["src/auth/login.ts"],
+  "taskId": "task-003",
+  "failureType": "parity",
+  "strategyApplied": "Direct Fix — added missing null guard in handleLogin",
+  "attempts": 1,
+  "scopeReduced": false,
+  "notes": "Root cause was a missing null check. Fixed in target file; parity re-verified and now passes."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

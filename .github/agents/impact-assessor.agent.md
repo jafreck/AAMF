@@ -96,3 +96,37 @@ None — this is a **leaf agent**.
 - This is a **read-only** agent. Do not modify any source files.
 - Do not attempt to write migration code.
 - Focus on accuracy of the assessment — the migration planner depends on this output.
+
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record the impact assessment results. It **must** be the last fenced code block in your output.
+
+### Schema
+
+```json
+{
+  "agent": "impact-assessor",
+  "status": "<completed | failed | needs-review>",
+  "outputFiles": ["<path to impact assessment file written>"],
+  "totalFiles": 0,
+  "totalLoc": 0,
+  "riskCount": 0,
+  "notes": "<summary of key findings and highest-risk areas>"
+}
+```
+
+### Example
+
+```aamf-json
+{
+  "agent": "impact-assessor",
+  "status": "completed",
+  "outputFiles": [".aamf/migration/my-project/impact-assessment.md"],
+  "totalFiles": 84,
+  "totalLoc": 12400,
+  "riskCount": 5,
+  "notes": "Three high-risk modules identified: auth, payment-processor, and legacy-orm. Recommend migrating auth last due to broad dependency surface."
+}
+```
+
+> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.

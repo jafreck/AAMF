@@ -89,6 +89,8 @@ export class MigrationOrchestrator {
   private readonly tokenTracker: TokenTracker;
   private readonly progressDir: string;
   private readonly singlePhase?: number;
+  /** Stores the migration-planner AgentResult from Phase 3 for Phase 4 to consume. */
+  private phase3PlanResult?: AgentResult;
   /**
    * Semaphore that limits concurrent build/test command executions.
    * Separate from `maxParallelAgents` so that agent code-generation can
@@ -384,6 +386,12 @@ export class MigrationOrchestrator {
       const adjInv = this.buildInvocation('adjudicator', adjCtx, 3);
       const adjResult = await this.launcher.launchAgent(adjInv);
       this.recordTokens(adjResult, 3);
+      // Adjudicator may have rewritten migration-plan.md; clear pre-adjudication
+      // structured output so Phase 4 reads the updated file instead.
+      this.phase3PlanResult = undefined;
+    } else {
+      // Store for Phase 4 to consume via structuredOutput
+      this.phase3PlanResult = planResult;
     }
 
     const outputPath = join(this.progressDir, 'migration-plan.md');
@@ -400,18 +408,24 @@ export class MigrationOrchestrator {
 
   private async executePhase4(start: number): Promise<PhaseResult> {
     const planPath = join(this.progressDir, 'migration-plan.md');
-    if (!(await fileExists(planPath))) {
-      return {
-        phase: 4,
-        name: 'Iterative Migration',
-        success: false,
-        duration: Date.now() - start,
-        error: 'migration-plan.md not found — Phase 3 may not have completed',
-      };
-    }
 
-    // 1. Parse migration plan
-    const tasks = await ResultParser.parseMigrationPlan(planPath);
+    // 1. Parse migration plan — prefer structuredOutput from Phase 3, fall back to file
+    let tasks: MigrationTask[];
+    if (this.phase3PlanResult?.outputParsed && Array.isArray(this.phase3PlanResult.structuredOutput?.['tasks'])) {
+      tasks = this.phase3PlanResult.structuredOutput['tasks'] as MigrationTask[];
+    } else {
+      if (!(await fileExists(planPath))) {
+        return {
+          phase: 4,
+          name: 'Iterative Migration',
+          success: false,
+          duration: Date.now() - start,
+          error: 'migration-plan.md not found — Phase 3 may not have completed',
+        };
+      }
+      this.logger.warn('Phase 3 structured output unavailable — falling back to ResultParser.parseMigrationPlan');
+      tasks = await ResultParser.parseMigrationPlan(planPath);
+    }
     if (tasks.length === 0) {
       this.logger.warn('No tasks found in migration plan');
       return {
@@ -850,11 +864,16 @@ export class MigrationOrchestrator {
         };
       }
 
-      // Parse report for required fixes
-      const reportPath = join(this.progressDir, 'final-parity-report.md');
-      if (!(await fileExists(reportPath))) break;
-
-      const fixes = await ResultParser.parseFinalParityReport(reportPath);
+      // Parse report for required fixes — prefer structuredOutput, fall back to file
+      let fixes: Array<{ description: string; sourceFile: string; targetFile: string }>;
+      if (result.outputParsed && Array.isArray(result.structuredOutput?.['fixes'])) {
+        fixes = result.structuredOutput['fixes'] as Array<{ description: string; sourceFile: string; targetFile: string }>;
+      } else {
+        const reportPath = join(this.progressDir, 'final-parity-report.md');
+        if (!(await fileExists(reportPath))) break;
+        this.logger.warn('Final-parity-checker structured output unavailable — falling back to ResultParser.parseFinalParityReport');
+        fixes = await ResultParser.parseFinalParityReport(reportPath);
+      }
       if (fixes.length === 0) break;
 
       if (iteration < MAX_LOOPBACK) {

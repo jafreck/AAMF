@@ -80,9 +80,10 @@ export async function countFileLines(filePath: string): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     let count = 0;
     const stream = createReadStream(filePath);
-    stream.on('data', (chunk: Buffer) => {
-      for (let i = 0; i < chunk.length; i++) {
-        if (chunk[i] === 0x0a) count++;
+    stream.on('data', (chunk: Buffer | string) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      for (let i = 0; i < buf.length; i++) {
+        if (buf[i] === 0x0a) count++;
       }
     });
     stream.on('end', () => resolve(count));

@@ -396,6 +396,185 @@ describe('MigrationOrchestrator', () => {
     });
   });
 
+  // ─── structuredOutput Integration ──────────────────────────────────
+
+  describe('structuredOutput Integration', () => {
+    it('should read Phase 4 tasks from structuredOutput when outputParsed is true', async () => {
+      // Migration-planner returns structured tasks → no migration-plan.md needed
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'migration-planner') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              tasks: [
+                {
+                  id: 'task-s01',
+                  name: 'Structured Task 1',
+                  sourceFiles: ['src/s01.py'],
+                  targetFiles: ['src/s01.ts'],
+                  knowledgeBaseRef: 'kb/s01.md',
+                  dependencies: [],
+                  complexity: 'simple',
+                  description: 'Migrate s01',
+                  acceptanceCriteria: ['works'],
+                  parityChecks: ['matches'],
+                },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+
+      // Note: no migration-plan.md written to progressDir
+      const { orchestrator, mockLauncher } = await setupOrchestrator(tempDir, launcherFn);
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+      const codeMigratorInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator',
+      );
+      // code-migrator should have been invoked for the structured task
+      expect(codeMigratorInvocations.length).toBeGreaterThanOrEqual(1);
+      expect(codeMigratorInvocations[0]!.taskId).toBe('task-s01');
+    });
+
+    it('should fall back to ResultParser when Phase 3 outputParsed is false', async () => {
+      // Default mock returns outputParsed: false, so Phase 4 must read file
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      await writeMigrationPlan(progressDir);
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+      // code-migrator should have been invoked (tasks parsed from file)
+      const codeMigratorInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator',
+      );
+      expect(codeMigratorInvocations.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should read Phase 5 fixes from structuredOutput when outputParsed is true', async () => {
+      // final-parity-checker returns structured fixes → code-migrator re-invoked in phase 5
+      let parityCallCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'final-parity-checker') {
+          parityCallCount++;
+          if (parityCallCount === 1) {
+            // First call: return one fix via structuredOutput
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                fixes: [
+                  {
+                    description: 'Missing error handling',
+                    sourceFile: 'src/auth.py',
+                    targetFile: 'src/auth.ts',
+                  },
+                ],
+              },
+            };
+          }
+          // Second call: no more fixes → stop loop
+          return {
+            outputParsed: true,
+            structuredOutput: { fixes: [] },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+      await writeMigrationPlan(progressDir);
+      // Note: no final-parity-report.md written to prove structured output is used
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+      const codeMigratorInPhase5 = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 5,
+      );
+      expect(codeMigratorInPhase5.length).toBeGreaterThan(0);
+    });
+
+    it('should stop Phase 5 loop early when structuredOutput fixes is empty', async () => {
+      let parityCallCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'final-parity-checker') {
+          parityCallCount++;
+          return {
+            outputParsed: true,
+            structuredOutput: { fixes: [] },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+      await writeMigrationPlan(progressDir);
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+      // final-parity-checker should have been called once (loop exits immediately)
+      expect(parityCallCount).toBe(1);
+      // No phase-5 code-migrator invocations expected
+      const codeMigratorInPhase5 = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 5,
+      );
+      expect(codeMigratorInPhase5.length).toBe(0);
+    });
+
+    it('should prefer structuredOutput.tokenUsage over result.tokenUsage in recordTokens', async () => {
+      // Budget set to 500; result.tokenUsage.total = 100 (within budget),
+      // but structuredOutput.tokenUsage.total = 600 (exceeds budget).
+      // If recordTokens picks structuredOutput, the budget will be exceeded and run aborted.
+      const launcherFn = createMockLauncher(() => ({
+        tokenUsage: { prompt: 50, completion: 50, total: 100 },
+        outputParsed: true,
+        structuredOutput: {
+          tokenUsage: { prompt: 400, completion: 200, total: 600 },
+        },
+      }));
+
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          largeFileThreshold: 500,
+          maxLinesPerTask: 500,
+          tokenBudget: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+        },
+      });
+
+      const result = await orchestrator.run();
+
+      // If structuredOutput.tokenUsage (600) is preferred, budget (500) is exceeded on
+      // the first agent invocation → migration aborts with fewer than 7 phases.
+      expect(result.success).toBe(false);
+      expect(result.phases.length).toBeLessThan(7);
+    });
+  });
+
   // ─── Phase 4 Specifics ─────────────────────────────────────────────
 
   describe('Phase 4 Specifics', () => {

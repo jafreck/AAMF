@@ -86,6 +86,15 @@ export interface AgentResult {
 
   /** Captured stderr or error message when the agent fails. */
   error?: string;
+
+  /** Structured data parsed from the agent's output, if applicable. */
+  structuredOutput?: Record<string, unknown>;
+
+  /** Whether the agent's output was successfully parsed into structured form. */
+  outputParsed: boolean;
+
+  /** Error message describing why output parsing failed, if applicable. */
+  parseError?: string;
 }
 
 // ─── Agent Context ───────────────────────────────────────────────────────────

@@ -4,6 +4,44 @@ import { z } from 'zod';
 import { MigrationTask } from './types.js';
 import { fileExists, readJson } from '../util/fs.js';
 
+export const MISSING_BLOCK_ERROR = 'missing aamf-json block';
+
+// ─── AamfOutput Schemas ───────────────────────────────────────────────────────
+
+/**
+ * Base Zod schema for structured output blocks emitted by AAMF agents.
+ * Agents write a fenced ```aamf-json block to stdout with this shape.
+ */
+export const AamfOutputBase = z.object({
+  status: z.enum(['completed', 'failed', 'needs-review']),
+  agent: z.string().min(1),
+  taskId: z.string().min(1).optional(),
+  tokenUsage: z.object({
+    prompt: z.number().int(),
+    completion: z.number().int(),
+    total: z.number().int(),
+  }).optional(),
+  notes: z.string().optional(),
+}).passthrough();
+
+export type AamfOutputBaseType = z.infer<typeof AamfOutputBase>;
+
+/** Per-agent output schemas — each locks `agent` to its canonical name. */
+export const MigrationOrchestratorOutput = AamfOutputBase.extend({ agent: z.literal('migration-orchestrator') });
+export const ImpactAssessorOutput = AamfOutputBase.extend({ agent: z.literal('impact-assessor') });
+export const KnowledgeBuilderOutput = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
+export const LargeFileAnalyzerOutput = AamfOutputBase.extend({ agent: z.literal('large-file-analyzer') });
+export const MigrationPlannerOutput = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
+export const AdjudicatorOutput = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
+export const CodeMigratorOutput = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
+export const ParityVerifierOutput = AamfOutputBase.extend({ agent: z.literal('parity-verifier') });
+export const TestWriterOutput = AamfOutputBase.extend({ agent: z.literal('test-writer') });
+export const FailureRecoveryOutput = AamfOutputBase.extend({ agent: z.literal('failure-recovery') });
+export const FinalParityCheckerOutput = AamfOutputBase.extend({ agent: z.literal('final-parity-checker') });
+export const E2eTestCrafterOutput = AamfOutputBase.extend({ agent: z.literal('e2e-test-crafter') });
+export const DocumentationWriterOutput = AamfOutputBase.extend({ agent: z.literal('documentation-writer') });
+export const MigrationRunnerOutput = AamfOutputBase.extend({ agent: z.literal('migration-runner') });
+
 /**
  * JSON schema for structured agent task results (sidecar `.result.json`).
  */
@@ -180,6 +218,45 @@ export class ResultParser {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Extract the last ```aamf-json fenced block from agent stdout and validate
+   * it against the provided Zod schema.
+   *
+   * @param stdout - Raw agent stdout string.
+   * @param schema - Zod schema to validate the parsed JSON against.
+   * @returns `{ data, parsed: true }` on success, or `{ parsed: false, error }`.
+   */
+  static parseAamfOutput<T extends z.ZodTypeAny>(
+    stdout: string,
+    schema: T,
+  ): { data: z.infer<T>; parsed: true } | { parsed: false; error: string } {
+    // Find all ```aamf-json ... ``` blocks; use the last one.
+    const blockRegex = /```aamf-json\r?\n([\s\S]*?)```/g;
+    let lastMatch: RegExpExecArray | null = null;
+    let match: RegExpExecArray | null;
+    while ((match = blockRegex.exec(stdout)) !== null) {
+      lastMatch = match;
+    }
+
+    if (!lastMatch) {
+      return { parsed: false, error: MISSING_BLOCK_ERROR };
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(lastMatch[1]!.trim());
+    } catch (err) {
+      return { parsed: false, error: `malformed JSON in aamf-json block: ${String(err)}` };
+    }
+
+    const result = schema.safeParse(raw);
+    if (!result.success) {
+      return { parsed: false, error: `schema validation failed: ${result.error.message}` };
+    }
+
+    return { data: result.data, parsed: true };
   }
 
   /**
