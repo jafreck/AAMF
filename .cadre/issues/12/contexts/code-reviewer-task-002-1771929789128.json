@@ -1,0 +1,85 @@
+{
+  "agent": "code-reviewer",
+  "issueNumber": 12,
+  "projectName": "aamf",
+  "repository": "jafreck/AAMF",
+  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+  "phase": 3,
+  "taskId": "task-002",
+  "config": {
+    "commands": {
+      "install": "cd runtime && npm install",
+      "build": "cd runtime && npm run build",
+      "test": "cd runtime && npm test"
+    }
+  },
+  "inputFiles": [
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/diff-task-002.patch",
+    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-002.md"
+  ],
+  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/review-task-002.md",
+  "payload": {
+    "taskId": "task-002",
+    "acceptanceCriteria": [
+      "`AamfOutputBase` Zod schema is exported with fields: `status`, `agent`, `taskId`, `tokenUsage` (optional), `notes` (optional)",
+      "Per-agent Zod schemas are exported for all 14 named agents",
+      "`ResultParser.parseAamfOutput(stdout, schema)` static method is exported",
+      "The method extracts the last fenced aamf-json block from stdout",
+      "Returns `{ data, parsed: true }` on success and `{ parsed: false, error: string }` on missing block, malformed JSON, or schema validation failure",
+      "When no aamf-json block is present, the error message clearly states 'missing aamf-json block'"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "verdict": {
+        "type": "string",
+        "enum": [
+          "pass",
+          "needs-fixes"
+        ]
+      },
+      "issues": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "line": {
+              "type": "number"
+            },
+            "severity": {
+              "type": "string",
+              "enum": [
+                "error",
+                "warning",
+                "suggestion"
+              ]
+            },
+            "description": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "file",
+            "severity",
+            "description"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "summary": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "verdict",
+      "issues",
+      "summary"
+    ],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

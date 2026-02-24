@@ -1,0 +1,982 @@
+diff --git a/.cadre/issues/12/contexts/code-reviewer-task-005-1771929754549.json b/.cadre/issues/12/contexts/code-reviewer-task-005-1771929754549.json
+new file mode 100644
+index 0000000..5f81144
+--- /dev/null
++++ b/.cadre/issues/12/contexts/code-reviewer-task-005-1771929754549.json
+@@ -0,0 +1,82 @@
++{
++  "agent": "code-reviewer",
++  "issueNumber": 12,
++  "projectName": "aamf",
++  "repository": "jafreck/AAMF",
++  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
++  "phase": 3,
++  "taskId": "task-005",
++  "config": {
++    "commands": {
++      "install": "cd runtime && npm install",
++      "build": "cd runtime && npm run build",
++      "test": "cd runtime && npm test"
++    }
++  },
++  "inputFiles": [
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/diff-task-005.patch",
++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-005.md"
++  ],
++  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/review-task-005.md",
++  "payload": {
++    "taskId": "task-005",
++    "acceptanceCriteria": [
++      "All mock `AgentResult` factory functions/objects include `outputParsed: false` as a default",
++      "No TypeScript compilation errors in the helpers module",
++      "Existing tests that import mocks continue to pass without modification"
++    ]
++  },
++  "outputSchema": {
++    "type": "object",
++    "properties": {
++      "verdict": {
++        "type": "string",
++        "enum": [
++          "pass",
++          "needs-fixes"
++        ]
++      },
++      "issues": {
++        "type": "array",
++        "items": {
++          "type": "object",
++          "properties": {
++            "file": {
++              "type": "string"
++            },
++            "line": {
++              "type": "number"
++            },
++            "severity": {
++              "type": "string",
++              "enum": [
++                "error",
++                "warning",
++                "suggestion"
++              ]
++            },
++            "description": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "file",
++            "severity",
++            "description"
++          ],
++          "additionalProperties": false
++        }
++      },
++      "summary": {
++        "type": "string"
++      }
++    },
++    "required": [
++      "verdict",
++      "issues",
++      "summary"
++    ],
++    "additionalProperties": false,
++    "$schema": "http://json-schema.org/draft-07/schema#"
++  }
++}
+diff --git a/.cadre/issues/12/diff-task-005.patch b/.cadre/issues/12/diff-task-005.patch
+new file mode 100644
+index 0000000..e2b5e09
+--- /dev/null
++++ b/.cadre/issues/12/diff-task-005.patch
+@@ -0,0 +1,667 @@
++diff --git a/.cadre/issues/12/checkpoint.backup.json b/.cadre/issues/12/checkpoint.backup.json
++index 4795b5a..1a47e2d 100644
++--- a/.cadre/issues/12/checkpoint.backup.json
+++++ b/.cadre/issues/12/checkpoint.backup.json
++@@ -2,12 +2,14 @@
++   "issueNumber": 12,
++   "version": 1,
++   "currentPhase": 3,
++-  "currentTask": "task-001",
+++  "currentTask": null,
++   "completedPhases": [
++     1,
++     2
++   ],
++-  "completedTasks": [],
+++  "completedTasks": [
+++    "task-001"
+++  ],
++   "failedTasks": [],
++   "blockedTasks": [],
++   "phaseOutputs": {
++@@ -39,6 +41,6 @@
++   "branchName": "cadre/issue-12",
++   "baseCommit": "0064e4ce6a0b77de3855cc122ab7b80adf1004a8",
++   "startedAt": "2026-02-24T10:30:12.383Z",
++-  "lastCheckpoint": "2026-02-24T10:34:32.722Z",
+++  "lastCheckpoint": "2026-02-24T10:40:23.037Z",
++   "resumeCount": 0
++ }
++diff --git a/.cadre/issues/12/checkpoint.json b/.cadre/issues/12/checkpoint.json
++index 1a47e2d..3b92ea5 100644
++--- a/.cadre/issues/12/checkpoint.json
+++++ b/.cadre/issues/12/checkpoint.json
++@@ -2,7 +2,7 @@
++   "issueNumber": 12,
++   "version": 1,
++   "currentPhase": 3,
++-  "currentTask": null,
+++  "currentTask": "task-005",
++   "completedPhases": [
++     1,
++     2
++@@ -41,6 +41,6 @@
++   "branchName": "cadre/issue-12",
++   "baseCommit": "0064e4ce6a0b77de3855cc122ab7b80adf1004a8",
++   "startedAt": "2026-02-24T10:30:12.383Z",
++-  "lastCheckpoint": "2026-02-24T10:40:23.037Z",
+++  "lastCheckpoint": "2026-02-24T10:40:23.140Z",
++   "resumeCount": 0
++ }
++diff --git a/.cadre/issues/12/contexts/code-writer-task-002-1771929623141.json b/.cadre/issues/12/contexts/code-writer-task-002-1771929623141.json
++new file mode 100644
++index 0000000..f3cd482
++--- /dev/null
+++++ b/.cadre/issues/12/contexts/code-writer-task-002-1771929623141.json
++@@ -0,0 +1,35 @@
+++{
+++  "agent": "code-writer",
+++  "issueNumber": 12,
+++  "projectName": "aamf",
+++  "repository": "jafreck/AAMF",
+++  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+++  "phase": 3,
+++  "taskId": "task-002",
+++  "config": {
+++    "commands": {
+++      "install": "cd runtime && npm install",
+++      "build": "cd runtime && npm run build",
+++      "test": "cd runtime && npm test"
+++    }
+++  },
+++  "inputFiles": [
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-002.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/src/agents/result-parser.ts"
+++  ],
+++  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+++  "payload": {
+++    "taskId": "task-002",
+++    "files": [
+++      "runtime/src/agents/result-parser.ts"
+++    ],
+++    "acceptanceCriteria": [
+++      "`AamfOutputBase` Zod schema is exported with fields: `status`, `agent`, `taskId`, `tokenUsage` (optional), `notes` (optional)",
+++      "Per-agent Zod schemas are exported for all 14 named agents",
+++      "`ResultParser.parseAamfOutput(stdout, schema)` static method is exported",
+++      "The method extracts the last fenced aamf-json block from stdout",
+++      "Returns `{ data, parsed: true }` on success and `{ parsed: false, error: string }` on missing block, malformed JSON, or schema validation failure",
+++      "When no aamf-json block is present, the error message clearly states 'missing aamf-json block'"
+++    ]
+++  }
+++}
++diff --git a/.cadre/issues/12/contexts/code-writer-task-005-1771929623141.json b/.cadre/issues/12/contexts/code-writer-task-005-1771929623141.json
++new file mode 100644
++index 0000000..cffec0a
++--- /dev/null
+++++ b/.cadre/issues/12/contexts/code-writer-task-005-1771929623141.json
++@@ -0,0 +1,32 @@
+++{
+++  "agent": "code-writer",
+++  "issueNumber": 12,
+++  "projectName": "aamf",
+++  "repository": "jafreck/AAMF",
+++  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+++  "phase": 3,
+++  "taskId": "task-005",
+++  "config": {
+++    "commands": {
+++      "install": "cd runtime && npm install",
+++      "build": "cd runtime && npm run build",
+++      "test": "cd runtime && npm test"
+++    }
+++  },
+++  "inputFiles": [
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-005.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/tests/helpers/mocks.ts"
+++  ],
+++  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+++  "payload": {
+++    "taskId": "task-005",
+++    "files": [
+++      "runtime/tests/helpers/mocks.ts"
+++    ],
+++    "acceptanceCriteria": [
+++      "All mock `AgentResult` factory functions/objects include `outputParsed: false` as a default",
+++      "No TypeScript compilation errors in the helpers module",
+++      "Existing tests that import mocks continue to pass without modification"
+++    ]
+++  }
+++}
++diff --git a/.cadre/issues/12/contexts/test-writer-task-002-1771929723003.json b/.cadre/issues/12/contexts/test-writer-task-002-1771929723003.json
++new file mode 100644
++index 0000000..0f975b8
++--- /dev/null
+++++ b/.cadre/issues/12/contexts/test-writer-task-002-1771929723003.json
++@@ -0,0 +1,35 @@
+++{
+++  "agent": "test-writer",
+++  "issueNumber": 12,
+++  "projectName": "aamf",
+++  "repository": "jafreck/AAMF",
+++  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+++  "phase": 3,
+++  "taskId": "task-002",
+++  "config": {
+++    "commands": {
+++      "install": "cd runtime && npm install",
+++      "build": "cd runtime && npm run build",
+++      "test": "cd runtime && npm test"
+++    }
+++  },
+++  "inputFiles": [
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/checkpoint.backup.json",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/checkpoint.json",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/progress.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/runtime/src/agents/result-parser.ts",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/code-writer-task-002-1771929623141.json",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/code-writer-task-005-1771929623141.json",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/test-writer-task-005-1771929655890.json",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-002.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-005.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks/task-002-result.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks/task-005-result.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-002.md"
+++  ],
+++  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+++  "payload": {
+++    "taskId": "task-002",
+++    "testFramework": "unknown"
+++  }
+++}
++diff --git a/.cadre/issues/12/contexts/test-writer-task-005-1771929655890.json b/.cadre/issues/12/contexts/test-writer-task-005-1771929655890.json
++new file mode 100644
++index 0000000..106f1ad
++--- /dev/null
+++++ b/.cadre/issues/12/contexts/test-writer-task-005-1771929655890.json
++@@ -0,0 +1,32 @@
+++{
+++  "agent": "test-writer",
+++  "issueNumber": 12,
+++  "projectName": "aamf",
+++  "repository": "jafreck/AAMF",
+++  "worktreePath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12",
+++  "phase": 3,
+++  "taskId": "task-005",
+++  "config": {
+++    "commands": {
+++      "install": "cd runtime && npm install",
+++      "build": "cd runtime && npm run build",
+++      "test": "cd runtime && npm test"
+++    }
+++  },
+++  "inputFiles": [
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/checkpoint.backup.json",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/checkpoint.json",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/progress.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/code-writer-task-002-1771929623141.json",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/contexts/code-writer-task-005-1771929623141.json",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-002.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-005.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks/task-005-result.md",
+++    "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/issues/12/task-task-005.md"
+++  ],
+++  "outputPath": "/Users/jacobfreck/.cadre/aamf/worktrees/issue-12/.cadre/tasks",
+++  "payload": {
+++    "taskId": "task-005",
+++    "testFramework": "unknown"
+++  }
+++}
++diff --git a/.cadre/issues/12/progress.md b/.cadre/issues/12/progress.md
++index da72955..8b4e11d 100644
++--- a/.cadre/issues/12/progress.md
+++++ b/.cadre/issues/12/progress.md
++@@ -1,9 +1,9 @@
++ # Issue #12: Enforce structured schematized output for all agents via `aamf-json` fenced blocks
++ 
++ ## Pipeline Status
++-- **Current Phase**: 2/5
+++- **Current Phase**: 3/5
++ - **Token Usage**: 0
++-- **Last Updated**: 2026-02-24T10:34:32.720Z
+++- **Last Updated**: 2026-02-24T10:40:23.140Z
++ 
++ ## Phases
++ 
++@@ -11,7 +11,7 @@
++ |---|-------|--------|----------|
++ | 1 | Analysis & Scouting | ✅ | 153.2s |
++ | 2 | Planning | ✅ | 105.3s |
++-| 3 | Implementation | ⏳ | — |
+++| 3 | Implementation | 🔄 | — |
++ | 4 | Integration Verification | ⏳ | — |
++ | 5 | PR Composition | ⏳ | — |
++ 
++@@ -24,6 +24,12 @@
++ - ⚠️ Task task-006: file does not exist: runtime/tests/aamf-output-schema.test.ts
++ 
++ 
+++## Implementation Tasks
+++
+++| Task | Name | Status |
+++|------|------|--------|
+++| task-001 | task-001 | ✅ completed |
+++
++ ## Event Log
++ 
++ - `10:30:12` Pipeline started (resume from phase 1)
++@@ -33,4 +39,7 @@
++ - `10:32:47` Phase 2 started: Planning
++ - `10:34:32` Phase 2 completed in 105329ms
++ - `10:34:32` Gate phase 2: passed with 1 warning(s)
+++- `10:34:32` Phase 3 started: Implementation
+++- `10:34:32` Task task-001 started: Extend AgentResult Interface
+++- `10:40:23` Task task-001 completed
++ 
++diff --git a/.cadre/issues/12/task-task-002.md b/.cadre/issues/12/task-task-002.md
++new file mode 100644
++index 0000000..cd9ed88
++--- /dev/null
+++++ b/.cadre/issues/12/task-task-002.md
++@@ -0,0 +1,13 @@
+++# Task: task-002 - Add AamfOutputBase Schema and parseAamfOutput to ResultParser
+++
+++**Description:** Define a common `AamfOutputBase` Zod schema and per-agent schemas extending it, then add a `parseAamfOutput(stdout, schema)` static method to `ResultParser` that extracts the last `aamf-json` fenced block and validates it against the provided schema.
+++**Files:** runtime/src/agents/result-parser.ts
+++**Dependencies:** task-001
+++**Complexity:** complex
+++**Acceptance Criteria:**
+++- `AamfOutputBase` Zod schema is exported with fields: `status`, `agent`, `taskId`, `tokenUsage` (optional), `notes` (optional)
+++- Per-agent Zod schemas are exported for all 14 named agents
+++- `ResultParser.parseAamfOutput(stdout, schema)` static method is exported
+++- The method extracts the last fenced aamf-json block from stdout
+++- Returns `{ data, parsed: true }` on success and `{ parsed: false, error: string }` on missing block, malformed JSON, or schema validation failure
+++- When no aamf-json block is present, the error message clearly states 'missing aamf-json block'
++\ No newline at end of file
++diff --git a/.cadre/issues/12/task-task-005.md b/.cadre/issues/12/task-task-005.md
++new file mode 100644
++index 0000000..7c4da8c
++--- /dev/null
+++++ b/.cadre/issues/12/task-task-005.md
++@@ -0,0 +1,10 @@
+++# Task: task-005 - Update Test Helpers and Mocks
+++
+++**Description:** Update `runtime/tests/helpers/mocks.ts` to include the new `outputParsed`, `structuredOutput`, and `parseError` fields on all mock `AgentResult` objects.
+++**Files:** runtime/tests/helpers/mocks.ts
+++**Dependencies:** task-001
+++**Complexity:** simple
+++**Acceptance Criteria:**
+++- All mock `AgentResult` factory functions/objects include `outputParsed: false` as a default
+++- No TypeScript compilation errors in the helpers module
+++- Existing tests that import mocks continue to pass without modification
++\ No newline at end of file
++diff --git a/.cadre/tasks/task-002-result.md b/.cadre/tasks/task-002-result.md
++new file mode 100644
++index 0000000..2ca2802
++--- /dev/null
+++++ b/.cadre/tasks/task-002-result.md
++@@ -0,0 +1,15 @@
+++# Task Result: task-002 - Add AamfOutputBase Schema and parseAamfOutput to ResultParser
+++
+++## Changes Made
+++- `runtime/src/agents/result-parser.ts`: Added `AamfOutputBase` Zod schema with `status`, `agent`, `taskId` (optional), `tokenUsage` (optional), and `notes` (optional) fields. Added 14 per-agent schemas (one per named agent) extending `AamfOutputBase` with a literal `agent` field. Added `ResultParser.parseAamfOutput(stdout, schema)` static method that extracts the last `aamf-json` fenced block from stdout, parses JSON, validates against the provided schema, and returns `{ data, parsed: true }` on success or `{ parsed: false, error }` on failure.
+++
+++## Files Modified
+++- runtime/src/agents/result-parser.ts
+++
+++## Files Created
+++- (none)
+++
+++## Notes
+++- `parseAamfOutput` uses the last `aamf-json` block (not the first) to allow agents to emit intermediate blocks and have the final one win.
+++- Missing block produces error: `'missing aamf-json block'` as required.
+++- All 232 existing tests continue to pass; build is clean.
++diff --git a/.cadre/tasks/task-005-result.md b/.cadre/tasks/task-005-result.md
++new file mode 100644
++index 0000000..ae98137
++--- /dev/null
+++++ b/.cadre/tasks/task-005-result.md
++@@ -0,0 +1,15 @@
+++# Task Result: task-005 - Update Test Helpers and Mocks
+++
+++## Changes Made
+++- `runtime/tests/helpers/mocks.ts`: No changes required — `outputParsed: false` was already present in the base `AgentResult` object inside `createMockLauncher`.
+++
+++## Files Modified
+++- (none)
+++
+++## Files Created
+++- (none)
+++
+++## Notes
+++- The `outputParsed: false` field was already added to `createMockLauncher`'s base object (line 31) in a prior change.
+++- The TypeScript build passes with no errors.
+++- All acceptance criteria are satisfied without any code modification.
++diff --git a/runtime/src/agents/result-parser.ts b/runtime/src/agents/result-parser.ts
++index 6c5d589..ce29b7c 100644
++--- a/runtime/src/agents/result-parser.ts
+++++ b/runtime/src/agents/result-parser.ts
++@@ -4,6 +4,42 @@ import { z } from 'zod';
++ import { MigrationTask } from './types.js';
++ import { fileExists, readJson } from '../util/fs.js';
++ 
+++// ─── AamfOutput Schemas ───────────────────────────────────────────────────────
+++
+++/**
+++ * Base Zod schema for structured output blocks emitted by AAMF agents.
+++ * Agents write a fenced ```aamf-json block to stdout with this shape.
+++ */
+++export const AamfOutputBase = z.object({
+++  status: z.enum(['completed', 'failed', 'needs-review']),
+++  agent: z.string().min(1),
+++  taskId: z.string().min(1).optional(),
+++  tokenUsage: z.object({
+++    prompt: z.number().int(),
+++    completion: z.number().int(),
+++    total: z.number().int(),
+++  }).optional(),
+++  notes: z.string().optional(),
+++});
+++
+++export type AamfOutputBaseType = z.infer<typeof AamfOutputBase>;
+++
+++/** Per-agent output schemas — each locks `agent` to its canonical name. */
+++export const MigrationOrchestratorOutput = AamfOutputBase.extend({ agent: z.literal('migration-orchestrator') });
+++export const ImpactAssessorOutput = AamfOutputBase.extend({ agent: z.literal('impact-assessor') });
+++export const KnowledgeBuilderOutput = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
+++export const LargeFileAnalyzerOutput = AamfOutputBase.extend({ agent: z.literal('large-file-analyzer') });
+++export const MigrationPlannerOutput = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
+++export const AdjudicatorOutput = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
+++export const CodeMigratorOutput = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
+++export const ParityVerifierOutput = AamfOutputBase.extend({ agent: z.literal('parity-verifier') });
+++export const TestWriterOutput = AamfOutputBase.extend({ agent: z.literal('test-writer') });
+++export const FailureRecoveryOutput = AamfOutputBase.extend({ agent: z.literal('failure-recovery') });
+++export const FinalParityCheckerOutput = AamfOutputBase.extend({ agent: z.literal('final-parity-checker') });
+++export const E2eTestCrafterOutput = AamfOutputBase.extend({ agent: z.literal('e2e-test-crafter') });
+++export const DocumentationWriterOutput = AamfOutputBase.extend({ agent: z.literal('documentation-writer') });
+++export const MigrationRunnerOutput = AamfOutputBase.extend({ agent: z.literal('migration-runner') });
+++
++ /**
++  * JSON schema for structured agent task results (sidecar `.result.json`).
++  */
++@@ -182,6 +218,45 @@ export class ResultParser {
++     }
++   }
++ 
+++  /**
+++   * Extract the last ```aamf-json fenced block from agent stdout and validate
+++   * it against the provided Zod schema.
+++   *
+++   * @param stdout - Raw agent stdout string.
+++   * @param schema - Zod schema to validate the parsed JSON against.
+++   * @returns `{ data, parsed: true }` on success, or `{ parsed: false, error }`.
+++   */
+++  static parseAamfOutput<T extends z.ZodTypeAny>(
+++    stdout: string,
+++    schema: T,
+++  ): { data: z.infer<T>; parsed: true } | { parsed: false; error: string } {
+++    // Find all ```aamf-json ... ``` blocks; use the last one.
+++    const blockRegex = /```aamf-json\r?\n([\s\S]*?)```/g;
+++    let lastMatch: RegExpExecArray | null = null;
+++    let match: RegExpExecArray | null;
+++    while ((match = blockRegex.exec(stdout)) !== null) {
+++      lastMatch = match;
+++    }
+++
+++    if (!lastMatch) {
+++      return { parsed: false, error: 'missing aamf-json block' };
+++    }
+++
+++    let raw: unknown;
+++    try {
+++      raw = JSON.parse(lastMatch[1]!.trim());
+++    } catch (err) {
+++      return { parsed: false, error: `malformed JSON in aamf-json block: ${String(err)}` };
+++    }
+++
+++    const result = schema.safeParse(raw);
+++    if (!result.success) {
+++      return { parsed: false, error: `schema validation failed: ${result.error.message}` };
+++    }
+++
+++    return { data: result.data, parsed: true };
+++  }
+++
++   /**
++    * Parse an individual task block into a {@link MigrationTask}, or `null`
++    * if the block does not contain a recognisable task header.
++diff --git a/runtime/tests/helpers/mocks.test.ts b/runtime/tests/helpers/mocks.test.ts
++new file mode 100644
++index 0000000..2c4e204
++--- /dev/null
+++++ b/runtime/tests/helpers/mocks.test.ts
++@@ -0,0 +1,204 @@
+++import { describe, it, expect, vi, beforeEach } from 'vitest';
+++import {
+++  createMockLauncher,
+++  createFailingLauncher,
+++  MockAgentLauncher,
+++  createMockConfig,
+++  makeTask,
+++} from './mocks.js';
+++import type { AgentInvocation } from '../../src/agents/types.js';
+++
+++function makeInvocation(overrides?: Partial<AgentInvocation>): AgentInvocation {
+++  return {
+++    agent: 'code-migrator',
+++    contextFile: '/tmp/context.json',
+++    progressDir: '/tmp/progress',
+++    taskId: 'task-001',
+++    ...overrides,
+++  };
+++}
+++
+++// ─── createMockLauncher ───────────────────────────────────────────────────────
+++
+++describe('createMockLauncher', () => {
+++  it('should return a successful AgentResult by default', async () => {
+++    const launcher = createMockLauncher();
+++    const inv = makeInvocation();
+++    const result = await launcher(inv);
+++    expect(result.success).toBe(true);
+++    expect(result.exitCode).toBe(0);
+++    expect(result.agent).toBe('code-migrator');
+++    expect(result.taskId).toBe('task-001');
+++  });
+++
+++  it('should include outputParsed: false by default', async () => {
+++    const launcher = createMockLauncher();
+++    const result = await launcher(makeInvocation());
+++    expect(result.outputParsed).toBe(false);
+++  });
+++
+++  it('should include outputFiles as empty array by default', async () => {
+++    const launcher = createMockLauncher();
+++    const result = await launcher(makeInvocation());
+++    expect(result.outputFiles).toEqual([]);
+++  });
+++
+++  it('should include tokenUsage by default', async () => {
+++    const launcher = createMockLauncher();
+++    const result = await launcher(makeInvocation());
+++    expect(result.tokenUsage).toBeDefined();
+++    expect(result.tokenUsage?.total).toBeGreaterThan(0);
+++  });
+++
+++  it('should apply per-agent object overrides', async () => {
+++    const launcher = createMockLauncher({
+++      'code-migrator': { outputParsed: true, structuredOutput: { key: 'val' } },
+++    });
+++    const result = await launcher(makeInvocation({ agent: 'code-migrator' }));
+++    expect(result.outputParsed).toBe(true);
+++    expect(result.structuredOutput).toEqual({ key: 'val' });
+++  });
+++
+++  it('should not apply overrides for non-matching agents', async () => {
+++    const launcher = createMockLauncher({
+++      'parity-verifier': { outputParsed: true },
+++    });
+++    const result = await launcher(makeInvocation({ agent: 'code-migrator' }));
+++    expect(result.outputParsed).toBe(false);
+++  });
+++
+++  it('should apply function overrides', async () => {
+++    const launcher = createMockLauncher((inv) => ({
+++      outputParsed: true,
+++      structuredOutput: { agent: inv.agent },
+++    }));
+++    const result = await launcher(makeInvocation({ agent: 'test-writer' }));
+++    expect(result.outputParsed).toBe(true);
+++    expect(result.structuredOutput?.['agent']).toBe('test-writer');
+++  });
+++
+++  it('should support setting outputParsed: true via function override', async () => {
+++    const launcher = createMockLauncher(() => ({
+++      outputParsed: true,
+++      structuredOutput: { status: 'done' },
+++    }));
+++    const result = await launcher(makeInvocation());
+++    expect(result.outputParsed).toBe(true);
+++    expect(result.structuredOutput).toEqual({ status: 'done' });
+++  });
+++
+++  it('should support setting parseError via function override', async () => {
+++    const launcher = createMockLauncher(() => ({
+++      outputParsed: false,
+++      parseError: 'missing aamf-json block',
+++    }));
+++    const result = await launcher(makeInvocation());
+++    expect(result.outputParsed).toBe(false);
+++    expect(result.parseError).toBe('missing aamf-json block');
+++  });
+++});
+++
+++// ─── createFailingLauncher ────────────────────────────────────────────────────
+++
+++describe('createFailingLauncher', () => {
+++  it('should return failure for listed agents', async () => {
+++    const launcher = createFailingLauncher(['code-migrator']);
+++    const result = await launcher(makeInvocation({ agent: 'code-migrator' }));
+++    expect(result.success).toBe(false);
+++    expect(result.exitCode).toBe(1);
+++    expect(result.error).toBe('Agent failed');
+++  });
+++
+++  it('should return success for non-listed agents', async () => {
+++    const launcher = createFailingLauncher(['parity-verifier']);
+++    const result = await launcher(makeInvocation({ agent: 'code-migrator' }));
+++    expect(result.success).toBe(true);
+++    expect(result.exitCode).toBe(0);
+++  });
+++
+++  it('should use a custom error message when provided', async () => {
+++    const launcher = createFailingLauncher(['test-writer'], 'Custom error');
+++    const result = await launcher(makeInvocation({ agent: 'test-writer' }));
+++    expect(result.error).toBe('Custom error');
+++  });
+++
+++  it('should preserve outputParsed: false for failed agents', async () => {
+++    const launcher = createFailingLauncher(['code-migrator']);
+++    const result = await launcher(makeInvocation({ agent: 'code-migrator' }));
+++    expect(result.outputParsed).toBe(false);
+++  });
+++});
+++
+++// ─── MockAgentLauncher ────────────────────────────────────────────────────────
+++
+++describe('MockAgentLauncher', () => {
+++  it('should track invocations', async () => {
+++    const fn = createMockLauncher();
+++    const mock = new MockAgentLauncher(fn);
+++    const inv = makeInvocation();
+++    await mock.launchAgent(inv);
+++    expect(mock.invocations).toHaveLength(1);
+++    expect(mock.invocations[0]).toBe(inv);
+++  });
+++
+++  it('should accumulate multiple invocations', async () => {
+++    const fn = createMockLauncher();
+++    const mock = new MockAgentLauncher(fn);
+++    await mock.launchAgent(makeInvocation({ agent: 'code-migrator' }));
+++    await mock.launchAgent(makeInvocation({ agent: 'test-writer' }));
+++    expect(mock.invocations).toHaveLength(2);
+++    expect(mock.invocations[1]?.agent).toBe('test-writer');
+++  });
+++
+++  it('should return the result from the underlying function', async () => {
+++    const fn = createMockLauncher(() => ({ outputParsed: true }));
+++    const mock = new MockAgentLauncher(fn);
+++    const result = await mock.launchAgent(makeInvocation());
+++    expect(result.outputParsed).toBe(true);
+++  });
+++
+++  it('getResolvedPath should return undefined', () => {
+++    const mock = new MockAgentLauncher(createMockLauncher());
+++    expect(mock.getResolvedPath()).toBeUndefined();
+++  });
+++});
+++
+++// ─── createMockConfig ─────────────────────────────────────────────────────────
+++
+++describe('createMockConfig', () => {
+++  it('should return a valid MigrationConfig', () => {
+++    const config = createMockConfig();
+++    expect(config.projectName).toBe('test-project');
+++    expect(config.source.language).toBe('python');
+++    expect(config.target.language).toBe('typescript');
+++    expect(config.options.maxParallelAgents).toBeGreaterThan(0);
+++    expect(config.options.dryRun).toBe(false);
+++  });
+++
+++  it('should apply overrides', () => {
+++    const config = createMockConfig({ projectName: 'my-project' });
+++    expect(config.projectName).toBe('my-project');
+++  });
+++});
+++
+++// ─── makeTask ─────────────────────────────────────────────────────────────────
+++
+++describe('makeTask', () => {
+++  it('should create a MigrationTask with the given id', () => {
+++    const task = makeTask('task-042');
+++    expect(task.id).toBe('task-042');
+++    expect(task.name).toBe('Task task-042');
+++    expect(task.sourceFiles).toContain('src/task-042.py');
+++    expect(task.targetFiles).toContain('src/task-042.ts');
+++  });
+++
+++  it('should default to no dependencies', () => {
+++    const task = makeTask('task-001');
+++    expect(task.dependencies).toEqual([]);
+++  });
+++
+++  it('should accept specified dependencies', () => {
+++    const task = makeTask('task-002', ['task-001']);
+++    expect(task.dependencies).toEqual(['task-001']);
+++  });
+++});
++diff --git a/runtime/tests/result-parser.test.ts b/runtime/tests/result-parser.test.ts
++index d926142..7f66110 100644
++--- a/runtime/tests/result-parser.test.ts
+++++ b/runtime/tests/result-parser.test.ts
++@@ -2,7 +2,25 @@ import { describe, it, expect, vi } from 'vitest';
++ import { readFile } from 'node:fs/promises';
++ import { join } from 'node:path';
++ import { fileURLToPath } from 'node:url';
++-import { ResultParser, TaskResultSchema } from '../src/agents/result-parser.js';
+++import {
+++  ResultParser,
+++  TaskResultSchema,
+++  AamfOutputBase,
+++  MigrationOrchestratorOutput,
+++  ImpactAssessorOutput,
+++  KnowledgeBuilderOutput,
+++  LargeFileAnalyzerOutput,
+++  MigrationPlannerOutput,
+++  AdjudicatorOutput,
+++  CodeMigratorOutput,
+++  ParityVerifierOutput,
+++  TestWriterOutput,
+++  FailureRecoveryOutput,
+++  FinalParityCheckerOutput,
+++  E2eTestCrafterOutput,
+++  DocumentationWriterOutput,
+++  MigrationRunnerOutput,
+++} from '../src/agents/result-parser.js';
++ 
++ const __dirname = fileURLToPath(new URL('.', import.meta.url));
++ 
+diff --git a/runtime/tests/result-parser.test.ts b/runtime/tests/result-parser.test.ts
+index 7f66110..1237444 100644
+--- a/runtime/tests/result-parser.test.ts
++++ b/runtime/tests/result-parser.test.ts
+@@ -225,6 +225,216 @@ Just notes.
+     });
+   });
+ 
++  describe('AamfOutputBase schema', () => {
++    it('should accept a minimal valid output', () => {
++      const result = AamfOutputBase.parse({ status: 'completed', agent: 'code-migrator' });
++      expect(result.status).toBe('completed');
++      expect(result.agent).toBe('code-migrator');
++      expect(result.taskId).toBeUndefined();
++      expect(result.tokenUsage).toBeUndefined();
++      expect(result.notes).toBeUndefined();
++    });
++
++    it('should accept all optional fields', () => {
++      const result = AamfOutputBase.parse({
++        status: 'needs-review',
++        agent: 'parity-verifier',
++        taskId: 'task-007',
++        tokenUsage: { prompt: 100, completion: 50, total: 150 },
++        notes: 'Some note',
++      });
++      expect(result.taskId).toBe('task-007');
++      expect(result.tokenUsage?.total).toBe(150);
++      expect(result.notes).toBe('Some note');
++    });
++
++    it('should reject invalid status values', () => {
++      expect(() => AamfOutputBase.parse({ status: 'unknown', agent: 'x' })).toThrow();
++    });
++
++    it('should reject empty agent string', () => {
++      expect(() => AamfOutputBase.parse({ status: 'completed', agent: '' })).toThrow();
++    });
++
++    it('should reject non-integer tokenUsage fields', () => {
++      expect(() =>
++        AamfOutputBase.parse({
++          status: 'completed',
++          agent: 'x',
++          tokenUsage: { prompt: 1.5, completion: 0, total: 1 },
++        }),
++      ).toThrow();
++    });
++
++    it('should accept all valid status enum values', () => {
++      for (const status of ['completed', 'failed', 'needs-review'] as const) {
++        expect(() => AamfOutputBase.parse({ status, agent: 'a' })).not.toThrow();
++      }
++    });
++  });
++
++  describe('per-agent output schemas', () => {
++    it('should accept a matching agent literal for MigrationOrchestratorOutput', () => {
++      const result = MigrationOrchestratorOutput.parse({ status: 'completed', agent: 'migration-orchestrator' });
++      expect(result.agent).toBe('migration-orchestrator');
++    });
++
++    it('should reject a wrong agent literal for MigrationOrchestratorOutput', () => {
++      expect(() =>
++        MigrationOrchestratorOutput.parse({ status: 'completed', agent: 'code-migrator' }),
++      ).toThrow();
++    });
++
++    it('should validate ImpactAssessorOutput', () => {
++      expect(() => ImpactAssessorOutput.parse({ status: 'completed', agent: 'impact-assessor' })).not.toThrow();
++    });
++
++    it('should validate KnowledgeBuilderOutput', () => {
++      expect(() => KnowledgeBuilderOutput.parse({ status: 'completed', agent: 'knowledge-builder' })).not.toThrow();
++    });
++
++    it('should validate LargeFileAnalyzerOutput', () => {
++      expect(() => LargeFileAnalyzerOutput.parse({ status: 'completed', agent: 'large-file-analyzer' })).not.toThrow();
++    });
++
++    it('should validate MigrationPlannerOutput', () => {
++      expect(() => MigrationPlannerOutput.parse({ status: 'completed', agent: 'migration-planner' })).not.toThrow();
++    });
++
++    it('should validate AdjudicatorOutput', () => {
++      expect(() => AdjudicatorOutput.parse({ status: 'completed', agent: 'adjudicator' })).not.toThrow();
++    });
++
++    it('should validate CodeMigratorOutput', () => {
++      expect(() => CodeMigratorOutput.parse({ status: 'completed', agent: 'code-migrator' })).not.toThrow();
++    });
++
++    it('should validate ParityVerifierOutput', () => {
++      expect(() => ParityVerifierOutput.parse({ status: 'completed', agent: 'parity-verifier' })).not.toThrow();
++    });
++
++    it('should validate TestWriterOutput', () => {
++      expect(() => TestWriterOutput.parse({ status: 'completed', agent: 'test-writer' })).not.toThrow();
++    });
++
++    it('should validate FailureRecoveryOutput', () => {
++      expect(() => FailureRecoveryOutput.parse({ status: 'completed', agent: 'failure-recovery' })).not.toThrow();
++    });
++
++    it('should validate FinalParityCheckerOutput', () => {
++      expect(() => FinalParityCheckerOutput.parse({ status: 'completed', agent: 'final-parity-checker' })).not.toThrow();
++    });
++
++    it('should validate E2eTestCrafterOutput', () => {
++      expect(() => E2eTestCrafterOutput.parse({ status: 'completed', agent: 'e2e-test-crafter' })).not.toThrow();
++    });
++
++    it('should validate DocumentationWriterOutput', () => {
++      expect(() => DocumentationWriterOutput.parse({ status: 'completed', agent: 'documentation-writer' })).not.toThrow();
++    });
++
++    it('should validate MigrationRunnerOutput', () => {
++      expect(() => MigrationRunnerOutput.parse({ status: 'completed', agent: 'migration-runner' })).not.toThrow();
++    });
++  });
++
++  describe('parseAamfOutput', () => {
++    it('should parse a valid aamf-json block and return data', () => {
++      const stdout = `
++Some output text.
++\`\`\`aamf-json
++{"status":"completed","agent":"code-migrator"}
++\`\`\`
++`;
++      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput);
++      expect(result.parsed).toBe(true);
++      if (result.parsed) {
++        expect(result.data.status).toBe('completed');
++        expect(result.data.agent).toBe('code-migrator');
++      }
++    });
++
++    it('should return the last aamf-json block when multiple are present', () => {
++      const stdout = `
++\`\`\`aamf-json
++{"status":"failed","agent":"code-migrator"}
++\`\`\`
++intermediate text
++\`\`\`aamf-json
++{"status":"completed","agent":"code-migrator"}
++\`\`\`
++`;
++      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput);
++      expect(result.parsed).toBe(true);
++      if (result.parsed) {
++        expect(result.data.status).toBe('completed');
++      }
++    });
++
++    it('should return parsed: false with error "missing aamf-json block" when no block present', () => {
++      const result = ResultParser.parseAamfOutput('no fenced blocks here', AamfOutputBase);
++      expect(result.parsed).toBe(false);
++      if (!result.parsed) {
++        expect(result.error).toContain('missing aamf-json block');
++      }
++    });
++
++    it('should return parsed: false for malformed JSON', () => {
++      const stdout = '```aamf-json\n{not valid json}\n```';
++      const result = ResultParser.parseAamfOutput(stdout, AamfOutputBase);
++      expect(result.parsed).toBe(false);
++      if (!result.parsed) {
++        expect(result.error).toContain('malformed JSON');
++      }
++    });
++
++    it('should return parsed: false for schema validation failure', () => {
++      const stdout = '```aamf-json\n{"status":"invalid-status","agent":"code-migrator"}\n```';
++      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput);
++      expect(result.parsed).toBe(false);
++      if (!result.parsed) {
++        expect(result.error).toContain('schema validation failed');
++      }
++    });
++
++    it('should return parsed: false when agent literal does not match schema', () => {
++      const stdout = '```aamf-json\n{"status":"completed","agent":"impact-assessor"}\n```';
++      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput);
++      expect(result.parsed).toBe(false);
++      if (!result.parsed) {
++        expect(result.error).toContain('schema validation failed');
++      }
++    });
++
++    it('should parse optional fields when provided', () => {
++      const stdout = `\`\`\`aamf-json
++{"status":"completed","agent":"test-writer","taskId":"task-003","tokenUsage":{"prompt":100,"completion":50,"total":150},"notes":"All good"}
++\`\`\``;
++      const result = ResultParser.parseAamfOutput(stdout, TestWriterOutput);
++      expect(result.parsed).toBe(true);
++      if (result.parsed) {
++        expect(result.data.taskId).toBe('task-003');
++        expect(result.data.tokenUsage?.total).toBe(150);
++        expect(result.data.notes).toBe('All good');
++      }
++    });
++
++    it('should handle CRLF line endings in the fenced block', () => {
++      const stdout = '```aamf-json\r\n{"status":"completed","agent":"adjudicator"}\r\n```';
++      const result = ResultParser.parseAamfOutput(stdout, AdjudicatorOutput);
++      expect(result.parsed).toBe(true);
++    });
++
++    it('should work with the base AamfOutputBase schema', () => {
++      const stdout = '```aamf-json\n{"status":"needs-review","agent":"any-agent"}\n```';
++      const result = ResultParser.parseAamfOutput(stdout, AamfOutputBase);
++      expect(result.parsed).toBe(true);
++      if (result.parsed) {
++        expect(result.data.status).toBe('needs-review');
++      }
++    });
++  });
++
+   describe('parseTokenUsage', () => {
+     it('should parse prompt and completion tokens', () => {
+       const output = 'prompt_tokens: 1500\ncompletion_tokens: 800\ntotal_tokens: 2300';
