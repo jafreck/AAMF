@@ -217,6 +217,7 @@ export class AgentLauncher {
         outputFiles,
         duration,
         tokenUsage,
+        outputParsed: false,
         error: result.killed
           ? `Agent timed out after ${timeout}ms`
           : result.exitCode !== 0
@@ -235,6 +236,7 @@ export class AgentLauncher {
         success: false,
         outputFiles: [],
         duration,
+        outputParsed: false,
         error: err instanceof Error ? err.message : String(err),
       };
     }

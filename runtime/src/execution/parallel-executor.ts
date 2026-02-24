@@ -39,6 +39,7 @@ export class ParallelExecutor {
             success: false,
             outputFiles: [],
             duration: 0,
+            outputParsed: false,
             error,
           } satisfies AgentResult;
         }
