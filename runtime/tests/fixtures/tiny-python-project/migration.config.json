@@ -1,7 +1,7 @@
 {
   "projectName": "tiny-calc-migration",
   "source": {
-    "path": "./tests/fixtures/tiny-python-project",
+    "path": ".",
     "language": "python",
     "entryPoints": ["main.py"],
     "excludePatterns": ["__pycache__"]
