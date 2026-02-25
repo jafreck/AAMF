@@ -584,10 +584,7 @@ Some vague finding with no structured fields.
         const reportPath = join(dir, 'review-report.md');
         await writeFile(reportPath, reportContent, 'utf-8');
         const entries = await ResultParser.parseIdiomaticReport(reportPath);
-        expect(entries).toHaveLength(1);
-        expect(entries[0]?.file).toBe('');
-        expect(entries[0]?.issue).toBe('');
-        expect(entries[0]?.suggestion).toBe('');
+        expect(entries).toHaveLength(0);
       } finally {
         await rm(dir, { recursive: true, force: true });
       }

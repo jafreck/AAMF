@@ -1041,11 +1041,11 @@ export class MigrationOrchestrator {
       }
 
       // Parse idiomatic issues
+      const reportPath = join(this.progressDir, 'idiomatic-review-report.md');
       let issues: Array<{ file: string; issue: string; suggestion: string }>;
       if (reviewResult.outputParsed && Array.isArray(reviewResult.structuredOutput?.['issues'])) {
         issues = reviewResult.structuredOutput['issues'] as Array<{ file: string; issue: string; suggestion: string }>;
       } else {
-        const reportPath = join(this.progressDir, 'idiomatic-review-report.md');
         this.logger.warn('Idiomatic-reviewer structured output unavailable — falling back to ResultParser.parseIdiomaticReport');
         issues = await ResultParser.parseIdiomaticReport(reportPath);
       }
@@ -1056,18 +1056,23 @@ export class MigrationOrchestrator {
         this.logger.info(
           `Idiomatic review found ${issues.length} issue(s), refactor iteration ${iteration + 1}`,
         );
-        const refactorCtx = await this.contextBuilder.buildContext('idiomatic-refactorer', 8);
-        const refactorInv = this.buildInvocation('idiomatic-refactorer', refactorCtx, 8);
-        const refactorResult = await this.launcher.launchAgent(refactorInv);
-        this.recordTokens(refactorResult, 8);
-        if (!refactorResult.success) {
-          return {
-            phase: 8,
-            name: 'Idiomatic Refactor',
-            success: false,
-            outputPath: join(this.progressDir, 'idiomatic-review-report.md'),
-            duration: Date.now() - start,
-          };
+        for (const issue of issues) {
+          const refactorCtx = await this.contextBuilder.buildContext('idiomatic-refactorer', 8, undefined, {
+            targetFile: issue.file,
+            idiomaticReport: reportPath,
+          });
+          const refactorInv = this.buildInvocation('idiomatic-refactorer', refactorCtx, 8);
+          const refactorResult = await this.launcher.launchAgent(refactorInv);
+          this.recordTokens(refactorResult, 8);
+          if (!refactorResult.success) {
+            return {
+              phase: 8,
+              name: 'Idiomatic Refactor',
+              success: false,
+              outputPath: reportPath,
+              duration: Date.now() - start,
+            };
+          }
         }
       } else {
         this.logger.warn('Max idiomatic refactor iterations reached, proceeding with remaining issues');

@@ -436,10 +436,12 @@ export class ResultParser {
     const issueBlocks = content.split(/^#{2,3}\s+(?:Issue|Finding)/mi);
     for (const block of issueBlocks.slice(1)) {
       const fileMatch = block.match(/file:?\s*[`"]?([^\n`"]+)/i);
+      const file = fileMatch?.[1]?.trim() ?? '';
+      if (!file) continue;
       const issueMatch = block.match(/issue:?\s*[`"]?([^\n`"]+)/i);
       const suggestionMatch = block.match(/suggestion:?\s*[`"]?([^\n`"]+)/i);
       entries.push({
-        file: fileMatch?.[1]?.trim() ?? '',
+        file,
         issue: issueMatch?.[1]?.trim() ?? '',
         suggestion: suggestionMatch?.[1]?.trim() ?? '',
       });
