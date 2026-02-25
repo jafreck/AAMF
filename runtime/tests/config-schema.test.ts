@@ -22,6 +22,7 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.continueOnBlocked).toBe(true);
     expect(result.options.maxBlockedTasks).toBe(0);
     expect(result.options.maxInfraRetries).toBe(3);
+    expect(result.options.avgTokensPerTask).toBe(5000);
     expect(result.copilot.cliCommand).toBe('copilot');
     expect(result.copilot.timeout).toBe(300000);
   });
@@ -189,6 +190,19 @@ describe('MigrationConfigSchema', () => {
     it('should leave phaseTimeouts undefined when omitted', () => {
       const result = MigrationConfigSchema.parse(validConfig);
       expect(result.copilot.phaseTimeouts).toBeUndefined();
+    });
+
+    it('should default avgTokensPerTask to 5000 when omitted', () => {
+      const result = MigrationConfigSchema.parse(validConfig);
+      expect(result.options.avgTokensPerTask).toBe(5000);
+    });
+
+    it('should accept a custom avgTokensPerTask value', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { avgTokensPerTask: 8000 },
+      });
+      expect(result.options.avgTokensPerTask).toBe(8000);
     });
   });
 });
