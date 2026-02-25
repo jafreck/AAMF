@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { openDb } from '../../src/indexer/db.js';
+import { openDb, setKbMeta, getKbMeta, createVec0Tables } from '../../src/indexer/db.js';
 
 describe('openDb', () => {
   let tempDir: string;
@@ -117,6 +117,88 @@ describe('openDb', () => {
       }
     ).c;
     expect(count).toBe(0);
+    db.close();
+  });
+});
+
+describe('setKbMeta / getKbMeta', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'aamf-meta-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('should write and read a key-value pair', () => {
+    const db = openDb(join(tempDir, 'meta.db'));
+    setKbMeta(db, 'version', '42');
+    expect(getKbMeta(db, 'version')).toBe('42');
+    db.close();
+  });
+
+  it('should return undefined for a missing key', () => {
+    const db = openDb(join(tempDir, 'meta.db'));
+    expect(getKbMeta(db, 'nonexistent')).toBeUndefined();
+    db.close();
+  });
+
+  it('should overwrite an existing key with INSERT OR REPLACE', () => {
+    const db = openDb(join(tempDir, 'meta.db'));
+    setKbMeta(db, 'model', 'modelA');
+    setKbMeta(db, 'model', 'modelB');
+    expect(getKbMeta(db, 'model')).toBe('modelB');
+    db.close();
+  });
+
+  it('should store multiple independent keys', () => {
+    const db = openDb(join(tempDir, 'meta.db'));
+    setKbMeta(db, 'key1', 'val1');
+    setKbMeta(db, 'key2', 'val2');
+    expect(getKbMeta(db, 'key1')).toBe('val1');
+    expect(getKbMeta(db, 'key2')).toBe('val2');
+    db.close();
+  });
+});
+
+describe('createVec0Tables', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'aamf-vec0-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('should create symbol_embeddings and symbol_semantic_embeddings tables', () => {
+    const db = openDb(join(tempDir, 'vec.db'));
+    createVec0Tables(db, 1024);
+
+    const tables = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`)
+      .all()
+      .map((r: any) => r.name as string);
+
+    expect(tables).toContain('symbol_embeddings');
+    expect(tables).toContain('symbol_semantic_embeddings');
+    db.close();
+  });
+
+  it('should store embedding_dims in kb_meta', () => {
+    const db = openDb(join(tempDir, 'vec.db'));
+    createVec0Tables(db, 2560);
+    expect(getKbMeta(db, 'embedding_dims')).toBe('2560');
+    db.close();
+  });
+
+  it('should be idempotent — calling twice does not throw', () => {
+    const db = openDb(join(tempDir, 'vec.db'));
+    createVec0Tables(db, 1024);
+    expect(() => createVec0Tables(db, 1024)).not.toThrow();
     db.close();
   });
 });

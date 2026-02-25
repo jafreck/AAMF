@@ -210,7 +210,7 @@ describe('IndexBuilder', () => {
 
     if (!sym) return; // No symbols extracted — grammar unavailable
 
-    builder.ingestSummary(sym.id, 'A test summary', 'test-model');
+    await builder.ingestSummary(sym.id, 'A test summary', 'test-model');
 
     const db2 = openDb(dbPath);
     try {
