@@ -56,8 +56,8 @@ jobs:
             const release = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag_name: context.ref_name,
-              name: context.ref_name,
+              tag_name: context.ref.replace('refs/tags/', ''),
+              name: context.ref.replace('refs/tags/', ''),
               generate_release_notes: true,
             });
             return release.data.upload_url;
@@ -74,7 +74,7 @@ jobs:
               release_id: (await github.rest.repos.getReleaseByTag({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                tag: context.ref_name,
+                tag: context.ref.replace('refs/tags/', ''),
               })).data.id,
               name: 'runtime-dist.tar.gz',
               data: fs.readFileSync('runtime-dist.tar.gz'),
