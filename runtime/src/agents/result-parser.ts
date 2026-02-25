@@ -376,7 +376,12 @@ export class ResultParser {
    *
    * Recognises formats such as `prompt_tokens: 1234`, `completion-tokens: 567`,
    * and `total tokens: 1801`. When only a total is available the split is
-   * estimated as 60 % prompt / 40 % completion.
+   * estimated as 80 % prompt / 20 % completion (consistent with
+   * {@link CostEstimator.estimateFromTotal}).
+   *
+   * **Note:** Regex-based token extraction from free-form text is unreliable.
+   * Agents should emit structured token data inside their `aamf-json` block
+   * under the `tokenUsage` field for accurate accounting.
    *
    * @param output - Raw agent output text.
    * @returns Parsed token counts, or `undefined` if no usage data is found.
@@ -400,7 +405,7 @@ export class ResultParser {
 
     if (totalMatch) {
       const total = parseInt(totalMatch[1]!, 10);
-      return { prompt: Math.round(total * 0.6), completion: Math.round(total * 0.4), total };
+      return { prompt: Math.round(total * 0.8), completion: total - Math.round(total * 0.8), total };
     }
 
     return undefined;
