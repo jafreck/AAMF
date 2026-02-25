@@ -501,4 +501,65 @@ describe('AgentLauncher', () => {
       expect(result.parseError).toBeUndefined();
     });
   });
+
+  describe('token tracking', () => {
+    it('should have non-zero tokenUsage when agent emits tokenUsage in aamf-json block', async () => {
+      const structured = JSON.stringify({
+        status: 'completed',
+        agent: 'code-migrator',
+        tokenUsage: { prompt: 500, completion: 200, total: 700 },
+      });
+      const script = await createScript('token-aamf-nonzero.sh', [
+        `printf '\`\`\`aamf-json\\n${structured}\\n\`\`\`\\n'`,
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('token-aamf-nonzero');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'token-aamf-nonzero',
+      });
+
+      expect(result.tokenUsage).toBeDefined();
+      expect(result.tokenUsage!.total).toBeGreaterThan(0);
+    });
+
+    it('should have non-zero tokenUsage via estimation fallback when no token data is emitted', async () => {
+      const script = await createScript('no-tokens.sh', 'echo "no token data here"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('no-tokens-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'no-tokens-001',
+      });
+
+      expect(result.tokenUsage).toBeDefined();
+      expect(result.tokenUsage!.total).toBeGreaterThan(0);
+    });
+
+    it('should have non-zero tokenUsage on error/catch path (missing binary)', async () => {
+      const launcher = makeLauncher('__aamf_no_such_binary_token_test__');
+      const { contextFile, progressDir } = await prepareInvocation('catch-token-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'catch-token-001',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.tokenUsage).toBeDefined();
+      expect(result.tokenUsage!.total).toBeGreaterThan(0);
+    });
+  });
 });

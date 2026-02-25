@@ -92,8 +92,9 @@ export class CostEstimator {
   }
 
   /**
-   * Estimate cost from a single total-token count by assuming a
-   * 60 % prompt / 40 % completion split.
+   * Estimate cost from a single total-token count by assuming an
+   * 80 % prompt / 20 % completion split (reflecting agentic workloads
+   * with large context windows).
    *
    * @param model - Model identifier.
    * @param totalTokens - Combined token count.
@@ -103,7 +104,7 @@ export class CostEstimator {
     model: string,
     totalTokens: number,
   ): { input: number; output: number; total: number } {
-    const promptTokens = Math.round(totalTokens * 0.6);
+    const promptTokens = Math.round(totalTokens * 0.8);
     const completionTokens = totalTokens - promptTokens;
     return this.estimate(model, promptTokens, completionTokens);
   }

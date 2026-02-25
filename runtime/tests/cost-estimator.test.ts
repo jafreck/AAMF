@@ -65,10 +65,10 @@ describe('CostEstimator', () => {
     expect(result.output).toBe(99.00);
   });
 
-  it('should split 60/40 with estimateFromTotal', () => {
+  it('should split 80/20 with estimateFromTotal', () => {
     const result = estimator.estimateFromTotal('gpt-4.1', 1000);
-    // 600 prompt, 400 completion
-    const promptTokens = Math.round(1000 * 0.6);
+    // 800 prompt, 200 completion
+    const promptTokens = Math.round(1000 * 0.8);
     const completionTokens = 1000 - promptTokens;
     const expected = estimator.estimate('gpt-4.1', promptTokens, completionTokens);
     expect(result.input).toBeCloseTo(expected.input, 10);

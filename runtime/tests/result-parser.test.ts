@@ -482,6 +482,9 @@ intermediate text
       const usage = ResultParser.parseTokenUsage(output);
       expect(usage).toBeDefined();
       expect(usage?.total).toBe(5000);
+      // 80% prompt, 20% completion — consistent with CostEstimator.estimateFromTotal
+      expect(usage?.prompt).toBe(4000);
+      expect(usage?.completion).toBe(1000);
     });
 
     it('should return undefined for no token info', () => {
