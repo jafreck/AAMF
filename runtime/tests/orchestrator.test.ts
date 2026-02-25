@@ -961,6 +961,61 @@ describe('MigrationOrchestrator', () => {
     });
   });
 
+  // ─── Cumulative Duration ───────────────────────────────────────────
+
+  describe('Cumulative Duration', () => {
+    it('should set cumulativeDurationMs to totalDuration on a fresh run', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      const result = await orchestrator.run();
+
+      expect(result.cumulativeDuration).toBe(result.totalDuration);
+      expect(checkpoint.getState().cumulativeDurationMs).toBe(result.totalDuration);
+    });
+
+    it('should accumulate cumulativeDurationMs across two simulated runs', async () => {
+      const launcherFn = createMockLauncher();
+      const config = createMockConfig();
+      const logger = createSilentLogger(tempDir);
+      const progressDir = join(tempDir, '.aamf', 'migration', config.projectName);
+      await ensureDir(progressDir);
+      await writeMigrationPlan(progressDir);
+
+      // First run
+      const checkpoint1 = new CheckpointManager(progressDir, logger);
+      await checkpoint1.load(config.projectName);
+      const progress1 = new ProgressWriter(join(progressDir, 'progress.md'));
+      await progress1.initialize(config);
+      const orch1 = new MigrationOrchestrator(config, checkpoint1, new MockAgentLauncher(launcherFn) as any, progress1, logger, tempDir);
+      const result1 = await orch1.run();
+
+      expect(result1.cumulativeDuration).toBe(result1.totalDuration);
+      const afterFirst = checkpoint1.getState().cumulativeDurationMs;
+      expect(afterFirst).toBe(result1.totalDuration);
+
+      // Second run (resume) — simulate by loading the existing checkpoint
+      const config2 = createMockConfig({ options: { resume: true } });
+      const checkpoint2 = new CheckpointManager(progressDir, logger);
+      await checkpoint2.load(config2.projectName);
+      // Reset completed phases so there's work to do
+      const state = checkpoint2.getState();
+      state.completedPhases = [];
+      state.currentPhase = 1;
+      state.cumulativeDurationMs = afterFirst;
+      await checkpoint2.save(state);
+
+      const progress2 = new ProgressWriter(join(progressDir, 'progress.md'));
+      await progress2.initialize(config2);
+      const orch2 = new MigrationOrchestrator(config2, checkpoint2, new MockAgentLauncher(launcherFn) as any, progress2, logger, tempDir);
+      const result2 = await orch2.run();
+
+      expect(result2.cumulativeDuration).toBe(afterFirst + result2.totalDuration);
+      expect(checkpoint2.getState().cumulativeDurationMs).toBe(afterFirst + result2.totalDuration);
+    });
+  });
+
   // ─── MigrationError ────────────────────────────────────────────────
 
   describe('MigrationError', () => {

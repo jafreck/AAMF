@@ -236,11 +236,17 @@ export class MigrationOrchestrator {
     const totalDuration = Date.now() - startTime;
     const finalState = this.checkpoint.getState();
 
+    // Accumulate cumulativeDurationMs across all resume runs
+    const cumulativeDurationMs = (finalState.cumulativeDurationMs ?? 0) + totalDuration;
+    finalState.cumulativeDurationMs = cumulativeDurationMs;
+    await this.checkpoint.save(finalState);
+
     const migrationResult: MigrationResult = {
       success: !aborted && phaseResults.every((r) => r.success),
       projectName: this.config.projectName,
       phases: phaseResults,
       totalDuration,
+      cumulativeDuration: cumulativeDurationMs,
       tokenUsage: this.tokenTracker.toCheckpointData(),
       failedTasks: finalState.failedTasks.map((f) => f.taskId),
       blockedTasks: finalState.blockedTasks,
@@ -252,6 +258,7 @@ export class MigrationOrchestrator {
       success: migrationResult.success,
       duration: totalDuration,
     });
+    this.progress.setCumulativeDuration(cumulativeDurationMs);
     await this.progress.finalize(migrationResult);
     return migrationResult;
   }

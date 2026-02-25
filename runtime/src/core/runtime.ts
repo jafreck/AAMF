@@ -170,6 +170,9 @@ export class MigrationRuntime {
     console.log('='.repeat(60));
     console.log(`Project: ${result.projectName}`);
     console.log(`Duration: ${this.formatDuration(result.totalDuration)}`);
+    if (result.cumulativeDuration !== undefined && result.cumulativeDuration > result.totalDuration) {
+      console.log(`Total (all runs): ${this.formatDuration(result.cumulativeDuration)}`);
+    }
     console.log(`Token Usage: ${result.tokenUsage.total.toLocaleString()}`);
     
     const model = this.config.copilot.model ?? 'claude-sonnet-4';
