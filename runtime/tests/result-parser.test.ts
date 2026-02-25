@@ -492,4 +492,102 @@ intermediate text
       expect(usage).toBeUndefined();
     });
   });
+
+  describe('parseIdiomaticReport', () => {
+    it('should return an empty array for a non-existent file', async () => {
+      const entries = await ResultParser.parseIdiomaticReport('/nonexistent/path/report.md');
+      expect(entries).toEqual([]);
+    });
+
+    it('should return an empty array for a report with no Issue sections', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-test-'));
+      try {
+        const reportPath = join(dir, 'empty-report.md');
+        await writeFile(reportPath, '# Idiomatic Review Report\n\nNo issues found.\n', 'utf-8');
+        const entries = await ResultParser.parseIdiomaticReport(reportPath);
+        expect(entries).toEqual([]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should parse a well-formed report with Issue sections', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-test-'));
+      try {
+        const reportContent = `# Idiomatic Review Report
+
+## Issue
+
+File: src/utils/formatter.ts
+Issue: Uses a manual for-loop where a map would be idiomatic.
+Suggestion: Replace the for-loop with Array.prototype.map().
+
+## Issue
+
+File: src/auth/login.ts
+Issue: Error handling uses callback-style instead of async/await.
+Suggestion: Refactor to use async/await with try/catch.
+`;
+        const reportPath = join(dir, 'review-report.md');
+        await writeFile(reportPath, reportContent, 'utf-8');
+        const entries = await ResultParser.parseIdiomaticReport(reportPath);
+        expect(entries).toHaveLength(2);
+        expect(entries[0]?.file).toBe('src/utils/formatter.ts');
+        expect(entries[0]?.issue).toContain('for-loop');
+        expect(entries[0]?.suggestion).toContain('map');
+        expect(entries[1]?.file).toBe('src/auth/login.ts');
+        expect(entries[1]?.issue).toContain('callback-style');
+        expect(entries[1]?.suggestion).toContain('async/await');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should parse Finding sections in addition to Issue sections', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-test-'));
+      try {
+        const reportContent = `# Idiomatic Review Report
+
+### Finding
+
+File: src/index.ts
+Issue: Global mutable state used for caching.
+Suggestion: Use a closure or module-level const instead.
+`;
+        const reportPath = join(dir, 'review-report.md');
+        await writeFile(reportPath, reportContent, 'utf-8');
+        const entries = await ResultParser.parseIdiomaticReport(reportPath);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]?.file).toBe('src/index.ts');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should return empty strings for missing fields in a section', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-test-'));
+      try {
+        const reportContent = `# Idiomatic Review Report
+
+## Issue
+
+Some vague finding with no structured fields.
+`;
+        const reportPath = join(dir, 'review-report.md');
+        await writeFile(reportPath, reportContent, 'utf-8');
+        const entries = await ResultParser.parseIdiomaticReport(reportPath);
+        expect(entries).toHaveLength(0);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });

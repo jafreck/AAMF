@@ -60,6 +60,15 @@ export const MigrationConfigSchema = z.object({
      * Used for Phase 4 cost projection. Default: 5000.
      */
     avgTokensPerTask: z.number().int().min(1).default(5000),
+    /**
+     * Options for the optional idiomatic refactor phase (Phase 8).
+     * When enabled, the idiomatic-reviewer and idiomatic-refactorer agents
+     * run after Phase 6 to improve code idiomaticness.
+     */
+    idiomaticRefactor: z.object({
+      enabled: z.boolean().default(false),
+      maxIterations: z.number().int().min(1).default(2),
+    }).optional(),
   }).default({}),
   copilot: z.object({
     cliCommand: z.string().default('copilot'),

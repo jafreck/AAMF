@@ -147,9 +147,10 @@ describe('MigrationOrchestrator', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(true);
-      expect(result.phases).toHaveLength(7);
-      for (let i = 0; i < result.phases.length; i++) {
-        expect(result.phases[i]!.phase).toBe(i + 1);
+      expect(result.phases).toHaveLength(8);
+      const phaseIds = result.phases.map((p) => p.phase).sort((a, b) => a - b);
+      for (let i = 0; i < phaseIds.length; i++) {
+        expect(phaseIds[i]).toBe(i + 1);
       }
       expect(mockLauncher.invocations.length).toBeGreaterThan(0);
     });
@@ -188,7 +189,7 @@ describe('MigrationOrchestrator', () => {
 
       const result = await orchestrator.run();
 
-      expect(result.phases).toHaveLength(7);
+      expect(result.phases).toHaveLength(8);
       const agentsInvoked = mockLauncher.invocations.map((i) => i.agent);
       expect(agentsInvoked).not.toContain('impact-assessor');
       expect(agentsInvoked).not.toContain('knowledge-builder');
@@ -1440,6 +1441,181 @@ describe('MigrationOrchestrator', () => {
       const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'impact-assessor');
       expect(phase1Invocation).toBeDefined();
       expect(phase1Invocation!.timeout).toBe(300_000);
+    });
+  });
+
+  // ─── Phase 8: Idiomatic Refactor ──────────────────────────────────
+
+  describe('Phase 8: Idiomatic Refactor', () => {
+    it('should skip Phase 8 when idiomaticRefactor.enabled is false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 3,
+            largeFileThreshold: 500,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+            idiomaticRefactor: { enabled: false, maxIterations: 2 },
+          },
+        },
+      );
+      await writeMigrationPlan(progressDir);
+
+      await orchestrator.run();
+
+      const phase8Invocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'idiomatic-reviewer' || i.agent === 'idiomatic-refactorer',
+      );
+      expect(phase8Invocations).toHaveLength(0);
+    });
+
+    it('should run Phase 8 agents when idiomaticRefactor.enabled is true', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 3,
+            largeFileThreshold: 500,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+            idiomaticRefactor: { enabled: true, maxIterations: 2 },
+          },
+        },
+      );
+      await writeMigrationPlan(progressDir);
+
+      await orchestrator.run();
+
+      const reviewInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'idiomatic-reviewer',
+      );
+      expect(reviewInvocations.length).toBeGreaterThan(0);
+    });
+
+    it('should terminate idiomatic refactor loop at maxIterations', async () => {
+      let reviewCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'idiomatic-reviewer') {
+          reviewCount++;
+        }
+        return {};
+      });
+
+      const maxIterations = 3;
+      const { orchestrator, progressDir, logger } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 3,
+            largeFileThreshold: 500,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+            idiomaticRefactor: { enabled: true, maxIterations },
+          },
+        },
+      );
+      await writeMigrationPlan(progressDir);
+
+      // Write an idiomatic report with issues so the loop keeps iterating
+      await writeFile(
+        join(progressDir, 'idiomatic-review-report.md'),
+        '# Idiomatic Review\n\n## Issue: Use const\nFile: src/main.ts\nIssue: let used instead of const\nSuggestion: replace let with const\n',
+      );
+
+      const warnSpy = vi.spyOn(logger, 'warn');
+
+      await orchestrator.run();
+
+      expect(reviewCount).toBeLessThanOrEqual(maxIterations);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Max idiomatic refactor iterations reached'),
+      );
+    });
+
+    it('should skip Phase 8 when idiomaticRefactor is omitted from options', async () => {
+      const launcherFn = createMockLauncher();
+      // Default config has no idiomaticRefactor key — Phase 8 must be silently skipped
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+      await writeMigrationPlan(progressDir);
+
+      await orchestrator.run();
+
+      const phase8Invocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'idiomatic-reviewer' || i.agent === 'idiomatic-refactorer',
+      );
+      expect(phase8Invocations).toHaveLength(0);
+    });
+
+    it('should exit loop after one iteration when idiomatic-reviewer finds no issues', async () => {
+      let reviewCount = 0;
+      let refactorCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'idiomatic-reviewer') reviewCount++;
+        if (inv.agent === 'idiomatic-refactorer') refactorCount++;
+        return {};
+      });
+
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 3,
+            largeFileThreshold: 500,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+            idiomaticRefactor: { enabled: true, maxIterations: 5 },
+          },
+        },
+      );
+      await writeMigrationPlan(progressDir);
+
+      // No idiomatic report file → parseIdiomaticReport returns [] → loop exits immediately
+      await orchestrator.run();
+
+      expect(reviewCount).toBe(1);
+      expect(refactorCount).toBe(0);
     });
   });
 });
