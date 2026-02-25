@@ -156,6 +156,12 @@ export class MigrationOrchestrator {
     }
 
     for (const phase of phasesToRun) {
+      // Skip optional phases that are not enabled
+      if (phase.optional && phase.id === 8 && !this.config.options.idiomaticRefactor?.enabled) {
+        this.logger.info(`Skipping optional Phase 8 (idiomaticRefactor not enabled)`);
+        continue;
+      }
+
       // Skip already-completed phases on resume
       if (phase.id < resumePoint.phase) {
         phaseResults.push({
@@ -296,6 +302,8 @@ export class MigrationOrchestrator {
         return this.executePhase6(start);
       case 7:
         return this.executePhase7(start);
+      case 8:
+        return this.executePhase8(start);
       default:
         throw new Error(`Unknown phase: ${phase.id}`);
     }
@@ -998,6 +1006,64 @@ export class MigrationOrchestrator {
       name: 'Completion',
       success: true,
       outputPath: this.progressDir,
+      duration: Date.now() - start,
+    };
+  }
+
+  // ─── Phase 8: Idiomatic Refactor ─────────────────────────────────────
+
+  private async executePhase8(start: number): Promise<PhaseResult> {
+    const maxIterations = this.config.options.idiomaticRefactor?.maxIterations ?? 2;
+
+    for (let iteration = 0; iteration < maxIterations; iteration++) {
+      const reviewCtx = await this.contextBuilder.buildContext('idiomatic-reviewer', 8);
+      const reviewInv = this.buildInvocation('idiomatic-reviewer', reviewCtx, 8);
+      const reviewResult = await this.launcher.launchAgent(reviewInv);
+      this.recordTokens(reviewResult, 8);
+
+      if (!reviewResult.success) {
+        return {
+          phase: 8,
+          name: 'Idiomatic Refactor',
+          success: false,
+          duration: Date.now() - start,
+          error: reviewResult.error,
+          exitCode: reviewResult.exitCode,
+          stderr: reviewResult.stderr,
+        };
+      }
+
+      // Parse idiomatic issues
+      let issues: Array<{ file: string; issue: string; suggestion: string }>;
+      if (reviewResult.outputParsed && Array.isArray(reviewResult.structuredOutput?.['issues'])) {
+        issues = reviewResult.structuredOutput['issues'] as Array<{ file: string; issue: string; suggestion: string }>;
+      } else {
+        const reportPath = join(this.progressDir, 'idiomatic-review-report.md');
+        this.logger.warn('Idiomatic-reviewer structured output unavailable — falling back to ResultParser.parseIdiomaticReport');
+        issues = await ResultParser.parseIdiomaticReport(reportPath);
+      }
+
+      if (issues.length === 0) break;
+
+      if (iteration < maxIterations - 1) {
+        this.logger.info(
+          `Idiomatic review found ${issues.length} issue(s), refactor iteration ${iteration + 1}`,
+        );
+        const refactorCtx = await this.contextBuilder.buildContext('idiomatic-refactorer', 8);
+        const refactorInv = this.buildInvocation('idiomatic-refactorer', refactorCtx, 8);
+        const refactorResult = await this.launcher.launchAgent(refactorInv);
+        this.recordTokens(refactorResult, 8);
+      } else {
+        this.logger.warn('Max idiomatic refactor iterations reached, proceeding with remaining issues');
+      }
+    }
+
+    const outputPath = join(this.progressDir, 'idiomatic-review-report.md');
+    return {
+      phase: 8,
+      name: 'Idiomatic Refactor',
+      success: true,
+      outputPath,
       duration: Date.now() - start,
     };
   }
