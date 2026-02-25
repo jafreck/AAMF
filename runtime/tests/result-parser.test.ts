@@ -491,6 +491,62 @@ intermediate text
       const usage = ResultParser.parseTokenUsage('some output with no tokens');
       expect(usage).toBeUndefined();
     });
+
+    it('should route to parseClaudeTokenUsage when runtime is claude-code', () => {
+      const output = '{"type":"message","usage":{"input_tokens":1200,"output_tokens":400}}';
+      const usage = ResultParser.parseTokenUsage(output, 'claude-code');
+      expect(usage).toEqual({ prompt: 1200, completion: 400, total: 1600 });
+    });
+
+    it('should use regex path when runtime is not claude-code', () => {
+      const output = 'prompt_tokens: 100\ncompletion_tokens: 50\n{"usage":{"input_tokens":999,"output_tokens":999}}';
+      const usage = ResultParser.parseTokenUsage(output);
+      expect(usage).toEqual({ prompt: 100, completion: 50, total: 150 });
+    });
+  });
+
+  describe('parseClaudeTokenUsage', () => {
+    it('should parse Claude JSON usage from stdout', () => {
+      const output = 'Some text\n{"type":"message","usage":{"input_tokens":2000,"output_tokens":500}}\nMore text';
+      const usage = ResultParser.parseClaudeTokenUsage(output);
+      expect(usage).toEqual({ prompt: 2000, completion: 500, total: 2500 });
+    });
+
+    it('should parse Claude JSON usage from stderr', () => {
+      const stderr = '[stderr] {"usage":{"input_tokens":1000,"output_tokens":300}}';
+      const usage = ResultParser.parseClaudeTokenUsage(stderr);
+      expect(usage).toEqual({ prompt: 1000, completion: 300, total: 1300 });
+    });
+
+    it('should populate cachedInput when cache_read_input_tokens is present', () => {
+      const output = '{"usage":{"input_tokens":1500,"output_tokens":400,"cache_read_input_tokens":200}}';
+      const usage = ResultParser.parseClaudeTokenUsage(output);
+      expect(usage?.prompt).toBe(1500);
+      expect(usage?.completion).toBe(400);
+      expect(usage?.total).toBe(1900);
+      expect(usage?.cachedInput).toBe(200);
+    });
+
+    it('should not include cachedInput when cache_read_input_tokens is absent', () => {
+      const output = '{"usage":{"input_tokens":800,"output_tokens":200}}';
+      const usage = ResultParser.parseClaudeTokenUsage(output);
+      expect(usage?.cachedInput).toBeUndefined();
+    });
+
+    it('should return the last usage JSON when multiple are present', () => {
+      const output = [
+        '{"usage":{"input_tokens":100,"output_tokens":50}}',
+        '{"usage":{"input_tokens":900,"output_tokens":300}}',
+      ].join('\n');
+      const usage = ResultParser.parseClaudeTokenUsage(output);
+      expect(usage?.prompt).toBe(900);
+      expect(usage?.completion).toBe(300);
+    });
+
+    it('should return undefined when no Claude usage JSON is found', () => {
+      const usage = ResultParser.parseClaudeTokenUsage('prompt_tokens: 100\ncompletion_tokens: 50');
+      expect(usage).toBeUndefined();
+    });
   });
 
   describe('parseIdiomaticReport', () => {
