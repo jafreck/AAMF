@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: runtime/node_modules
+          key: ${{ runner.os }}-node-20.x-${{ hashFiles('runtime/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-20.x-
+
+      - name: Install dependencies
+        working-directory: runtime
+        run: npm ci
+
+      - name: Type check
+        working-directory: runtime
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        working-directory: runtime
+        run: npx vitest run
+
+      - name: Build
+        working-directory: runtime
+        run: npx tsc
+
+      - name: Package dist
+        run: tar -czf runtime-dist.tar.gz -C runtime dist
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const release = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: context.ref_name,
+              name: context.ref_name,
+              generate_release_notes: true,
+            });
+            return release.data.upload_url;
+          result-encoding: string
+
+      - name: Upload release asset
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: (await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: context.ref_name,
+              })).data.id,
+              name: 'runtime-dist.tar.gz',
+              data: fs.readFileSync('runtime-dist.tar.gz'),
+            });
