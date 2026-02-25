@@ -23,6 +23,7 @@ import {
   MigrationRunnerOutput,
 } from '../agents/result-parser.js';
 import { Logger } from '../logging/logger.js';
+import { TokenTracker } from '../budget/token-tracker.js';
 import { z } from 'zod';
 
 /** Map each known agent name to its Zod output schema. */
@@ -283,10 +284,17 @@ export class AgentLauncher {
         agentResult.success = false;
       }
 
+      // Fallback: if token usage is still unknown, estimate from prompt length
+      if (!agentResult.tokenUsage) {
+        const estimatedTotal = TokenTracker.estimateTokens(prompt);
+        agentResult.tokenUsage = { prompt: estimatedTotal, completion: 0, total: estimatedTotal };
+      }
+
       return agentResult;
     } catch (err) {
       stopTimers();
       const duration = Date.now() - startTime;
+      const estimatedTotal = TokenTracker.estimateTokens(prompt);
       return {
         agent: invocation.agent,
         taskId: invocation.taskId,
@@ -294,6 +302,7 @@ export class AgentLauncher {
         success: false,
         outputFiles: [],
         duration,
+        tokenUsage: { prompt: estimatedTotal, completion: 0, total: estimatedTotal },
         outputParsed: false,
         error: err instanceof Error ? err.message : String(err),
       };
