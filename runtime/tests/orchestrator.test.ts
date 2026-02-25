@@ -964,6 +964,134 @@ describe('MigrationOrchestrator', () => {
       const logsWithEta = progressLogs.filter((m) => m.includes('— avg'));
       expect(logsWithEta).toHaveLength(0);
     });
+
+    it('should store task durations in checkpoint after each task completion', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      await orchestrator.run();
+
+      const state = checkpoint.getState();
+      // Default plan has 2 tasks; both should have recorded a duration
+      expect(state.completedTaskDurationsMs).toHaveLength(2);
+      state.completedTaskDurationsMs.forEach((d) => {
+        expect(typeof d).toBe('number');
+        expect(d).toBeGreaterThanOrEqual(0);
+      });
+    });
+
+    it('should include ETA on resume run seeded with prior completedTaskDurationsMs', async () => {
+      const config = createMockConfig();
+      const logger = createSilentLogger(tempDir);
+      const progressDir = join(tempDir, '.aamf', 'migration', config.projectName);
+      await ensureDir(progressDir);
+
+      // Write a 3-task plan so the resume run has work to do
+      const threeTaskPlan = `# Migration Plan: test-project
+
+## Task: task-001 - Module A
+
+**Description:** Migrate A
+**Complexity:** simple
+**Knowledge Base Reference:** kb/task-001.md
+
+**Source Files:**
+- src/a.py
+
+**Target Files:**
+- src/a.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+
+## Task: task-002 - Module B
+
+**Description:** Migrate B
+**Complexity:** simple
+**Knowledge Base Reference:** kb/task-002.md
+
+**Source Files:**
+- src/b.py
+
+**Target Files:**
+- src/b.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+
+## Task: task-003 - Module C
+
+**Description:** Migrate C
+**Complexity:** simple
+**Knowledge Base Reference:** kb/task-003.md
+
+**Source Files:**
+- src/c.py
+
+**Target Files:**
+- src/c.ts
+
+**Dependencies:** task-001
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await writeFile(join(progressDir, 'migration-plan.md'), threeTaskPlan);
+
+      // First run to get 1 task completed (so checkpoint has 1 prior duration)
+      const checkpoint1 = new CheckpointManager(progressDir, logger);
+      await checkpoint1.load(config.projectName);
+      const progress1 = new ProgressWriter(join(progressDir, 'progress.md'));
+      await progress1.initialize(config);
+
+      // Manually seed checkpoint with 1 completed task and 1 prior duration so resume will have data
+      const seedState = checkpoint1.getState();
+      seedState.completedTasks = ['task-001'];
+      seedState.completedTaskDurationsMs = [3000];
+      await checkpoint1.save(seedState);
+
+      // Resume run: task-002 and task-003 remain; after task-002 completes we now have 2 durations
+      const config2 = createMockConfig({ options: { resume: true } });
+      const checkpoint2 = new CheckpointManager(progressDir, logger);
+      await checkpoint2.load(config2.projectName);
+      const progress2 = new ProgressWriter(join(progressDir, 'progress.md'));
+      await progress2.initialize(config2);
+      const mockLauncher2 = new MockAgentLauncher(createMockLauncher());
+      const orch2 = new MigrationOrchestrator(
+        config2,
+        checkpoint2,
+        mockLauncher2 as any,
+        progress2,
+        logger,
+        tempDir,
+      );
+
+      const infoSpy = vi.spyOn(logger, 'info');
+      await orch2.run();
+
+      const progressLogs = infoSpy.mock.calls
+        .map((c) => c[0] as string)
+        .filter((m) => typeof m === 'string' && m.startsWith('Task progress:'));
+
+      // After the first new task completes, combined with the 1 seeded duration, we have ≥2 — ETA should appear
+      const logsWithEta = progressLogs.filter((m) => m.includes('— avg'));
+      expect(logsWithEta.length).toBeGreaterThan(0);
+      expect(logsWithEta[0]).toMatch(/— avg .+\/task, ~.+ remaining/);
+    });
   });
 
   // ─── Phase 5 Loop-back ─────────────────────────────────────────────
