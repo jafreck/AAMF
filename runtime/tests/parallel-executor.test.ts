@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { ParallelExecutor } from '../src/execution/parallel-executor.js';
 import { AgentInvocation, AgentResult } from '../src/agents/types.js';
-import { createMockLauncher, createSilentLogger } from './helpers/mocks.js';
+import { createMockLauncher, createSilentLogger, createMockConfig } from './helpers/mocks.js';
 
 describe('ParallelExecutor', () => {
   let tempDir: string;
@@ -134,5 +134,128 @@ describe('ParallelExecutor', () => {
     const results = await executor.executeAll([]);
 
     expect(results).toEqual([]);
+  });
+
+  // ─── Session Isolation ─────────────────────────────────────────────
+
+  describe('Session Isolation', () => {
+    it('should log a warning when contextWindowStrategy is session and concurrency > 1', async () => {
+      const launcher = createMockLauncher();
+      const logger = createSilentLogger(tempDir);
+      const warnSpy = vi.spyOn(logger, 'warn');
+
+      const config = createMockConfig({
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          largeFileThreshold: 500,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          contextWindowStrategy: 'session',
+        },
+      });
+
+      const executor = new ParallelExecutor(2, launcher, logger, config);
+      await executor.executeAll([makeInvocation('a'), makeInvocation('b')]);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("contextWindowStrategy is 'session'"),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Session isolation is not guaranteed'),
+      );
+    });
+
+    it('should not warn when contextWindowStrategy is session but concurrency is 1', async () => {
+      const launcher = createMockLauncher();
+      const logger = createSilentLogger(tempDir);
+      const warnSpy = vi.spyOn(logger, 'warn');
+
+      const config = createMockConfig({
+        options: {
+          maxParallelAgents: 1,
+          maxRetriesPerTask: 3,
+          largeFileThreshold: 500,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          contextWindowStrategy: 'session',
+        },
+      });
+
+      const executor = new ParallelExecutor(1, launcher, logger, config);
+      await executor.executeAll([makeInvocation('a'), makeInvocation('b')]);
+
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("contextWindowStrategy is 'session'"),
+      );
+    });
+
+    it('should not warn when contextWindowStrategy is per-invocation with concurrency > 1', async () => {
+      const launcher = createMockLauncher();
+      const logger = createSilentLogger(tempDir);
+      const warnSpy = vi.spyOn(logger, 'warn');
+
+      const config = createMockConfig({
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          largeFileThreshold: 500,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          contextWindowStrategy: 'per-invocation',
+        },
+      });
+
+      const executor = new ParallelExecutor(3, launcher, logger, config);
+      await executor.executeAll([makeInvocation('a'), makeInvocation('b')]);
+
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining("contextWindowStrategy is 'session'"),
+      );
+    });
+
+    it('should produce independent results for each invocation (no shared state)', async () => {
+      // Verify that each invocation produces its own isolated result regardless of concurrency
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
+        agent: inv.agent,
+        taskId: inv.taskId,
+        exitCode: 0,
+        success: true,
+        outputFiles: [`/output/${inv.taskId}.ts`],
+        duration: 10,
+        outputParsed: false,
+      });
+
+      const logger = createSilentLogger(tempDir);
+      const executor = new ParallelExecutor(3, launcher, logger);
+      const invocations = ['a', 'b', 'c'].map(makeInvocation);
+      const results = await executor.executeAll(invocations);
+
+      // Each result's outputFiles should reflect only that invocation's data
+      expect(results[0]!.outputFiles).toEqual(['/output/a.ts']);
+      expect(results[1]!.outputFiles).toEqual(['/output/b.ts']);
+      expect(results[2]!.outputFiles).toEqual(['/output/c.ts']);
+    });
   });
 });

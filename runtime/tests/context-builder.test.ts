@@ -222,4 +222,109 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe(progressDir);
     });
   });
+
+  // ─── Context Window Token Limit ────────────────────────────────────────────
+
+  describe('Context Window Token Limit', () => {
+    it('should include contextWindowTokens from options for copilot runtime', async () => {
+      const config = createMockConfig({
+        agentRuntime: 'copilot',
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          largeFileThreshold: 500,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          contextWindowStrategy: 'per-invocation',
+          contextWindowTokens: 64_000,
+        },
+      });
+      const b = new ContextBuilder(config, progressDir);
+      const contextPath = await b.buildContext('impact-assessor', 1);
+      const context = await readJson<AgentContext & { contextWindowTokens?: number }>(contextPath);
+
+      expect(context.contextWindowTokens).toBe(64_000);
+    });
+
+    it('should use claudeCode.contextWindowTokens for claude-code runtime, taking precedence over options', async () => {
+      const config = createMockConfig({
+        agentRuntime: 'claude-code',
+        claudeCode: {
+          cliCommand: 'claude',
+          agentDir: '.claude/agents',
+          timeout: 300_000,
+          contextWindowTokens: 200_000,
+        },
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          largeFileThreshold: 500,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          contextWindowStrategy: 'per-invocation',
+          contextWindowTokens: 64_000,
+        },
+      });
+      const b = new ContextBuilder(config, progressDir);
+      const contextPath = await b.buildContext('impact-assessor', 1);
+      const context = await readJson<AgentContext & { contextWindowTokens?: number }>(contextPath);
+
+      // claudeCode.contextWindowTokens (200_000) takes precedence over options.contextWindowTokens (64_000)
+      expect(context.contextWindowTokens).toBe(200_000);
+    });
+
+    it('should fall back to options.contextWindowTokens when claude-code has no override', async () => {
+      const config = createMockConfig({
+        agentRuntime: 'claude-code',
+        claudeCode: {
+          cliCommand: 'claude',
+          agentDir: '.claude/agents',
+          timeout: 300_000,
+        },
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          largeFileThreshold: 500,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          contextWindowStrategy: 'per-invocation',
+          contextWindowTokens: 128_000,
+        },
+      });
+      const b = new ContextBuilder(config, progressDir);
+      const contextPath = await b.buildContext('impact-assessor', 1);
+      const context = await readJson<AgentContext & { contextWindowTokens?: number }>(contextPath);
+
+      expect(context.contextWindowTokens).toBe(128_000);
+    });
+
+    it('should omit contextWindowTokens from context when not configured', async () => {
+      // Default createMockConfig has no contextWindowTokens set
+      const contextPath = await builder.buildContext('impact-assessor', 1);
+      const context = await readJson<AgentContext & { contextWindowTokens?: number }>(contextPath);
+
+      expect(context.contextWindowTokens).toBeUndefined();
+    });
+  });
 });
