@@ -87,6 +87,9 @@ export interface AgentResult {
   /** Captured stderr or error message when the agent fails. */
   error?: string;
 
+  /** Raw stderr output from the agent process. */
+  stderr?: string;
+
   /** Structured data parsed from the agent's output, if applicable. */
   structuredOutput?: Record<string, unknown>;
 
@@ -238,6 +241,12 @@ export interface PhaseResult {
 
   /** Error message if the phase failed. */
   error?: string;
+
+  /** Process exit code of the agent that caused the failure, if applicable. */
+  exitCode?: number;
+
+  /** Raw stderr from the agent that caused the failure, if applicable. */
+  stderr?: string;
 }
 
 // ─── Task Tracking ───────────────────────────────────────────────────────────

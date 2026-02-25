@@ -1051,4 +1051,104 @@ describe('MigrationOrchestrator', () => {
       expect(error).toBeInstanceOf(Error);
     });
   });
+
+  // ─── Phase-failed enrichment ───────────────────────────────────────
+
+  describe('Phase-failed enrichment', () => {
+    it('should include exitCode and stderr in phase-failed event when phase 1 fails', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'impact-assessor') {
+          return { exitCode: 2, success: false, error: 'failure', stderr: 'agent stderr output' };
+        }
+        return {};
+      });
+
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+      const events: Array<{ type: string; exitCode?: number; stderr?: string }> = [];
+      vi.spyOn(logger, 'event').mockImplementation((ev) => { events.push(ev as any); });
+
+      await orchestrator.run();
+
+      const failedEvent = events.find((e) => e.type === 'phase-failed');
+      expect(failedEvent).toBeDefined();
+      expect(failedEvent!.exitCode).toBe(2);
+      expect(failedEvent!.stderr).toBe('agent stderr output');
+    });
+
+    it('should truncate stderr to 2000 chars in phase-failed event', async () => {
+      const longStderr = 'x'.repeat(3000);
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'impact-assessor') {
+          return { exitCode: 1, success: false, error: 'fail', stderr: longStderr };
+        }
+        return {};
+      });
+
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+      const events: Array<{ type: string; stderr?: string }> = [];
+      vi.spyOn(logger, 'event').mockImplementation((ev) => { events.push(ev as any); });
+
+      await orchestrator.run();
+
+      const failedEvent = events.find((e) => e.type === 'phase-failed');
+      expect(failedEvent?.stderr?.length).toBe(2000);
+    });
+
+    it('should include exitCode and stderr in progress file on phase failure', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'impact-assessor') {
+          return { exitCode: 3, success: false, error: 'fail', stderr: 'stderr from agent' };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await orchestrator.run();
+
+      const progressFile = join(progressDir, 'progress.md');
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('exitCode: 3');
+      expect(content).toContain('stderr from agent');
+    });
+  });
+
+  // ─── phaseTimeouts ─────────────────────────────────────────────────
+
+  describe('phaseTimeouts', () => {
+    it('should use phaseTimeouts[phase] as timeout when configured', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        copilot: {
+          cliCommand: 'copilot',
+          agentDir: '.github/agents',
+          timeout: 300_000,
+          phaseTimeouts: { 1: 60_000 },
+        },
+      });
+
+      await orchestrator.run();
+
+      const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'impact-assessor');
+      expect(phase1Invocation).toBeDefined();
+      expect(phase1Invocation!.timeout).toBe(60_000);
+    });
+
+    it('should fall back to config.copilot.timeout when no phaseTimeout override exists', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        copilot: {
+          cliCommand: 'copilot',
+          agentDir: '.github/agents',
+          timeout: 300_000,
+          phaseTimeouts: { 2: 90_000 },
+        },
+      });
+
+      await orchestrator.run();
+
+      const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'impact-assessor');
+      expect(phase1Invocation).toBeDefined();
+      expect(phase1Invocation!.timeout).toBe(300_000);
+    });
+  });
 });

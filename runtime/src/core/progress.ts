@@ -12,7 +12,7 @@ export interface TaskDetails {
 }
 
 export class ProgressWriter {
-  private phases: Map<number, { name: string; status: string; notes?: string }> = new Map();
+  private phases: Map<number, { name: string; status: string; notes?: string; exitCode?: number; stderr?: string }> = new Map();
   private tasks: Map<string, { status: string; details?: TaskDetails }> = new Map();
   private events: string[] = [];
   private totalTasks: number = 0;
@@ -85,11 +85,13 @@ export class ProgressWriter {
   }
 
   /** Update current phase status */
-  async updatePhase(phase: number, status: string, notes?: string): Promise<void> {
+  async updatePhase(phase: number, status: string, notes?: string, exitCode?: number, stderr?: string): Promise<void> {
     const existing = this.phases.get(phase);
     if (existing) {
       existing.status = status;
       existing.notes = notes;
+      existing.exitCode = exitCode;
+      existing.stderr = stderr;
     }
     await this.writeCurrentState();
   }
@@ -166,7 +168,11 @@ export class ProgressWriter {
     md += `|-------|------|--------|-------|\n`;
     for (const [id, phase] of this.phases) {
       const statusIcon = phase.status === 'completed' ? '✅' : phase.status === 'in-progress' ? '🔄' : phase.status === 'failed' ? '❌' : '⬜';
-      md += `| ${id} | ${phase.name} | ${statusIcon} ${phase.status} | ${phase.notes ?? ''} |\n`;
+      const noteParts: string[] = [];
+      if (phase.notes) noteParts.push(phase.notes);
+      if (phase.exitCode !== undefined) noteParts.push(`exitCode: ${phase.exitCode}`);
+      if (phase.stderr) noteParts.push(`stderr: ${phase.stderr.slice(0, 200)}`);
+      md += `| ${id} | ${phase.name} | ${statusIcon} ${phase.status} | ${noteParts.join('; ')} |\n`;
     }
     md += '\n';
 

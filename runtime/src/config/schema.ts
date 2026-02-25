@@ -68,6 +68,8 @@ export const MigrationConfigSchema = z.object({
         output: z.number().min(0).describe('Cost per 1M output tokens in USD'),
       }),
     ).optional().describe('Per-model cost overrides (USD per 1M tokens)'),
+    /** Per-phase timeout overrides in milliseconds, keyed by phase number. */
+    phaseTimeouts: z.record(z.coerce.number(), z.number().int()).optional(),
   }).default({}),
   environment: z.object({
     /** Whether to resolve PATH from a login shell at startup (default: true). */

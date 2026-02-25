@@ -50,6 +50,25 @@ describe('ProgressWriter', () => {
     expect(content).toContain('✅');
   });
 
+  it('should persist exitCode and stderr in phase record when provided', async () => {
+    await writer.initialize(config);
+    await writer.updatePhase(1, 'failed', 'agent crashed', 127, 'command not found');
+
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('exitCode: 127');
+    expect(content).toContain('command not found');
+    expect(content).toContain('agent crashed');
+  });
+
+  it('should not include exitCode or stderr when not provided', async () => {
+    await writer.initialize(config);
+    await writer.updatePhase(1, 'failed', 'some error');
+
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('some error');
+    expect(content).not.toContain('exitCode:');
+  });
+
   it('should track task progress with progress bar', async () => {
     await writer.initialize(config);
     writer.setTotalTasks(10);
