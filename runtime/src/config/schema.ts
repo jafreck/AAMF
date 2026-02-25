@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const MigrationConfigSchema = z.object({
   projectName: z.string().min(1).regex(/^[a-z0-9-]+$/),
+  agentRuntime: z.enum(['copilot', 'claude-code']).default('copilot'),
   source: z.object({
     path: z.string(),
     language: z.string(),
@@ -24,6 +25,8 @@ export const MigrationConfigSchema = z.object({
     largeFileThreshold: z.number().int().default(500),
     maxLinesPerTask: z.number().int().default(500),
     tokenBudget: z.number().int().optional(),
+    contextWindowStrategy: z.enum(['per-invocation', 'session']).default('per-invocation'),
+    contextWindowTokens: z.number().int().optional(),
     dryRun: z.boolean().default(false),
     resume: z.boolean().default(false),
     invocationDelayMs: z.number().int().min(0).default(0),
@@ -75,6 +78,22 @@ export const MigrationConfigSchema = z.object({
     model: z.string().optional(),
     agentDir: z.string().default('.github/agents'),
     timeout: z.number().int().default(300_000),
+    costOverrides: z.record(
+      z.string(),
+      z.object({
+        input: z.number().min(0).describe('Cost per 1M input tokens in USD'),
+        output: z.number().min(0).describe('Cost per 1M output tokens in USD'),
+      }),
+    ).optional().describe('Per-model cost overrides (USD per 1M tokens)'),
+    /** Per-phase timeout overrides in milliseconds, keyed by phase number. */
+    phaseTimeouts: z.record(z.coerce.number(), z.number().int()).optional(),
+  }).default({}),
+  claudeCode: z.object({
+    cliCommand: z.string().default('claude'),
+    model: z.string().optional(),
+    agentDir: z.string().default('.claude/agents'),
+    timeout: z.number().int().default(300_000),
+    contextWindowTokens: z.number().int().optional(),
     costOverrides: z.record(
       z.string(),
       z.object({

@@ -374,6 +374,39 @@ export class ResultParser {
   }
 
   /**
+   * Parse token usage from Claude's JSON-based output format.
+   *
+   * Searches for JSON fragments containing a `usage` object with
+   * `input_tokens` and `output_tokens` fields (emitted by the Claude API).
+   * Also extracts `cache_read_input_tokens` when present.
+   *
+   * @param output - Raw agent output text (stdout or stderr).
+   * @returns Parsed token counts, or `undefined` if no Claude usage JSON is found.
+   */
+  static parseClaudeTokenUsage(
+    output: string,
+  ): { prompt: number; completion: number; total: number; cachedInput?: number } | undefined {
+    // Match JSON objects that contain a "usage" key with input_tokens/output_tokens
+    const usageRegex = /\{[^{}]*"usage"\s*:\s*\{[^{}]*"input_tokens"\s*:\s*(\d+)[^{}]*"output_tokens"\s*:\s*(\d+)[^{}]*\}/g;
+    let lastMatch: RegExpExecArray | null = null;
+    let match: RegExpExecArray | null;
+    while ((match = usageRegex.exec(output)) !== null) {
+      lastMatch = match;
+    }
+
+    if (!lastMatch) return undefined;
+
+    const prompt = parseInt(lastMatch[1]!, 10);
+    const completion = parseInt(lastMatch[2]!, 10);
+
+    // Extract cache_read_input_tokens from the same usage object if present
+    const cacheMatch = lastMatch[0].match(/"cache_read_input_tokens"\s*:\s*(\d+)/);
+    const cachedInput = cacheMatch ? parseInt(cacheMatch[1]!, 10) : undefined;
+
+    return { prompt, completion, total: prompt + completion, ...(cachedInput !== undefined && { cachedInput }) };
+  }
+
+  /**
    * Parse token usage from agent stdout/stderr output.
    *
    * Recognises formats such as `prompt_tokens: 1234`, `completion-tokens: 567`,
@@ -381,16 +414,25 @@ export class ResultParser {
    * estimated as 80 % prompt / 20 % completion (consistent with
    * {@link CostEstimator.estimateFromTotal}).
    *
+   * When `runtime` is `'claude-code'`, delegates to {@link parseClaudeTokenUsage}
+   * to handle Claude's JSON-based usage format instead.
+   *
    * **Note:** Regex-based token extraction from free-form text is unreliable.
    * Agents should emit structured token data inside their `aamf-json` block
    * under the `tokenUsage` field for accurate accounting.
    *
    * @param output - Raw agent output text.
+   * @param runtime - Optional runtime identifier; pass `'claude-code'` to parse Claude JSON format.
    * @returns Parsed token counts, or `undefined` if no usage data is found.
    */
   static parseTokenUsage(
     output: string,
+    runtime?: string,
   ): { prompt: number; completion: number; total: number } | undefined {
+    if (runtime === 'claude-code') {
+      return ResultParser.parseClaudeTokenUsage(output);
+    }
+
     const promptMatch = output.match(/prompt[\s_-]*tokens?:?\s*(\d+)/i);
     const completionMatch = output.match(/completion[\s_-]*tokens?:?\s*(\d+)/i);
     const totalMatch = output.match(/total[\s_-]*tokens?:?\s*(\d+)/i);

@@ -1,6 +1,7 @@
 import pLimit from 'p-limit';
 import { AgentInvocation, AgentResult } from '../agents/types.js';
 import { Logger } from '../logging/logger.js';
+import { MigrationConfig } from '../config/schema.js';
 
 /** Function signature for launching an agent invocation and returning its result. */
 export interface AgentLauncherFn {
@@ -11,12 +12,23 @@ export interface AgentLauncherFn {
 export class ParallelExecutor {
   private limit: ReturnType<typeof pLimit>;
 
-  constructor(private concurrency: number, private launcher: AgentLauncherFn, private logger: Logger) {
+  constructor(
+    private concurrency: number,
+    private launcher: AgentLauncherFn,
+    private logger: Logger,
+    private config?: MigrationConfig,
+  ) {
     this.limit = pLimit(concurrency);
   }
 
   /** Execute all invocations concurrently (up to the concurrency limit). Returns results in invocation order. */
   async executeAll(invocations: AgentInvocation[]): Promise<AgentResult[]> {
+    if (this.config?.options.contextWindowStrategy === 'session' && this.concurrency > 1) {
+      this.logger.warn(
+        `contextWindowStrategy is 'session' but concurrency is ${this.concurrency} > 1. ` +
+          'Session isolation is not guaranteed when multiple agents run concurrently.',
+      );
+    }
     this.logger.info(`Executing ${invocations.length} agent invocations with concurrency ${this.concurrency}`);
     const promises = invocations.map((inv, i) =>
       this.limit(async () => {

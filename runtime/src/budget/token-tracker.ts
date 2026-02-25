@@ -11,12 +11,21 @@ export class TokenTracker {
   private usageByAgent: Map<string, number> = new Map();
   private usageByPhase: Map<number, number> = new Map();
   private totalTokens: number = 0;
+  private totalCachedInput: number = 0;
 
   /** Record token usage for a given agent and phase. */
-  record(agent: string, phase: number, tokens: number): void {
+  record(agent: string, phase: number, tokens: number, cachedInput?: number): void {
     this.totalTokens += tokens;
     this.usageByAgent.set(agent, (this.usageByAgent.get(agent) ?? 0) + tokens);
     this.usageByPhase.set(phase, (this.usageByPhase.get(phase) ?? 0) + tokens);
+    if (cachedInput !== undefined) {
+      this.totalCachedInput += cachedInput;
+    }
+  }
+
+  /** Return the total number of cached input tokens accumulated. */
+  getCachedInput(): number {
+    return this.totalCachedInput;
   }
 
   /** Return the total number of tokens consumed. */

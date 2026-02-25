@@ -91,6 +91,35 @@ describe('CostEstimator', () => {
     expect(models).toContain('gemini-3-pro-preview');
   });
 
+  it('should list Claude Code CLI model identifiers (dash notation)', () => {
+    const models = estimator.getSupportedModels();
+    expect(models).toContain('claude-sonnet-4-5');
+    expect(models).toContain('claude-haiku-4-5');
+    expect(models).toContain('claude-opus-4-5');
+  });
+
+  it('should calculate cached token cost at 50% of input price for claude-sonnet-4-5', () => {
+    const result = estimator.estimate('claude-sonnet-4-5', 0, 0, 1_000_000);
+    // input price = $3/M, cached = 50% = $1.50/M for 1M tokens
+    expect(result.cached).toBeCloseTo(1.50, 10);
+    expect(result.total).toBeCloseTo(1.50, 10);
+  });
+
+  it('should include cached cost in total', () => {
+    const result = estimator.estimate('claude-sonnet-4-5', 1_000_000, 1_000_000, 1_000_000);
+    // input = 3.00, output = 15.00, cached = 1.50
+    expect(result.input).toBe(3.00);
+    expect(result.output).toBe(15.00);
+    expect(result.cached).toBeCloseTo(1.50, 10);
+    expect(result.total).toBeCloseTo(19.50, 10);
+  });
+
+  it('should return zero cached cost when cachedInputTokens is omitted', () => {
+    const result = estimator.estimate('claude-sonnet-4-5', 1_000_000, 0);
+    expect(result.cached).toBe(0);
+    expect(result.total).toBe(result.input + result.output);
+  });
+
   it('should handle zero tokens without error', () => {
     const result = estimator.estimate('gpt-4.1', 0, 0);
     expect(result.input).toBe(0);

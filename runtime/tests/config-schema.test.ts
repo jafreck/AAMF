@@ -229,5 +229,90 @@ describe('MigrationConfigSchema', () => {
         expect(result.options.idiomaticRefactor?.maxIterations).toBe(3);
       });
     });
+
+    it('should default agentRuntime to copilot', () => {
+      const result = MigrationConfigSchema.parse(validConfig);
+      expect(result.agentRuntime).toBe('copilot');
+    });
+
+    it('should accept agentRuntime of claude-code', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        agentRuntime: 'claude-code',
+      });
+      expect(result.agentRuntime).toBe('claude-code');
+    });
+
+    it('should reject invalid agentRuntime value', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        agentRuntime: 'openai',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should apply claudeCode defaults', () => {
+      const result = MigrationConfigSchema.parse(validConfig);
+      expect(result.claudeCode.cliCommand).toBe('claude');
+      expect(result.claudeCode.agentDir).toBe('.claude/agents');
+      expect(result.claudeCode.timeout).toBe(300000);
+      expect(result.claudeCode.model).toBeUndefined();
+      expect(result.claudeCode.contextWindowTokens).toBeUndefined();
+      expect(result.claudeCode.costOverrides).toBeUndefined();
+      expect(result.claudeCode.phaseTimeouts).toBeUndefined();
+    });
+
+    it('should accept explicit claudeCode config', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        claudeCode: {
+          cliCommand: 'claude',
+          model: 'claude-sonnet-4-5',
+          agentDir: '.claude/agents',
+          timeout: 600000,
+          contextWindowTokens: 200000,
+          costOverrides: { 'claude-sonnet-4-5': { input: 3, output: 15 } },
+          phaseTimeouts: { 4: 120000 },
+        },
+      });
+      expect(result.success ?? true).toBe(true);
+      expect(result.claudeCode.model).toBe('claude-sonnet-4-5');
+      expect(result.claudeCode.contextWindowTokens).toBe(200000);
+      expect(result.claudeCode.timeout).toBe(600000);
+    });
+
+    it('should default contextWindowStrategy to per-invocation', () => {
+      const result = MigrationConfigSchema.parse(validConfig);
+      expect(result.options.contextWindowStrategy).toBe('per-invocation');
+    });
+
+    it('should accept contextWindowStrategy of session', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { contextWindowStrategy: 'session' },
+      });
+      expect(result.options.contextWindowStrategy).toBe('session');
+    });
+
+    it('should reject invalid contextWindowStrategy', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { contextWindowStrategy: 'global' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept options.contextWindowTokens as a number', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { contextWindowTokens: 100000 },
+      });
+      expect(result.options.contextWindowTokens).toBe(100000);
+    });
+
+    it('should leave options.contextWindowTokens undefined when omitted', () => {
+      const result = MigrationConfigSchema.parse(validConfig);
+      expect(result.options.contextWindowTokens).toBeUndefined();
+    });
   });
 });
