@@ -1,0 +1,14 @@
+{
+  "name": "aamf",
+  "version": "0.1.0",
+  "description": "Autonomous Agent Migration Framework",
+  "private": true,
+  "scripts": {
+    "build": "npm run build --prefix runtime",
+    "test": "npm test --prefix runtime",
+    "install-runtime": "npm install --prefix runtime"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

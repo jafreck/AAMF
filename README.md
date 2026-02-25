@@ -1,5 +1,7 @@
 # AAMF — Autonomous Agent Migration Framework
 
+[![CI](https://github.com/jafreck/AAMF/actions/workflows/ci.yml/badge.svg)](https://github.com/jafreck/AAMF/actions/workflows/ci.yml)
+
 AAMF is a TypeScript runtime that orchestrates AI agents to migrate extremely large legacy codebases from one technology stack to another. It manages the full lifecycle — analysis, planning, code translation, verification, and documentation — by spawning out-of-process Copilot CLI invocations and coordinating them through a seven-phase pipeline with checkpointing, budgeting, and failure recovery.
 
 Typical use cases include porting a 100k+ line Python monolith to TypeScript, a COBOL system to Go, or a Java codebase to Rust.
