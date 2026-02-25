@@ -163,7 +163,7 @@ export class ProgressWriter {
       if (phase.notes) noteParts.push(phase.notes);
       if (phase.exitCode !== undefined) noteParts.push(`exitCode: ${phase.exitCode}`);
       if (phase.stderr) noteParts.push(`stderr: ${phase.stderr.slice(0, 200)}`);
-      md += `| ${id} | ${phase.name} | ${statusIcon} ${phase.status} | ${noteParts.join(' | ')} |\n`;
+      md += `| ${id} | ${phase.name} | ${statusIcon} ${phase.status} | ${noteParts.join('; ')} |\n`;
     }
     md += '\n';
 

@@ -380,6 +380,8 @@ export class MigrationOrchestrator {
         success: false,
         duration: Date.now() - start,
         error: planResult.error,
+        exitCode: planResult.exitCode,
+        stderr: planResult.stderr,
       };
     }
 
@@ -868,6 +870,8 @@ export class MigrationOrchestrator {
           success: false,
           duration: Date.now() - start,
           error: result.error,
+          exitCode: result.exitCode,
+          stderr: result.stderr,
         };
       }
 
