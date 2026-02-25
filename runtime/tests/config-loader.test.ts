@@ -71,6 +71,25 @@ describe('Config Loader', () => {
     expect(config.copilot.agentDir).toBe(join(tempDir, '.github', 'agents'));
   });
 
+  it('should resolve claudeCode.agentDir relative to config file directory', async () => {
+    const configPath = join(tempDir, 'migration.config.json');
+    await writeFile(configPath, JSON.stringify(validConfig));
+
+    const config = await loadConfig(configPath);
+    expect(config.claudeCode.agentDir).toBe(join(tempDir, '.claude', 'agents'));
+  });
+
+  it('should resolve explicit claudeCode.agentDir relative to config file directory', async () => {
+    const configPath = join(tempDir, 'migration.config.json');
+    await writeFile(configPath, JSON.stringify({
+      ...validConfig,
+      claudeCode: { agentDir: './custom-agents' },
+    }));
+
+    const config = await loadConfig(configPath);
+    expect(config.claudeCode.agentDir).toBe(join(tempDir, 'custom-agents'));
+  });
+
   it('should merge overrides correctly with applyOverrides', async () => {
     const configPath = join(tempDir, 'migration.config.json');
     await writeFile(configPath, JSON.stringify(validConfig));
