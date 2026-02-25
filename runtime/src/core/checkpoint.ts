@@ -21,6 +21,7 @@ export interface CheckpointState {
   startedAt: string;                        // ISO timestamp
   lastCheckpoint: string;                   // ISO timestamp
   resumeCount: number;
+  cumulativeDurationMs: number;             // total wall-clock ms across all resume runs
 }
 
 export interface CheckpointFailedTask {
@@ -52,6 +53,7 @@ export class CheckpointManager {
       try {
         this.state = await readJson<CheckpointState>(this.checkpointPath);
         this.state.resumeCount += 1;
+        this.state.cumulativeDurationMs ??= 0;
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
         await this.save(this.state);
         return this.state;
@@ -62,6 +64,7 @@ export class CheckpointManager {
           try {
             this.state = await readJson<CheckpointState>(this.backupPath);
             this.state.resumeCount += 1;
+            this.state.cumulativeDurationMs ??= 0;
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
             await this.save(this.state);
             return this.state;
@@ -87,6 +90,7 @@ export class CheckpointManager {
       startedAt: new Date().toISOString(),
       lastCheckpoint: new Date().toISOString(),
       resumeCount: 0,
+      cumulativeDurationMs: 0,
     };
     await this.save(this.state);
     return this.state;

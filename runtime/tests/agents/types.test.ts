@@ -242,6 +242,61 @@ describe('FailedTask', () => {
   });
 });
 
+// ─── MigrationResult ─────────────────────────────────────────────────────────
+
+describe('MigrationResult', () => {
+  function makeBaseMigrationResult(overrides?: Partial<MigrationResult>): MigrationResult {
+    return {
+      success: true,
+      projectName: 'test-project',
+      phases: [],
+      totalDuration: 1000,
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      failedTasks: [],
+      blockedTasks: [],
+      ...overrides,
+    };
+  }
+
+  it('should construct with required fields and no cumulativeDuration', () => {
+    const result = makeBaseMigrationResult();
+    expect(result.success).toBe(true);
+    expect(result.projectName).toBe('test-project');
+    expect(result.totalDuration).toBe(1000);
+    expect(result.cumulativeDuration).toBeUndefined();
+  });
+
+  it('should accept cumulativeDuration when provided', () => {
+    const result = makeBaseMigrationResult({ cumulativeDuration: 5000 });
+    expect(result.cumulativeDuration).toBe(5000);
+  });
+
+  it('should accept cumulativeDuration of 0', () => {
+    const result = makeBaseMigrationResult({ cumulativeDuration: 0 });
+    expect(result.cumulativeDuration).toBe(0);
+  });
+
+  it('should represent accumulated duration across multiple resume runs', () => {
+    // Simulate three resume runs of 1000ms each
+    const result = makeBaseMigrationResult({ cumulativeDuration: 3000 });
+    expect(result.cumulativeDuration).toBe(3000);
+    expect(result.totalDuration).toBe(1000); // current run only
+  });
+
+  it('should allow cumulativeDuration to be omitted (optional field)', () => {
+    const result: MigrationResult = {
+      success: false,
+      projectName: 'failing-project',
+      phases: [],
+      totalDuration: 500,
+      tokenUsage: { total: 100, byPhase: { 1: 100 }, byAgent: { 'code-migrator': 100 } },
+      failedTasks: ['task-001'],
+      blockedTasks: ['task-002'],
+    };
+    expect(result.cumulativeDuration).toBeUndefined();
+  });
+});
+
 // ─── TaskDetails ──────────────────────────────────────────────────────────────
 
 describe('TaskDetails', () => {
