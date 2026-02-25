@@ -19,6 +19,7 @@ export class ProgressWriter {
   private tokenUsage: { total: number } = { total: 0 };
   private startTime: Date = new Date();
   private agentStatuses: Map<string, string> = new Map();
+  private cumulativeDurationMs: number = 0;
 
   constructor(private filePath: string) {}
 
@@ -129,6 +130,11 @@ export class ProgressWriter {
     await this.writeCurrentState();
   }
 
+  /** Set the accumulated duration across all resume runs (call before finalize). */
+  setCumulativeDuration(ms: number): void {
+    this.cumulativeDurationMs = ms;
+  }
+
   /** Write completion summary */
   async finalize(result: { success: boolean; failedTasks: string[]; blockedTasks: string[]; totalDuration: number }): Promise<void> {
     await this.appendEvent(result.success ? 'Migration completed successfully!' : 'Migration completed with issues.');
@@ -149,6 +155,9 @@ export class ProgressWriter {
     let md = `# Migration Progress: ${projectName}\n\n`;
     md += `**Started:** ${this.startTime.toISOString()}\n`;
     md += `**Elapsed:** ${elapsed}\n`;
+    if (this.cumulativeDurationMs > Date.now() - this.startTime.getTime()) {
+      md += `**Total Cumulative Duration:** ${this.formatDuration(this.cumulativeDurationMs)}\n`;
+    }
     md += `**Token Usage:** ${this.tokenUsage.total.toLocaleString()} tokens\n\n`;
 
     // Phase table

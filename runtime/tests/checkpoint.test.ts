@@ -113,6 +113,45 @@ describe('CheckpointManager', () => {
     expect(resume.taskId).toBe('task-005');
   });
 
+  it('should default cumulativeDurationMs to 0 when field is absent in stored checkpoint (backward compat)', async () => {
+    // Write a checkpoint without cumulativeDurationMs (simulating an old checkpoint)
+    const { writeJson } = await import('../src/util/fs.js');
+    const oldState = {
+      projectName: 'old-project',
+      version: 1,
+      currentPhase: 2,
+      currentTask: null,
+      completedPhases: [1],
+      completedTasks: ['task-001'],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 1,
+      // cumulativeDurationMs intentionally omitted
+    };
+    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const loaded = await manager3.load('old-project');
+    expect(loaded.cumulativeDurationMs).toBe(0);
+  });
+
+  it('should initialize cumulativeDurationMs to 0 on fresh state and preserve on reload', async () => {
+    const state = await manager.load('test-project');
+    expect(state.cumulativeDurationMs).toBe(0);
+
+    // Simulate accumulation then reload
+    state.cumulativeDurationMs = 5000;
+    await manager.save(state);
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.cumulativeDurationMs).toBe(5000);
+  });
+
   it('should write checkpoint atomically', async () => {
     await manager.load('test-project');
     

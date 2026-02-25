@@ -118,6 +118,24 @@ describe('ProgressWriter', () => {
     expect(content).toContain('completed successfully');
   });
 
+  it('should not show cumulative duration line on a fresh run (equal to elapsed)', async () => {
+    await writer.initialize(config);
+    // cumulativeDurationMs is 0 by default; elapsed is also ~0, so no cumulative line
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).not.toContain('Total Cumulative Duration');
+  });
+
+  it('should show cumulative duration line when it exceeds current session elapsed', async () => {
+    await writer.initialize(config);
+    // Simulate a resumed run where prior runs added 60 seconds
+    writer.setCumulativeDuration(60_000);
+    await writer.appendEvent('resumed');
+
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('Total Cumulative Duration');
+    expect(content).toContain('1m 0s');
+  });
+
   describe('Resume & Edge Cases', () => {
     it('should rewrite all phases to pending on re-initialization', async () => {
       await writer.initialize(config);

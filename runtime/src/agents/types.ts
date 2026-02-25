@@ -212,6 +212,9 @@ export interface MigrationResult {
 
   /** Task IDs that could not run due to unmet dependencies. */
   blockedTasks: string[];
+
+  /** Sum of all session durations (in milliseconds) across all resume runs. */
+  cumulativeDuration?: number;
 }
 
 /**
