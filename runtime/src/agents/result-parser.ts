@@ -112,7 +112,7 @@ export class ResultParser {
 
     // Split on task headers like "## Task: task-001 - Module Name"
     // or "### task-001: Module Name"
-    const taskBlocks = content.split(/^#{2,3}\s+(?:Task:\s*)?/m).filter(Boolean);
+    const taskBlocks = content.split(/^#{2,3}\s+(?:Task:\s*)?(?=task-\d+)/mi).filter(Boolean);
 
     for (const block of taskBlocks) {
       const task = ResultParser.parseTaskBlock(block);
@@ -151,8 +151,8 @@ export class ResultParser {
         // Block didn't match task header pattern — not necessarily an error
         // (could be a preamble or non-task heading)
         const headerLine = block.split('\n')[0]?.trim() ?? '(unknown)';
-        // Only count as failed if it looks like it was *trying* to be a task
-        if (/task/i.test(headerLine)) {
+        // Only count as failed if it looks like it was *trying* to be a canonical task
+        if (/task-\d+/i.test(headerLine)) {
           failedBlockHeaders.push(headerLine);
         }
       }

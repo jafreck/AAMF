@@ -159,6 +159,41 @@ Just notes.
       expect(log.info).toHaveBeenCalledWith(expect.stringContaining('1 tasks OK'));
     });
 
+    it('should not treat structural headings as task blocks', () => {
+      const content = `## Task Summary
+
+This section summarizes all tasks.
+
+## Tasks
+
+Here are the tasks:
+
+## Task: task-001 - Module A
+
+**Description:** First task
+**Complexity:** simple
+
+**Source Files:**
+- src/a.py
+
+## Task: task-002 - Module B
+
+**Description:** Second task
+**Complexity:** simple
+
+**Source Files:**
+- src/b.py
+`;
+      const log = silentLogger();
+      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      expect(tasks).toHaveLength(2);
+      expect(log.warn).not.toHaveBeenCalledWith(expect.stringContaining('Unparseable block headers'));
+      expect(log.error).not.toHaveBeenCalledWith(expect.stringContaining('Task Summary'));
+      expect(log.error).not.toHaveBeenCalledWith(expect.stringContaining('Tasks'));
+      expect(tasks[0]?.id).toBe('task-001');
+      expect(tasks[1]?.id).toBe('task-002');
+    });
+
     it('should reject non-canonical "Task N:" headers', () => {
       const content = `## Task 1: Migrate Constants Module
 
