@@ -11,6 +11,8 @@ export interface PhaseDefinition {
   critical: boolean;
   /** Whether agents in this phase can run in parallel */
   parallel: boolean;
+  /** Whether this phase is optional (skipped unless explicitly enabled) */
+  optional?: boolean;
 }
 
 /** The 7 ordered migration phases */
@@ -62,6 +64,15 @@ export const PHASES: readonly PhaseDefinition[] = [
     agents: ['e2e-test-crafter', 'documentation-writer'],
     critical: false,
     parallel: true,  // e2e tests and docs can be written in parallel
+  },
+  {
+    id: 8,
+    name: 'Idiomatic Refactor',
+    description: 'Review and refactor migrated code to use idiomatic patterns for the target language',
+    agents: ['idiomatic-reviewer', 'idiomatic-refactorer'],
+    critical: false,
+    parallel: false,
+    optional: true,
   },
   {
     id: 7,

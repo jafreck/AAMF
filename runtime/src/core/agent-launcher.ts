@@ -21,6 +21,8 @@ import {
   E2eTestCrafterOutput,
   DocumentationWriterOutput,
   MigrationRunnerOutput,
+  IdiomaticReviewerOutput,
+  IdiomaticRefactorerOutput,
 } from '../agents/result-parser.js';
 import { Logger } from '../logging/logger.js';
 import { TokenTracker } from '../budget/token-tracker.js';
@@ -42,6 +44,8 @@ const agentOutputSchemas: Record<AgentName, z.ZodTypeAny> = {
   'e2e-test-crafter': E2eTestCrafterOutput,
   'documentation-writer': DocumentationWriterOutput,
   'migration-runner': MigrationRunnerOutput,
+  'idiomatic-reviewer': IdiomaticReviewerOutput,
+  'idiomatic-refactorer': IdiomaticRefactorerOutput,
 };
 
 /**

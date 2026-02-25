@@ -195,6 +195,21 @@ export class ContextBuilder {
           outputPath: join(out, 'docs'),
         };
 
+      case 'idiomatic-reviewer':
+        return {
+          inputFiles: [out],
+          outputPath: join(this.progressDir, 'idiomatic-review-report.md'),
+        };
+
+      case 'idiomatic-refactorer':
+        return {
+          inputFiles: [
+            ...(payload?.targetFile ? [String(payload.targetFile)] : []),
+            ...(payload?.idiomaticReport ? [String(payload.idiomaticReport)] : []),
+          ],
+          outputPath: out,
+        };
+
       default:
         // migration-orchestrator, migration-runner, etc.
         return {

@@ -41,6 +41,8 @@ export const FinalParityCheckerOutput = AamfOutputBase.extend({ agent: z.literal
 export const E2eTestCrafterOutput = AamfOutputBase.extend({ agent: z.literal('e2e-test-crafter') });
 export const DocumentationWriterOutput = AamfOutputBase.extend({ agent: z.literal('documentation-writer') });
 export const MigrationRunnerOutput = AamfOutputBase.extend({ agent: z.literal('migration-runner') });
+export const IdiomaticReviewerOutput = AamfOutputBase.extend({ agent: z.literal('idiomatic-reviewer') });
+export const IdiomaticRefactorerOutput = AamfOutputBase.extend({ agent: z.literal('idiomatic-refactorer') });
 
 /**
  * JSON schema for structured agent task results (sidecar `.result.json`).
@@ -409,6 +411,40 @@ export class ResultParser {
     }
 
     return undefined;
+  }
+
+  /**
+   * Parse an idiomatic review report and extract individual issues.
+   *
+   * Splits the report on H2/H3 headings that begin with "Issue" or "Finding"
+   * and extracts file, issue, and suggestion fields from each block.
+   *
+   * @param reportPath - Absolute path to the idiomatic review report markdown file.
+   * @returns Array of issues, or empty array if the file doesn't exist or has no sections.
+   */
+  static async parseIdiomaticReport(
+    reportPath: string,
+  ): Promise<Array<{ file: string; issue: string; suggestion: string }>> {
+    if (!(await fileExists(reportPath))) return [];
+    let content: string;
+    try {
+      content = await readFile(reportPath, 'utf-8');
+    } catch {
+      return [];
+    }
+    const entries: Array<{ file: string; issue: string; suggestion: string }> = [];
+    const issueBlocks = content.split(/^#{2,3}\s+(?:Issue|Finding)/mi);
+    for (const block of issueBlocks.slice(1)) {
+      const fileMatch = block.match(/file:?\s*[`"]?([^\n`"]+)/i);
+      const issueMatch = block.match(/issue:?\s*[`"]?([^\n`"]+)/i);
+      const suggestionMatch = block.match(/suggestion:?\s*[`"]?([^\n`"]+)/i);
+      entries.push({
+        file: fileMatch?.[1]?.trim() ?? '',
+        issue: issueMatch?.[1]?.trim() ?? '',
+        suggestion: suggestionMatch?.[1]?.trim() ?? '',
+      });
+    }
+    return entries;
   }
 
   /**

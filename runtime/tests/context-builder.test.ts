@@ -194,6 +194,26 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toContain('docs');
     });
 
+    it('should route idiomatic-reviewer to target output dir, output to idiomatic-review-report.md', async () => {
+      const contextPath = await builder.buildContext('idiomatic-reviewer', 8);
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).toContain('/tmp/target');
+      expect(context.outputPath).toContain('idiomatic-review-report.md');
+    });
+
+    it('should route idiomatic-refactorer with targetFile and idiomaticReport from payload', async () => {
+      const contextPath = await builder.buildContext('idiomatic-refactorer', 8, undefined, {
+        targetFile: '/tmp/target/src/utils.ts',
+        idiomaticReport: '/tmp/progress/idiomatic-review-report.md',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).toContain('/tmp/target/src/utils.ts');
+      expect(context.inputFiles).toContain('/tmp/progress/idiomatic-review-report.md');
+      expect(context.outputPath).toBe('/tmp/target');
+    });
+
     it('should use default routing for unknown/orchestrator agents', async () => {
       const contextPath = await builder.buildContext('migration-orchestrator', 1);
       const context = await readJson<AgentContext>(contextPath);

@@ -23,7 +23,9 @@ export type AgentName =
   | 'final-parity-checker'
   | 'e2e-test-crafter'
   | 'documentation-writer'
-  | 'migration-runner';
+  | 'migration-runner'
+  | 'idiomatic-reviewer'
+  | 'idiomatic-refactorer';
 
 // ─── Invocation & Results ────────────────────────────────────────────────────
 

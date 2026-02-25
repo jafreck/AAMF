@@ -204,5 +204,30 @@ describe('MigrationConfigSchema', () => {
       });
       expect(result.options.avgTokensPerTask).toBe(8000);
     });
+
+    describe('idiomaticRefactor option', () => {
+      it('should leave idiomaticRefactor undefined when omitted', () => {
+        const result = MigrationConfigSchema.parse(validConfig);
+        expect(result.options.idiomaticRefactor).toBeUndefined();
+      });
+
+      it('should default enabled to false and maxIterations to 2 when idiomaticRefactor is {}', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { idiomaticRefactor: {} },
+        });
+        expect(result.options.idiomaticRefactor?.enabled).toBe(false);
+        expect(result.options.idiomaticRefactor?.maxIterations).toBe(2);
+      });
+
+      it('should accept idiomaticRefactor: { enabled: true, maxIterations: 3 }', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { idiomaticRefactor: { enabled: true, maxIterations: 3 } },
+        });
+        expect(result.options.idiomaticRefactor?.enabled).toBe(true);
+        expect(result.options.idiomaticRefactor?.maxIterations).toBe(3);
+      });
+    });
   });
 });

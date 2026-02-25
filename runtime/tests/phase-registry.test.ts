@@ -2,12 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { PHASES, getPhase, getRemainingPhases } from '../src/core/phase-registry.js';
 
 describe('Phase Registry', () => {
-  it('should have exactly 7 entries', () => {
-    expect(PHASES).toHaveLength(7);
+  it('should have exactly 8 entries', () => {
+    expect(PHASES).toHaveLength(8);
   });
 
-  it('should have sequential IDs 1–7', () => {
-    expect(PHASES.map(p => p.id)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  it('should contain phases with IDs 1–7 plus 8', () => {
+    const ids = PHASES.map(p => p.id).sort((a, b) => a - b);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it('should mark phases 1–4 as critical', () => {
@@ -17,8 +18,8 @@ describe('Phase Registry', () => {
     }
   });
 
-  it('should mark phases 5–7 as non-critical', () => {
-    for (const id of [5, 6, 7]) {
+  it('should mark phases 5–8 as non-critical', () => {
+    for (const id of [5, 6, 7, 8]) {
       const phase = PHASES.find(p => p.id === id);
       expect(phase?.critical).toBe(false);
     }
@@ -40,10 +41,11 @@ describe('Phase Registry', () => {
     expect(getPhase(99)).toBeUndefined();
   });
 
-  it('should return phases 5, 6, 7 from getRemainingPhases(5)', () => {
+  it('should return phases 5, 6, 7, 8 from getRemainingPhases(5)', () => {
     const remaining = getRemainingPhases(5);
-    expect(remaining).toHaveLength(3);
-    expect(remaining.map(p => p.id)).toEqual([5, 6, 7]);
+    expect(remaining).toHaveLength(4);
+    const ids = remaining.map(p => p.id).sort((a, b) => a - b);
+    expect(ids).toEqual([5, 6, 7, 8]);
   });
 
   it('should have non-empty name and description for all phases', () => {
@@ -51,5 +53,31 @@ describe('Phase Registry', () => {
       expect(phase.name.length).toBeGreaterThan(0);
       expect(phase.description.length).toBeGreaterThan(0);
     }
+  });
+
+  describe('Phase 8 (Idiomatic Refactor)', () => {
+    it('should exist with id: 8 and name "Idiomatic Refactor"', () => {
+      const phase = getPhase(8);
+      expect(phase).toBeDefined();
+      expect(phase?.id).toBe(8);
+      expect(phase?.name).toBe('Idiomatic Refactor');
+    });
+
+    it('should be optional', () => {
+      const phase = getPhase(8);
+      expect(phase?.optional).toBe(true);
+    });
+
+    it('should include idiomatic-reviewer and idiomatic-refactorer agents', () => {
+      const phase = getPhase(8);
+      expect(phase?.agents).toContain('idiomatic-reviewer');
+      expect(phase?.agents).toContain('idiomatic-refactorer');
+    });
+
+    it('should appear before Phase 7 (Completion) in the PHASES array', () => {
+      const phase8Index = PHASES.findIndex(p => p.id === 8);
+      const phase7Index = PHASES.findIndex(p => p.id === 7);
+      expect(phase8Index).toBeLessThan(phase7Index);
+    });
   });
 });
