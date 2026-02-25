@@ -27,10 +27,10 @@
     "testCommand": "cargo test"
   },
   "options": {
-    "maxParallelAgents": 3,
-    "maxRetriesPerTask": 2,
-    "largeFileThreshold": 500,
-    "maxLinesPerTask": 500,
+    "maxParallelAgents": 5,
+    "maxRetriesPerTask": 3,
+    "largeFileThreshold": 1000,
+    "maxLinesPerTask": 750,
     "tokenBudget": 10000000,
     "dryRun": false,
     "resume": true
