@@ -33,7 +33,8 @@
     "maxLinesPerTask": 750,
     "tokenBudget": 10000000,
     "dryRun": false,
-    "resume": true
+    "resume": true,
+    "keepArtifacts": false
   },
   "copilot": {
     "cliCommand": "copilot",

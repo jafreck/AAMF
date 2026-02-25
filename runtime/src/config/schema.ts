@@ -72,6 +72,15 @@ export const MigrationConfigSchema = z.object({
       enabled: z.boolean().default(false),
       maxIterations: z.number().int().min(1).default(2),
     }).optional(),
+    /**
+     * When `true`, AAMF preserves the `.aamf` checkpoint directory and the
+     * target output directory after the migration completes instead of
+     * deleting them.  Useful for post-run inspection and debugging.
+     * Can also be enabled at runtime by setting the environment variable
+     * `AAMF_KEEP_ARTIFACTS=1` without modifying the config file.
+     * Default: false.
+     */
+    keepArtifacts: z.boolean().default(false),
   }).default({}),
   copilot: z.object({
     cliCommand: z.string().default('copilot'),
