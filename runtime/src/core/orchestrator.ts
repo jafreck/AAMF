@@ -474,8 +474,8 @@ export class MigrationOrchestrator {
 
     // 1c. Cost projection
     const taskCount = tasks.length;
-    const avgTokensPerTask = 5000;
-    const estimatedTotalTokens = taskCount * avgTokensPerTask * 3; // migrator + parity + test-writer
+    const agentMultiplier = this.config.target.testCommand ? 3 : 2; // migrator + parity (+ test-writer if testCommand set)
+    const estimatedTotalTokens = taskCount * this.config.options.avgTokensPerTask * agentMultiplier;
     const model = this.config.copilot.model ?? 'claude-sonnet-4';
     const estimator = new CostEstimator(this.config.copilot.costOverrides);
     const projected = estimator.estimateFromTotal(model, estimatedTotalTokens);

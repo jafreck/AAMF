@@ -253,6 +253,7 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
         },
       });
 
@@ -327,6 +328,7 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
         },
       });
 
@@ -363,6 +365,7 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
         },
       });
 
@@ -563,6 +566,7 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
         },
       });
 
@@ -642,6 +646,7 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
         },
       });
 
@@ -699,6 +704,7 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
           },
         },
       );
@@ -841,6 +847,7 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
           },
         },
       );
@@ -897,6 +904,96 @@ describe('MigrationOrchestrator', () => {
 
       // Task should be blocked because major issues remain after max retries
       expect(result.blockedTasks).toContain('task-001');
+    });
+
+    it('should use avgTokensPerTask from config for Phase 4 cost projection', async () => {
+      const launcherFn = createMockLauncher();
+      const logger = createSilentLogger(tempDir);
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      const config = createMockConfig({
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          largeFileThreshold: 500,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 8000,
+        },
+      });
+
+      const progressDir = join(tempDir, '.aamf', 'migration', config.projectName);
+      await ensureDir(progressDir);
+
+      const checkpoint = new CheckpointManager(progressDir, logger);
+      await checkpoint.load(config.projectName);
+      const progressFile = join(progressDir, 'progress.md');
+      const progress = new ProgressWriter(progressFile);
+      await progress.initialize(config);
+
+      const mockLauncher = new MockAgentLauncher(launcherFn);
+      const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, tempDir);
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      // 2 tasks * 8000 avgTokensPerTask * 2 (no testCommand) = 32,000
+      const projectionLog = infoSpy.mock.calls.find((call) => call[0]?.includes('estimated'));
+      expect(projectionLog).toBeDefined();
+      expect(projectionLog![0]).toContain('32,000');
+    });
+
+    it('should use multiplier of 2 without testCommand and 3 with testCommand', async () => {
+      const launcherFn = createMockLauncher();
+
+      // Without testCommand: multiplier = 2
+      {
+        const logger = createSilentLogger(tempDir);
+        const infoSpy = vi.spyOn(logger, 'info');
+        const config = createMockConfig({ options: { maxParallelAgents: 3, maxRetriesPerTask: 3, largeFileThreshold: 500, maxLinesPerTask: 500, dryRun: false, resume: false, invocationDelayMs: 0, buildConcurrency: 1, continueOnBlocked: true, maxBlockedTasks: 0, maxInfraRetries: 3, avgTokensPerTask: 1000 } });
+        const progressDir2 = join(tempDir, 'sub1', '.aamf', 'migration', config.projectName);
+        await ensureDir(progressDir2);
+        const checkpoint = new CheckpointManager(progressDir2, logger);
+        await checkpoint.load(config.projectName);
+        const progress = new ProgressWriter(join(progressDir2, 'progress.md'));
+        await progress.initialize(config);
+        const mockLauncher = new MockAgentLauncher(launcherFn);
+        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub1'));
+        await writeMigrationPlan(progressDir2);
+        await orchestrator.run();
+        // 2 tasks * 1000 * 2 = 4,000
+        const log = infoSpy.mock.calls.find((c) => c[0]?.includes('estimated'));
+        expect(log![0]).toContain('4,000');
+      }
+
+      // With testCommand: multiplier = 3
+      {
+        const logger = createSilentLogger(tempDir);
+        const infoSpy = vi.spyOn(logger, 'info');
+        const config = createMockConfig({
+          target: { language: 'typescript', outputPath: '/tmp/target', testCommand: 'npm test' },
+          options: { maxParallelAgents: 3, maxRetriesPerTask: 3, largeFileThreshold: 500, maxLinesPerTask: 500, dryRun: false, resume: false, invocationDelayMs: 0, buildConcurrency: 1, continueOnBlocked: true, maxBlockedTasks: 0, maxInfraRetries: 3, avgTokensPerTask: 1000 },
+        });
+        const progressDir3 = join(tempDir, 'sub2', '.aamf', 'migration', config.projectName);
+        await ensureDir(progressDir3);
+        const checkpoint = new CheckpointManager(progressDir3, logger);
+        await checkpoint.load(config.projectName);
+        const progress = new ProgressWriter(join(progressDir3, 'progress.md'));
+        await progress.initialize(config);
+        const mockLauncher = new MockAgentLauncher(launcherFn);
+        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub2'));
+        await writeMigrationPlan(progressDir3);
+        await orchestrator.run();
+        // 2 tasks * 1000 * 3 = 6,000
+        const log = infoSpy.mock.calls.find((c) => c[0]?.includes('estimated'));
+        expect(log![0]).toContain('6,000');
+      }
     });
   });
 

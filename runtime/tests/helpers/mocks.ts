@@ -97,6 +97,7 @@ export function createMockConfig(overrides?: Partial<MigrationConfig>): Migratio
       continueOnBlocked: true,
       maxBlockedTasks: 0,
       maxInfraRetries: 3,
+      avgTokensPerTask: 5000,
     },
     copilot: {
       cliCommand: 'copilot',

@@ -55,6 +55,11 @@ export const MigrationConfigSchema = z.object({
      * Default: 3.
      */
     maxInfraRetries: z.number().int().min(0).max(10).default(3),
+    /**
+     * Estimated average number of tokens consumed per migration task.
+     * Used for Phase 4 cost projection. Default: 5000.
+     */
+    avgTokensPerTask: z.number().int().min(1).default(5000),
   }).default({}),
   copilot: z.object({
     cliCommand: z.string().default('copilot'),
