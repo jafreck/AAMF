@@ -1522,7 +1522,7 @@ describe('MigrationOrchestrator', () => {
       });
 
       const maxIterations = 3;
-      const { orchestrator, progressDir } = await setupOrchestrator(
+      const { orchestrator, progressDir, logger } = await setupOrchestrator(
         tempDir,
         launcherFn,
         {
@@ -1551,9 +1551,70 @@ describe('MigrationOrchestrator', () => {
         '# Idiomatic Review\n\n## Issue: Use const\nFile: src/main.ts\nIssue: let used instead of const\nSuggestion: replace let with const\n',
       );
 
+      const warnSpy = vi.spyOn(logger, 'warn');
+
       await orchestrator.run();
 
       expect(reviewCount).toBeLessThanOrEqual(maxIterations);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Max idiomatic refactor iterations reached'),
+      );
+    });
+
+    it('should skip Phase 8 when idiomaticRefactor is omitted from options', async () => {
+      const launcherFn = createMockLauncher();
+      // Default config has no idiomaticRefactor key — Phase 8 must be silently skipped
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+      await writeMigrationPlan(progressDir);
+
+      await orchestrator.run();
+
+      const phase8Invocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'idiomatic-reviewer' || i.agent === 'idiomatic-refactorer',
+      );
+      expect(phase8Invocations).toHaveLength(0);
+    });
+
+    it('should exit loop after one iteration when idiomatic-reviewer finds no issues', async () => {
+      let reviewCount = 0;
+      let refactorCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'idiomatic-reviewer') reviewCount++;
+        if (inv.agent === 'idiomatic-refactorer') refactorCount++;
+        return {};
+      });
+
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 3,
+            largeFileThreshold: 500,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+            idiomaticRefactor: { enabled: true, maxIterations: 5 },
+          },
+        },
+      );
+      await writeMigrationPlan(progressDir);
+
+      // No idiomatic report file → parseIdiomaticReport returns [] → loop exits immediately
+      await orchestrator.run();
+
+      expect(reviewCount).toBe(1);
+      expect(refactorCount).toBe(0);
     });
   });
 });
