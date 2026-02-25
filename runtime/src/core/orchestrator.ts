@@ -1325,7 +1325,7 @@ export class MigrationOrchestrator {
 
   private recordTokens(result: AgentResult, phase: number): void {
     if (result.tokenUsage) {
-      this.tokenTracker.record(result.agent, phase, result.tokenUsage.total);
+      this.tokenTracker.record(result.agent, phase, result.tokenUsage.total, result.tokenUsage.cachedInput);
     }
   }
 }
