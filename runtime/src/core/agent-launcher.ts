@@ -259,6 +259,7 @@ export class AgentLauncher {
           : result.exitCode !== 0
             ? result.stderr || `Exit code ${result.exitCode}`
             : undefined,
+        stderr: (result.killed || result.exitCode !== 0) ? result.stderr : undefined,
       };
 
       // Parse structured aamf-json output block from stdout

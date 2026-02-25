@@ -189,12 +189,15 @@ export class MigrationOrchestrator {
           duration: result.duration,
         });
       } else {
-        await this.progress.updatePhase(phase.id, 'failed', result.error);
+        const truncatedStderr = result.stderr ? result.stderr.slice(0, 2000) : undefined;
+        await this.progress.updatePhase(phase.id, 'failed', result.error, result.exitCode, truncatedStderr);
         this.logger.event({
           type: 'phase-failed',
           phase: phase.id,
           name: phase.name,
           error: result.error ?? 'unknown',
+          exitCode: result.exitCode,
+          stderr: truncatedStderr,
         });
 
         if (phase.critical) {
@@ -296,6 +299,8 @@ export class MigrationOrchestrator {
       outputPath,
       duration: Date.now() - start,
       error: result.error,
+      exitCode: result.success ? undefined : result.exitCode,
+      stderr: result.success ? undefined : result.stderr,
     };
   }
 
@@ -315,6 +320,8 @@ export class MigrationOrchestrator {
         success: false,
         duration: Date.now() - start,
         error: kbResult.error,
+        exitCode: kbResult.exitCode,
+        stderr: kbResult.stderr,
       };
     }
 
@@ -1185,13 +1192,15 @@ export class MigrationOrchestrator {
     phase: number,
     taskId?: string,
   ): AgentInvocation {
+    const phaseTimeouts = this.config.copilot.phaseTimeouts;
+    const timeout = phaseTimeouts?.[phase] ?? this.config.copilot.timeout;
     return {
       agent,
       contextFile,
       progressDir: this.progressDir,
       phase,
       taskId,
-      timeout: this.config.copilot.timeout,
+      timeout,
     };
   }
 

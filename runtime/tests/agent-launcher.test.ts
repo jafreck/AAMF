@@ -159,6 +159,7 @@ describe('AgentLauncher', () => {
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(1);
     expect(result.error).toContain('bad');
+    expect(result.stderr).toContain('bad');
   });
 
   it('should enforce timeout and kill the process', async () => {
@@ -203,7 +204,25 @@ describe('AgentLauncher', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('timed out');
+    expect(result.stderr).toBeDefined();
   }, 15_000);
+
+  it('should not populate stderr on successful (exit code 0) run', async () => {
+    const script = await createScript('success-stderr.sh', 'echo "some stderr" >&2\nexit 0');
+    const launcher = makeLauncher(script);
+    const { contextFile, progressDir } = await prepareInvocation('success-stderr-001');
+
+    const result = await launcher.launchAgent({
+      agent: 'code-migrator',
+      contextFile,
+      progressDir,
+      phase: 4,
+      taskId: 'success-stderr-001',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.stderr).toBeUndefined();
+  });
 
   it('should detect output files from context outputPath', async () => {
     const outputFile = join(tempDir, 'output.txt');

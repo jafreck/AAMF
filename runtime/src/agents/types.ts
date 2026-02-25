@@ -238,6 +238,12 @@ export interface PhaseResult {
 
   /** Error message if the phase failed. */
   error?: string;
+
+  /** Process exit code of the agent that caused the failure, if applicable. */
+  exitCode?: number;
+
+  /** Raw stderr from the agent that caused the failure, if applicable. */
+  stderr?: string;
 }
 
 // ─── Task Tracking ───────────────────────────────────────────────────────────
