@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { MigrationRuntime } from './core/runtime.js';
+import { IndexBuilder } from './indexer/index.js';
 
 const program = new Command()
   .name('aamf')
@@ -69,4 +70,52 @@ program
     }
   });
 
+// ─── index subcommand ─────────────────────────────────────────────────────────
+
+const indexCmd = program.command('index').description('Knowledge-base indexing commands');
+
+indexCmd
+  .command('build')
+  .description('Build the knowledge-base index from scratch')
+  .requiredOption('--root <path>', 'Root directory of the source tree to index')
+  .requiredOption('--db <path>', 'Path to the SQLite knowledge-base file')
+  .action(async (opts) => {
+    try {
+      const builder = new IndexBuilder(opts.db, { rootDir: opts.root });
+      await builder.build();
+      console.log(chalk.green('Index build complete.'));
+    } catch (err) {
+      console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      process.exit(1);
+    }
+  });
+
+indexCmd
+  .command('update')
+  .description('Incrementally update the knowledge-base index for changed files')
+  .requiredOption('--db <path>', 'Path to the SQLite knowledge-base file')
+  .requiredOption('--root <path>', 'Root directory of the source tree')
+  .argument('[files...]', 'Changed file paths to re-process')
+  .action(async (files: string[], opts) => {
+    try {
+      const builder = new IndexBuilder(opts.db, { rootDir: opts.root });
+      await builder.update(files);
+      console.log(chalk.green(`Index updated for ${files.length} file(s).`));
+    } catch (err) {
+      console.error(chalk.red(`Error: ${err instanceof Error ? err.message : String(err)}`));
+      process.exit(1);
+    }
+  });
+
+// ─── kb-server subcommand (placeholder — full implementation in session-006) ──
+
+program
+  .command('kb-server')
+  .description('Start the knowledge-base MCP server (placeholder)')
+  .requiredOption('--db <path>', 'Path to the SQLite knowledge-base file')
+  .action((opts) => {
+    console.log(chalk.yellow(`kb-server stub: db=${opts.db} (full implementation coming in session-006)`));
+  });
+
 program.parse();
+
