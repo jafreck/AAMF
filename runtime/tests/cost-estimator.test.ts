@@ -76,6 +76,15 @@ describe('CostEstimator', () => {
     expect(result.total).toBeCloseTo(expected.total, 10);
   });
 
+  it('should compute exactly 800 prompt / 200 completion tokens for 1000 total in estimateFromTotal', () => {
+    // Acceptance criterion: 80% prompt, 20% completion for agentic workloads
+    const gpt41 = estimator.estimate('gpt-4.1', 800, 200);
+    const result = estimator.estimateFromTotal('gpt-4.1', 1000);
+    expect(result.input).toBeCloseTo(gpt41.input, 10);
+    expect(result.output).toBeCloseTo(gpt41.output, 10);
+    expect(result.total).toBeCloseTo(gpt41.total, 10);
+  });
+
   it('should format cost correctly', () => {
     expect(CostEstimator.formatCost(1.5)).toBe('$1.5000');
     expect(CostEstimator.formatCost(0)).toBe('$0.0000');

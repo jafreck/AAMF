@@ -484,6 +484,14 @@ intermediate text
       expect(usage?.total).toBe(5000);
     });
 
+    it('should split total-only tokens 80/20 (prompt/completion)', () => {
+      // 80% prompt, 20% completion — consistent with CostEstimator.estimateFromTotal
+      const usage = ResultParser.parseTokenUsage('Total tokens: 5000');
+      expect(usage?.prompt).toBe(4000);
+      expect(usage?.completion).toBe(1000);
+      expect(usage?.total).toBe(5000);
+    });
+
     it('should return undefined for no token info', () => {
       const usage = ResultParser.parseTokenUsage('some output with no tokens');
       expect(usage).toBeUndefined();
