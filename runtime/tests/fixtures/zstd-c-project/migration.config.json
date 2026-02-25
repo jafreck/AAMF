@@ -34,7 +34,7 @@
     "tokenBudget": 10000000,
     "dryRun": false,
     "resume": true,
-    "keepArtifacts": false
+    "keepArtifacts": true
   },
   "copilot": {
     "cliCommand": "copilot",
