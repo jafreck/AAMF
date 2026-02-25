@@ -10,6 +10,7 @@ import {
   AgentName,
   MigrationResult,
   MigrationTask,
+  ModuleGroup,
   PhaseResult,
 } from '../agents/types.js';
 import { ContextBuilder } from '../agents/context-builder.js';
@@ -21,7 +22,7 @@ import { RetryExecutor } from '../execution/retry.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
 import { Logger } from '../logging/logger.js';
-import { fileExists, countFileLines, atomicWrite } from '../util/fs.js';
+import { fileExists, countFileLines, atomicWrite, readJson } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
@@ -400,48 +401,167 @@ export class MigrationOrchestrator {
   // ─── Phase 3: Migration Planning ─────────────────────────────────────
 
   private async executePhase3(start: number): Promise<PhaseResult> {
-    // 1. Launch migration-planner
-    const planContext = await this.contextBuilder.buildContext('migration-planner', 3);
-    const planInv = this.buildInvocation('migration-planner', planContext, 3);
-    const planResult = await this.launcher.launchAgent(planInv);
-    this.recordTokens(planResult, 3);
+    const planningDir = join(this.progressDir, 'planning');
+    const groupsFile = join(planningDir, 'groups.json');
+    const strategyFile = join(planningDir, 'strategy.md');
+    const mergedTasksFile = join(planningDir, 'tasks-merged.json');
 
-    if (!planResult.success) {
+    // ── Step 3a: migration-planner (fast, serial) ──────────────────────────
+    //   Reads the knowledge base and emits planning/groups.json +
+    //   planning/strategy.md.  Expected to take ~5-10 min.
+    const checkpointState = this.checkpoint.getState();
+    if (!checkpointState.phase3aComplete) {
+      const planContext = await this.contextBuilder.buildContext('migration-planner', 3);
+      const planInv = this.buildInvocation('migration-planner', planContext, 3);
+      const planResult = await this.launcher.launchAgent(planInv);
+      this.recordTokens(planResult, 3);
+
+      if (!planResult.success) {
+        return {
+          phase: 3,
+          name: 'Migration Planning',
+          success: false,
+          duration: Date.now() - start,
+          error: planResult.error,
+          exitCode: planResult.exitCode,
+          stderr: planResult.stderr,
+        };
+      }
+
+      // Adjudicator runs before task decomposition when competing strategies
+      // were written to disk by the migration-planner.
+      const adjudicationFile = join(this.progressDir, 'competing-strategies.md');
+      if (await fileExists(adjudicationFile)) {
+        const adjCtx = await this.contextBuilder.buildContext('adjudicator', 3, undefined, {
+          competingStrategiesFile: adjudicationFile,
+          decisionType: 'migration-strategy',
+        });
+        const adjInv = this.buildInvocation('adjudicator', adjCtx, 3);
+        const adjResult = await this.launcher.launchAgent(adjInv);
+        this.recordTokens(adjResult, 3);
+      }
+
+      // Checkpoint after step 3a.  If step 3b fails partway through, the
+      // next resume run skips the migration-planner and retries only the
+      // task-decomposer invocations that did not yet complete.
+      await this.checkpoint.completePhase3a();
+      this.logger.info(
+        'Step 3a complete: migration-planner wrote planning/groups.json and planning/strategy.md',
+      );
+    } else {
+      this.logger.info('Resuming Phase 3 — step 3a already complete, skipping migration-planner');
+    }
+
+    // ── Step 3b: parallel task-decomposer × N (one per module group) ──────
+    //   Each invocation reads strategy.md + its group's analysis files and
+    //   emits planning/tasks-<group>.json.  Completed groups are tracked in
+    //   the checkpoint so partial failures can be retried cheaply on resume.
+    if (!(await fileExists(groupsFile))) {
       return {
         phase: 3,
         name: 'Migration Planning',
         success: false,
         duration: Date.now() - start,
-        error: planResult.error,
-        exitCode: planResult.exitCode,
-        stderr: planResult.stderr,
+        error: 'planning/groups.json not found — migration-planner did not emit module groups',
       };
     }
 
-    // 2. Check if adjudicator is needed (competing strategies)
-    const adjudicationFile = join(this.progressDir, 'competing-strategies.md');
-    if (await fileExists(adjudicationFile)) {
-      const adjCtx = await this.contextBuilder.buildContext('adjudicator', 3, undefined, {
-        competingStrategiesFile: adjudicationFile,
-        decisionType: 'migration-strategy',
-      });
-      const adjInv = this.buildInvocation('adjudicator', adjCtx, 3);
-      const adjResult = await this.launcher.launchAgent(adjInv);
-      this.recordTokens(adjResult, 3);
-      // Adjudicator may have rewritten migration-plan.md; clear pre-adjudication
-      // structured output so Phase 4 reads the updated file instead.
-      this.phase3PlanResult = undefined;
+    const groups = await readJson<ModuleGroup[]>(groupsFile);
+    const completedGroups = new Set(this.checkpoint.getState().completedPhase3Groups ?? []);
+    const remainingGroups = groups.filter(g => !completedGroups.has(g.id));
+
+    if (remainingGroups.length > 0) {
+      this.logger.info(
+        `Step 3b: running task-decomposer for ${remainingGroups.length} of ${groups.length} ` +
+        `module group(s) in parallel (${completedGroups.size} already complete)`,
+      );
+
+      const invocations: AgentInvocation[] = [];
+      for (const group of remainingGroups) {
+        const ctx = await this.contextBuilder.buildContext('task-decomposer', 3, group.id, {
+          groupId: group.id,
+          groupName: group.name,
+          strategyFile,
+          analysisFiles: group.analysisFiles,
+        });
+        invocations.push(this.buildInvocation('task-decomposer', ctx, 3, group.id));
+      }
+
+      const parallel = new ParallelExecutor(
+        this.config.options.maxParallelAgents,
+        (inv) => this.launcher.launchAgent(inv),
+        this.logger,
+      );
+      const results = await parallel.executeAll(invocations);
+
+      const failedGroupIds: string[] = [];
+      for (const [i, r] of results.entries()) {
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        const group = remainingGroups[i]!;
+        this.recordTokens(r, 3);
+        if (r.success) {
+          await this.checkpoint.completePhase3Group(group.id);
+        } else {
+          failedGroupIds.push(group.id);
+          this.logger.error(
+            `task-decomposer failed for group "${group.id}": ${r.error ?? 'unknown'}`,
+          );
+        }
+      }
+
+      if (failedGroupIds.length > 0) {
+        return {
+          phase: 3,
+          name: 'Migration Planning',
+          success: false,
+          duration: Date.now() - start,
+          error: `task-decomposer failed for ${failedGroupIds.length} group(s): ${failedGroupIds.join(', ')}`,
+        };
+      }
     } else {
-      // Store for Phase 4 to consume via structuredOutput
-      this.phase3PlanResult = planResult;
+      this.logger.info('Step 3b: all module groups already task-decomposed, proceeding to merge');
     }
 
-    const outputPath = join(this.progressDir, 'migration-plan.md');
+    // ── Merge all tasks-<group>.json → planning/tasks-merged.json ─────────
+    //   The orchestrator reassembles individual group task lists into a single
+    //   ordered array.  Phase 4 reads this via structuredOutput (preferred)
+    //   or by loading the file directly (fallback on resume without in-memory
+    //   state).
+    const allTasks: MigrationTask[] = [];
+    for (const group of groups) {
+      const taskFile = join(planningDir, `tasks-${group.id}.json`);
+      if (await fileExists(taskFile)) {
+        const groupTasks = await readJson<MigrationTask[]>(taskFile);
+        allTasks.push(...groupTasks);
+      } else {
+        this.logger.warn(
+          `Expected task file not found for group "${group.id}": ${taskFile}`,
+        );
+      }
+    }
+
+    this.logger.info(
+      `Merged ${allTasks.length} task(s) across ${groups.length} module group(s) → ${mergedTasksFile}`,
+    );
+    await atomicWrite(mergedTasksFile, JSON.stringify(allTasks, null, 2));
+
+    // Make merged tasks available to Phase 4 via the in-memory structuredOutput
+    // path (avoids a redundant file read when phases run back-to-back).
+    this.phase3PlanResult = {
+      agent: 'task-decomposer',
+      exitCode: 0,
+      success: true,
+      outputFiles: [mergedTasksFile],
+      duration: Date.now() - start,
+      outputParsed: true,
+      structuredOutput: { tasks: allTasks },
+    };
+
     return {
       phase: 3,
       name: 'Migration Planning',
       success: true,
-      outputPath,
+      outputPath: mergedTasksFile,
       duration: Date.now() - start,
     };
   }
@@ -457,16 +577,29 @@ export class MigrationOrchestrator {
       tasks = this.phase3PlanResult.structuredOutput['tasks'] as MigrationTask[];
     } else {
       if (!(await fileExists(planPath))) {
-        return {
-          phase: 4,
-          name: 'Iterative Migration',
-          success: false,
-          duration: Date.now() - start,
-          error: 'migration-plan.md not found — Phase 3 may not have completed',
-        };
+        // Also check for the newer planning/tasks-merged.json produced by the
+        // two-step Phase 3 (migration-planner + parallel task-decomposer).
+        const mergedPlanPath = join(this.progressDir, 'planning', 'tasks-merged.json');
+        if (await fileExists(mergedPlanPath)) {
+          this.logger.warn(
+            'Phase 3 structured output unavailable — falling back to planning/tasks-merged.json',
+          );
+          tasks = await readJson<MigrationTask[]>(mergedPlanPath);
+        } else {
+          return {
+            phase: 4,
+            name: 'Iterative Migration',
+            success: false,
+            duration: Date.now() - start,
+            error: 'migration-plan.md and planning/tasks-merged.json not found — Phase 3 may not have completed',
+          };
+        }
+      } else {
+        this.logger.warn(
+          'Phase 3 structured output unavailable — falling back to ResultParser.parseMigrationPlan',
+        );
+        tasks = await ResultParser.parseMigrationPlan(planPath);
       }
-      this.logger.warn('Phase 3 structured output unavailable — falling back to ResultParser.parseMigrationPlan');
-      tasks = await ResultParser.parseMigrationPlan(planPath);
     }
     if (tasks.length === 0) {
       this.logger.warn('No tasks found in migration plan');

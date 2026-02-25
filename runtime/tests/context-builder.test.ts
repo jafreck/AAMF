@@ -96,7 +96,9 @@ describe('ContextBuilder', () => {
 
       expect(context.inputFiles.some((f: string) => f.includes('index.md'))).toBe(true);
       expect(context.inputFiles.some((f: string) => f.includes('impact-assessment.md'))).toBe(true);
-      expect(context.outputPath).toContain('migration-plan.md');
+      // Output path is now the planning/ directory (migration-planner emits groups.json +
+      // strategy.md; task-decomposers emit tasks-<group>.json into the same directory)
+      expect(context.outputPath).toContain('planning');
     });
 
     it('should route adjudicator to competing strategies file', async () => {

@@ -15,6 +15,7 @@ export type AgentName =
   | 'knowledge-builder'
   | 'large-file-analyzer'
   | 'migration-planner'
+  | 'task-decomposer'
   | 'adjudicator'
   | 'code-migrator'
   | 'parity-verifier'
@@ -182,6 +183,37 @@ export interface MigrationTask {
 
   /** Optional line range in the source file to scope the migration. */
   lineRange?: { start: number; end: number };
+}
+
+// ─── Module Groups ──────────────────────────────────────────────────────────
+
+/**
+ * A logical grouping of related source modules, emitted by `migration-planner`
+ * in `planning/groups.json`.
+ *
+ * Each group is handed to an independent `task-decomposer` agent that reads
+ * `planning/strategy.md` plus only the group's analysis files, keeping
+ * individual context windows small and enabling full parallelism.
+ */
+export interface ModuleGroup {
+  /**
+   * Stable, filesystem-safe identifier (e.g. `"core"`, `"api"`, `"utils-1"`).
+   * Used as the suffix in `planning/tasks-<id>.json`.
+   */
+  id: string;
+
+  /** Human-readable name shown in logs and progress output. */
+  name: string;
+
+  /**
+   * Absolute paths to the knowledge-base analysis files that are relevant to
+   * this group.  The `task-decomposer` agent receives these as its
+   * `inputFiles`, alongside `planning/strategy.md`.
+   */
+  analysisFiles: string[];
+
+  /** Optional prose description of what the group contains. */
+  description?: string;
 }
 
 // ─── Migration-Level Results ─────────────────────────────────────────────────

@@ -127,8 +127,23 @@ export class ContextBuilder {
       case 'migration-planner':
         return {
           inputFiles: [join(kbDir, 'index.md'), impactAssessment, join(kbDir, 'large-files')],
-          outputPath: migrationPlan,
+          outputPath: join(this.progressDir, 'planning'),
         };
+
+      case 'task-decomposer': {
+        const strategyFile = String(payload?.strategyFile ?? join(this.progressDir, 'planning', 'strategy.md'));
+        const analysisFiles = Array.isArray(payload?.analysisFiles)
+          ? (payload.analysisFiles as string[])
+          : [];
+        return {
+          inputFiles: [strategyFile, ...analysisFiles],
+          outputPath: join(this.progressDir, 'planning', `tasks-${taskId ?? 'unknown'}.json`),
+          agentPayload: {
+            groupId: payload?.groupId,
+            groupName: payload?.groupName,
+          },
+        };
+      }
 
       case 'adjudicator':
         return {

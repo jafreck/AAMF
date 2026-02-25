@@ -32,6 +32,23 @@ export const ImpactAssessorOutput = AamfOutputBase.extend({ agent: z.literal('im
 export const KnowledgeBuilderOutput = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
 export const LargeFileAnalyzerOutput = AamfOutputBase.extend({ agent: z.literal('large-file-analyzer') });
 export const MigrationPlannerOutput = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
+export const TaskDecomposerOutput = AamfOutputBase.extend({
+  agent: z.literal('task-decomposer'),
+  /** Parsed tasks for this module group — mirrors the MigrationTask[] schema. */
+  tasks: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    sourceFiles: z.array(z.string()),
+    targetFiles: z.array(z.string()),
+    knowledgeBaseRef: z.string(),
+    dependencies: z.array(z.string()),
+    complexity: z.enum(['simple', 'moderate', 'complex']),
+    description: z.string(),
+    acceptanceCriteria: z.array(z.string()),
+    parityChecks: z.array(z.string()),
+    lineRange: z.object({ start: z.number(), end: z.number() }).optional(),
+  })).optional(),
+});
 export const AdjudicatorOutput = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
 export const CodeMigratorOutput = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
 export const ParityVerifierOutput = AamfOutputBase.extend({ agent: z.literal('parity-verifier') });
