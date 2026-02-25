@@ -22,6 +22,7 @@ export interface CheckpointState {
   lastCheckpoint: string;                   // ISO timestamp
   resumeCount: number;
   cumulativeDurationMs: number;             // total wall-clock ms across all resume runs
+  completedTaskDurationsMs: number[];       // wall-clock ms per completed task, in order
 }
 
 export interface CheckpointFailedTask {
@@ -54,6 +55,7 @@ export class CheckpointManager {
         this.state = await readJson<CheckpointState>(this.checkpointPath);
         this.state.resumeCount += 1;
         this.state.cumulativeDurationMs ??= 0;
+        this.state.completedTaskDurationsMs ??= [];
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
         await this.save(this.state);
         return this.state;
@@ -65,6 +67,7 @@ export class CheckpointManager {
             this.state = await readJson<CheckpointState>(this.backupPath);
             this.state.resumeCount += 1;
             this.state.cumulativeDurationMs ??= 0;
+            this.state.completedTaskDurationsMs ??= [];
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
             await this.save(this.state);
             return this.state;
@@ -91,6 +94,7 @@ export class CheckpointManager {
       lastCheckpoint: new Date().toISOString(),
       resumeCount: 0,
       cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
     };
     await this.save(this.state);
     return this.state;
@@ -135,10 +139,13 @@ export class CheckpointManager {
   }
 
   /** Mark a task as complete and checkpoint */
-  async completeTask(taskId: string): Promise<void> {
+  async completeTask(taskId: string, durationMs?: number): Promise<void> {
     const state = this.getState();
     if (!state.completedTasks.includes(taskId)) {
       state.completedTasks.push(taskId);
+    }
+    if (durationMs !== undefined) {
+      state.completedTaskDurationsMs.push(durationMs);
     }
     state.currentTask = null;
     // Remove from failed if it was there

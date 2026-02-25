@@ -152,8 +152,59 @@ describe('CheckpointManager', () => {
     expect(reloaded.cumulativeDurationMs).toBe(5000);
   });
 
-  it('should write checkpoint atomically', async () => {
+  it('should append durationMs to completedTaskDurationsMs when provided', async () => {
     await manager.load('test-project');
+    await manager.completeTask('task-001', 1234);
+    await manager.completeTask('task-002', 5678);
+
+    const state = manager.getState();
+    expect(state.completedTaskDurationsMs).toEqual([1234, 5678]);
+  });
+
+  it('should not append to completedTaskDurationsMs when durationMs is omitted', async () => {
+    await manager.load('test-project');
+    await manager.completeTask('task-001');
+
+    const state = manager.getState();
+    expect(state.completedTaskDurationsMs).toEqual([]);
+  });
+
+  it('should round-trip task duration through save and reload', async () => {
+    await manager.load('test-project');
+    await manager.completeTask('task-001', 9999);
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.completedTaskDurationsMs).toEqual([9999]);
+  });
+
+  it('should default completedTaskDurationsMs to [] when field is absent in stored checkpoint (backward compat)', async () => {
+    const { writeJson } = await import('../src/util/fs.js');
+    const oldState = {
+      projectName: 'old-project',
+      version: 1,
+      currentPhase: 2,
+      currentTask: null,
+      completedPhases: [1],
+      completedTasks: ['task-001'],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 1,
+      cumulativeDurationMs: 0,
+      // completedTaskDurationsMs intentionally omitted
+    };
+    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const loaded = await manager3.load('old-project');
+    expect(loaded.completedTaskDurationsMs).toEqual([]);
+  });
+
+  it('should write checkpoint atomically', async () => {    await manager.load('test-project');
     
     // Verify checkpoint file exists
     const exists = await fileExists(join(tempDir, 'checkpoint.json'));
