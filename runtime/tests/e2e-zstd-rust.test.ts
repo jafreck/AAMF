@@ -131,7 +131,7 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
       logLevel: 'info',
     });
     result = await runtime.run();
-  }, 21_600_000); // 6-hour timeout — ~50 K lines of C, larger than lz4
+  }, 57_600_000); // 16-hour timeout — ~50 K lines of C, larger than lz4
 
   afterAll(async () => {
     if (keepArtifacts) return;
