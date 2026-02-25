@@ -67,4 +67,23 @@ describe('TokenTracker', () => {
     const tokens = TokenTracker.estimateTokens('hello world'); // 11 chars → ceil(11/4) = 3
     expect(tokens).toBe(3);
   });
+
+  it('should track cached input tokens', () => {
+    const tracker = new TokenTracker();
+    tracker.record('agent-a', 1, 1000, 500);
+    tracker.record('agent-b', 1, 2000, 300);
+    expect(tracker.getCachedInput()).toBe(800);
+  });
+
+  it('should return zero cached input when none recorded', () => {
+    const tracker = new TokenTracker();
+    tracker.record('agent-a', 1, 1000);
+    expect(tracker.getCachedInput()).toBe(0);
+  });
+
+  it('should not affect total tokens when cachedInput is provided', () => {
+    const tracker = new TokenTracker();
+    tracker.record('agent-a', 1, 1000, 500);
+    expect(tracker.getTotal()).toBe(1000);
+  });
 });

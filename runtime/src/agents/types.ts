@@ -84,7 +84,7 @@ export interface AgentResult {
   duration: number;
 
   /** Optional token-usage breakdown reported by the agent. */
-  tokenUsage?: { prompt: number; completion: number; total: number };
+  tokenUsage?: { prompt: number; completion: number; total: number; cachedInput?: number };
 
   /** Captured stderr or error message when the agent fails. */
   error?: string;

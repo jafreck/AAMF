@@ -5,7 +5,7 @@
 
 /** Pricing per 1 M tokens (USD) for input and output. */
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  // Claude models
+  // Claude models (dot notation — Copilot CLI)
   'claude-sonnet-4.6': { input: 3.00, output: 15.00 },
   'claude-sonnet-4.5': { input: 3.00, output: 15.00 },
   'claude-haiku-4.5': { input: 0.80, output: 4.00 },
@@ -13,6 +13,10 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   'claude-opus-4.6-fast': { input: 15.00, output: 75.00 },
   'claude-opus-4.5': { input: 15.00, output: 75.00 },
   'claude-sonnet-4': { input: 3.00, output: 15.00 },
+  // Claude models (dash notation — Claude Code CLI)
+  'claude-sonnet-4-5': { input: 3.00, output: 15.00 },
+  'claude-haiku-4-5': { input: 0.80, output: 4.00 },
+  'claude-opus-4-5': { input: 15.00, output: 75.00 },
   // Gemini models
   'gemini-3-pro-preview': { input: 3.50, output: 10.50 },
   // GPT models
@@ -78,17 +82,22 @@ export class CostEstimator {
    * @param model - Model identifier.
    * @param promptTokens - Number of input / prompt tokens.
    * @param completionTokens - Number of output / completion tokens.
-   * @returns Breakdown of input, output, and total cost in USD.
+   * @param cachedInputTokens - Number of cached input tokens (billed at 50% of input price).
+   * @returns Breakdown of input, output, cached, and total cost in USD.
    */
   estimate(
     model: string,
     promptTokens: number,
     completionTokens: number,
-  ): { input: number; output: number; total: number } {
+    cachedInputTokens?: number,
+  ): { input: number; output: number; cached: number; total: number } {
     const pricing = this.resolvePricing(model);
     const input = (promptTokens / 1_000_000) * pricing.input;
     const output = (completionTokens / 1_000_000) * pricing.output;
-    return { input, output, total: input + output };
+    const cached = cachedInputTokens !== undefined
+      ? (cachedInputTokens / 1_000_000) * pricing.input * 0.5
+      : 0;
+    return { input, output, cached, total: input + output + cached };
   }
 
   /**
