@@ -3,7 +3,8 @@
  *
  * Opens (or creates) a SQLite knowledge-base database and ensures all
  * required tables exist.  Vector embedding tables (vec0 virtual tables)
- * are created in a later milestone once the embedding dimensions are known.
+ * are created separately via `createVec0Tables()` once the embedding
+ * dimensions are known.
  */
 
 import Database from 'better-sqlite3';
@@ -89,6 +90,11 @@ CREATE TABLE IF NOT EXISTS kb_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Full-text search index over symbol names, signatures, and kinds (BM25 via FTS5).
+CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
+  name, signature, kind
+);
 `;
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -110,4 +116,50 @@ export function openDb(path: string): Database.Database {
   db.exec(DDL);
 
   return db;
+}
+
+// ─── kb_meta helpers ──────────────────────────────────────────────────────────
+
+/** Write (or overwrite) a key-value pair in `kb_meta`. */
+export function setKbMeta(db: Database.Database, key: string, value: string): void {
+  db.prepare('INSERT OR REPLACE INTO kb_meta (key, value) VALUES (?, ?)').run(key, value);
+}
+
+/** Read a value from `kb_meta`; returns `undefined` if the key is absent. */
+export function getKbMeta(db: Database.Database, key: string): string | undefined {
+  const row = db.prepare('SELECT value FROM kb_meta WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value;
+}
+
+// ─── Vec0 virtual tables ──────────────────────────────────────────────────────
+
+/**
+ * Loads the sqlite-vec extension and creates the `symbol_embeddings` and
+ * `symbol_semantic_embeddings` vec0 virtual tables with the given dimension.
+ * Also stores `embedding_dims` in `kb_meta` for validation on reopen.
+ *
+ * This function is idempotent: it is safe to call multiple times with the
+ * same `dims` value.
+ *
+ * @param db   An open better-sqlite3 database instance.
+ * @param dims Embedding dimensionality (e.g. 1024 for Qwen3-Embedding-0.6B).
+ */
+export function createVec0Tables(db: Database.Database, dims: number): void {
+  // Load the sqlite-vec native extension.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const sqliteVec = require('sqlite-vec') as { load(db: Database.Database): void };
+  sqliteVec.load(db);
+
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS symbol_embeddings USING vec0(
+      embedding FLOAT[${dims}]
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS symbol_semantic_embeddings USING vec0(
+      embedding FLOAT[${dims}]
+    );
+  `);
+
+  setKbMeta(db, 'embedding_dims', String(dims));
 }

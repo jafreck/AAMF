@@ -10,7 +10,7 @@
 
 import * as fs from 'node:fs';
 import * as crypto from 'node:crypto';
-import { openDb } from './db.js';
+import { openDb, setKbMeta, createVec0Tables } from './db.js';
 import type { Database } from './db.js';
 import { walkFiles } from './walker.js';
 import type { WalkerConfig } from './walker.js';
@@ -27,6 +27,7 @@ import { GoExtractor } from './extractors/go.js';
 import { JavaExtractor } from './extractors/java.js';
 import { CSharpExtractor } from './extractors/csharp.js';
 import type { SymbolExtractor } from './extractors/types.js';
+import type { EmbeddingProvider } from './embedder.js';
 
 // ─── Extractor registry ───────────────────────────────────────────────────────
 
@@ -41,6 +42,9 @@ const EXTRACTORS: Record<string, SymbolExtractor> = {
   java:       new JavaExtractor(),
   csharp:     new CSharpExtractor(),
 };
+
+/** Number of symbols to embed per batch. */
+const EMBED_BATCH_SIZE = 64;
 
 // ─── Prepared statement types ─────────────────────────────────────────────────
 
@@ -65,12 +69,14 @@ export class IndexBuilder {
   private readonly walkerConfig: WalkerConfig;
   private readonly pool: ParserPool;
   private readonly resolver: ImportResolver;
+  private readonly embedder: EmbeddingProvider | null;
 
-  constructor(dbPath: string, walkerConfig: WalkerConfig) {
+  constructor(dbPath: string, walkerConfig: WalkerConfig, embedder?: EmbeddingProvider) {
     this.dbPath = dbPath;
     this.walkerConfig = walkerConfig;
     this.pool = new ParserPool();
     this.resolver = new ImportResolver();
+    this.embedder = embedder ?? null;
   }
 
   // ─── Public API ──────────────────────────────────────────────────────────
@@ -88,6 +94,9 @@ export class IndexBuilder {
         this.processFile(db, file.path, file.language);
       }
       this.resolveImports(db);
+      if (this.embedder) {
+        await this.embedStructural(db);
+      }
     } finally {
       db.close();
     }
@@ -144,20 +153,28 @@ export class IndexBuilder {
   }
 
   /**
-   * Stub: writes an LLM-generated summary for a symbol to `symbol_summaries`.
-   * Full implementation will be completed in M2.
+   * Writes an LLM-generated summary for a symbol to `symbol_summaries`.
+   * If an `EmbeddingProvider` was configured, also embeds the summary text
+   * and persists it to `symbol_semantic_embeddings`.
    *
    * @param symbolId  Row ID of the symbol in the `symbols` table.
    * @param summary   Natural-language summary text.
    * @param model     Name of the model that produced the summary.
    */
-  ingestSummary(symbolId: number, summary: string, model = 'unknown'): void {
+  async ingestSummary(symbolId: number, summary: string, model = 'unknown'): Promise<void> {
     const db = openDb(this.dbPath);
     try {
       db.prepare(
         `INSERT OR REPLACE INTO symbol_summaries (symbol_id, summary, model)
          VALUES (?, ?, ?)`,
       ).run(symbolId, summary, model);
+
+      if (this.embedder) {
+        const [[embedding]] = await Promise.all([this.embedder.embed([summary])]);
+        db.prepare(
+          'INSERT OR REPLACE INTO symbol_semantic_embeddings(rowid, embedding) VALUES (?, json(?))',
+        ).run(symbolId, JSON.stringify(embedding));
+      }
     } finally {
       db.close();
     }
@@ -192,7 +209,10 @@ export class IndexBuilder {
          WHERE id = ?`,
       ).run(language, sizeBytes, hash, existing.id);
       fileId = existing.id;
-      // Remove stale symbols / imports
+      // Remove stale symbols / imports (also clean up FTS5 index)
+      db.prepare(
+        `DELETE FROM symbols_fts WHERE rowid IN (SELECT id FROM symbols WHERE file_id = ?)`,
+      ).run(fileId);
       db.prepare('DELETE FROM symbols WHERE file_id = ?').run(fileId);
       db.prepare('DELETE FROM file_imports WHERE file_id = ?').run(fileId);
     } else {
@@ -214,10 +234,13 @@ export class IndexBuilder {
 
     const result: ExtractionResult = extractor.extract(tree, source, filePath);
 
-    // Insert symbols
+    // Insert symbols and keep FTS5 index in sync
     const insertSymbol = db.prepare(
       `INSERT INTO symbols (file_id, name, kind, start_line, end_line, signature, doc_comment)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insertFts = db.prepare(
+      `INSERT INTO symbols_fts(rowid, name, signature, kind) VALUES (?, ?, ?, ?)`,
     );
 
     // Map from callerSymbol name → symbol row ID (for call refs)
@@ -233,7 +256,9 @@ export class IndexBuilder {
         sym.signature ?? null,
         null, // doc_comment extraction in future milestone
       ) as { lastInsertRowid: number | bigint };
-      symbolIdMap.set(sym.name, Number(info.lastInsertRowid));
+      const symId = Number(info.lastInsertRowid);
+      symbolIdMap.set(sym.name, symId);
+      insertFts.run(symId, sym.name, sym.signature ?? '', sym.kind);
     }
 
     // Insert raw imports (resolved_id will be filled in resolveImports())
@@ -294,6 +319,43 @@ export class IndexBuilder {
           updateResolved.run(targetFile.id, row.id);
         }
       }
+    }
+  }
+
+  /**
+   * Embed structural symbol signatures in batches and persist results to
+   * the `symbol_embeddings` vec0 virtual table.
+   *
+   * Also stores the embedding model name and dims in `kb_meta` and
+   * creates the vec0 tables if they don't exist yet.
+   */
+  private async embedStructural(db: Database.Database): Promise<void> {
+    const embedder = this.embedder!;
+
+    setKbMeta(db, 'embedding_model', embedder.modelName);
+    setKbMeta(db, 'embedding_dims', String(embedder.dims));
+    createVec0Tables(db, embedder.dims);
+
+    // Fetch all symbols that have a signature to embed.
+    const symbols = db
+      .prepare('SELECT id, name, signature FROM symbols WHERE signature IS NOT NULL')
+      .all() as Array<{ id: number; name: string; signature: string }>;
+
+    const insertEmbed = db.prepare(
+      'INSERT OR REPLACE INTO symbol_embeddings(rowid, embedding) VALUES (?, json(?))',
+    );
+
+    for (let i = 0; i < symbols.length; i += EMBED_BATCH_SIZE) {
+      const batch = symbols.slice(i, i + EMBED_BATCH_SIZE);
+      const texts = batch.map(s => s.signature || s.name);
+      const embeddings = await embedder.embed(texts);
+
+      db.transaction(() => {
+        for (let j = 0; j < batch.length; j++) {
+          const sym = batch[j];
+          if (sym) insertEmbed.run(sym.id, JSON.stringify(embeddings[j]));
+        }
+      })();
     }
   }
 }
