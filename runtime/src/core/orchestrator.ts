@@ -159,6 +159,13 @@ export class MigrationOrchestrator {
       // Skip optional phases that are not enabled
       if (phase.optional && phase.id === 8 && !this.config.options.idiomaticRefactor?.enabled) {
         this.logger.info(`Skipping optional Phase 8 (idiomaticRefactor not enabled)`);
+        phaseResults.push({
+          phase: phase.id,
+          name: phase.name,
+          success: true,
+          outputPath: undefined,
+          duration: 0,
+        });
         continue;
       }
 
@@ -1053,6 +1060,15 @@ export class MigrationOrchestrator {
         const refactorInv = this.buildInvocation('idiomatic-refactorer', refactorCtx, 8);
         const refactorResult = await this.launcher.launchAgent(refactorInv);
         this.recordTokens(refactorResult, 8);
+        if (!refactorResult.success) {
+          return {
+            phase: 8,
+            name: 'Idiomatic Refactor',
+            success: false,
+            outputPath: join(this.progressDir, 'idiomatic-review-report.md'),
+            duration: Date.now() - start,
+          };
+        }
       } else {
         this.logger.warn('Max idiomatic refactor iterations reached, proceeding with remaining issues');
       }

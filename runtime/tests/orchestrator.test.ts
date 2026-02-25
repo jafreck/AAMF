@@ -147,9 +147,10 @@ describe('MigrationOrchestrator', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(true);
-      expect(result.phases).toHaveLength(7);
-      for (let i = 0; i < result.phases.length; i++) {
-        expect(result.phases[i]!.phase).toBe(i + 1);
+      expect(result.phases).toHaveLength(8);
+      const phaseIds = result.phases.map((p) => p.phase).sort((a, b) => a - b);
+      for (let i = 0; i < phaseIds.length; i++) {
+        expect(phaseIds[i]).toBe(i + 1);
       }
       expect(mockLauncher.invocations.length).toBeGreaterThan(0);
     });
@@ -188,7 +189,7 @@ describe('MigrationOrchestrator', () => {
 
       const result = await orchestrator.run();
 
-      expect(result.phases).toHaveLength(7);
+      expect(result.phases).toHaveLength(8);
       const agentsInvoked = mockLauncher.invocations.map((i) => i.agent);
       expect(agentsInvoked).not.toContain('impact-assessor');
       expect(agentsInvoked).not.toContain('knowledge-builder');
