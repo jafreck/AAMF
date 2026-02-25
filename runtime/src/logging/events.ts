@@ -15,7 +15,7 @@ export type RuntimeEvent =
   | { type: 'migration-completed'; projectName: string; success: boolean; duration: number }
   | { type: 'phase-started'; phase: number; name: string }
   | { type: 'phase-completed'; phase: number; name: string; success: boolean; duration: number }
-  | { type: 'phase-failed'; phase: number; name: string; error: string }
+  | { type: 'phase-failed'; phase: number; name: string; error: string; exitCode?: number; stderr?: string }
   | { type: 'agent-launched'; agent: string; taskId?: string; phase?: number }
   | { type: 'agent-completed'; agent: string; taskId?: string; success: boolean; duration: number }
   | { type: 'agent-failed'; agent: string; taskId?: string; error: string; attempt: number }

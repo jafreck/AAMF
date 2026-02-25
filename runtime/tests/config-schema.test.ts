@@ -177,5 +177,18 @@ describe('MigrationConfigSchema', () => {
       });
       expect(result.success).toBe(false);
     });
+
+    it('should accept phaseTimeouts mapping phase numbers to ms values', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        copilot: { phaseTimeouts: { 1: 60000, 3: 120000 } },
+      });
+      expect(result.copilot.phaseTimeouts).toEqual({ 1: 60000, 3: 120000 });
+    });
+
+    it('should leave phaseTimeouts undefined when omitted', () => {
+      const result = MigrationConfigSchema.parse(validConfig);
+      expect(result.copilot.phaseTimeouts).toBeUndefined();
+    });
   });
 });

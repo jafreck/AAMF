@@ -105,6 +105,33 @@ describe('AgentResult', () => {
     });
   });
 
+  describe('stderr field', () => {
+    it('should be undefined when not provided', () => {
+      const result = makeBaseAgentResult();
+      expect(result.stderr).toBeUndefined();
+    });
+
+    it('should carry raw stderr output when set', () => {
+      const result = makeBaseAgentResult({ stderr: 'raw error line\nanother line' });
+      expect(result.stderr).toBe('raw error line\nanother line');
+    });
+
+    it('should be independent from the error field', () => {
+      const result = makeBaseAgentResult({
+        error: 'Formatted error message',
+        stderr: 'raw process output with stack trace',
+      });
+      expect(result.error).toBe('Formatted error message');
+      expect(result.stderr).toBe('raw process output with stack trace');
+    });
+
+    it('should allow stderr without error field', () => {
+      const result = makeBaseAgentResult({ stderr: 'some warning output' });
+      expect(result.stderr).toBe('some warning output');
+      expect(result.error).toBeUndefined();
+    });
+  });
+
   describe('existing fields', () => {
     it('should include required fields: agent, exitCode, success, outputFiles, duration', () => {
       const result = makeBaseAgentResult();

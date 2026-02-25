@@ -87,6 +87,9 @@ export interface AgentResult {
   /** Captured stderr or error message when the agent fails. */
   error?: string;
 
+  /** Raw stderr output from the agent process. */
+  stderr?: string;
+
   /** Structured data parsed from the agent's output, if applicable. */
   structuredOutput?: Record<string, unknown>;
 
