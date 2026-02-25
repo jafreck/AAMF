@@ -900,6 +900,72 @@ describe('MigrationOrchestrator', () => {
     });
   });
 
+  // ─── ETA Logging ───────────────────────────────────────────────────
+
+  describe('ETA Logging', () => {
+    it('should include avg and ETA in progress log after ≥2 task completions', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, logger, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      await orchestrator.run();
+
+      const progressLogs = infoSpy.mock.calls
+        .map((c) => c[0] as string)
+        .filter((m) => typeof m === 'string' && m.startsWith('Task progress:'));
+
+      // The default plan has 2 tasks; after the 2nd completes the ETA segment should appear
+      const logsWithEta = progressLogs.filter((m) => m.includes('— avg'));
+      expect(logsWithEta.length).toBeGreaterThan(0);
+      // Should contain the expected format
+      expect(logsWithEta[0]).toMatch(/— avg .+\/task, ~.+ remaining/);
+    });
+
+    it('should omit ETA segment when only 1 task has completed', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, logger, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      await orchestrator.run();
+
+      const progressLogs = infoSpy.mock.calls
+        .map((c) => c[0] as string)
+        .filter((m) => typeof m === 'string' && m.startsWith('Task progress:'));
+
+      // Only 1 task completed — no ETA segment expected
+      expect(progressLogs.length).toBeGreaterThan(0);
+      const logsWithEta = progressLogs.filter((m) => m.includes('— avg'));
+      expect(logsWithEta).toHaveLength(0);
+    });
+  });
+
   // ─── Phase 5 Loop-back ─────────────────────────────────────────────
 
   describe('Phase 5 Loop-back', () => {

@@ -66,6 +66,17 @@ export function classifyError(errorOutput: string): string | undefined {
   return undefined;
 }
 
+/** Format a duration in ms as a human-readable string (e.g., "1h 2m 3s", "5m 30s", "45s"). */
+function formatDuration(ms: number): string {
+  const totalSecs = Math.round(ms / 1000);
+  const hours = Math.floor(totalSecs / 3600);
+  const mins = Math.floor((totalSecs % 3600) / 60);
+  const secs = totalSecs % 60;
+  if (hours > 0) return `${hours}h ${mins}m ${secs}s`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
 /** Error thrown when a critical phase fails. */
 export class MigrationError extends Error {
   constructor(
@@ -507,6 +518,7 @@ export class MigrationOrchestrator {
     const checkpointState = this.checkpoint.getState();
     queue.markCompleted(checkpointState.completedTasks);
     this.progress.setTotalTasks(sortedTasks.length);
+    const completedDurationsMs: number[] = [...checkpointState.completedTaskDurationsMs];
 
     // 4. Process tasks
     const retryExec = new RetryExecutor(
@@ -541,7 +553,7 @@ export class MigrationOrchestrator {
       this.logger.info(`Executing batch of ${batch.length} task(s) in parallel (${readyTasks.length} ready)`);
 
       // Execute batch concurrently
-      const batchPromises = batch.map(task => this.executeTask(task, retryExec, queue));
+      const batchPromises = batch.map(task => this.executeTask(task, retryExec, queue, completedDurationsMs));
       await Promise.allSettled(batchPromises);
 
       // Check blocked-task policy
@@ -630,10 +642,13 @@ export class MigrationOrchestrator {
     task: MigrationTask,
     retryExec: RetryExecutor,
     queue: TaskQueue,
+    completedDurationsMs: number[],
   ): Promise<void> {
     this.logger.event({ type: 'task-started', taskId: task.id, name: task.name });
     await this.checkpoint.setCurrentTask(task.id);
     await this.progress.updateTask(task.id, 'in-progress');
+
+    const taskStartMs = Date.now();
 
     // a. Code migration with retry
     const migratorCtx = await this.contextBuilder.buildContext(
@@ -840,8 +855,10 @@ export class MigrationOrchestrator {
     }
 
     // d. Complete task
+    const durationMs = Date.now() - taskStartMs;
     queue.complete(task.id);
-    await this.checkpoint.completeTask(task.id);
+    await this.checkpoint.completeTask(task.id, durationMs);
+    completedDurationsMs.push(durationMs);
 
     const progress = queue.getProgress();
     await this.progress.updateTask(task.id, 'completed', {
@@ -854,9 +871,13 @@ export class MigrationOrchestrator {
       name: task.name,
       duration: migratorResult.duration,
     });
-    this.logger.info(
-      `Task progress: ${progress.completed}/${progress.total} (${progress.blocked} blocked)`,
-    );
+    let progressMsg = `Task progress: ${progress.completed}/${progress.total} (${progress.blocked} blocked)`;
+    if (completedDurationsMs.length >= 2) {
+      const avgMs = completedDurationsMs.reduce((a, b) => a + b, 0) / completedDurationsMs.length;
+      const etaMs = progress.remaining * avgMs;
+      progressMsg += ` — avg ${formatDuration(avgMs)}/task, ~${formatDuration(etaMs)} remaining`;
+    }
+    this.logger.info(progressMsg);
   }
 
   // ─── Phase 5: Final Parity Verification ──────────────────────────────
