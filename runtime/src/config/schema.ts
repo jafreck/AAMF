@@ -79,6 +79,23 @@ export const MigrationConfigSchema = z.object({
      */
     kbIndex: z.object({
       enabled: z.boolean().default(false),
+      /** Embedding configuration for semantic search in the KB. */
+      embeddings: z.object({
+        /** Enable vector embeddings during indexing (requires Python + sentence-transformers). */
+        enabled: z.boolean().default(false),
+        /**
+         * Full HuggingFace model name compatible with sentence-transformers.
+         * The embedding dimensionality is auto-detected from the model at startup.
+         * Examples:
+         *   'Qwen/Qwen3-Embedding-0.6B'  (~1.5 GB)
+         *   'Qwen/Qwen3-Embedding-4B'
+         *   'BAAI/bge-small-en-v1.5'
+         *   'sentence-transformers/all-MiniLM-L6-v2'
+         */
+        model: z.string().default('Qwen/Qwen3-Embedding-0.6B'),
+        /** Path to the Python binary with sentence-transformers installed. */
+        pythonBin: z.string().default('python3'),
+      }).optional(),
     }).optional(),
   }).default({}),
   copilot: z.object({

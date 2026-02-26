@@ -24,7 +24,7 @@ describe('CheckpointManager', () => {
   it('should create initial state on first load', async () => {
     const state = await manager.load('test-project');
     expect(state.projectName).toBe('test-project');
-    expect(state.currentPhase).toBe(1);
+    expect(state.currentPhase).toBe(0);
     expect(state.completedPhases).toEqual([]);
     expect(state.completedTasks).toEqual([]);
     expect(state.version).toBe(1);

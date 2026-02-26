@@ -303,6 +303,107 @@ describe('MigrationOrchestrator', () => {
         buildSpy.mockRestore();
       }
     });
+
+    it('executePhase0 should pass embedder to IndexBuilder when embeddings.enabled is true', async () => {
+      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
+
+      // Mock ensurePythonDeps to avoid actually running pip
+      const depsMod = await import('../src/indexer/ensure-python-deps.js');
+      const depsSpy = vi.spyOn(depsMod, 'ensurePythonDeps').mockResolvedValue(undefined);
+
+      // Mock embedder init() to avoid spawning a real Python process
+      const { SentenceTransformersProvider } = await import('../src/indexer/embedder.js');
+      const initSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'init').mockResolvedValue(undefined);
+      const disposeSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'dispose').mockResolvedValue(undefined);
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 1,
+            largeFileThreshold: 500,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+            contextWindowStrategy: 'per-invocation',
+            kbIndex: {
+              enabled: true,
+              embeddings: { enabled: true, model: 'Qwen/Qwen3-Embedding-0.6B', pythonBin: 'python3' },
+            },
+          },
+        });
+
+        const result = await orchestrator.executePhase0(Date.now());
+
+        expect(result.phase).toBe(0);
+        expect(depsSpy).toHaveBeenCalledWith('python3');
+        expect(initSpy).toHaveBeenCalled();
+      } finally {
+        buildSpy.mockRestore();
+        depsSpy.mockRestore();
+        initSpy.mockRestore();
+        disposeSpy.mockRestore();
+      }
+    });
+
+    it('executePhase0 should skip embeddings gracefully when ensurePythonDeps fails', async () => {
+      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
+
+      const depsMod = await import('../src/indexer/ensure-python-deps.js');
+      const depsSpy = vi.spyOn(depsMod, 'ensurePythonDeps').mockRejectedValue(
+        new Error('python3 not found'),
+      );
+
+      // Mock init to simulate failure (Python not available)
+      const { SentenceTransformersProvider } = await import('../src/indexer/embedder.js');
+      const initSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'init').mockRejectedValue(
+        new Error('Embedding subprocess exited with code 1 before handshake'),
+      );
+      const disposeSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'dispose').mockResolvedValue(undefined);
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 1,
+            largeFileThreshold: 500,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+            contextWindowStrategy: 'per-invocation',
+            kbIndex: {
+              enabled: true,
+              embeddings: { enabled: true },
+            },
+          },
+        });
+
+        // Should still succeed — embeddings are best-effort
+        const result = await orchestrator.executePhase0(Date.now());
+        expect(result.phase).toBe(0);
+      } finally {
+        buildSpy.mockRestore();
+        depsSpy.mockRestore();
+        initSpy.mockRestore();
+        disposeSpy.mockRestore();
+      }
+    });
   });
 
   // ─── Phase Sequencing ──────────────────────────────────────────────

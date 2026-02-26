@@ -344,6 +344,50 @@ describe('MigrationConfigSchema', () => {
         });
         expect(result.options.kbIndex?.enabled).toBe(false);
       });
+
+      it('should leave embeddings undefined when omitted from kbIndex', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { kbIndex: { enabled: true } },
+        });
+        expect(result.options.kbIndex?.embeddings).toBeUndefined();
+      });
+
+      it('should default embeddings.enabled to false when embeddings is {}', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { kbIndex: { enabled: true, embeddings: {} } },
+        });
+        expect(result.options.kbIndex?.embeddings?.enabled).toBe(false);
+      });
+
+      it('should accept embeddings with all fields', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: {
+            kbIndex: {
+              enabled: true,
+              embeddings: { enabled: true, model: 'BAAI/bge-small-en-v1.5', pythonBin: '/usr/bin/python3.11' },
+            },
+          },
+        });
+        const emb = result.options.kbIndex?.embeddings;
+        expect(emb?.enabled).toBe(true);
+        expect(emb?.model).toBe('BAAI/bge-small-en-v1.5');
+        expect(emb?.pythonBin).toBe('/usr/bin/python3.11');
+      });
+
+      it('should default model to Qwen3-Embedding-0.6B and pythonBin to python3', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: {
+            kbIndex: { enabled: true, embeddings: { enabled: true } },
+          },
+        });
+        const emb = result.options.kbIndex?.embeddings;
+        expect(emb?.model).toBe('Qwen/Qwen3-Embedding-0.6B');
+        expect(emb?.pythonBin).toBe('python3');
+      });
     });
   });
 });

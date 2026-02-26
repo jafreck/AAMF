@@ -7,6 +7,9 @@
  */
 
 import Parser from 'tree-sitter';
+import { createRequire } from 'node:module';
+
+const esmRequire = createRequire(import.meta.url);
 
 // ─── Grammar package map ──────────────────────────────────────────────────────
 
@@ -71,8 +74,9 @@ export class ParserPool {
     }
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      let grammar = require(pkg);
+      // Native addons must be loaded via require(), not import().
+      // Use createRequire to ensure it works in both CJS and ESM contexts.
+      let grammar = esmRequire(pkg);
 
       // Some packages (e.g. tree-sitter-typescript) export sub-grammars.
       if (language === 'typescript' && grammar.typescript) {

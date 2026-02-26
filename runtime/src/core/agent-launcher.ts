@@ -245,8 +245,14 @@ export class CopilotRunner implements AgentRunner {
     }
 
     // Inject MCP config for KB server access
+    // Copilot CLI uses --additional-mcp-config with { mcpServers: { name: { url } } } format
     if (invocation.mcpConfig) {
-      args.push('--mcp-config', JSON.stringify(invocation.mcpConfig));
+      const mcpServersDef = {
+        mcpServers: {
+          'aamf-kb': { url: invocation.mcpConfig.url, type: 'http' },
+        },
+      };
+      args.push('--additional-mcp-config', JSON.stringify(mcpServersDef));
     }
 
     const env: NodeJS.ProcessEnv = {
@@ -400,8 +406,14 @@ export class ClaudeCodeRunner implements AgentRunner {
     }
 
     // Inject MCP config for KB server access
+    // Claude Code uses --mcp-config with a JSON string containing the server definition
     if (invocation.mcpConfig) {
-      args.push('--mcp-config', JSON.stringify(invocation.mcpConfig));
+      const mcpServersDef = {
+        mcpServers: {
+          'aamf-kb': { url: invocation.mcpConfig.url, type: 'http' },
+        },
+      };
+      args.push('--mcp-config', JSON.stringify(mcpServersDef));
     }
 
     const env: NodeJS.ProcessEnv = {

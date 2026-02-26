@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
 import { CheckpointManager } from './checkpoint.js';
@@ -24,6 +24,8 @@ import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
 import { IndexBuilder } from '../indexer/index.js';
+import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
+import { ensurePythonDeps } from '../indexer/ensure-python-deps.js';
 import { KbServerProcess } from './kb-server-process.js';
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
@@ -104,9 +106,12 @@ export class MigrationOrchestrator {
   private readonly contextBuilder: ContextBuilder;
   private readonly tokenTracker: TokenTracker;
   private readonly progressDir: string;
+  private readonly projectRoot: string;
   private readonly singlePhase?: number;
   private readonly kbDbPath: string;
   private kbServer?: KbServerProcess;
+  /** Live embedding provider created during Phase 0 and disposed on shutdown. */
+  private embedder?: EmbeddingProvider;
   /** Stores the migration-planner AgentResult from Phase 3 for Phase 4 to consume. */
   private phase3PlanResult?: AgentResult;
   /**
@@ -127,6 +132,7 @@ export class MigrationOrchestrator {
     projectRoot: string,
     singlePhase?: number,
   ) {
+    this.projectRoot = projectRoot;
     this.progressDir = join(projectRoot, '.aamf', 'migration', config.projectName);
     this.contextBuilder = new ContextBuilder(config, this.progressDir);
     this.tokenTracker = new TokenTracker();
@@ -155,11 +161,11 @@ export class MigrationOrchestrator {
     let aborted = false;
 
     // Determine which phases to execute
-    const phasesToRun = this.singlePhase
+    const phasesToRun = this.singlePhase != null
       ? PHASES.filter(p => p.id === this.singlePhase)
       : PHASES;
 
-    if (this.singlePhase) {
+    if (this.singlePhase != null) {
       this.logger.info(`Running single phase: ${this.singlePhase}`);
     }
 
@@ -186,8 +192,9 @@ export class MigrationOrchestrator {
           continue;
         }
 
-        // Skip already-completed phases on resume
-        if (phase.id < resumePoint.phase) {
+        // Skip already-completed phases on resume (but not when explicitly
+        // requesting a single phase via --phase).
+        if (this.singlePhase == null && phase.id < resumePoint.phase) {
           phaseResults.push({
             phase: phase.id,
             name: phase.name,
@@ -282,8 +289,12 @@ export class MigrationOrchestrator {
         this.progress.setTokenUsage(this.tokenTracker.getTotal());
       }
     } finally {
-      // Always stop the KB server, whether migration succeeded, failed, or was aborted
+      // Always stop the KB server and dispose the embedder, whether migration succeeded, failed, or was aborted
       await this.stopKbServer();
+      if (this.embedder) {
+        try { await this.embedder.dispose(); } catch { /* ignore */ }
+        this.embedder = undefined;
+      }
     }
 
     const totalDuration = Date.now() - startTime;
@@ -351,8 +362,40 @@ export class MigrationOrchestrator {
    * source directory. Wraps the build in retry logic and a timeout.
    */
   async executePhase0(start: number = Date.now()): Promise<PhaseResult> {
-    this.logger.info(`Building KB index at ${this.kbDbPath}`);
-    const builder = new IndexBuilder(this.kbDbPath, { rootDir: this.config.source.path });
+    const sourceRoot = resolve(this.projectRoot, this.config.source.path);
+    this.logger.info(`Building KB index at ${this.kbDbPath} (source: ${sourceRoot})`);
+
+    // Optionally set up the embedding provider for semantic search.
+    const embCfg = this.config.options.kbIndex?.embeddings;
+    if (embCfg?.enabled) {
+      const pythonBin = embCfg.pythonBin ?? 'python3';
+      const model = embCfg.model ?? 'Qwen/Qwen3-Embedding-0.6B';
+      this.logger.info(`Embeddings enabled — ensuring Python deps (python: ${pythonBin}, model: ${model})`);
+      try {
+        await ensurePythonDeps(pythonBin);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to install Python embedding deps — embeddings will be skipped: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      this.embedder = new SentenceTransformersProvider(model, pythonBin);
+      try {
+        await this.embedder.init();
+        this.logger.info(`Embedding model loaded — dims: ${this.embedder.dims}`);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to initialise embedding model — embeddings will be skipped: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        try { await this.embedder.dispose(); } catch { /* ignore */ }
+        this.embedder = undefined;
+      }
+    }
+
+    const builder = new IndexBuilder(this.kbDbPath, { rootDir: sourceRoot }, this.embedder);
 
     const maxAttempts = this.config.options.maxRetriesPerTask;
     const timeout =
@@ -1421,9 +1464,23 @@ export class MigrationOrchestrator {
     const phaseTimeouts = this.config.copilot.phaseTimeouts;
     const timeout = phaseTimeouts?.[phase] ?? this.config.copilot.timeout;
 
-    // Agents that benefit from KB access when the KB server is running
+    // Agents that benefit from KB access when the KB server is running.
+    // Essentially every agent that analyses or transforms source code.
     const KB_AWARE_AGENTS: AgentName[] = [
-      'impact-assessor', 'knowledge-builder', 'migration-planner', 'code-migrator',
+      'impact-assessor',
+      'knowledge-builder',
+      'large-file-analyzer',
+      'migration-planner',
+      'adjudicator',
+      'code-migrator',
+      'parity-verifier',
+      'test-writer',
+      'failure-recovery',
+      'final-parity-checker',
+      'e2e-test-crafter',
+      'documentation-writer',
+      'idiomatic-reviewer',
+      'idiomatic-refactorer',
     ];
     const mcpConfig = (KB_AWARE_AGENTS.includes(agent) && this.kbServer)
       ? this.kbServer.mcpConfig

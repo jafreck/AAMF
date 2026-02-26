@@ -564,7 +564,7 @@ describe('AgentLauncher', () => {
   });
 
   describe('mcpConfig injection', () => {
-    it('should pass --mcp-config flag when mcpConfig is provided', async () => {
+    it('should pass --additional-mcp-config flag when mcpConfig is provided', async () => {
       const script = await createScript('echo-mcp-args.sh', 'echo "ARGS:$@"\nexit 0');
       const launcher = makeLauncher(script);
       const { contextFile, progressDir } = await prepareInvocation('mcp-config-001');
@@ -590,11 +590,12 @@ describe('AgentLauncher', () => {
       expect(agentLog).toBeDefined();
 
       const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
-      expect(logContent).toContain('--mcp-config');
+      expect(logContent).toContain('--additional-mcp-config');
+      expect(logContent).toContain('aamf-kb');
       expect(logContent).toContain('localhost:4321');
     });
 
-    it('should not include --mcp-config flag when mcpConfig is absent', async () => {
+    it('should not include --additional-mcp-config flag when mcpConfig is absent', async () => {
       const script = await createScript('echo-no-mcp.sh', 'echo "ARGS:$@"\nexit 0');
       const launcher = makeLauncher(script);
       const { contextFile, progressDir } = await prepareInvocation('no-mcp-001');
@@ -615,7 +616,7 @@ describe('AgentLauncher', () => {
       expect(agentLog).toBeDefined();
 
       const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
-      expect(logContent).not.toContain('--mcp-config');
+      expect(logContent).not.toContain('--additional-mcp-config');
     });
   });
 });

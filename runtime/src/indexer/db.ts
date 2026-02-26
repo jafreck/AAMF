@@ -8,6 +8,9 @@
  */
 
 import Database from 'better-sqlite3';
+import { createRequire } from 'node:module';
+
+const esmRequire = createRequire(import.meta.url);
 
 // Re-export the Database type so callers don't need to import better-sqlite3.
 export type { Database };
@@ -149,8 +152,8 @@ export function getKbMeta(db: Database.Database, key: string): string | undefine
  */
 export function createVec0Tables(db: Database.Database, dims: number): void {
   // Load the sqlite-vec native extension.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const sqliteVec = require('sqlite-vec') as { load(db: Database.Database): void };
+  // Use createRequire for ESM compatibility (native addons cannot be loaded via import()).
+  const sqliteVec = esmRequire('sqlite-vec') as { load(db: Database.Database): void };
   sqliteVec.load(db);
 
   db.exec(`

@@ -146,13 +146,19 @@ export function createKbMcpServer(
  * `SentenceTransformersProvider` instance for it.  Returns `undefined` when no
  * embedding model is recorded in the database.
  */
-function buildEmbedder(db: Database.Database): EmbeddingProvider | undefined {
+async function buildEmbedder(db: Database.Database): Promise<EmbeddingProvider | undefined> {
   const modelName = getKbMeta(db, 'embedding_model');
   if (!modelName) return undefined;
 
-  const dimsStr = getKbMeta(db, 'embedding_dims');
-  const dims = dimsStr ? parseInt(dimsStr, 10) : 1024;
-  return new SentenceTransformersProvider(modelName, dims);
+  const provider = new SentenceTransformersProvider(modelName);
+  try {
+    await provider.init();
+    return provider;
+  } catch {
+    // Model not available — fall back to structural search only.
+    try { await provider.dispose(); } catch { /* ignore */ }
+    return undefined;
+  }
 }
 
 // ─── CLI argument parsing ─────────────────────────────────────────────────────
@@ -173,7 +179,7 @@ async function main(): Promise<void> {
   const { dbPath } = parseArgs();
 
   const db = openReadOnly(dbPath);
-  const embedder = buildEmbedder(db);
+  const embedder = await buildEmbedder(db);
 
   const server = createKbMcpServer(db, dbPath, embedder);
 
