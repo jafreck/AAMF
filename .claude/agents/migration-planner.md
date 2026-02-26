@@ -126,6 +126,14 @@ Write to `.aamf/migration/{projectName}/migration-plan.md`:
 |-------|---------|
 | `adjudicator` | Evaluates competing migration strategies and selects the best one |
 
+## KB MCP Tools
+
+If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer the following MCP tool over direct file reads:
+
+- **`kb_graph`** — query the import/dependency graph to determine topological ordering of modules and to identify tightly coupled components that must be migrated together.
+
+Fall back to Bash / Read / Grep tools only when the KB index is unavailable or a query cannot be satisfied by the MCP tools.
+
 ## Context Window Management
 
 - **Do not read source code files** — rely entirely on the knowledge base and impact assessment.

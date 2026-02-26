@@ -122,6 +122,15 @@ knowledge-base/
 |-------|---------|
 | `large-file-analyzer` | Detailed analysis of files >500 lines |
 
+## KB MCP Tools
+
+If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer the following MCP tools over direct file reads:
+
+- **`kb_graph`** — query the import/dependency graph. Use this to discover what a module imports and what imports it, instead of grepping for `import` statements across files.
+- **`kb_lookup`** — retrieve a specific symbol's definition, signature, docstring, and source location by name. Use this to enumerate a module's public API without reading the entire file.
+
+Fall back to Bash / Read / Grep tools only when the KB index is unavailable or a query cannot be satisfied by the MCP tools.
+
 ## Context Window Management
 
 - **Process the codebase module-by-module**, not all at once.
