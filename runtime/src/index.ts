@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { MigrationRuntime } from './core/runtime.js';
 import { IndexBuilder } from './indexer/index.js';
+import { KbServerProcess } from './core/kb-server-process.js';
 
 const program = new Command()
   .name('aamf')
@@ -107,14 +108,29 @@ indexCmd
     }
   });
 
-// ─── kb-server subcommand (placeholder — full implementation in session-006) ──
+// ─── kb-server subcommand ─────────────────────────────────────────────────────
 
 program
   .command('kb-server')
-  .description('Start the knowledge-base MCP server (placeholder)')
+  .description('Start the knowledge-base MCP server')
   .requiredOption('--db <path>', 'Path to the SQLite knowledge-base file')
-  .action((opts) => {
-    console.log(chalk.yellow(`kb-server stub: db=${opts.db} (full implementation coming in session-006)`));
+  .action(async (opts) => {
+    const srv = new KbServerProcess(opts.db);
+    try {
+      await srv.start();
+    } catch {
+      // start() rejects if the subprocess exits before signalling READY;
+      // that is not necessarily fatal — the server may still be running for
+      // MCP clients that spawn their own connection.
+    }
+    const cfg = srv.mcpConfig;
+    console.log(JSON.stringify(cfg, null, 2));
+
+    // Keep the CLI alive until the user sends SIGINT.
+    process.on('SIGINT', async () => {
+      await srv.stop();
+      process.exit(0);
+    });
   });
 
 program.parse();
