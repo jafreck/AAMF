@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { AgentName, AgentContext } from './types.js';
+import { AgentName, AgentContext, McpServerConfig } from './types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { writeJson, ensureDir } from '../util/fs.js';
 
@@ -21,6 +21,9 @@ export interface ContextBuildOptions {
  * set of input files, an output path, and an optional payload.
  */
 export class ContextBuilder {
+  /** MCP server config for the KB server; set by the orchestrator after Phase 0 completes. */
+  kbServerConfig?: McpServerConfig;
+
   constructor(private config: MigrationConfig, private progressDir: string) {}
 
   /**
@@ -222,6 +225,12 @@ export class ContextBuilder {
             ...(payload?.idiomaticReport ? [String(payload.idiomaticReport)] : []),
           ],
           outputPath: out,
+        };
+
+      case 'kb-indexer':
+        return {
+          inputFiles: [src],
+          outputPath: join(this.progressDir, 'kb.db'),
         };
 
       default:

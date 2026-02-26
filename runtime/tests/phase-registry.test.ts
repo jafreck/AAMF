@@ -2,13 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { PHASES, getPhase, getRemainingPhases } from '../src/core/phase-registry.js';
 
 describe('Phase Registry', () => {
-  it('should have exactly 8 entries', () => {
-    expect(PHASES).toHaveLength(8);
+  it('should have exactly 9 entries', () => {
+    expect(PHASES).toHaveLength(9);
   });
 
-  it('should contain phases with IDs 1–7 plus 8', () => {
+  it('should contain phases with IDs 0–7 plus 8', () => {
     const ids = PHASES.map(p => p.id).sort((a, b) => a - b);
-    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(ids).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it('should mark phases 1–4 as critical', () => {
@@ -53,6 +53,32 @@ describe('Phase Registry', () => {
       expect(phase.name.length).toBeGreaterThan(0);
       expect(phase.description.length).toBeGreaterThan(0);
     }
+  });
+
+  describe('Phase 0 (KB Indexing)', () => {
+    it('should exist with id: 0 and name "KB Indexing"', () => {
+      const phase = getPhase(0);
+      expect(phase).toBeDefined();
+      expect(phase?.id).toBe(0);
+      expect(phase?.name).toBe('KB Indexing');
+    });
+
+    it('should be optional and non-critical', () => {
+      const phase = getPhase(0);
+      expect(phase?.optional).toBe(true);
+      expect(phase?.critical).toBe(false);
+    });
+
+    it('should include kb-indexer agent', () => {
+      const phase = getPhase(0);
+      expect(phase?.agents).toContain('kb-indexer');
+    });
+
+    it('should appear before Phase 1 in the PHASES array', () => {
+      const phase0Index = PHASES.findIndex(p => p.id === 0);
+      const phase1Index = PHASES.findIndex(p => p.id === 1);
+      expect(phase0Index).toBeLessThan(phase1Index);
+    });
   });
 
   describe('Phase 8 (Idiomatic Refactor)', () => {

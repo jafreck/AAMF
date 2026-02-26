@@ -25,7 +25,23 @@ export type AgentName =
   | 'documentation-writer'
   | 'migration-runner'
   | 'idiomatic-reviewer'
-  | 'idiomatic-refactorer';
+  | 'idiomatic-refactorer'
+  | 'kb-indexer';
+
+// ─── MCP Server Config ───────────────────────────────────────────────────────
+
+/**
+ * Configuration that an MCP client uses to spawn the KB server subprocess.
+ * Modelled after the stdio-transport StdioServerParameters shape.
+ */
+export interface McpServerConfig {
+  /** The executable to run (e.g. "node" or "tsx"). */
+  command: string;
+  /** Arguments passed to the executable. */
+  args: string[];
+  /** Optional environment variables to inject into the subprocess. */
+  env?: Record<string, string>;
+}
 
 // ─── Invocation & Results ────────────────────────────────────────────────────
 
@@ -57,6 +73,9 @@ export interface AgentInvocation {
 
   /** Timeout in milliseconds; overrides the default agent timeout. */
   timeout?: number;
+
+  /** MCP server config for the KB server; serialised as --mcp-config to the agent subprocess. */
+  mcpConfig?: McpServerConfig;
 }
 
 /**

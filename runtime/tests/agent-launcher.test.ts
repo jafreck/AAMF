@@ -562,4 +562,123 @@ describe('AgentLauncher', () => {
       expect(result.tokenUsage!.total).toBeGreaterThan(0);
     });
   });
+
+  describe('mcpConfig injection', () => {
+    it('should pass --mcp-config flag when mcpConfig is provided', async () => {
+      const script = await createScript('echo-mcp-args.sh', 'echo "ARGS:$@"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('mcp-config-001');
+
+      const mcpConfig = {
+        command: 'node',
+        args: ['dist/kb-server.js', '--db', '/tmp/kb.db'],
+      };
+
+      const result = await launcher.launchAgent({
+        agent: 'impact-assessor',
+        contextFile,
+        progressDir,
+        phase: 1,
+        taskId: 'mcp-config-001',
+        mcpConfig,
+      });
+
+      expect(result.success).toBe(true);
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f => f.startsWith('impact-assessor-mcp-config-001'));
+      expect(agentLog).toBeDefined();
+
+      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      expect(logContent).toContain('--mcp-config');
+      expect(logContent).toContain('kb-server.js');
+    });
+
+    it('should inject KB_DB_PATH env var when mcpConfig has --db arg', async () => {
+      const script = await createScript('print-kb-env.sh', [
+        'echo "KB_DB_PATH:$KB_DB_PATH"',
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('kb-db-path-001');
+
+      const mcpConfig = {
+        command: 'node',
+        args: ['dist/kb-server.js', '--db', '/tmp/test-kb.db'],
+      };
+
+      await launcher.launchAgent({
+        agent: 'knowledge-builder',
+        contextFile,
+        progressDir,
+        phase: 2,
+        taskId: 'kb-db-path-001',
+        mcpConfig,
+      });
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f => f.startsWith('knowledge-builder-kb-db-path-001'));
+      expect(agentLog).toBeDefined();
+
+      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      expect(logContent).toContain('KB_DB_PATH:/tmp/test-kb.db');
+    });
+
+    it('should not inject KB_DB_PATH when mcpConfig has no --db arg', async () => {
+      const script = await createScript('print-kb-env2.sh', [
+        'echo "KB_DB_PATH:${KB_DB_PATH:-UNSET}"',
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('no-db-arg-001');
+
+      const mcpConfig = {
+        command: 'node',
+        args: ['dist/kb-server.js'],
+      };
+
+      await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'no-db-arg-001',
+        mcpConfig,
+      });
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f => f.startsWith('code-migrator-no-db-arg-001'));
+      expect(agentLog).toBeDefined();
+
+      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      expect(logContent).toContain('KB_DB_PATH:UNSET');
+    });
+
+    it('should not include --mcp-config flag when mcpConfig is absent', async () => {
+      const script = await createScript('echo-no-mcp.sh', 'echo "ARGS:$@"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('no-mcp-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'no-mcp-001',
+      });
+
+      expect(result.success).toBe(true);
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f => f.startsWith('code-migrator-no-mcp-001'));
+      expect(agentLog).toBeDefined();
+
+      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      expect(logContent).not.toContain('--mcp-config');
+    });
+  });
 });

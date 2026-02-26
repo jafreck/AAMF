@@ -23,6 +23,8 @@ import { CostEstimator } from '../budget/cost-estimator.js';
 import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
+import { IndexBuilder } from '../indexer/index.js';
+import { KbServerProcess } from './kb-server-process.js';
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
 
@@ -100,6 +102,8 @@ export class MigrationOrchestrator {
   private readonly tokenTracker: TokenTracker;
   private readonly progressDir: string;
   private readonly singlePhase?: number;
+  private readonly kbDbPath: string;
+  private kbServer?: KbServerProcess;
   /** Stores the migration-planner AgentResult from Phase 3 for Phase 4 to consume. */
   private phase3PlanResult?: AgentResult;
   /**
@@ -124,6 +128,7 @@ export class MigrationOrchestrator {
     this.contextBuilder = new ContextBuilder(config, this.progressDir);
     this.tokenTracker = new TokenTracker();
     this.singlePhase = singlePhase;
+    this.kbDbPath = join(this.progressDir, 'kb.db');
 
     const bc = config.options.buildConcurrency ?? 1;
     // 0 means unlimited → use maxParallelAgents
@@ -155,109 +160,125 @@ export class MigrationOrchestrator {
       this.logger.info(`Running single phase: ${this.singlePhase}`);
     }
 
-    for (const phase of phasesToRun) {
-      // Skip optional phases that are not enabled
-      if (phase.optional && phase.id === 8 && !this.config.options.idiomaticRefactor?.enabled) {
-        this.logger.info(`Skipping optional Phase 8 (idiomaticRefactor not enabled)`);
-        phaseResults.push({
-          phase: phase.id,
-          name: phase.name,
-          success: true,
-          outputPath: undefined,
-          duration: 0,
-        });
-        continue;
-      }
-
-      // Skip already-completed phases on resume
-      if (phase.id < resumePoint.phase) {
-        phaseResults.push({
-          phase: phase.id,
-          name: phase.name,
-          success: true,
-          outputPath: state.phaseOutputs[phase.id],
-          duration: 0,
-        });
-        continue;
-      }
-
-      await this.progress.updatePhase(phase.id, 'in-progress');
-      this.logger.event({ type: 'phase-started', phase: phase.id, name: phase.name });
-      this.logger.setPhase(phase.id);
-
-      const phaseStart = Date.now();
-      let result: PhaseResult;
-
-      try {
-        result = await this.executePhase(phase);
-      } catch (err) {
-        result = {
-          phase: phase.id,
-          name: phase.name,
-          success: false,
-          duration: Date.now() - phaseStart,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
-
-      phaseResults.push(result);
-
-      if (result.success) {
-        await this.checkpoint.completePhase(phase.id, result.outputPath ?? '');
-        await this.progress.updatePhase(phase.id, 'completed');
-        this.logger.event({
-          type: 'phase-completed',
-          phase: phase.id,
-          name: phase.name,
-          success: true,
-          duration: result.duration,
-        });
-      } else {
-        const truncatedStderr = result.stderr ? result.stderr.slice(0, 2000) : undefined;
-        await this.progress.updatePhase(phase.id, 'failed', result.error, result.exitCode, truncatedStderr);
-        this.logger.event({
-          type: 'phase-failed',
-          phase: phase.id,
-          name: phase.name,
-          error: result.error ?? 'unknown',
-          exitCode: result.exitCode,
-          stderr: truncatedStderr,
-        });
-
-        if (phase.critical) {
-          aborted = true;
-          await this.progress.appendEvent(`Migration aborted: Phase ${phase.id} failed`);
-          break;
+    try {
+      for (const phase of phasesToRun) {
+        // Skip optional Phase 0 (KB Indexing) unless AAMF_USE_KB_INDEX=1
+        if (phase.optional && phase.id === 0 && process.env['AAMF_USE_KB_INDEX'] !== '1') {
+          this.logger.info(`Skipping optional Phase 0 (KB Indexing) — set AAMF_USE_KB_INDEX=1 to enable`);
+          continue;
         }
-      }
 
-      // Budget check
-      if (this.config.options.tokenBudget) {
-        const threshold = this.tokenTracker.checkThreshold(this.config.options.tokenBudget);
-        if (threshold === 'exceeded') {
-          this.logger.event({
-            type: 'budget-exceeded',
-            usage: this.tokenTracker.getTotal(),
-            budget: this.config.options.tokenBudget,
+        // Skip optional phases that are not enabled
+        if (phase.optional && phase.id === 8 && !this.config.options.idiomaticRefactor?.enabled) {
+          this.logger.info(`Skipping optional Phase 8 (idiomaticRefactor not enabled)`);
+          phaseResults.push({
+            phase: phase.id,
+            name: phase.name,
+            success: true,
+            outputPath: undefined,
+            duration: 0,
           });
-          await this.progress.appendEvent('Token budget exceeded — pausing migration');
-          aborted = true;
-          break;
+          continue;
         }
-        if (threshold === 'warning') {
-          const pct = Math.round(
-            (this.tokenTracker.getTotal() / this.config.options.tokenBudget) * 100,
-          );
-          this.logger.event({
-            type: 'budget-warning',
-            usage: this.tokenTracker.getTotal(),
-            budget: this.config.options.tokenBudget,
-            percentage: pct,
-          });
-        }
-      }
 
-      this.progress.setTokenUsage(this.tokenTracker.getTotal());
+        // Skip already-completed phases on resume
+        if (phase.id < resumePoint.phase) {
+          phaseResults.push({
+            phase: phase.id,
+            name: phase.name,
+            success: true,
+            outputPath: state.phaseOutputs[phase.id],
+            duration: 0,
+          });
+          continue;
+        }
+
+        await this.progress.updatePhase(phase.id, 'in-progress');
+        this.logger.event({ type: 'phase-started', phase: phase.id, name: phase.name });
+        this.logger.setPhase(phase.id);
+
+        const phaseStart = Date.now();
+        let result: PhaseResult;
+
+        try {
+          result = await this.executePhase(phase);
+        } catch (err) {
+          result = {
+            phase: phase.id,
+            name: phase.name,
+            success: false,
+            duration: Date.now() - phaseStart,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+
+        phaseResults.push(result);
+
+        // After Phase 0 completes, start the KB server so agents in subsequent phases can use it
+        if (phase.id === 0 && result.success) {
+          await this.startKbServer();
+        }
+
+        if (result.success) {
+          await this.checkpoint.completePhase(phase.id, result.outputPath ?? '');
+          await this.progress.updatePhase(phase.id, 'completed');
+          this.logger.event({
+            type: 'phase-completed',
+            phase: phase.id,
+            name: phase.name,
+            success: true,
+            duration: result.duration,
+          });
+        } else {
+          const truncatedStderr = result.stderr ? result.stderr.slice(0, 2000) : undefined;
+          await this.progress.updatePhase(phase.id, 'failed', result.error, result.exitCode, truncatedStderr);
+          this.logger.event({
+            type: 'phase-failed',
+            phase: phase.id,
+            name: phase.name,
+            error: result.error ?? 'unknown',
+            exitCode: result.exitCode,
+            stderr: truncatedStderr,
+          });
+
+          if (phase.critical) {
+            aborted = true;
+            await this.progress.appendEvent(`Migration aborted: Phase ${phase.id} failed`);
+            break;
+          }
+        }
+
+        // Budget check
+        if (this.config.options.tokenBudget) {
+          const threshold = this.tokenTracker.checkThreshold(this.config.options.tokenBudget);
+          if (threshold === 'exceeded') {
+            this.logger.event({
+              type: 'budget-exceeded',
+              usage: this.tokenTracker.getTotal(),
+              budget: this.config.options.tokenBudget,
+            });
+            await this.progress.appendEvent('Token budget exceeded — pausing migration');
+            aborted = true;
+            break;
+          }
+          if (threshold === 'warning') {
+            const pct = Math.round(
+              (this.tokenTracker.getTotal() / this.config.options.tokenBudget) * 100,
+            );
+            this.logger.event({
+              type: 'budget-warning',
+              usage: this.tokenTracker.getTotal(),
+              budget: this.config.options.tokenBudget,
+              percentage: pct,
+            });
+          }
+        }
+
+        this.progress.setTokenUsage(this.tokenTracker.getTotal());
+      }
+    } finally {
+      // Always stop the KB server, whether migration succeeded, failed, or was aborted
+      await this.stopKbServer();
     }
 
     const totalDuration = Date.now() - startTime;
@@ -295,6 +316,8 @@ export class MigrationOrchestrator {
   private async executePhase(phase: PhaseDefinition): Promise<PhaseResult> {
     const start = Date.now();
     switch (phase.id) {
+      case 0:
+        return this.executePhase0(start);
       case 1:
         return this.executePhase1(start);
       case 2:
@@ -313,6 +336,66 @@ export class MigrationOrchestrator {
         return this.executePhase8(start);
       default:
         throw new Error(`Unknown phase: ${phase.id}`);
+    }
+  }
+
+  // ─── Phase 0: KB Indexing ─────────────────────────────────────────────
+
+  /**
+   * Execute Phase 0: build the local knowledge-base SQLite index from the
+   * source directory. Only runs when `AAMF_USE_KB_INDEX=1`.
+   */
+  async executePhase0(start: number = Date.now()): Promise<PhaseResult> {
+    this.logger.info(`Building KB index at ${this.kbDbPath}`);
+    const builder = new IndexBuilder(this.kbDbPath, { rootDir: this.config.source.path });
+    try {
+      await builder.build();
+      return {
+        phase: 0,
+        name: 'KB Indexing',
+        success: true,
+        outputPath: this.kbDbPath,
+        duration: Date.now() - start,
+      };
+    } catch (err) {
+      return {
+        phase: 0,
+        name: 'KB Indexing',
+        success: false,
+        duration: Date.now() - start,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  // ─── KB Server Lifecycle ──────────────────────────────────────────────
+
+  /** Start the KB MCP server and register its config with the context builder. */
+  private async startKbServer(): Promise<void> {
+    this.kbServer = new KbServerProcess(this.kbDbPath);
+    try {
+      await this.kbServer.start();
+      this.contextBuilder.kbServerConfig = this.kbServer.mcpConfig;
+      this.logger.info('KB server started and ready');
+    } catch (err) {
+      this.logger.warn(
+        `KB server failed to start — agents will run without KB access: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      this.kbServer = undefined;
+    }
+  }
+
+  /** Stop the KB MCP server if it is running. */
+  private async stopKbServer(): Promise<void> {
+    if (this.kbServer) {
+      try {
+        await this.kbServer.stop();
+        this.logger.info('KB server stopped');
+      } catch {
+        // Ignore errors on shutdown
+      }
+      this.kbServer = undefined;
+      this.contextBuilder.kbServerConfig = undefined;
     }
   }
 
@@ -1313,6 +1396,15 @@ export class MigrationOrchestrator {
   ): AgentInvocation {
     const phaseTimeouts = this.config.copilot.phaseTimeouts;
     const timeout = phaseTimeouts?.[phase] ?? this.config.copilot.timeout;
+
+    // Agents that benefit from KB access when the KB server is running
+    const KB_AWARE_AGENTS: AgentName[] = [
+      'impact-assessor', 'knowledge-builder', 'migration-planner', 'code-migrator',
+    ];
+    const mcpConfig = (KB_AWARE_AGENTS.includes(agent) && this.kbServer)
+      ? this.kbServer.mcpConfig
+      : undefined;
+
     return {
       agent,
       contextFile,
@@ -1320,6 +1412,7 @@ export class MigrationOrchestrator {
       phase,
       taskId,
       timeout,
+      ...(mcpConfig ? { mcpConfig } : {}),
     };
   }
 

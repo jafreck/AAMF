@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { MigrationOrchestrator, MigrationError } from '../src/core/orchestrator.js';
 import { CheckpointManager } from '../src/core/checkpoint.js';
 import { ProgressWriter } from '../src/core/progress.js';
-import { PHASES } from '../src/core/phase-registry.js';
+import { PHASES, getPhase } from '../src/core/phase-registry.js';
 import {
   createMockLauncher,
   createFailingLauncher,
@@ -1312,7 +1312,7 @@ describe('MigrationOrchestrator', () => {
 
   describe('MigrationError', () => {
     it('should construct MigrationError with phase and result details', () => {
-      const phase = PHASES[0]!;
+      const phase = getPhase(1)!;
       const phaseResult = {
         phase: 1,
         name: 'Impact Assessment',
@@ -1330,7 +1330,7 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('should have correct name property ("MigrationError")', () => {
-      const phase = PHASES[0]!;
+      const phase = getPhase(1)!;
       const phaseResult = {
         phase: 1,
         name: 'Impact Assessment',
