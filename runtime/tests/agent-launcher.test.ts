@@ -562,4 +562,60 @@ describe('AgentLauncher', () => {
       expect(result.tokenUsage!.total).toBeGreaterThan(0);
     });
   });
+
+  describe('mcpConfig injection', () => {
+    it('should pass --mcp-config flag when mcpConfig is provided', async () => {
+      const script = await createScript('echo-mcp-args.sh', 'echo "ARGS:$@"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('mcp-config-001');
+
+      const mcpConfig = {
+        url: 'http://localhost:4321/mcp',
+      };
+
+      const result = await launcher.launchAgent({
+        agent: 'impact-assessor',
+        contextFile,
+        progressDir,
+        phase: 1,
+        taskId: 'mcp-config-001',
+        mcpConfig,
+      });
+
+      expect(result.success).toBe(true);
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f => f.startsWith('impact-assessor-mcp-config-001'));
+      expect(agentLog).toBeDefined();
+
+      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      expect(logContent).toContain('--mcp-config');
+      expect(logContent).toContain('localhost:4321');
+    });
+
+    it('should not include --mcp-config flag when mcpConfig is absent', async () => {
+      const script = await createScript('echo-no-mcp.sh', 'echo "ARGS:$@"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('no-mcp-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'no-mcp-001',
+      });
+
+      expect(result.success).toBe(true);
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f => f.startsWith('code-migrator-no-mcp-001'));
+      expect(agentLog).toBeDefined();
+
+      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      expect(logContent).not.toContain('--mcp-config');
+    });
+  });
 });

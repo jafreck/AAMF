@@ -116,6 +116,15 @@ The JSON must conform to this schema:
 - `parity`: one of `"pass"`, `"partial"`, `"fail"`
 - `issues[].severity`: one of `"critical"`, `"major"`, `"minor"`
 
+## KB MCP Tools
+
+If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer the following MCP tools over reading source files directly:
+
+- **`kb_lookup`** — retrieve a specific symbol's full definition (signature, docstring, body location) by name. Use this to fetch a function or class implementation instead of reading the entire source file.
+- **`kb_snippet`** — retrieve a precise line-range excerpt from an indexed source file. Use this when you need a specific code snippet without loading the whole file.
+
+Fall back to Bash / Read / Grep tools only when the KB index is unavailable or a query cannot be satisfied by the MCP tools.
+
 ## Context Window Management
 
 - **Only read the files specified in your task** — never browse the broader codebase.

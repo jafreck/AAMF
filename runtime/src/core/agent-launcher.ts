@@ -244,11 +244,17 @@ export class CopilotRunner implements AgentRunner {
       }
     }
 
+    // Inject MCP config for KB server access
+    if (invocation.mcpConfig) {
+      args.push('--mcp-config', JSON.stringify(invocation.mcpConfig));
+    }
+
     const env: NodeJS.ProcessEnv = {
       ...stripVSCodeEnv(process.env),
       ...(this.resolvedPath ? { PATH: this.resolvedPath } : {}),
       AAMF_PROGRESS_DIR: invocation.progressDir,
       AAMF_CONTEXT_FILE: invocation.contextFile,
+      ...(invocation.kbDbPath ? { KB_DB_PATH: invocation.kbDbPath } : {}),
     };
     if (invocation.phase !== undefined) env.AAMF_PHASE = String(invocation.phase);
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
@@ -393,11 +399,17 @@ export class ClaudeCodeRunner implements AgentRunner {
       args.push('--model', this.config.claudeCode.model);
     }
 
+    // Inject MCP config for KB server access
+    if (invocation.mcpConfig) {
+      args.push('--mcp-config', JSON.stringify(invocation.mcpConfig));
+    }
+
     const env: NodeJS.ProcessEnv = {
       ...stripVSCodeEnv(process.env),
       ...(this.resolvedPath ? { PATH: this.resolvedPath } : {}),
       AAMF_PROGRESS_DIR: invocation.progressDir,
       AAMF_CONTEXT_FILE: invocation.contextFile,
+      ...(invocation.kbDbPath ? { KB_DB_PATH: invocation.kbDbPath } : {}),
     };
     if (invocation.phase !== undefined) env.AAMF_PHASE = String(invocation.phase);
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;

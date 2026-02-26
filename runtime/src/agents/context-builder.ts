@@ -21,6 +21,7 @@ export interface ContextBuildOptions {
  * set of input files, an output path, and an optional payload.
  */
 export class ContextBuilder {
+
   constructor(private config: MigrationConfig, private progressDir: string) {}
 
   /**

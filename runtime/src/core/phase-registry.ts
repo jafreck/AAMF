@@ -18,6 +18,15 @@ export interface PhaseDefinition {
 /** The 7 ordered migration phases */
 export const PHASES: readonly PhaseDefinition[] = [
   {
+    id: 0,
+    name: 'KB Indexing',
+    description: 'Build a local knowledge-base index of the source codebase for use by subsequent agents',
+    agents: [],
+    critical: false,
+    parallel: false,
+    optional: true,
+  },
+  {
     id: 1,
     name: 'Impact Assessment',
     description: 'Analyze source codebase to determine migration scope, complexity, and risks',

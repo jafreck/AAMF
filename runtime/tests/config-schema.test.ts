@@ -314,5 +314,36 @@ describe('MigrationConfigSchema', () => {
       const result = MigrationConfigSchema.parse(validConfig);
       expect(result.options.contextWindowTokens).toBeUndefined();
     });
+
+    describe('kbIndex option', () => {
+      it('should leave kbIndex undefined when omitted', () => {
+        const result = MigrationConfigSchema.parse(validConfig);
+        expect(result.options.kbIndex).toBeUndefined();
+      });
+
+      it('should default kbIndex.enabled to false when kbIndex is {}', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { kbIndex: {} },
+        });
+        expect(result.options.kbIndex?.enabled).toBe(false);
+      });
+
+      it('should accept kbIndex: { enabled: true }', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { kbIndex: { enabled: true } },
+        });
+        expect(result.options.kbIndex?.enabled).toBe(true);
+      });
+
+      it('should accept kbIndex: { enabled: false } explicitly', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { kbIndex: { enabled: false } },
+        });
+        expect(result.options.kbIndex?.enabled).toBe(false);
+      });
+    });
   });
 });

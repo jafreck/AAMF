@@ -72,6 +72,14 @@ export const MigrationConfigSchema = z.object({
       enabled: z.boolean().default(false),
       maxIterations: z.number().int().min(1).default(2),
     }).optional(),
+    /**
+     * Options for the optional KB indexing phase (Phase 0).
+     * When enabled (or when AAMF_USE_KB_INDEX=1), the indexer builds a SQLite
+     * knowledge-base and an HTTP MCP server is started for agents to query it.
+     */
+    kbIndex: z.object({
+      enabled: z.boolean().default(false),
+    }).optional(),
   }).default({}),
   copilot: z.object({
     cliCommand: z.string().default('copilot'),

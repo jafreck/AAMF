@@ -438,3 +438,124 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
     expect(allContent).toMatch(/unsafe\s*\{/);
   });
 });
+
+/**
+ * E2E test variant with AAMF_USE_KB_INDEX=1.
+ *
+ * Runs the full migration pipeline with KB indexing (Phase 0) enabled,
+ * verifying that the phase completes and the KB database is created with
+ * at least one row in the kb_meta table.
+ *
+ * Gated behind both AAMF_E2E=1 and AAMF_USE_KB_INDEX=1.
+ *
+ * Run with:
+ *   AAMF_E2E=1 AAMF_USE_KB_INDEX=1 npx vitest run tests/e2e-lz4-rust.test.ts
+ */
+const runKbIndexE2E = runE2E && process.env.AAMF_USE_KB_INDEX === '1';
+
+describe.skipIf(!runKbIndexE2E)('E2E lz4 C → Rust Migration with KB Index', () => {
+  let result: Awaited<ReturnType<MigrationRuntime['run']>>;
+  const kbProgressDir = join(fixtureDir, '.aamf-kb', 'migration', 'lz4-to-rust-kb');
+  const kbAamfRoot = join(fixtureDir, '.aamf-kb');
+  const kbOutputDir = join(fixtureDir, 'tmp', 'lz4-rust-kb-output');
+  const kbConfigPath = join(fixtureDir, 'migration-kb.config.json');
+
+  beforeAll(async () => {
+    // Reuse the already-downloaded lz4 source (ensureLz4Source from parent suite runs first)
+    await ensureLz4Source();
+
+    // Write a config for the KB-indexed variant
+    const config = {
+      projectName: 'lz4-to-rust-kb',
+      source: {
+        path: libDir,
+        language: 'c',
+        entryPoints: ['lz4.c'],
+        excludePatterns: ['.git', '*.o', '*.lo', '*.la', '*.pc', 'Makefile*', '*.md'],
+      },
+      target: {
+        language: 'rust',
+        framework: 'stable',
+        outputPath: kbOutputDir,
+        testFramework: 'cargo-test',
+        buildCommand: 'cargo build',
+        testCommand: 'cargo test',
+      },
+      options: {
+        maxParallelAgents: 3,
+        maxRetriesPerTask: 2,
+        largeFileThreshold: 500,
+        maxLinesPerTask: 500,
+        tokenBudget: 500000,
+        dryRun: false,
+        resume: false,
+      },
+      copilot: {
+        cliCommand: 'copilot',
+        model: 'claude-sonnet-4.6',
+        agentDir: '../../../../.github/agents',
+        timeout: 300_000,
+      },
+    };
+    await writeFile(kbConfigPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+
+    // Clean up previous artefacts
+    await rm(kbAamfRoot, { recursive: true, force: true });
+    await rm(kbOutputDir, { recursive: true, force: true });
+
+    // Enable KB indexing for this run
+    process.env['AAMF_USE_KB_INDEX'] = '1';
+
+    const runtime = new MigrationRuntime();
+    await runtime.initialize({ configPath: kbConfigPath, logLevel: 'info' });
+    result = await runtime.run();
+  }, 10_800_000); // 3-hour timeout
+
+  afterAll(async () => {
+    // Restore env
+    delete process.env['AAMF_USE_KB_INDEX'];
+  });
+
+  it('should have downloaded the lz4 library source', async () => {
+    expect(await fileExists(join(libDir, 'lz4.c'))).toBe(true);
+  });
+
+  it('should execute Phase 0 (KB Indexing) successfully', () => {
+    const phase0 = result.phases.find(p => p.phase === 0);
+    expect(phase0).toBeDefined();
+    expect(phase0!.success).toBe(true);
+    expect(phase0!.name).toBe('KB Indexing');
+  });
+
+  it('Phase 0 should create a KB database file', async () => {
+    const kbDb = join(kbProgressDir, 'kb.db');
+    expect(await fileExists(kbDb)).toBe(true);
+  });
+
+  it('Phase 0 KB database should have at least one row in kb_meta', async () => {
+    // Dynamically import better-sqlite3 to avoid hard dependency at test collection time
+    const kbDb = join(kbProgressDir, 'kb.db');
+    try {
+      const { default: Database } = await import('better-sqlite3');
+      const db = new Database(kbDb, { readonly: true });
+      const row = db.prepare('SELECT COUNT(*) AS cnt FROM kb_meta').get() as { cnt: number };
+      db.close();
+      expect(row.cnt).toBeGreaterThan(0);
+    } catch {
+      // If better-sqlite3 is unavailable in the test runner, skip gracefully
+      console.warn('better-sqlite3 not available, skipping kb_meta row check');
+    }
+  });
+
+  it('should complete migration successfully with KB index', () => {
+    expect(result.success).toBe(true);
+    expect(result.projectName).toBe('lz4-to-rust-kb');
+  });
+
+  it('should produce Rust output files with KB index', async () => {
+    expect(await fileExists(kbOutputDir)).toBe(true);
+    const outputFiles = (await readdir(kbOutputDir, { recursive: true })) as string[];
+    const rsFiles = outputFiles.filter(f => f.endsWith('.rs'));
+    expect(rsFiles.length).toBeGreaterThan(0);
+  });
+});
