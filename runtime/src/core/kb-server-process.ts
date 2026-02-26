@@ -37,6 +37,8 @@ export class KbServerProcess {
   private readonly dbPath: string;
   private httpServer: http.Server | null = null;
   private _port: number | null = null;
+  private db: import('better-sqlite3').Database | null = null;
+  private embedder: SentenceTransformersProvider | null = null;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
@@ -60,18 +62,17 @@ export class KbServerProcess {
   async start(): Promise<void> {
     if (this.httpServer) return;
 
-    const db = openReadOnly(this.dbPath);
+    this.db = openReadOnly(this.dbPath);
 
     // Spin up a live embedder if the KB was indexed with one.
-    const modelName = getKbMeta(db, 'embedding_model');
-    let embedder: SentenceTransformersProvider | undefined;
+    const modelName = getKbMeta(this.db, 'embedding_model');
     if (modelName) {
-      const dimsStr = getKbMeta(db, 'embedding_dims');
+      const dimsStr = getKbMeta(this.db, 'embedding_dims');
       const dims = dimsStr ? parseInt(dimsStr, 10) : 1024;
-      embedder = new SentenceTransformersProvider(modelName, dims);
+      this.embedder = new SentenceTransformersProvider(modelName, dims);
     }
 
-    const mcpServer = createKbMcpServer(db, this.dbPath, embedder);
+    const mcpServer = createKbMcpServer(this.db, this.dbPath, this.embedder ?? undefined);
 
     // Stateless transport: each POST request gets its own temporary session.
     const transport = new StreamableHTTPServerTransport({
@@ -110,7 +111,19 @@ export class KbServerProcess {
    * Shut down the HTTP server.
    * Resolves immediately if the server was never started.
    */
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
+    // Dispose the embedder (kills the Python subprocess if one was started).
+    if (this.embedder) {
+      try { await this.embedder.dispose(); } catch { /* best-effort */ }
+      this.embedder = null;
+    }
+
+    // Close the read-only DB handle.
+    if (this.db) {
+      try { this.db.close(); } catch { /* best-effort */ }
+      this.db = null;
+    }
+
     return new Promise((resolve, reject) => {
       if (!this.httpServer) {
         resolve();

@@ -66,26 +66,56 @@ export interface SearchResult {
   mode_used: string;
 }
 
+/**
+ * Sanitise a user-provided query string for FTS5 MATCH.
+ *
+ * FTS5 has its own query grammar where characters like `*`, `OR`, `NOT`, `-`,
+ * `^`, `"`, `(`, `)` carry special meaning.  Wrapping the query in escaped
+ * double-quotes forces FTS5 to treat it as a literal phrase, preventing
+ * syntax errors and injection from symbol names like `operator+` or `T*`.
+ */
+function sanitizeFts5Query(query: string): string {
+  // Escape interior double-quotes, then wrap in double-quotes for a phrase query.
+  return `"${query.replace(/"/g, '""')}"`;
+}
+
 /** Run a structural BM25 FTS5 search and return ranked rows. */
 function structuralSearch(
   db: Database.Database,
   query: string,
   limit: number,
 ): SearchResult['results'] {
-  const rows = db
-    .prepare(
-      `SELECT s.id AS symbol_id, s.name, s.kind, f.path AS file_path,
-              s.start_line, s.end_line,
-              bm25(symbols_fts) AS score
-         FROM symbols_fts
-         JOIN symbols s ON s.rowid = symbols_fts.rowid
-         JOIN files   f ON f.id   = s.file_id
-        WHERE symbols_fts MATCH ?
-        ORDER BY score
-        LIMIT ?`,
-    )
-    .all(query, limit) as SearchResult['results'];
-  return rows;
+  const safeQuery = sanitizeFts5Query(query);
+  try {
+    const rows = db
+      .prepare(
+        `SELECT s.id AS symbol_id, s.name, s.kind, f.path AS file_path,
+                s.start_line, s.end_line,
+                bm25(symbols_fts) AS score
+           FROM symbols_fts
+           JOIN symbols s ON s.rowid = symbols_fts.rowid
+           JOIN files   f ON f.id   = s.file_id
+          WHERE symbols_fts MATCH ?
+          ORDER BY score
+          LIMIT ?`,
+      )
+      .all(safeQuery, limit) as SearchResult['results'];
+    return rows;
+  } catch {
+    // FTS5 parse error — fall back to LIKE-based search.
+    const likeQuery = `%${query}%`;
+    return db
+      .prepare(
+        `SELECT s.id AS symbol_id, s.name, s.kind, f.path AS file_path,
+                s.start_line, s.end_line,
+                0.0 AS score
+           FROM symbols s
+           JOIN files f ON f.id = s.file_id
+          WHERE s.name LIKE ?
+          LIMIT ?`,
+      )
+      .all(likeQuery, limit) as SearchResult['results'];
+  }
 }
 
 /**

@@ -254,6 +254,7 @@ export class CopilotRunner implements AgentRunner {
       ...(this.resolvedPath ? { PATH: this.resolvedPath } : {}),
       AAMF_PROGRESS_DIR: invocation.progressDir,
       AAMF_CONTEXT_FILE: invocation.contextFile,
+      ...(invocation.kbDbPath ? { KB_DB_PATH: invocation.kbDbPath } : {}),
     };
     if (invocation.phase !== undefined) env.AAMF_PHASE = String(invocation.phase);
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
@@ -408,6 +409,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       ...(this.resolvedPath ? { PATH: this.resolvedPath } : {}),
       AAMF_PROGRESS_DIR: invocation.progressDir,
       AAMF_CONTEXT_FILE: invocation.contextFile,
+      ...(invocation.kbDbPath ? { KB_DB_PATH: invocation.kbDbPath } : {}),
     };
     if (invocation.phase !== undefined) env.AAMF_PHASE = String(invocation.phase);
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;

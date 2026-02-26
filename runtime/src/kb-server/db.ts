@@ -19,6 +19,17 @@ export type { Database };
 export function openReadOnly(path: string): Database.Database {
   const db = new Database(path, { readonly: true });
   db.pragma('foreign_keys = ON');
+
+  // Load sqlite-vec extension so vec0 virtual tables (symbol_embeddings) can
+  // be queried for semantic / fused search.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const sqliteVec = require('sqlite-vec');
+    sqliteVec.load(db);
+  } catch {
+    // sqlite-vec not available — vec0 tables won't be queryable.
+  }
+
   return db;
 }
 

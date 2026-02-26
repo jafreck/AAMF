@@ -72,6 +72,9 @@ export interface AgentInvocation {
 
   /** MCP server config for the KB server; serialised as --mcp-config to the agent subprocess. */
   mcpConfig?: McpServerConfig;
+
+  /** Path to the KB SQLite database; injected as KB_DB_PATH env var into the agent subprocess. */
+  kbDbPath?: string;
 }
 
 /**

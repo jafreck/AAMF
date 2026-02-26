@@ -1429,6 +1429,10 @@ export class MigrationOrchestrator {
       ? this.kbServer.mcpConfig
       : undefined;
 
+    const kbDbPath = (KB_AWARE_AGENTS.includes(agent) && this.kbServer)
+      ? this.kbDbPath
+      : undefined;
+
     return {
       agent,
       contextFile,
@@ -1437,6 +1441,7 @@ export class MigrationOrchestrator {
       taskId,
       timeout,
       ...(mcpConfig ? { mcpConfig } : {}),
+      ...(kbDbPath ? { kbDbPath } : {}),
     };
   }
 

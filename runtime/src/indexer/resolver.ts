@@ -157,13 +157,24 @@ export class ImportResolver {
   private resolveRust(
     source: string,
     _fromFile: string,
-    _rootDir: string,
+    rootDir: string,
   ): ResolvedImport {
     // `use crate::…` and `use self::…` are always internal but we cannot
     // resolve to a file path without walking the crate graph.
     if (source.startsWith('crate::') || source.startsWith('self::') || source.startsWith('super::')) {
       return { rawSource: source, isExternal: false };
     }
+
+    // Check Cargo.toml to distinguish workspace crates from third-party deps.
+    const cargoDeps = this.parseCargoToml(rootDir);
+    const crateName = source.split('::')[0] ?? source;
+    if (cargoDeps.has(crateName)) {
+      return { rawSource: source, isExternal: true };
+    }
+
+    // If the crate name isn't in Cargo.toml [dependencies], assume it's
+    // a workspace-internal crate or stdlib crate — mark as external since
+    // we can't resolve the file path without a full crate graph.
     return this.markExternal(source);
   }
 

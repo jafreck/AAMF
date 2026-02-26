@@ -23,28 +23,41 @@ import type { Database } from './db.js';
  * disambiguation is not attempted here.
  */
 export function buildCallGraph(db: Database.Database): void {
-  // Build a map: symbol name → symbol id (last one wins for duplicates)
-  const nameToId = new Map<string, number>();
+  // Build a multimap: symbol name → array of { id, file_id }
+  const nameToSymbols = new Map<string, Array<{ id: number; file_id: number }>>();
   const allSymbols = db
-    .prepare('SELECT id, name FROM symbols')
-    .all() as Array<{ id: number; name: string }>;
+    .prepare('SELECT id, name, file_id FROM symbols')
+    .all() as Array<{ id: number; name: string; file_id: number }>;
   for (const row of allSymbols) {
-    nameToId.set(row.name, row.id);
+    let list = nameToSymbols.get(row.name);
+    if (!list) {
+      list = [];
+      nameToSymbols.set(row.name, list);
+    }
+    list.push({ id: row.id, file_id: row.file_id });
   }
 
-  // Fetch all unresolved refs
+  // Fetch all unresolved refs along with the caller's file_id for proximity.
   const unresolved = db
-    .prepare('SELECT id, callee_name FROM symbol_refs WHERE callee_id IS NULL')
-    .all() as Array<{ id: number; callee_name: string }>;
+    .prepare(
+      `SELECT sr.id, sr.callee_name, s.file_id AS caller_file_id
+         FROM symbol_refs sr
+         JOIN symbols s ON s.id = sr.caller_id
+        WHERE sr.callee_id IS NULL`,
+    )
+    .all() as Array<{ id: number; callee_name: string; caller_file_id: number }>;
 
   const update = db.prepare('UPDATE symbol_refs SET callee_id = ? WHERE id = ?');
 
   const updateMany = db.transaction(() => {
     for (const ref of unresolved) {
-      const calleeId = nameToId.get(ref.callee_name);
-      if (calleeId !== undefined) {
-        update.run(calleeId, ref.id);
-      }
+      const candidates = nameToSymbols.get(ref.callee_name);
+      if (!candidates || candidates.length === 0) continue;
+
+      // Prefer same-file match for common names like init, new, parse.
+      const sameFile = candidates.find(c => c.file_id === ref.caller_file_id);
+      const best = sameFile ?? candidates[0]!;
+      update.run(best.id, ref.id);
     }
   });
 

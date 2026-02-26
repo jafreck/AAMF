@@ -118,10 +118,9 @@ program
     const srv = new KbServerProcess(opts.db);
     try {
       await srv.start();
-    } catch {
-      // start() rejects if the subprocess exits before signalling READY;
-      // that is not necessarily fatal — the server may still be running for
-      // MCP clients that spawn their own connection.
+    } catch (err) {
+      console.error(`Failed to start KB server: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
     }
     const cfg = srv.mcpConfig;
     console.log(JSON.stringify(cfg, null, 2));

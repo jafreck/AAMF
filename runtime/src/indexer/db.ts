@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS external_deps (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   package     TEXT    NOT NULL,
-  version     TEXT
+  version     TEXT,
+  UNIQUE(file_id, package)
 );
 
 -- Logical modules grouping related files (e.g. Rust crates, Python packages).
