@@ -21,7 +21,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 0,
     name: 'KB Indexing',
     description: 'Build a local knowledge-base index of the source codebase for use by subsequent agents',
-    agents: ['kb-indexer'],
+    agents: [],
     critical: false,
     parallel: false,
     optional: true,

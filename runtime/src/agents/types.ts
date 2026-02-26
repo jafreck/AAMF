@@ -25,22 +25,18 @@ export type AgentName =
   | 'documentation-writer'
   | 'migration-runner'
   | 'idiomatic-reviewer'
-  | 'idiomatic-refactorer'
-  | 'kb-indexer';
+  | 'idiomatic-refactorer';
 
 // ─── MCP Server Config ───────────────────────────────────────────────────────
 
 /**
- * Configuration that an MCP client uses to spawn the KB server subprocess.
- * Modelled after the stdio-transport StdioServerParameters shape.
+ * Configuration that an MCP client uses to connect to the shared KB HTTP server.
+ * The server runs for the duration of the migration and all agents connect to
+ * the same instance via this URL.
  */
 export interface McpServerConfig {
-  /** The executable to run (e.g. "node" or "tsx"). */
-  command: string;
-  /** Arguments passed to the executable. */
-  args: string[];
-  /** Optional environment variables to inject into the subprocess. */
-  env?: Record<string, string>;
+  /** HTTP URL of the running KB MCP server (e.g. `"http://localhost:4321/mcp"`). */
+  url: string;
 }
 
 // ─── Invocation & Results ────────────────────────────────────────────────────

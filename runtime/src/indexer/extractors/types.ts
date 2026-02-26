@@ -21,6 +21,8 @@ export interface RawSymbol {
   endLine: number;
   /** Textual signature of the symbol (declaration without body). */
   signature: string;
+  /** Documentation comment immediately preceding the symbol, if extracted by the language extractor. */
+  docComment?: string;
 }
 
 /** An import or include directive extracted from a source file. */

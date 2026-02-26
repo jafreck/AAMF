@@ -8,11 +8,12 @@
  *  - "semantic"    — cosine similarity via sqlite-vec vec0 tables (requires embeddings).
  *  - "fused"       — Reciprocal Rank Fusion (k=60) combining structural + semantic.
  *
- * Semantic and fused modes silently fall back to structural-only when no
- * embedding vectors are present in the database.
+ * Semantic and fused modes fall back to structural-only when no EmbeddingProvider
+ * is supplied, clearly indicating the degradation in `mode_used`.
  */
 
 import type { Database } from '../db.js';
+import type { EmbeddingProvider } from '../../indexer/embedder.js';
 
 // ─── Tool definition ──────────────────────────────────────────────────────────
 
@@ -89,18 +90,36 @@ function structuralSearch(
 
 /**
  * Attempt a semantic (cosine) search via the vec0 virtual table.
- * Returns `null` if the table doesn't exist or has no rows.
+ * Returns `null` when no embedder is available or the table has no rows.
  */
-function semanticSearch(
-  _db: Database.Database,
-  _query: string,
-  _limit: number,
-): SearchResult['results'] | null {
-  // Semantic search requires pre-computed query embeddings from the embedder
-  // subsystem (EmbeddingProvider). Without a live embedder we cannot vectorise
-  // the query at query-time inside the MCP server.  Return null to signal
-  // fallback to structural mode.
-  return null;
+async function semanticSearch(
+  db: Database.Database,
+  query: string,
+  limit: number,
+  embedder: EmbeddingProvider,
+): Promise<SearchResult['results'] | null> {
+  try {
+    const [queryVec] = await embedder.embed([query]);
+    if (!queryVec) return null;
+
+    const rows = db
+      .prepare(
+        `SELECT s.id AS symbol_id, s.name, s.kind, f.path AS file_path,
+                s.start_line, s.end_line,
+                distance AS score
+           FROM symbol_embeddings
+           JOIN symbols s ON s.rowid = symbol_embeddings.rowid
+           JOIN files   f ON f.id   = s.file_id
+          WHERE embedding MATCH ?
+          ORDER BY distance
+          LIMIT ?`,
+      )
+      .all(JSON.stringify(queryVec), limit) as SearchResult['results'];
+
+    return rows.length > 0 ? rows : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -139,7 +158,11 @@ function rrfFuse(
 }
 
 /** Execute a knowledge-base search in the requested mode. */
-export function handler(db: Database.Database, args: SearchArgs): SearchResult {
+export async function handler(
+  db: Database.Database,
+  args: SearchArgs,
+  embedder?: EmbeddingProvider,
+): Promise<SearchResult> {
   const limit = args.limit ?? 20;
   const mode = args.mode ?? 'structural';
 
@@ -149,13 +172,17 @@ export function handler(db: Database.Database, args: SearchArgs): SearchResult {
     return { results: structural, mode_used: 'structural' };
   }
 
-  const semantic = semanticSearch(db, args.query, limit);
+  if (!embedder) {
+    // No query-time embedder available — callers can detect this degradation.
+    return { results: structural, mode_used: 'structural (no query-time embedder)' };
+  }
+
+  const semantic = await semanticSearch(db, args.query, limit, embedder);
 
   if (mode === 'semantic') {
     if (semantic) {
       return { results: semantic, mode_used: 'semantic' };
     }
-    // Fall back to structural when no embeddings are available.
     return { results: structural, mode_used: 'structural (fallback: no embeddings)' };
   }
 

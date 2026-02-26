@@ -209,12 +209,13 @@ export class IndexBuilder {
          WHERE id = ?`,
       ).run(language, sizeBytes, hash, existing.id);
       fileId = existing.id;
-      // Remove stale symbols / imports (also clean up FTS5 index)
+      // Remove stale symbols / imports / external deps (also clean up FTS5 index)
       db.prepare(
         `DELETE FROM symbols_fts WHERE rowid IN (SELECT id FROM symbols WHERE file_id = ?)`,
       ).run(fileId);
       db.prepare('DELETE FROM symbols WHERE file_id = ?').run(fileId);
       db.prepare('DELETE FROM file_imports WHERE file_id = ?').run(fileId);
+      db.prepare('DELETE FROM external_deps WHERE file_id = ?').run(fileId);
     } else {
       const info = db
         .prepare(
@@ -254,7 +255,7 @@ export class IndexBuilder {
         sym.startLine,
         sym.endLine,
         sym.signature ?? null,
-        null, // doc_comment extraction in future milestone
+        sym.docComment ?? null,
       ) as { lastInsertRowid: number | bigint };
       const symId = Number(info.lastInsertRowid);
       symbolIdMap.set(sym.name, symId);
@@ -284,23 +285,27 @@ export class IndexBuilder {
 
   /**
    * Second pass: resolve raw_import strings to file IDs in the
-   * `file_imports.resolved_id` column.
+   * `file_imports.resolved_id` column.  Also populates `external_deps` for
+   * any import that resolves to an external package.
    */
   private resolveImports(db: Database.Database): void {
     const rootDir = this.walkerConfig.rootDir;
 
-    // Fetch all unresolved imports with their file's path and language
+    // Fetch all unresolved imports with their file's path, language, and file_id
     const rows = db
       .prepare(
-        `SELECT fi.id, fi.raw_import, f.path, f.language
+        `SELECT fi.id, fi.file_id, fi.raw_import, f.path, f.language
          FROM file_imports fi
          JOIN files f ON f.id = fi.file_id
          WHERE fi.resolved_id IS NULL`,
       )
-      .all() as Array<{ id: number; raw_import: string; path: string; language: string }>;
+      .all() as Array<{ id: number; file_id: number; raw_import: string; path: string; language: string }>;
 
     const updateResolved = db.prepare(
       'UPDATE file_imports SET resolved_id = ? WHERE id = ?',
+    );
+    const insertExternalDep = db.prepare(
+      'INSERT OR IGNORE INTO external_deps (file_id, package) VALUES (?, ?)',
     );
 
     for (const row of rows) {
@@ -318,6 +323,8 @@ export class IndexBuilder {
         if (targetFile) {
           updateResolved.run(targetFile.id, row.id);
         }
+      } else if (resolved.isExternal && resolved.externalName) {
+        insertExternalDep.run(row.file_id, resolved.externalName);
       }
     }
   }

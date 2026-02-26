@@ -1,154 +1,125 @@
 /**
  * @module core/kb-server-process
  *
- * Manages the lifecycle of the KB MCP server subprocess and exposes the
- * `McpServerConfig` that agents need to spawn their own connections.
+ * Manages the lifecycle of the KB MCP server as an in-process HTTP server.
  *
- * Launch modes (controlled by `AAMF_USE_COMPILED_KB_SERVER` env flag):
- *  - dev  (default) : spawns via `tsx src/kb-server/server.ts --db <path>`
- *  - prod           : spawns via `node dist/kb-server/server.js --db <path>`
+ * Instead of spawning a subprocess (stdio transport), `KbServerProcess` starts
+ * a `StreamableHTTPServerTransport` bound to `localhost:0` (OS-assigned port).
+ * All agents connect to the single shared server over its lifetime.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { join, dirname } from 'node:path';
-import type { McpServerConfig } from '../kb-server/server.js';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { openReadOnly } from '../kb-server/db.js';
+import { getKbMeta } from '../indexer/db.js';
+import { SentenceTransformersProvider } from '../indexer/embedder.js';
+import { createKbMcpServer } from '../kb-server/server.js';
+import type { McpServerConfig } from '../agents/types.js';
 
 // Re-export for convenience.
 export type { McpServerConfig };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Directory containing this source file (runtime/src/core/). */
-const __dirname = dirname(fileURLToPath(import.meta.url));
-/** runtime/src/ */
-const SRC_ROOT = join(__dirname, '..');
-/** runtime/ (package root) */
-const PACKAGE_ROOT = join(SRC_ROOT, '..');
-
-/** Default milliseconds to wait for the server to write READY before giving up. */
-const START_TIMEOUT_MS = 30_000;
-
-function buildConfig(dbPath: string): McpServerConfig {
-  if (process.env['AAMF_USE_COMPILED_KB_SERVER'] === '1') {
-    return {
-      command: 'node',
-      args: [join(PACKAGE_ROOT, 'dist', 'kb-server', 'server.js'), '--db', dbPath],
-    };
-  }
-  return {
-    command: 'tsx',
-    args: [join(SRC_ROOT, 'kb-server', 'server.ts'), '--db', dbPath],
-  };
-}
-
 // ─── KbServerProcess ──────────────────────────────────────────────────────────
 
 /**
- * Wrapper around the KB MCP server subprocess.
+ * Hosts the KB MCP server on an in-process HTTP endpoint.
  *
  * @example
  * ```ts
  * const srv = new KbServerProcess('/path/to/kb.db');
  * await srv.start();
- * // Agent can now use srv.mcpConfig to connect.
+ * // Agents use srv.mcpConfig.url to reach the server.
  * await srv.stop();
  * ```
  */
 export class KbServerProcess {
   private readonly dbPath: string;
-  private readonly config: McpServerConfig;
-  private child: ChildProcess | null = null;
+  private httpServer: http.Server | null = null;
+  private _port: number | null = null;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
-    this.config = buildConfig(dbPath);
-  }
-
-  /** McpServerConfig usable by an MCP client to spawn its own connection. */
-  get mcpConfig(): McpServerConfig {
-    return this.config;
   }
 
   /**
-   * Spawn the server subprocess and wait for it to signal readiness.
-   *
-   * The server writes `READY\n` to stderr once connected.  `start()` resolves
-   * when that line is received, or rejects if the process exits first or if
-   * the server does not become ready within `timeoutMs` milliseconds.
-   *
-   * @param timeoutMs - Maximum milliseconds to wait for READY (default: 30 s).
+   * HTTP URL of the running server (e.g. `"http://localhost:4321/mcp"`).
+   * Only valid after `start()` has resolved.
    */
-  start(timeoutMs = START_TIMEOUT_MS): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (this.child) {
-        resolve();
-        return;
-      }
-
-      const { command, args, env } = this.config;
-      const child = spawn(command, args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...env },
-      });
-
-      this.child = child;
-
-      let stderrBuf = '';
-      let settled = false;
-
-      const settle = (fn: () => void) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          fn();
-        }
-      };
-
-      const timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        this.child = null;
-        settle(() => reject(new Error(`KB server did not become ready within ${timeoutMs}ms`)));
-      }, timeoutMs);
-
-      child.stderr?.on('data', (chunk: Buffer) => {
-        stderrBuf += chunk.toString();
-        if (stderrBuf.includes('READY')) {
-          settle(() => resolve());
-        }
-      });
-
-      child.on('error', (err) => {
-        this.child = null;
-        settle(() => reject(err));
-      });
-
-      child.on('exit', (code) => {
-        this.child = null;
-        // If we haven't resolved yet (no READY received), reject.
-        settle(() => reject(new Error(`KB server exited unexpectedly with code ${code}`)));
-      });
-    });
+  get mcpConfig(): McpServerConfig {
+    if (this._port === null) {
+      throw new Error('KB server has not been started — call start() first');
+    }
+    return { url: `http://localhost:${this._port}/mcp` };
   }
 
   /**
-   * Send SIGTERM to the child process and wait for it to exit.
-   * Resolves immediately if the server was not started.
+   * Start the in-process HTTP MCP server and bind to a free OS-assigned port.
+   * Resolves once the server is listening.
+   */
+  async start(): Promise<void> {
+    if (this.httpServer) return;
+
+    const db = openReadOnly(this.dbPath);
+
+    // Spin up a live embedder if the KB was indexed with one.
+    const modelName = getKbMeta(db, 'embedding_model');
+    let embedder: SentenceTransformersProvider | undefined;
+    if (modelName) {
+      const dimsStr = getKbMeta(db, 'embedding_dims');
+      const dims = dimsStr ? parseInt(dimsStr, 10) : 1024;
+      embedder = new SentenceTransformersProvider(modelName, dims);
+    }
+
+    const mcpServer = createKbMcpServer(db, this.dbPath, embedder);
+
+    // Stateless transport: each POST request gets its own temporary session.
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    await mcpServer.connect(transport);
+
+    const httpServer = http.createServer(async (req, res) => {
+      if (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE') {
+        let body: unknown;
+        if (req.method === 'POST') {
+          const raw = await new Promise<string>((resolve, reject) => {
+            const chunks: Buffer[] = [];
+            req.on('data', (chunk: Buffer) => chunks.push(chunk));
+            req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+            req.on('error', reject);
+          });
+          try { body = JSON.parse(raw); } catch { /* leave body undefined */ }
+        }
+        await transport.handleRequest(req, res, body);
+      } else {
+        res.writeHead(405).end();
+      }
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      httpServer.once('error', reject);
+      httpServer.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    this._port = (httpServer.address() as AddressInfo).port;
+    this.httpServer = httpServer;
+  }
+
+  /**
+   * Shut down the HTTP server.
+   * Resolves immediately if the server was never started.
    */
   stop(): Promise<void> {
-    return new Promise((resolve) => {
-      const child = this.child;
-      if (!child) {
+    return new Promise((resolve, reject) => {
+      if (!this.httpServer) {
         resolve();
         return;
       }
-
-      child.once('exit', () => {
-        this.child = null;
-        resolve();
-      });
-
-      child.kill('SIGTERM');
+      const server = this.httpServer;
+      this.httpServer = null;
+      this._port = null;
+      server.close((err) => (err ? reject(err) : resolve()));
     });
   }
 }

@@ -23,7 +23,6 @@ import {
   MigrationRunnerOutput,
   IdiomaticReviewerOutput,
   IdiomaticRefactorerOutput,
-  KbIndexerOutput,
 } from '../agents/result-parser.js';
 import { Logger } from '../logging/logger.js';
 import { TokenTracker } from '../budget/token-tracker.js';
@@ -47,7 +46,6 @@ const agentOutputSchemas: Record<AgentName, z.ZodTypeAny> = {
   'migration-runner': MigrationRunnerOutput,
   'idiomatic-reviewer': IdiomaticReviewerOutput,
   'idiomatic-refactorer': IdiomaticRefactorerOutput,
-  'kb-indexer': KbIndexerOutput,
 };
 
 /**
@@ -260,14 +258,6 @@ export class CopilotRunner implements AgentRunner {
     if (invocation.phase !== undefined) env.AAMF_PHASE = String(invocation.phase);
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
 
-    // Inject KB_DB_PATH from mcpConfig when present
-    if (invocation.mcpConfig) {
-      const dbIdx = invocation.mcpConfig.args.indexOf('--db');
-      if (dbIdx !== -1 && invocation.mcpConfig.args[dbIdx + 1]) {
-        env.KB_DB_PATH = invocation.mcpConfig.args[dbIdx + 1];
-      }
-    }
-
     const startTime = Date.now();
     this.logger.info(`Launching CLI agent: ${cliCommand} ${args.join(' ')}`);
 
@@ -421,14 +411,6 @@ export class ClaudeCodeRunner implements AgentRunner {
     };
     if (invocation.phase !== undefined) env.AAMF_PHASE = String(invocation.phase);
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
-
-    // Inject KB_DB_PATH from mcpConfig when present
-    if (invocation.mcpConfig) {
-      const dbIdx = invocation.mcpConfig.args.indexOf('--db');
-      if (dbIdx !== -1 && invocation.mcpConfig.args[dbIdx + 1]) {
-        env.KB_DB_PATH = invocation.mcpConfig.args[dbIdx + 1];
-      }
-    }
 
     const startTime = Date.now();
     this.logger.info(`Launching Claude Code agent: ${cliCommand} ${args.join(' ')}`);

@@ -149,9 +149,6 @@ describe('MigrationOrchestrator', () => {
 
       const phase0 = result.phases.find(p => p.phase === 0);
       expect(phase0).toBeUndefined();
-
-      const kbIndexerInvocations = mockLauncher.invocations.filter(i => i.agent === 'kb-indexer');
-      expect(kbIndexerInvocations).toHaveLength(0);
     });
 
     it('should skip Phase 0 when AAMF_USE_KB_INDEX is set to "0"', async () => {

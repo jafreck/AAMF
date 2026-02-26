@@ -191,8 +191,7 @@ describe('AgentInvocation', () => {
 
   it('should support optional mcpConfig field', () => {
     const mcpConfig: McpServerConfig = {
-      command: 'node',
-      args: ['dist/kb-server.js', '--db', '/tmp/kb.db'],
+      url: 'http://localhost:4321/mcp',
     };
     const inv: AgentInvocation = {
       agent: 'impact-assessor',
@@ -201,8 +200,7 @@ describe('AgentInvocation', () => {
       mcpConfig,
     };
     expect(inv.mcpConfig).toBeDefined();
-    expect(inv.mcpConfig?.command).toBe('node');
-    expect(inv.mcpConfig?.args).toContain('--db');
+    expect(inv.mcpConfig?.url).toBe('http://localhost:4321/mcp');
   });
 
   it('should omit mcpConfig when not provided', () => {
@@ -213,38 +211,23 @@ describe('AgentInvocation', () => {
     };
     expect(inv.mcpConfig).toBeUndefined();
   });
-
-  it('should accept kb-indexer as agent name', () => {
-    const inv: AgentInvocation = {
-      agent: 'kb-indexer',
-      contextFile: '/tmp/ctx.json',
-      progressDir: '/tmp/progress',
-    };
-    expect(inv.agent).toBe('kb-indexer');
-  });
 });
 
 // ─── McpServerConfig ──────────────────────────────────────────────────────────
 
 describe('McpServerConfig', () => {
-  it('should require command and args', () => {
+  it('should require a url field', () => {
     const cfg: McpServerConfig = {
-      command: 'node',
-      args: ['dist/kb-server.js', '--db', '/tmp/kb.db'],
+      url: 'http://localhost:4321/mcp',
     };
-    expect(cfg.command).toBe('node');
-    expect(cfg.args).toHaveLength(3);
-    expect(cfg.env).toBeUndefined();
+    expect(cfg.url).toBe('http://localhost:4321/mcp');
   });
 
-  it('should support optional env field', () => {
+  it('should accept any localhost URL', () => {
     const cfg: McpServerConfig = {
-      command: 'tsx',
-      args: ['src/kb-server.ts'],
-      env: { LOG_LEVEL: 'debug', NODE_ENV: 'test' },
+      url: 'http://127.0.0.1:9999/mcp',
     };
-    expect(cfg.env?.['LOG_LEVEL']).toBe('debug');
-    expect(cfg.env?.['NODE_ENV']).toBe('test');
+    expect(cfg.url).toContain('9999');
   });
 });
 

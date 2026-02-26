@@ -100,27 +100,27 @@ describe('graph handler', () => {
 // ─── kb_search ────────────────────────────────────────────────────────────────
 
 describe('search handler', () => {
-  it('mode="structural" returns results for a known symbol name', () => {
-    const result = searchHandler(db, { query: 'Calculator', mode: 'structural' });
+  it('mode="structural" returns results for a known symbol name', async () => {
+    const result = await searchHandler(db, { query: 'Calculator', mode: 'structural' });
     expect(result).toHaveProperty('results');
     expect(result).toHaveProperty('mode_used');
     expect(Array.isArray(result.results)).toBe(true);
     expect(result.results.length).toBeGreaterThan(0);
   });
 
-  it('mode defaults to structural', () => {
-    const result = searchHandler(db, { query: 'Calculator' });
+  it('mode defaults to structural', async () => {
+    const result = await searchHandler(db, { query: 'Calculator' });
     expect(result.mode_used).toContain('structural');
   });
 
-  it('mode="semantic" falls back to structural when no embeddings exist', () => {
-    const result = searchHandler(db, { query: 'Calculator', mode: 'semantic' });
-    // Without embeddings the mode_used should mention the fallback.
+  it('mode="semantic" falls back when no embedder is provided', async () => {
+    const result = await searchHandler(db, { query: 'Calculator', mode: 'semantic' });
+    // Without an embedder the mode_used should indicate the degradation.
     expect(result.mode_used).toContain('structural');
   });
 
-  it('mode="fused" returns results', () => {
-    const result = searchHandler(db, { query: 'Calculator', mode: 'fused' });
+  it('mode="fused" returns results', async () => {
+    const result = await searchHandler(db, { query: 'Calculator', mode: 'fused' });
     expect(Array.isArray(result.results)).toBe(true);
   });
 });

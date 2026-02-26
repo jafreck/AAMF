@@ -90,6 +90,9 @@ export class MigrationError extends Error {
   }
 }
 
+/** Default timeout for the KB indexing phase when no phaseTimeouts[0] is configured (5 minutes). */
+const DEFAULT_INDEX_TIMEOUT_MS = 5 * 60_000;
+
 /**
  * The main orchestrator that sequences all 7 migration phases.
  *
@@ -162,9 +165,11 @@ export class MigrationOrchestrator {
 
     try {
       for (const phase of phasesToRun) {
-        // Skip optional Phase 0 (KB Indexing) unless AAMF_USE_KB_INDEX=1
-        if (phase.optional && phase.id === 0 && process.env['AAMF_USE_KB_INDEX'] !== '1') {
-          this.logger.info(`Skipping optional Phase 0 (KB Indexing) — set AAMF_USE_KB_INDEX=1 to enable`);
+        // Skip optional Phase 0 (KB Indexing) unless enabled via config or env var
+        if (phase.optional && phase.id === 0 &&
+            !this.config.options.kbIndex?.enabled &&
+            process.env['AAMF_USE_KB_INDEX'] !== '1') {
+          this.logger.info(`Skipping optional Phase 0 (KB Indexing) — set options.kbIndex.enabled or AAMF_USE_KB_INDEX=1 to enable`);
           continue;
         }
 
@@ -343,39 +348,59 @@ export class MigrationOrchestrator {
 
   /**
    * Execute Phase 0: build the local knowledge-base SQLite index from the
-   * source directory. Only runs when `AAMF_USE_KB_INDEX=1`.
+   * source directory. Wraps the build in retry logic and a timeout.
    */
   async executePhase0(start: number = Date.now()): Promise<PhaseResult> {
     this.logger.info(`Building KB index at ${this.kbDbPath}`);
     const builder = new IndexBuilder(this.kbDbPath, { rootDir: this.config.source.path });
-    try {
-      await builder.build();
-      return {
-        phase: 0,
-        name: 'KB Indexing',
-        success: true,
-        outputPath: this.kbDbPath,
-        duration: Date.now() - start,
-      };
-    } catch (err) {
-      return {
-        phase: 0,
-        name: 'KB Indexing',
-        success: false,
-        duration: Date.now() - start,
-        error: err instanceof Error ? err.message : String(err),
-      };
+
+    const maxAttempts = this.config.options.maxRetriesPerTask;
+    const timeout =
+      this.config.copilot.phaseTimeouts?.[0] ??
+      this.config.claudeCode?.phaseTimeouts?.[0] ??
+      DEFAULT_INDEX_TIMEOUT_MS;
+
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await Promise.race([
+          builder.build(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('KB index timeout')), timeout),
+          ),
+        ]);
+        return {
+          phase: 0,
+          name: 'KB Indexing',
+          success: true,
+          outputPath: this.kbDbPath,
+          duration: Date.now() - start,
+        };
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxAttempts) {
+          this.logger.warn(`KB index attempt ${attempt} failed, retrying: ${err instanceof Error ? err.message : String(err)}`);
+          await new Promise(r => setTimeout(r, 1_000 * attempt));
+        }
+      }
     }
+
+    return {
+      phase: 0,
+      name: 'KB Indexing',
+      success: false,
+      duration: Date.now() - start,
+      error: lastErr instanceof Error ? lastErr.message : String(lastErr),
+    };
   }
 
   // ─── KB Server Lifecycle ──────────────────────────────────────────────
 
-  /** Start the KB MCP server and register its config with the context builder. */
+  /** Start the KB MCP server (HTTP transport). */
   private async startKbServer(): Promise<void> {
     this.kbServer = new KbServerProcess(this.kbDbPath);
     try {
       await this.kbServer.start();
-      this.contextBuilder.kbServerConfig = this.kbServer.mcpConfig;
       this.logger.info('KB server started and ready');
     } catch (err) {
       this.logger.warn(
@@ -395,7 +420,6 @@ export class MigrationOrchestrator {
         // Ignore errors on shutdown
       }
       this.kbServer = undefined;
-      this.contextBuilder.kbServerConfig = undefined;
     }
   }
 

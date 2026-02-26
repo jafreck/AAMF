@@ -1,9 +1,12 @@
 /**
  * @module kb-server/server
  *
- * Knowledge-base MCP server entry point.
+ * Knowledge-base MCP server.
  *
- * Exposes the following MCP tools via stdio transport:
+ * Exports `createKbMcpServer()` for use by `KbServerProcess` (HTTP transport)
+ * and retains a standalone CLI entry point for development/debugging.
+ *
+ * MCP tools exposed:
  *   kb_lookup    — symbol / file lookup
  *   kb_graph     — call / import graph queries
  *   kb_search    — structural, semantic, and fused search
@@ -11,7 +14,7 @@
  *   kb_metrics   — aggregate code metrics
  *   kb_writeback — LLM summary write-back
  *
- * Usage (standalone):
+ * Standalone usage:
  *   node dist/kb-server/server.js --db <path-to-kb.db>
  *   tsx src/kb-server/server.ts --db <path-to-kb.db>
  */
@@ -19,7 +22,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { openReadOnly } from './db.js';
+import { fileURLToPath } from 'url';
+import { openReadOnly, type Database } from './db.js';
+import { getKbMeta } from '../indexer/db.js';
+import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
 import * as lookup from './tools/lookup.js';
 import * as graph from './tools/graph.js';
 import * as search from './tools/search.js';
@@ -27,41 +33,20 @@ import * as snippet from './tools/snippet.js';
 import * as metrics from './tools/metrics.js';
 import * as writeback from './tools/writeback.js';
 
-// ─── McpServerConfig type ─────────────────────────────────────────────────────
+// ─── Server factory ───────────────────────────────────────────────────────────
 
 /**
- * Configuration that an MCP client uses to spawn the KB server subprocess.
- * Modelled after the stdio-transport `StdioServerParameters` shape.
+ * Create and return a fully-configured `McpServer` with all KB tools registered.
+ *
+ * @param db      Read-only SQLite connection to the knowledge-base.
+ * @param dbPath  Path to the DB file, needed by `kb_writeback` for write access.
+ * @param embedder Optional live embedding provider for semantic/fused search.
  */
-export interface McpServerConfig {
-  /** The executable to run (e.g. "node" or "tsx"). */
-  command: string;
-  /** Arguments passed to the executable. */
-  args: string[];
-  /** Optional environment variables to inject into the subprocess. */
-  env?: Record<string, string>;
-}
-
-// ─── CLI argument parsing ─────────────────────────────────────────────────────
-
-function parseArgs(): { dbPath: string } {
-  const args = process.argv.slice(2);
-  const dbIdx = args.indexOf('--db');
-  if (dbIdx === -1 || !args[dbIdx + 1]) {
-    console.error('Usage: kb-server --db <path>');
-    process.exit(1);
-  }
-  return { dbPath: args[dbIdx + 1]! };
-}
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
-
-async function main(): Promise<void> {
-  const { dbPath } = parseArgs();
-
-  // Open the read-only DB connection shared by all read-only tools.
-  const db = openReadOnly(dbPath);
-
+export function createKbMcpServer(
+  db: Database.Database,
+  dbPath: string,
+  embedder?: EmbeddingProvider,
+): McpServer {
   const server = new McpServer(
     { name: 'aamf-kb-server', version: '0.1.0' },
     { capabilities: { tools: {} } },
@@ -107,7 +92,7 @@ async function main(): Promise<void> {
       limit: z.number().optional().describe('Max results (default 20).'),
     },
     async (args) => ({
-      content: [{ type: 'text', text: JSON.stringify(search.handler(db, args)) }],
+      content: [{ type: 'text', text: JSON.stringify(await search.handler(db, args, embedder)) }],
     }),
   );
 
@@ -151,7 +136,48 @@ async function main(): Promise<void> {
     }),
   );
 
-  // Connect via stdio transport.
+  return server;
+}
+
+// ─── Embedding helper ─────────────────────────────────────────────────────────
+
+/**
+ * Read the embedding model stored in `kb_meta` at index time and spin up a
+ * `SentenceTransformersProvider` instance for it.  Returns `undefined` when no
+ * embedding model is recorded in the database.
+ */
+function buildEmbedder(db: Database.Database): EmbeddingProvider | undefined {
+  const modelName = getKbMeta(db, 'embedding_model');
+  if (!modelName) return undefined;
+
+  const dimsStr = getKbMeta(db, 'embedding_dims');
+  const dims = dimsStr ? parseInt(dimsStr, 10) : 1024;
+  return new SentenceTransformersProvider(modelName, dims);
+}
+
+// ─── CLI argument parsing ─────────────────────────────────────────────────────
+
+function parseArgs(): { dbPath: string } {
+  const args = process.argv.slice(2);
+  const dbIdx = args.indexOf('--db');
+  if (dbIdx === -1 || !args[dbIdx + 1]) {
+    console.error('Usage: kb-server --db <path>');
+    process.exit(1);
+  }
+  return { dbPath: args[dbIdx + 1]! };
+}
+
+// ─── Main (standalone CLI) ────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  const { dbPath } = parseArgs();
+
+  const db = openReadOnly(dbPath);
+  const embedder = buildEmbedder(db);
+
+  const server = createKbMcpServer(db, dbPath, embedder);
+
+  // Connect via stdio transport (standalone/debug mode).
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
@@ -159,7 +185,10 @@ async function main(): Promise<void> {
   process.stderr.write('READY\n');
 }
 
-main().catch((err) => {
-  console.error('KB server fatal error:', err);
-  process.exit(1);
-});
+// Only run when executed as a standalone script, not when imported as a module.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error('KB server fatal error:', err);
+    process.exit(1);
+  });
+}

@@ -221,46 +221,6 @@ describe('ContextBuilder', () => {
       expect(context.inputFiles).toContain('/tmp/source');
       expect(context.outputPath).toBe(progressDir);
     });
-
-    it('should route kb-indexer to source path and kb.db output', async () => {
-      const contextPath = await builder.buildContext('kb-indexer', 0);
-      const context = await readJson<AgentContext>(contextPath);
-
-      expect(context.inputFiles).toContain('/tmp/source');
-      expect(context.outputPath).toContain('kb.db');
-    });
-  });
-
-  // ─── kbServerConfig ────────────────────────────────────────────────────────
-
-  describe('kbServerConfig', () => {
-    it('should be undefined by default', () => {
-      expect(builder.kbServerConfig).toBeUndefined();
-    });
-
-    it('should be settable and readable', () => {
-      const config = { command: 'node', args: ['dist/kb-server.js', '--db', '/tmp/kb.db'] };
-      builder.kbServerConfig = config;
-      expect(builder.kbServerConfig).toEqual(config);
-      expect(builder.kbServerConfig?.command).toBe('node');
-      expect(builder.kbServerConfig?.args).toContain('--db');
-    });
-
-    it('should be clearable by setting to undefined', () => {
-      builder.kbServerConfig = { command: 'node', args: [] };
-      builder.kbServerConfig = undefined;
-      expect(builder.kbServerConfig).toBeUndefined();
-    });
-
-    it('should support optional env field in kbServerConfig', () => {
-      const config = {
-        command: 'tsx',
-        args: ['src/kb-server.ts'],
-        env: { LOG_LEVEL: 'debug' },
-      };
-      builder.kbServerConfig = config;
-      expect(builder.kbServerConfig?.env?.['LOG_LEVEL']).toBe('debug');
-    });
   });
 
   // ─── Context Window Token Limit ────────────────────────────────────────────

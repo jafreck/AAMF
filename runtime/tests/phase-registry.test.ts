@@ -69,9 +69,9 @@ describe('Phase Registry', () => {
       expect(phase?.critical).toBe(false);
     });
 
-    it('should include kb-indexer agent', () => {
+    it('should have an empty agents array (Phase 0 runs in-process, no agent launched)', () => {
       const phase = getPhase(0);
-      expect(phase?.agents).toContain('kb-indexer');
+      expect(phase?.agents).toHaveLength(0);
     });
 
     it('should appear before Phase 1 in the PHASES array', () => {
