@@ -26,10 +26,11 @@ const SRC_ROOT = join(__dirname, '..');
 /** runtime/ (package root) */
 const PACKAGE_ROOT = join(SRC_ROOT, '..');
 
-const USE_COMPILED = process.env['AAMF_USE_COMPILED_KB_SERVER'] === '1';
+/** Default milliseconds to wait for the server to write READY before giving up. */
+const START_TIMEOUT_MS = 30_000;
 
 function buildConfig(dbPath: string): McpServerConfig {
-  if (USE_COMPILED) {
+  if (process.env['AAMF_USE_COMPILED_KB_SERVER'] === '1') {
     return {
       command: 'node',
       args: [join(PACKAGE_ROOT, 'dist', 'kb-server', 'server.js'), '--db', dbPath],
@@ -73,9 +74,12 @@ export class KbServerProcess {
    * Spawn the server subprocess and wait for it to signal readiness.
    *
    * The server writes `READY\n` to stderr once connected.  `start()` resolves
-   * when that line is received or rejects if the process exits first.
+   * when that line is received, or rejects if the process exits first or if
+   * the server does not become ready within `timeoutMs` milliseconds.
+   *
+   * @param timeoutMs - Maximum milliseconds to wait for READY (default: 30 s).
    */
-  start(): Promise<void> {
+  start(timeoutMs = START_TIMEOUT_MS): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.child) {
         resolve();
@@ -91,23 +95,38 @@ export class KbServerProcess {
       this.child = child;
 
       let stderrBuf = '';
+      let settled = false;
+
+      const settle = (fn: () => void) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          fn();
+        }
+      };
+
+      const timer = setTimeout(() => {
+        child.kill('SIGTERM');
+        this.child = null;
+        settle(() => reject(new Error(`KB server did not become ready within ${timeoutMs}ms`)));
+      }, timeoutMs);
 
       child.stderr?.on('data', (chunk: Buffer) => {
         stderrBuf += chunk.toString();
         if (stderrBuf.includes('READY')) {
-          resolve();
+          settle(() => resolve());
         }
       });
 
       child.on('error', (err) => {
         this.child = null;
-        reject(err);
+        settle(() => reject(err));
       });
 
       child.on('exit', (code) => {
         this.child = null;
         // If we haven't resolved yet (no READY received), reject.
-        reject(new Error(`KB server exited unexpectedly with code ${code}`));
+        settle(() => reject(new Error(`KB server exited unexpectedly with code ${code}`)));
       });
     });
   }

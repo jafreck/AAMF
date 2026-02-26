@@ -163,6 +163,20 @@ describe('KbServerProcess', () => {
       await expect(startPromise).rejects.toThrow(/exited unexpectedly/);
     });
 
+    it('should reject if server does not become ready within the timeout', async () => {
+      vi.useFakeTimers();
+      const fakeChild = makeFakeChild();
+      mockSpawn.mockReturnValue(fakeChild as unknown as ReturnType<typeof spawn>);
+
+      const proc = new KbServerProcess('/tmp/test.db');
+      const startPromise = proc.start(30_000);
+
+      // Advance time past the timeout without emitting READY.
+      vi.advanceTimersByTime(30_001);
+      await expect(startPromise).rejects.toThrow(/did not become ready/);
+      vi.useRealTimers();
+    });
+
     it('should be a no-op if already started', async () => {
       const fakeChild = makeFakeChild();
       mockSpawn.mockReturnValue(fakeChild as unknown as ReturnType<typeof spawn>);
