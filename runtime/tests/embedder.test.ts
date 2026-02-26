@@ -14,29 +14,31 @@ const ENABLED = process.env.AAMF_EMBEDDER === '1';
 // ─── Gated: constructor / property tests (requires AAMF_EMBEDDER=1) ───────────
 
 describe.skipIf(!ENABLED)('SentenceTransformersProvider (no subprocess)', () => {
-  it('should expose modelName and dims from constructor', () => {
-    const p = new SentenceTransformersProvider('my/model', 768);
+  it('should expose modelName from constructor', () => {
+    const p = new SentenceTransformersProvider('my/model');
     expect(p.modelName).toBe('my/model');
-    expect(p.dims).toBe(768);
+  });
+
+  it('dims should throw before init() is called', () => {
+    const p = new SentenceTransformersProvider('my/model');
+    expect(() => p.dims).toThrow('call init() first');
   });
 
   it('dispose() should resolve immediately when no subprocess was started', async () => {
-    const p = new SentenceTransformersProvider('my/model', 768);
+    const p = new SentenceTransformersProvider('my/model');
     await expect(p.dispose()).resolves.toBeUndefined();
   });
 });
 
 describe.skipIf(!ENABLED)('Qwen3EmbeddingProvider factory', () => {
-  it('should set correct modelName and dims for 4B', () => {
+  it('should set correct modelName for 4B', () => {
     const p = Qwen3EmbeddingProvider('4B');
     expect(p.modelName).toBe('Qwen/Qwen3-Embedding-4B');
-    expect(p.dims).toBe(2560);
   });
 
-  it('should set correct modelName and dims for 8B', () => {
+  it('should set correct modelName for 8B', () => {
     const p = Qwen3EmbeddingProvider('8B');
     expect(p.modelName).toBe('Qwen/Qwen3-Embedding-8B');
-    expect(p.dims).toBe(4096);
   });
 });
 
@@ -51,6 +53,7 @@ describe.skipIf(!ENABLED)('Qwen3EmbeddingProvider', () => {
 
   it('returns float arrays of the expected dimension (0.6B)', async () => {
     provider = Qwen3EmbeddingProvider('0.6B');
+    await provider.init();
     const result = await provider.embed(['hello world']);
 
     expect(result).toHaveLength(1);
@@ -60,6 +63,7 @@ describe.skipIf(!ENABLED)('Qwen3EmbeddingProvider', () => {
 
   it('batches multiple texts into a single round-trip', async () => {
     provider = Qwen3EmbeddingProvider('0.6B');
+    await provider.init();
     const texts = ['foo bar', 'baz qux', 'hello world'];
     const result = await provider.embed(texts);
 
@@ -78,6 +82,5 @@ describe.skipIf(!ENABLED)('Qwen3EmbeddingProvider', () => {
   it('modelName is set correctly', () => {
     provider = Qwen3EmbeddingProvider('0.6B');
     expect(provider.modelName).toBe('Qwen/Qwen3-Embedding-0.6B');
-    expect(provider.dims).toBe(1024);
   });
 });

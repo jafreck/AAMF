@@ -67,9 +67,13 @@ export class KbServerProcess {
     // Spin up a live embedder if the KB was indexed with one.
     const modelName = getKbMeta(this.db, 'embedding_model');
     if (modelName) {
-      const dimsStr = getKbMeta(this.db, 'embedding_dims');
-      const dims = dimsStr ? parseInt(dimsStr, 10) : 1024;
-      this.embedder = new SentenceTransformersProvider(modelName, dims);
+      this.embedder = new SentenceTransformersProvider(modelName);
+      try {
+        await this.embedder.init();
+      } catch {
+        // Model not available at serve time — fall back to structural search only.
+        this.embedder = null;
+      }
     }
 
     const mcpServer = createKbMcpServer(this.db, this.dbPath, this.embedder ?? undefined);

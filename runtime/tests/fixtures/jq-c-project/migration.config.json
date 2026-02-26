@@ -21,7 +21,13 @@
     "maxLinesPerTask": 500,
     "tokenBudget": 500000,
     "dryRun": false,
-    "resume": false
+    "resume": false,
+    "kbIndex": {
+      "enabled": true,
+      "embeddings": {
+        "enabled": true
+      }
+    }
   },
   "copilot": {
     "cliCommand": "copilot",
