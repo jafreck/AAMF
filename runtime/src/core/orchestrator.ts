@@ -1144,22 +1144,16 @@ export class MigrationOrchestrator {
           const routing = this.config.options.modelRouting!;
           const escalateAt = routing.escalateOnRetryAttempt ?? 2;
           if (attempt >= escalateAt) {
-            const escalatedModel = initialRoutingDecision.tier === 'critical'
-              ? routing.criticalModel
-              : routing.heavyModel;
+            // Promote to next-higher tier: heavy→critical, critical stays critical
+            const escalatedModel = initialRoutingDecision.tier === 'heavy'
+              ? (routing.criticalModel ?? routing.heavyModel)
+              : routing.criticalModel;
             if (escalatedModel) {
-              const escalatedDecision = this.applyRoutingCaps({
-                ...initialRoutingDecision,
-                selectedModel: escalatedModel,
-                reason: `retry-escalation-${initialRoutingDecision.tier}`,
-                escalated: true,
-              });
-              if (escalatedDecision.tier !== 'normal') {
-                migratorInv.modelOverride = escalatedDecision.selectedModel;
-                this.logger.warn(
-                  `Escalating ${task.id} to ${escalatedDecision.selectedModel} after ${attempt} retries`,
-                );
-              }
+              // Skip applyRoutingCaps — buildInvocation already consumed this task's cap budget
+              migratorInv.modelOverride = escalatedModel;
+              this.logger.warn(
+                `Escalating ${task.id} to ${escalatedModel} after ${attempt} retries`,
+              );
             }
           }
         }
