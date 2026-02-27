@@ -639,6 +639,167 @@ intermediate text
     });
   });
 
+  describe('parseCopilotCliUsage', () => {
+    it('should parse a single-model breakdown with tokens_in, tokens_out, tokens_cached', () => {
+      const output = `Total usage est:
+  1 Premium request
+
+Breakdown by AI model:
+  claude-sonnet-4-20250514:
+    tokens_in: 5000, tokens_out: 1200, tokens_cached: 800, premium_requests_est: 1
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 5000, completion: 1200, total: 6200, cachedInput: 800 });
+    });
+
+    it('should sum across multiple models', () => {
+      const output = `Total usage est:
+  3 Premium requests
+
+Breakdown by AI model:
+  claude-sonnet-4-20250514:
+    tokens_in: 4000, tokens_out: 1000, tokens_cached: 500, premium_requests_est: 2
+  gpt-4o:
+    tokens_in: 2000, tokens_out: 600, premium_requests_est: 1
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 6000, completion: 1600, total: 7600, cachedInput: 500 });
+    });
+
+    it('should parse numeric shorthand suffixes (k)', () => {
+      const output = `Breakdown by AI model:
+  claude-sonnet-4-20250514:
+    tokens_in: 41.3k, tokens_out: 2.1k, tokens_cached: 13.1k, premium_requests_est: 2
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 41300, completion: 2100, total: 43400, cachedInput: 13100 });
+    });
+
+    it('should parse numeric shorthand suffixes (m)', () => {
+      const output = `Breakdown by AI model:
+  large-model:
+    tokens_in: 2.5m, tokens_out: 0.5m, tokens_cached: 1m, premium_requests_est: 10
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 2500000, completion: 500000, total: 3000000, cachedInput: 1000000 });
+    });
+
+    it('should handle singular "Premium request"', () => {
+      const output = `Total usage est:
+  1 Premium request
+
+Breakdown by AI model:
+  gpt-4o:
+    tokens_in: 3000, tokens_out: 500, premium_requests_est: 1
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 3000, completion: 500, total: 3500 });
+    });
+
+    it('should handle plural "Premium requests"', () => {
+      const output = `Total usage est:
+  5 Premium requests
+
+Breakdown by AI model:
+  gpt-4o:
+    tokens_in: 10000, tokens_out: 2000, tokens_cached: 500, premium_requests_est: 5
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 10000, completion: 2000, total: 12000, cachedInput: 500 });
+    });
+
+    it('should return undefined for cachedInput when tokens_cached is absent', () => {
+      const output = `Breakdown by AI model:
+  gpt-4o:
+    tokens_in: 2000, tokens_out: 800, premium_requests_est: 1
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toBeDefined();
+      expect(usage?.prompt).toBe(2000);
+      expect(usage?.completion).toBe(800);
+      expect(usage?.total).toBe(2800);
+      expect(usage?.cachedInput).toBeUndefined();
+    });
+
+    it('should return undefined when output has no Copilot CLI usage block', () => {
+      const output = 'Some random agent output\nprompt_tokens: 100\ncompletion_tokens: 50';
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toBeUndefined();
+    });
+
+    it('should return undefined when breakdown header exists but no token lines follow', () => {
+      const output = `Breakdown by AI model:\n  (no models used)\n`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toBeUndefined();
+    });
+
+    it('should handle minor spacing variations', () => {
+      const output = `Breakdown by AI model:
+  model-a:
+    tokens_in:41.3k,tokens_out:2.1k,tokens_cached:13.1k,premium_requests_est:2
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 41300, completion: 2100, total: 43400, cachedInput: 13100 });
+    });
+
+    it('should be case-insensitive for the breakdown header', () => {
+      const output = `breakdown by ai model:
+  gpt-4o:
+    tokens_in: 1000, tokens_out: 200, premium_requests_est: 1
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 1000, completion: 200, total: 1200 });
+    });
+
+    it('should sum mixed shorthand and plain numbers across models', () => {
+      const output = `Breakdown by AI model:
+  model-a:
+    tokens_in: 1.5k, tokens_out: 300, tokens_cached: 200, premium_requests_est: 1
+  model-b:
+    tokens_in: 2000, tokens_out: 0.5k, premium_requests_est: 1
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 3500, completion: 800, total: 4300, cachedInput: 200 });
+    });
+
+    it('should return undefined for empty string input', () => {
+      const usage = ResultParser.parseCopilotCliUsage('');
+      expect(usage).toBeUndefined();
+    });
+  });
+
+  describe('parseTokenUsage (copilot-cli dispatch)', () => {
+    it('should route to parseCopilotCliUsage when runtime is copilot-cli', () => {
+      const output = `Breakdown by AI model:
+  gpt-4o:
+    tokens_in: 3000, tokens_out: 500, premium_requests_est: 1
+`;
+      const usage = ResultParser.parseTokenUsage(output, 'copilot-cli');
+      expect(usage).toEqual({ prompt: 3000, completion: 500, total: 3500 });
+    });
+
+    it('should return undefined via copilot-cli dispatch when no usage block', () => {
+      const usage = ResultParser.parseTokenUsage('no copilot cli output here', 'copilot-cli');
+      expect(usage).toBeUndefined();
+    });
+
+    it('should preserve cachedInput through copilot-cli dispatch', () => {
+      const output = `Breakdown by AI model:
+  claude-sonnet-4-20250514:
+    tokens_in: 5000, tokens_out: 1200, tokens_cached: 800, premium_requests_est: 1
+`;
+      const usage = ResultParser.parseTokenUsage(output, 'copilot-cli') as { prompt: number; completion: number; total: number; cachedInput?: number };
+      expect(usage).toBeDefined();
+      expect(usage.cachedInput).toBe(800);
+    });
+
+    it('should not fall through to regex path when runtime is copilot-cli', () => {
+      const output = 'prompt_tokens: 999\ncompletion_tokens: 111\nBreakdown by AI model:\n  m:\n    tokens_in: 100, tokens_out: 50, premium_requests_est: 1';
+      const usage = ResultParser.parseTokenUsage(output, 'copilot-cli');
+      expect(usage).toEqual({ prompt: 100, completion: 50, total: 150 });
+    });
+  });
+
   describe('parseIdiomaticReport', () => {
     it('should return an empty array for a non-existent file', async () => {
       const entries = await ResultParser.parseIdiomaticReport('/nonexistent/path/report.md');

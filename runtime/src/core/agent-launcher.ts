@@ -337,7 +337,7 @@ export class CopilotRunner implements AgentRunner {
       await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId);
 
       const outputFiles = await detectOutputFiles(invocation);
-      const tokenUsage = ResultParser.parseTokenUsage(result.stdout + '\n' + result.stderr);
+      const tokenUsage = ResultParser.parseTokenUsage(result.stdout + '\n' + result.stderr, 'copilot-cli');
 
       const agentResult: AgentResult = {
         agent: invocation.agent,
