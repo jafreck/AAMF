@@ -34,4 +34,6 @@ export type RuntimeEvent =
   | { type: 'checkpoint-saved'; phase: number; taskId?: string }
   | { type: 'budget-warning'; usage: number; budget: number; percentage: number }
   | { type: 'budget-exceeded'; usage: number; budget: number }
-  | { type: 'migration-interrupted'; reason: string };
+  | { type: 'migration-interrupted'; reason: string }
+  | { type: 'metric-recorded'; invocationId: string }
+  | { type: 'report-generated'; path: string };
