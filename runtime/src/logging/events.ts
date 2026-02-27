@@ -23,7 +23,7 @@ export type RuntimeEvent =
   | { type: 'agent-queued'; agent: string; taskId?: string; phase?: number; runId?: string; invocationId?: string }
   | { type: 'agent-launched'; agent: string; taskId?: string; phase?: number; runId?: string; invocationId?: string }
   | { type: 'agent-completed'; agent: string; taskId?: string; success: boolean; duration: number; runId?: string; invocationId?: string }
-  | { type: 'agent-failed'; agent: string; taskId?: string; error: string; attempt: number; runId?: string; invocationId?: string }
+  | { type: 'agent-failed'; agent: string; taskId?: string; error: string; attempt?: number; runId?: string; invocationId?: string }
   | { type: 'agent-heartbeat'; agent: string; taskId?: string; runId?: string; invocationId?: string; elapsedSeconds: number }
   | { type: 'agent-output-file-detected'; agent: string; taskId?: string; runId?: string; invocationId?: string; file: string }
   | { type: 'agent-timed-out'; agent: string; taskId?: string; runId?: string; invocationId?: string; timeout: number }

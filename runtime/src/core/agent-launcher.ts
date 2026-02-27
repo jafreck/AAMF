@@ -216,7 +216,7 @@ export class CopilotRunner implements AgentRunner {
   }
 
   async run(invocation: AgentInvocation): Promise<AgentResult> {
-    const invocationId = randomUUID();
+    const invocationId = invocation.invocationId ?? randomUUID();
     const timeout = invocation.timeout ?? this.config.copilot.timeout;
     const cliCommand = this.config.copilot.cliCommand;
 
@@ -405,7 +405,7 @@ export class ClaudeCodeRunner implements AgentRunner {
   }
 
   async run(invocation: AgentInvocation): Promise<AgentResult> {
-    const invocationId = randomUUID();
+    const invocationId = invocation.invocationId ?? randomUUID();
     const timeout = invocation.timeout ?? this.config.claudeCode.timeout;
     const cliCommand = this.config.claudeCode.cliCommand;
     const agentDir = this.config.claudeCode.agentDir;

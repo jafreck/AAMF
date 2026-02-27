@@ -75,6 +75,9 @@ export interface AgentInvocation {
 
   /** Path to the KB SQLite database; injected as KB_DB_PATH env var into the agent subprocess. */
   kbDbPath?: string;
+
+  /** Pre-generated invocation ID for log correlation; runners use this instead of generating their own. */
+  invocationId?: string;
 }
 
 /**
