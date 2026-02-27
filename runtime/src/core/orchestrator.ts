@@ -188,7 +188,6 @@ export class MigrationOrchestrator {
     this.costEstimatorInstance = new CostEstimator(overrides);
     this.reportGenerator = new ReportGenerator();
     this.runId = runId;
-    this.gitLimiter = pLimit(1);
   }
 
   // ─── Public API ──────────────────────────────────────────────────────
