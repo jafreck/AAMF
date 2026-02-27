@@ -6,6 +6,11 @@ AAMF is a TypeScript runtime that orchestrates AI agents to migrate extremely la
 
 Typical use cases include porting a 100k+ line Python monolith to TypeScript, a COBOL system to Go, or a Java codebase to Rust.
 
+## Repository Layout
+
+- `runtime/` — migration orchestration runtime, agent execution, checkpointing, KB server.
+- `lore/` — extracted knowledge-base indexing project (source walking, parsing, extraction, SQLite index + embeddings).
+
 ---
 
 ## Projects Ported Using AAMF
