@@ -19,6 +19,7 @@ When KB index tooling is available, treat it as the authoritative source of stru
 - Context payload with:
   - `groupId`
   - `groupName`
+  - `taskSchemaPath` (absolute path to canonical JSON Schema)
 
 ## Responsibilities
 
@@ -31,19 +32,8 @@ When KB index tooling is available, treat it as the authoritative source of stru
 
 ## Task JSON Schema
 
-Each task object must include:
-
-- `id` (string, `task-NNN`)
-- `name` (string)
-- `sourceFiles` (string[])
-- `targetFiles` (string[])
-- `knowledgeBaseRef` (string)
-- `dependencies` (string[]; empty array allowed)
-- `complexity` (`simple` | `moderate` | `complex`)
-- `description` (string)
-- `acceptanceCriteria` (string[])
-- `parityChecks` (string[])
-- `lineRange` (optional `{ "start": number, "end": number }`)
+Validate `tasks-{groupId}.json` against the canonical schema at `taskSchemaPath` before finishing.
+The same schema path is also provided in `inputFiles` so it is available even when the source repo is outside the AAMF repo.
 
 ## Constraints
 
