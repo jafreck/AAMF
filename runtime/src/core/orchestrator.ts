@@ -14,6 +14,8 @@ import {
   MigrationTask,
   ModuleGroup,
   PhaseResult,
+  RoutingDecision,
+  ModelTier,
 } from '../agents/types.js';
 import { ContextBuilder } from '../agents/context-builder.js';
 import { ResultParser } from '../agents/result-parser.js';
@@ -159,6 +161,10 @@ export class MigrationOrchestrator {
   private readonly runId: string;
   /** Tracks the maximum concurrency observed across all ParallelExecutor instances. */
   private _peakConcurrency = 0;
+  /** Number of tasks routed to heavy/critical model in this run. */
+  private _criticalTaskCount = 0;
+  /** Cumulative projected escalation cost (USD) for this run. */
+  private _escalationCostUsd = 0;
 
   constructor(
     private readonly config: MigrationConfig,
@@ -1114,18 +1120,47 @@ export class MigrationOrchestrator {
         kbEntry: task.knowledgeBaseRef,
       },
     );
-    const migratorInv = this.buildInvocation('code-migrator', migratorCtx, 4, task.id);
+    const migratorInv = this.buildInvocation('code-migrator', migratorCtx, 4, task.id, task);
     const fallbackModel = this.getFailureRecoveryModel();
+
+    // Capture the initial routing decision for retry-aware escalation
+    const initialRoutingDecision = this.config.options.modelRouting?.enabled
+      ? this.applyRoutingCaps(this.selectModelForInvocation(task, 'code-migrator'))
+      : undefined;
 
     const migratorResult = await retryExec.executeWithRetry(migratorInv, {
       maxAttempts: this.config.options.maxRetriesPerTask,
       onRetry: async (attempt, error) => {
         this.logger.warn(`Retry ${attempt} for ${task.id}: ${error}`);
+        // Existing transient-failure fallback runs first
         if (fallbackModel && this.isTransientModelFailure(error) && migratorInv.modelOverride !== fallbackModel) {
           migratorInv.modelOverride = fallbackModel;
           this.logger.warn(
             `Switching ${task.id} code-migrator retries to fallback model: ${fallbackModel}`,
           );
+        } else if (initialRoutingDecision && initialRoutingDecision.tier !== 'normal') {
+          // Retry-aware model escalation
+          const routing = this.config.options.modelRouting!;
+          const escalateAt = routing.escalateOnRetryAttempt ?? 2;
+          if (attempt >= escalateAt) {
+            const escalatedModel = initialRoutingDecision.tier === 'critical'
+              ? routing.criticalModel
+              : routing.heavyModel;
+            if (escalatedModel) {
+              const escalatedDecision = this.applyRoutingCaps({
+                ...initialRoutingDecision,
+                selectedModel: escalatedModel,
+                reason: `retry-escalation-${initialRoutingDecision.tier}`,
+                escalated: true,
+              });
+              if (escalatedDecision.tier !== 'normal') {
+                migratorInv.modelOverride = escalatedDecision.selectedModel;
+                this.logger.warn(
+                  `Escalating ${task.id} to ${escalatedDecision.selectedModel} after ${attempt} retries`,
+                );
+              }
+            }
+          }
         }
         await this.checkpoint.failTask(task.id, error, attempt, false);
       },
@@ -1899,11 +1934,119 @@ export class MigrationOrchestrator {
     }
   }
 
+  /**
+   * Convert a simple glob pattern to a RegExp for task-ID matching.
+   * Supports `*` (any chars) and `?` (single char).
+   */
+  private static globToRegex(pattern: string): RegExp {
+    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    const regexStr = escaped.replace(/\*/g, '.*').replace(/\?/g, '.');
+    return new RegExp(`^${regexStr}$`);
+  }
+
+  /**
+   * Compute a complexity score (0–100) and select the appropriate model
+   * tier for a task based on routing policy configuration.
+   */
+  private selectModelForInvocation(
+    task: MigrationTask | undefined,
+    agent: AgentName,
+  ): RoutingDecision {
+    const routing = this.config.options.modelRouting;
+    const defaultModel = routing?.defaultModel
+      ?? (this.config.agentRuntime === 'claude-code'
+        ? (this.config.claudeCode?.model ?? 'unknown')
+        : (this.config.copilot.model ?? 'unknown'));
+
+    if (!routing?.enabled) {
+      return { tier: 'normal', selectedModel: defaultModel, reason: 'routing-disabled', score: 0, escalated: false };
+    }
+
+    // Score computation (0–100)
+    let score = 0;
+    if (task) {
+      // sourceFiles: 0–15 (capped at 10 files)
+      score += Math.min(task.sourceFiles.length, 10) * 1.5;
+      // targetFiles: 0–10 (capped at 10 files)
+      score += Math.min(task.targetFiles.length, 10);
+      // lineRange size: 0–20 (capped at 1000 lines)
+      if (task.lineRange) {
+        const span = task.lineRange.end - task.lineRange.start;
+        score += Math.min(span / 1000, 1) * 20;
+      }
+      // dependencies fan-in/out: 0–15 (capped at 10 deps)
+      score += Math.min(task.dependencies.length, 10) * 1.5;
+      // complexity rating: simple=0, moderate=20, complex=40
+      const complexityScores: Record<string, number> = { simple: 0, moderate: 20, complex: 40 };
+      score += complexityScores[task.complexity] ?? 0;
+    }
+    score = Math.round(Math.min(score, 100));
+
+    // Check explicit overrides: criticalTaskPatterns
+    if (task && routing.criticalTaskPatterns?.length) {
+      for (const pattern of routing.criticalTaskPatterns) {
+        if (MigrationOrchestrator.globToRegex(pattern).test(task.id)) {
+          return { tier: 'critical', selectedModel: routing.criticalModel ?? defaultModel, reason: 'critical-task-pattern', score, escalated: false };
+        }
+      }
+    }
+
+    // Check explicit overrides: criticalAgents
+    if (routing.criticalAgents?.length && routing.criticalAgents.includes(agent)) {
+      return { tier: 'critical', selectedModel: routing.criticalModel ?? defaultModel, reason: 'critical-agent', score, escalated: false };
+    }
+
+    // Threshold-based tier assignment
+    if (score >= routing.criticalThreshold) {
+      return { tier: 'critical', selectedModel: routing.criticalModel ?? defaultModel, reason: 'score-critical', score, escalated: false };
+    }
+    if (score >= routing.heavyThreshold) {
+      return { tier: 'heavy', selectedModel: routing.heavyModel ?? defaultModel, reason: 'score-heavy', score, escalated: false };
+    }
+
+    return { tier: 'normal', selectedModel: defaultModel, reason: 'score-normal', score, escalated: false };
+  }
+
+  /**
+   * Apply cap enforcement to a routing decision. If caps are reached,
+   * downgrade the tier and return the adjusted decision.
+   */
+  private applyRoutingCaps(decision: RoutingDecision): RoutingDecision {
+    if (decision.tier === 'normal') return decision;
+
+    const routing = this.config.options.modelRouting;
+    if (!routing?.enabled) return decision;
+
+    const defaultModel = routing.defaultModel
+      ?? (this.config.agentRuntime === 'claude-code'
+        ? (this.config.claudeCode?.model ?? 'unknown')
+        : (this.config.copilot.model ?? 'unknown'));
+
+    // Enforce maxCriticalTasks cap
+    if (routing.maxCriticalTasks > 0 && this._criticalTaskCount >= routing.maxCriticalTasks) {
+      return { ...decision, tier: 'normal', selectedModel: defaultModel, reason: `${decision.reason}:capped-max-tasks` };
+    }
+
+    // Enforce maxEscalationCostUsd cap
+    if (routing.maxEscalationCostUsd > 0) {
+      const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
+      const projectedCost = this.costEstimatorInstance.projectCost(decision.selectedModel, avgTokens).total;
+      const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
+      const incrementalCost = Math.max(0, projectedCost - baseCost);
+      if (this._escalationCostUsd + incrementalCost > routing.maxEscalationCostUsd) {
+        return { ...decision, tier: 'normal', selectedModel: defaultModel, reason: `${decision.reason}:capped-cost` };
+      }
+    }
+
+    return decision;
+  }
+
   private buildInvocation(
     agent: AgentName,
     contextFile: string,
     phase: number,
     taskId?: string,
+    task?: MigrationTask,
   ): AgentInvocation {
     const phaseTimeouts = this.config.copilot.phaseTimeouts;
     const timeout = phaseTimeouts?.[phase] ?? this.config.copilot.timeout;
@@ -1933,9 +2076,49 @@ export class MigrationOrchestrator {
       ? this.kbDbPath
       : undefined;
 
-    const modelOverride = agent === 'failure-recovery'
+    // Failure-recovery model override takes precedence over routing
+    const failureRecoveryOverride = agent === 'failure-recovery'
       ? this.getFailureRecoveryModel()
       : undefined;
+
+    let modelOverride = failureRecoveryOverride;
+
+    // Apply model routing when enabled and no failure-recovery override
+    if (!failureRecoveryOverride && this.config.options.modelRouting?.enabled) {
+      const decision = this.applyRoutingCaps(
+        this.selectModelForInvocation(task, agent),
+      );
+
+      if (decision.tier !== 'normal') {
+        modelOverride = decision.selectedModel;
+
+        // Track caps
+        this._criticalTaskCount++;
+        const routing = this.config.options.modelRouting;
+        const defaultModel = routing.defaultModel
+          ?? (this.config.agentRuntime === 'claude-code'
+            ? (this.config.claudeCode?.model ?? 'unknown')
+            : (this.config.copilot.model ?? 'unknown'));
+        const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
+        const projectedCost = this.costEstimatorInstance.projectCost(decision.selectedModel, avgTokens).total;
+        const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
+        this._escalationCostUsd += Math.max(0, projectedCost - baseCost);
+
+        this.logger.info(
+          `Model routing: ${taskId ?? agent} → ${decision.tier} (${decision.selectedModel}), ` +
+          `score=${decision.score}, reason=${decision.reason}`,
+        );
+
+        this.logger.event({
+          type: 'model-routing-decision',
+          taskId: taskId ?? '',
+          tier: decision.tier,
+          selectedModel: decision.selectedModel,
+          reason: decision.reason,
+          score: decision.score,
+        });
+      }
+    }
 
     return {
       agent,
@@ -2007,17 +2190,29 @@ export class MigrationOrchestrator {
       });
     }
 
-    // Record invocation metric
+    // Record invocation metric — prefer modelOverride for correct attribution
     const endTime = new Date().toISOString();
-    const model = this.config.agentRuntime === 'claude-code'
+    const configModel = this.config.agentRuntime === 'claude-code'
       ? (this.config.claudeCode?.model ?? 'unknown')
       : (this.config.copilot.model ?? 'unknown');
+    const model = invocation.modelOverride ?? configModel;
     const tokensPrompt = result.tokenUsage?.prompt ?? 0;
     const tokensCompletion = result.tokenUsage?.completion ?? 0;
     const tokensTotal = result.tokenUsage?.total ?? 0;
     const costEstimate = this.costEstimatorInstance.estimate(
       model, tokensPrompt, tokensCompletion, result.tokenUsage?.cachedInput,
     );
+
+    // Compute routing metadata for the metric
+    const routingDecision = this.config.options.modelRouting?.enabled && invocation.modelOverride
+      ? (() => {
+          const defaultModel = this.config.options.modelRouting!.defaultModel ?? configModel;
+          const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
+          const projectedCost = this.costEstimatorInstance.projectCost(model, avgTokens).total;
+          const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
+          return { incrementalCost: Math.max(0, projectedCost - baseCost) };
+        })()
+      : undefined;
 
     const metric: InvocationMetric = {
       runId: this.runId,
@@ -2037,6 +2232,7 @@ export class MigrationOrchestrator {
       tokensCompletion,
       tokensTotal,
       costUsd: costEstimate.total,
+      ...(routingDecision ? { escalationCostUsd: routingDecision.incrementalCost } : {}),
     };
 
     this.metricsCollector.record(metric);
