@@ -1,4 +1,5 @@
-import { join, resolve, relative } from 'node:path';
+import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
@@ -29,6 +30,9 @@ import { IndexBuilder } from '../indexer/index.js';
 import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
 import { ensurePythonDeps } from '../indexer/ensure-python-deps.js';
 import { KbServerProcess } from './kb-server-process.js';
+import { MetricsCollector } from '../observability/metrics-collector.js';
+import { ReportGenerator } from '../observability/report-generator.js';
+import type { InvocationMetric } from '../agents/types.js';
 import { z } from 'zod';
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
@@ -149,6 +153,12 @@ export class MigrationOrchestrator {
   private readonly buildLimiter: ReturnType<typeof pLimit>;
   /** Serializes git mutations to keep commits deterministic. */
   private readonly gitLimiter: ReturnType<typeof pLimit>;
+  private readonly metricsCollector: MetricsCollector;
+  private readonly costEstimatorInstance: CostEstimator;
+  private readonly reportGenerator: ReportGenerator;
+  private readonly runId: string;
+  /** Tracks the maximum concurrency observed across all ParallelExecutor instances. */
+  private _peakConcurrency = 0;
 
   constructor(
     private readonly config: MigrationConfig,
@@ -157,6 +167,7 @@ export class MigrationOrchestrator {
     private readonly progress: ProgressWriter,
     private readonly logger: Logger,
     projectRoot: string,
+    runId: string,
     singlePhase?: number,
   ) {
     this.projectRoot = projectRoot;
@@ -170,6 +181,14 @@ export class MigrationOrchestrator {
     // 0 means unlimited → use maxParallelAgents
     this.buildLimiter = pLimit(bc === 0 ? config.options.maxParallelAgents : bc);
     this.gitLimiter = pLimit(1);
+    this.metricsCollector = new MetricsCollector();
+    const overrides = config.agentRuntime === 'claude-code'
+      ? config.claudeCode?.costOverrides
+      : config.copilot.costOverrides;
+    this.costEstimatorInstance = new CostEstimator(overrides);
+    this.reportGenerator = new ReportGenerator();
+    this.runId = runId;
+    this.gitLimiter = pLimit(1);
   }
 
   // ─── Public API ──────────────────────────────────────────────────────
@@ -181,6 +200,11 @@ export class MigrationOrchestrator {
 
     // Restore token usage from checkpoint
     this.tokenTracker.loadFromCheckpoint(state.tokenUsage);
+
+    // Restore metrics from JSONL if resuming
+    if (state.resumeCount > 0) {
+      await this.metricsCollector.loadFromJsonl(this.progressDir, 0);
+    }
 
     this.logger.event({ type: 'migration-started', projectName: this.config.projectName });
     await this.progress.appendEvent('Migration started');
@@ -384,6 +408,23 @@ export class MigrationOrchestrator {
     });
     this.progress.setCumulativeDuration(cumulativeDurationMs);
     await this.progress.finalize(migrationResult);
+
+    // Write observability metrics summary and report
+    try {
+      await this.metricsCollector.writeSummary(this.progressDir, this._peakConcurrency);
+      const metricsDir = join(this.progressDir, 'metrics');
+      const reportDir = join(this.progressDir, 'reports', 'observability');
+      const aggregates = this.metricsCollector.getAggregates(this._peakConcurrency);
+      await this.reportGenerator.generate(
+        metricsDir,
+        reportDir,
+        this.metricsCollector.getMetrics(),
+        aggregates,
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to write observability report: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     return migrationResult;
   }
 
@@ -531,7 +572,7 @@ export class MigrationOrchestrator {
   private async executePhase1(start: number): Promise<PhaseResult> {
     const contextFile = await this.contextBuilder.buildContext('impact-assessor', 1);
     const inv = this.buildInvocation('impact-assessor', contextFile, 1);
-    const result = await this.launcher.launchAgent(inv);
+    const result = await this.launchAgentWithEvents(inv);
     this.recordTokens(result, 1);
 
     const outputPath = join(this.progressDir, 'impact-assessment.md');
@@ -553,7 +594,7 @@ export class MigrationOrchestrator {
     // 1. Launch knowledge-builder
     const kbContext = await this.contextBuilder.buildContext('knowledge-builder', 2);
     const kbInv = this.buildInvocation('knowledge-builder', kbContext, 2);
-    const kbResult = await this.launcher.launchAgent(kbInv);
+    const kbResult = await this.launchAgentWithEvents(kbInv);
     this.recordTokens(kbResult, 2);
 
     if (!kbResult.success) {
@@ -596,7 +637,7 @@ export class MigrationOrchestrator {
     if (!checkpointState.phase3aComplete) {
       const planContext = await this.contextBuilder.buildContext('migration-planner', 3);
       const planInv = this.buildInvocation('migration-planner', planContext, 3);
-      const planResult = await this.launcher.launchAgent(planInv);
+      const planResult = await this.launchAgentWithEvents(planInv);
       this.recordTokens(planResult, 3);
 
       if (!planResult.success) {
@@ -620,7 +661,7 @@ export class MigrationOrchestrator {
           decisionType: 'migration-strategy',
         });
         const adjInv = this.buildInvocation('adjudicator', adjCtx, 3);
-        const adjResult = await this.launcher.launchAgent(adjInv);
+        const adjResult = await this.launchAgentWithEvents(adjInv);
         this.recordTokens(adjResult, 3);
       } else {
         // Helpful diagnostics: if strategy variant artifacts exist without the
@@ -700,7 +741,7 @@ export class MigrationOrchestrator {
         this.config.options.maxParallelAgents,
         async (inv) => {
           const retryExec = new RetryExecutor(
-            (attemptInv) => this.launcher.launchAgent(attemptInv),
+            (attemptInv) => this.launchAgentWithEvents(attemptInv),
             this.logger,
           );
           return retryExec.executeWithRetry(inv, {
@@ -715,6 +756,7 @@ export class MigrationOrchestrator {
         this.logger,
       );
       const results = await parallel.executeAll(invocations);
+      this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
 
       const failedGroups: Array<{ id: string; reason: string; attempts: number }> = [];
       for (const [i, r] of results.entries()) {
@@ -929,7 +971,7 @@ export class MigrationOrchestrator {
 
     // 4. Process tasks
     const retryExec = new RetryExecutor(
-      (inv) => this.launcher.launchAgent(inv),
+      (inv) => this.launchAgentWithEvents(inv),
       this.logger,
     );
 
@@ -1147,13 +1189,14 @@ export class MigrationOrchestrator {
 
     const parallel = new ParallelExecutor(
       2,
-      (inv) => this.launcher.launchAgent(inv),
+      (inv) => this.launchAgentWithEvents(inv),
       this.logger,
     );
     const [parityResult, testResult] = await parallel.executeAll([
       this.buildInvocation('parity-verifier', parityCtx, 4, task.id),
       this.buildInvocation('test-writer', testCtx, 4, task.id),
     ]);
+    this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
     if (parityResult) this.recordTokens(parityResult, 4);
     if (testResult) this.recordTokens(testResult, 4);
     if (testResult?.success) {
@@ -1189,7 +1232,7 @@ export class MigrationOrchestrator {
           },
         );
         const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
-        const recoveryResult = await this.launcher.launchAgent(recoveryInv);
+        const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
         this.recordTokens(recoveryResult, 4);
 
         if (!recoveryResult.success) {
@@ -1209,7 +1252,7 @@ export class MigrationOrchestrator {
           },
         );
         const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
-        const reMigrateResult = await this.launcher.launchAgent(reMigrateInv);
+        const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
         this.recordTokens(reMigrateResult, 4);
 
         if (!reMigrateResult.success) {
@@ -1230,7 +1273,7 @@ export class MigrationOrchestrator {
           },
         );
         const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
-        const reParityResult = await this.launcher.launchAgent(reParityInv);
+        const reParityResult = await this.launchAgentWithEvents(reParityInv);
         this.recordTokens(reParityResult, 4);
 
         parityPassed = await this.checkParityResult(task.id);
@@ -1315,7 +1358,7 @@ export class MigrationOrchestrator {
     for (let iteration = 0; iteration <= MAX_LOOPBACK; iteration++) {
       const ctx = await this.contextBuilder.buildContext('final-parity-checker', 5);
       const inv = this.buildInvocation('final-parity-checker', ctx, 5);
-      const result = await this.launcher.launchAgent(inv);
+      const result = await this.launchAgentWithEvents(inv);
       this.recordTokens(result, 5);
 
       if (!result.success) {
@@ -1364,7 +1407,7 @@ export class MigrationOrchestrator {
             5,
             `fix-${iteration}-${fixes.indexOf(fix)}`,
           );
-          const fixResult = await this.launcher.launchAgent(fixInv);
+          const fixResult = await this.launchAgentWithEvents(fixInv);
           this.recordTokens(fixResult, 5);
           if (fixResult.success) {
             await this.commitForAgent('code-migrator', 5, `fix-${iteration}-${fixes.indexOf(fix)}`);
@@ -1393,13 +1436,13 @@ export class MigrationOrchestrator {
 
     const results: AgentResult[] = [];
     if (this.isGitAutomationEnabled()) {
-      const e2eResult = await this.launcher.launchAgent(
+      const e2eResult = await this.launchAgentWithEvents(
         this.buildInvocation('e2e-test-crafter', e2eCtx, 6),
       );
       results.push(e2eResult);
       if (e2eResult.success) await this.commitForAgent('e2e-test-crafter', 6);
 
-      const docResult = await this.launcher.launchAgent(
+      const docResult = await this.launchAgentWithEvents(
         this.buildInvocation('documentation-writer', docCtx, 6),
       );
       results.push(docResult);
@@ -1407,7 +1450,7 @@ export class MigrationOrchestrator {
     } else {
       const parallel = new ParallelExecutor(
         2,
-        (inv) => this.launcher.launchAgent(inv),
+        (inv) => this.launchAgentWithEvents(inv),
         this.logger,
       );
 
@@ -1415,6 +1458,7 @@ export class MigrationOrchestrator {
         this.buildInvocation('e2e-test-crafter', e2eCtx, 6),
         this.buildInvocation('documentation-writer', docCtx, 6),
       ]);
+      this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
       results.push(...parallelResults);
     }
 
@@ -1456,7 +1500,7 @@ export class MigrationOrchestrator {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       const reviewCtx = await this.contextBuilder.buildContext('idiomatic-reviewer', 8);
       const reviewInv = this.buildInvocation('idiomatic-reviewer', reviewCtx, 8);
-      const reviewResult = await this.launcher.launchAgent(reviewInv);
+      const reviewResult = await this.launchAgentWithEvents(reviewInv);
       this.recordTokens(reviewResult, 8);
 
       if (!reviewResult.success) {
@@ -1493,7 +1537,7 @@ export class MigrationOrchestrator {
             idiomaticReport: reportPath,
           });
           const refactorInv = this.buildInvocation('idiomatic-refactorer', refactorCtx, 8);
-          const refactorResult = await this.launcher.launchAgent(refactorInv);
+          const refactorResult = await this.launchAgentWithEvents(refactorInv);
           this.recordTokens(refactorResult, 8);
           if (refactorResult.success) {
             await this.commitForAgent('idiomatic-refactorer', 8, issue.file);
@@ -1653,7 +1697,7 @@ export class MigrationOrchestrator {
         },
       );
       const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
-      const recoveryResult = await this.launcher.launchAgent(recoveryInv);
+      const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
       this.recordTokens(recoveryResult, 4);
 
       if (!recoveryResult.success) {
@@ -1673,7 +1717,7 @@ export class MigrationOrchestrator {
         },
       );
       const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
-      const reMigrateResult = await this.launcher.launchAgent(reMigrateInv);
+      const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
       this.recordTokens(reMigrateResult, 4);
 
       if (!reMigrateResult.success) {
@@ -1922,5 +1966,89 @@ export class MigrationOrchestrator {
     if (result.tokenUsage) {
       this.tokenTracker.record(result.agent, phase, result.tokenUsage.total, result.tokenUsage.cachedInput);
     }
+  }
+
+  /**
+   * Wrapper around `launcher.launchAgent()` that emits agent lifecycle events
+   * with invocationId correlation. All orchestrator agent launches should go
+   * through this method for consistent event emission.
+   */
+  private async launchAgentWithEvents(invocation: AgentInvocation): Promise<AgentResult> {
+    const invocationId = randomUUID();
+    const taggedInvocation = { ...invocation, invocationId };
+    const startTime = new Date().toISOString();
+
+    this.logger.event({
+      type: 'agent-launched',
+      agent: invocation.agent,
+      taskId: invocation.taskId,
+      phase: invocation.phase,
+      invocationId,
+    });
+
+    const result = await this.launcher.launchAgent(taggedInvocation);
+
+    if (result.success) {
+      this.logger.event({
+        type: 'agent-completed',
+        agent: result.agent,
+        taskId: result.taskId,
+        success: true,
+        duration: result.duration,
+        invocationId: result.invocationId,
+      });
+    } else {
+      this.logger.event({
+        type: 'agent-failed',
+        agent: result.agent,
+        taskId: result.taskId,
+        error: result.error ?? 'unknown',
+        invocationId: result.invocationId,
+      });
+    }
+
+    // Record invocation metric
+    const endTime = new Date().toISOString();
+    const model = this.config.agentRuntime === 'claude-code'
+      ? (this.config.claudeCode?.model ?? 'unknown')
+      : (this.config.copilot.model ?? 'unknown');
+    const tokensPrompt = result.tokenUsage?.prompt ?? 0;
+    const tokensCompletion = result.tokenUsage?.completion ?? 0;
+    const tokensTotal = result.tokenUsage?.total ?? 0;
+    const costEstimate = this.costEstimatorInstance.estimate(
+      model, tokensPrompt, tokensCompletion, result.tokenUsage?.cachedInput,
+    );
+
+    const metric: InvocationMetric = {
+      runId: this.runId,
+      phase: invocation.phase ?? 0,
+      taskId: invocation.taskId ?? '',
+      agentType: invocation.agent,
+      invocationId,
+      startTime,
+      endTime,
+      durationMs: result.duration,
+      attemptNumber: invocation.attemptNumber ?? 1,
+      maxAttempts: invocation.maxAttempts ?? 1,
+      wasRetry: (invocation.attemptNumber ?? 1) > 1,
+      status: result.success ? 'success' : 'failed',
+      model,
+      tokensPrompt,
+      tokensCompletion,
+      tokensTotal,
+      costUsd: costEstimate.total,
+    };
+
+    this.metricsCollector.record(metric);
+    try {
+      await this.metricsCollector.writeJsonl(this.progressDir);
+      const st = this.checkpoint.getState();
+      st.metricsCount = (st.metricsCount ?? 0) + 1;
+      await this.checkpoint.save(st);
+    } catch {
+      // Non-fatal: metrics persistence failure should not abort migration
+    }
+
+    return result;
   }
 }

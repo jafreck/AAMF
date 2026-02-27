@@ -1,0 +1,310 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, readFile, rm, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { MetricsCollector } from '../../src/observability/metrics-collector.js';
+import type { InvocationMetric } from '../../src/agents/types.js';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function makeMetric(overrides?: Partial<InvocationMetric>): InvocationMetric {
+  return {
+    runId: 'run-001',
+    phase: 4,
+    taskId: 'task-001',
+    agentType: 'code-migrator',
+    invocationId: 'inv-abc-123',
+    startTime: '2026-02-27T06:00:00.000Z',
+    endTime: '2026-02-27T06:00:05.000Z',
+    durationMs: 5000,
+    attemptNumber: 1,
+    maxAttempts: 3,
+    wasRetry: false,
+    status: 'success',
+    model: 'claude-opus-4',
+    tokensPrompt: 1000,
+    tokensCompletion: 500,
+    tokensTotal: 1500,
+    costUsd: 0.045,
+    ...overrides,
+  };
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe('MetricsCollector', () => {
+  let collector: MetricsCollector;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    collector = new MetricsCollector();
+    tmpDir = await mkdtemp(join(tmpdir(), 'metrics-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  // ─── record / getMetrics ──────────────────────────────────────────────
+
+  describe('record', () => {
+    it('should add a metric to the in-memory store', () => {
+      const metric = makeMetric();
+      collector.record(metric);
+      expect(collector.getMetrics()).toHaveLength(1);
+      expect(collector.getMetrics()[0]).toBe(metric);
+    });
+
+    it('should accumulate multiple metrics', () => {
+      collector.record(makeMetric({ invocationId: 'inv-1' }));
+      collector.record(makeMetric({ invocationId: 'inv-2' }));
+      collector.record(makeMetric({ invocationId: 'inv-3' }));
+      expect(collector.getMetrics()).toHaveLength(3);
+    });
+  });
+
+  describe('getMetrics', () => {
+    it('should return empty array when no metrics recorded', () => {
+      expect(collector.getMetrics()).toEqual([]);
+    });
+  });
+
+  // ─── writeJsonl ───────────────────────────────────────────────────────
+
+  describe('writeJsonl', () => {
+    it('should create metrics directory and JSONL file', async () => {
+      collector.record(makeMetric());
+      await collector.writeJsonl(tmpDir);
+      const content = await readFile(join(tmpDir, 'metrics', 'invocations.jsonl'), 'utf-8');
+      expect(content.trim()).not.toBe('');
+    });
+
+    it('should write the last metric as a single JSON line', async () => {
+      const metric = makeMetric({ invocationId: 'inv-only' });
+      collector.record(metric);
+      await collector.writeJsonl(tmpDir);
+      const content = await readFile(join(tmpDir, 'metrics', 'invocations.jsonl'), 'utf-8');
+      const parsed = JSON.parse(content.trim());
+      expect(parsed.invocationId).toBe('inv-only');
+    });
+
+    it('should append (not overwrite) on subsequent calls', async () => {
+      collector.record(makeMetric({ invocationId: 'inv-1' }));
+      await collector.writeJsonl(tmpDir);
+      collector.record(makeMetric({ invocationId: 'inv-2' }));
+      await collector.writeJsonl(tmpDir);
+
+      const content = await readFile(join(tmpDir, 'metrics', 'invocations.jsonl'), 'utf-8');
+      const lines = content.split('\n').filter((l) => l.trim().length > 0);
+      expect(lines).toHaveLength(2);
+      expect(JSON.parse(lines[0]!).invocationId).toBe('inv-1');
+      expect(JSON.parse(lines[1]!).invocationId).toBe('inv-2');
+    });
+
+    it('should do nothing when no metrics are recorded', async () => {
+      await collector.writeJsonl(tmpDir);
+      // No file should be created since there's no metric to write
+      await expect(
+        readFile(join(tmpDir, 'metrics', 'invocations.jsonl'), 'utf-8'),
+      ).rejects.toThrow();
+    });
+  });
+
+  // ─── writeSummary ─────────────────────────────────────────────────────
+
+  describe('writeSummary', () => {
+    it('should write summary.json with aggregate data', async () => {
+      collector.record(makeMetric());
+      await collector.writeSummary(tmpDir);
+      const raw = await readFile(join(tmpDir, 'metrics', 'summary.json'), 'utf-8');
+      const summary = JSON.parse(raw);
+      expect(summary.totalInvocations).toBe(1);
+      expect(summary.totalTokens).toBe(1500);
+      expect(summary.totalCost).toBe(0.045);
+    });
+
+    it('should write valid JSON with all aggregate fields', async () => {
+      collector.record(makeMetric({ wasRetry: true, agentType: 'test-writer' }));
+      collector.record(makeMetric({ agentType: 'code-migrator' }));
+      await collector.writeSummary(tmpDir);
+      const raw = await readFile(join(tmpDir, 'metrics', 'summary.json'), 'utf-8');
+      const summary = JSON.parse(raw);
+      expect(summary).toHaveProperty('totalInvocations');
+      expect(summary).toHaveProperty('invocationsByAgent');
+      expect(summary).toHaveProperty('totalRetries');
+      expect(summary).toHaveProperty('retriesByAgent');
+      expect(summary).toHaveProperty('retriesByPhase');
+      expect(summary).toHaveProperty('totalTokens');
+      expect(summary).toHaveProperty('totalCost');
+      expect(summary).toHaveProperty('tokensByAgent');
+      expect(summary).toHaveProperty('costByAgent');
+      expect(summary).toHaveProperty('peakParallelInvocations');
+      expect(summary).toHaveProperty('parallelismOverTime');
+    });
+  });
+
+  // ─── loadFromJsonl ────────────────────────────────────────────────────
+
+  describe('loadFromJsonl', () => {
+    it('should load metrics from existing JSONL file', async () => {
+      // Write some metrics manually
+      const metricsDir = join(tmpDir, 'metrics');
+      await mkdir(metricsDir, { recursive: true });
+      const m1 = makeMetric({ invocationId: 'inv-1' });
+      const m2 = makeMetric({ invocationId: 'inv-2' });
+      await writeFile(
+        join(metricsDir, 'invocations.jsonl'),
+        JSON.stringify(m1) + '\n' + JSON.stringify(m2) + '\n',
+        'utf-8',
+      );
+
+      await collector.loadFromJsonl(tmpDir);
+      expect(collector.getMetrics()).toHaveLength(2);
+      expect(collector.getMetrics()[0]!.invocationId).toBe('inv-1');
+      expect(collector.getMetrics()[1]!.invocationId).toBe('inv-2');
+    });
+
+    it('should skip the first N records when skipCount is provided', async () => {
+      const metricsDir = join(tmpDir, 'metrics');
+      await mkdir(metricsDir, { recursive: true });
+      const lines = [
+        JSON.stringify(makeMetric({ invocationId: 'inv-1' })),
+        JSON.stringify(makeMetric({ invocationId: 'inv-2' })),
+        JSON.stringify(makeMetric({ invocationId: 'inv-3' })),
+      ].join('\n') + '\n';
+      await writeFile(join(metricsDir, 'invocations.jsonl'), lines, 'utf-8');
+
+      await collector.loadFromJsonl(tmpDir, 2);
+      expect(collector.getMetrics()).toHaveLength(1);
+      expect(collector.getMetrics()[0]!.invocationId).toBe('inv-3');
+    });
+
+    it('should do nothing when JSONL file does not exist', async () => {
+      await collector.loadFromJsonl(tmpDir);
+      expect(collector.getMetrics()).toEqual([]);
+    });
+
+    it('should handle empty file gracefully', async () => {
+      const metricsDir = join(tmpDir, 'metrics');
+      await mkdir(metricsDir, { recursive: true });
+      await writeFile(join(metricsDir, 'invocations.jsonl'), '', 'utf-8');
+      await collector.loadFromJsonl(tmpDir);
+      expect(collector.getMetrics()).toEqual([]);
+    });
+  });
+
+  // ─── getAggregates ────────────────────────────────────────────────────
+
+  describe('getAggregates', () => {
+    it('should return zero counts for empty collector', () => {
+      const agg = collector.getAggregates();
+      expect(agg.totalInvocations).toBe(0);
+      expect(agg.totalRetries).toBe(0);
+      expect(agg.totalTokens).toBe(0);
+      expect(agg.totalCost).toBe(0);
+      expect(agg.peakParallelInvocations).toBe(0);
+      expect(agg.parallelismOverTime).toEqual([]);
+    });
+
+    it('should count invocations by agent', () => {
+      collector.record(makeMetric({ agentType: 'code-migrator' }));
+      collector.record(makeMetric({ agentType: 'code-migrator' }));
+      collector.record(makeMetric({ agentType: 'test-writer' }));
+      const agg = collector.getAggregates();
+      expect(agg.totalInvocations).toBe(3);
+      expect(agg.invocationsByAgent['code-migrator']).toBe(2);
+      expect(agg.invocationsByAgent['test-writer']).toBe(1);
+    });
+
+    it('should count retries correctly', () => {
+      collector.record(makeMetric({ wasRetry: false }));
+      collector.record(makeMetric({ wasRetry: true, agentType: 'code-migrator', phase: 4 }));
+      collector.record(makeMetric({ wasRetry: true, agentType: 'test-writer', phase: 5 }));
+      const agg = collector.getAggregates();
+      expect(agg.totalRetries).toBe(2);
+      expect(agg.retriesByAgent['code-migrator']).toBe(1);
+      expect(agg.retriesByAgent['test-writer']).toBe(1);
+      expect(agg.retriesByPhase[4]).toBe(1);
+      expect(agg.retriesByPhase[5]).toBe(1);
+    });
+
+    it('should sum tokens and cost by agent', () => {
+      collector.record(makeMetric({ agentType: 'code-migrator', tokensTotal: 1000, costUsd: 0.03 }));
+      collector.record(makeMetric({ agentType: 'code-migrator', tokensTotal: 2000, costUsd: 0.06 }));
+      collector.record(makeMetric({ agentType: 'test-writer', tokensTotal: 500, costUsd: 0.015 }));
+      const agg = collector.getAggregates();
+      expect(agg.totalTokens).toBe(3500);
+      expect(agg.totalCost).toBeCloseTo(0.105, 6);
+      expect(agg.tokensByAgent['code-migrator']).toBe(3000);
+      expect(agg.costByAgent['code-migrator']).toBeCloseTo(0.09, 6);
+      expect(agg.tokensByAgent['test-writer']).toBe(500);
+    });
+
+    it('should use externally-provided peakConcurrency when larger', () => {
+      collector.record(makeMetric());
+      const agg = collector.getAggregates(10);
+      expect(agg.peakParallelInvocations).toBe(10);
+    });
+
+    it('should use time-series peak when external peak is smaller', () => {
+      // Two overlapping invocations → concurrency = 2
+      collector.record(
+        makeMetric({
+          startTime: '2026-02-27T06:00:00.000Z',
+          endTime: '2026-02-27T06:00:05.000Z',
+        }),
+      );
+      collector.record(
+        makeMetric({
+          startTime: '2026-02-27T06:00:01.000Z',
+          endTime: '2026-02-27T06:00:04.000Z',
+        }),
+      );
+      const agg = collector.getAggregates(1);
+      expect(agg.peakParallelInvocations).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should compute parallelism buckets for overlapping invocations', () => {
+      collector.record(
+        makeMetric({
+          startTime: '2026-02-27T06:00:00.000Z',
+          endTime: '2026-02-27T06:00:03.000Z',
+        }),
+      );
+      collector.record(
+        makeMetric({
+          startTime: '2026-02-27T06:00:01.000Z',
+          endTime: '2026-02-27T06:00:02.000Z',
+        }),
+      );
+      const agg = collector.getAggregates();
+      expect(agg.parallelismOverTime.length).toBeGreaterThan(0);
+      const peakBucket = agg.parallelismOverTime.reduce(
+        (max, b) => (b.concurrency > max.concurrency ? b : max),
+        { epochSecond: 0, concurrency: 0 },
+      );
+      expect(peakBucket.concurrency).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should compute parallelism of 1 for non-overlapping invocations', () => {
+      collector.record(
+        makeMetric({
+          startTime: '2026-02-27T06:00:00.000Z',
+          endTime: '2026-02-27T06:00:01.000Z',
+        }),
+      );
+      collector.record(
+        makeMetric({
+          startTime: '2026-02-27T06:00:05.000Z',
+          endTime: '2026-02-27T06:00:06.000Z',
+        }),
+      );
+      const agg = collector.getAggregates();
+      const maxConcurrency = agg.parallelismOverTime.reduce(
+        (max, b) => Math.max(max, b.concurrency),
+        0,
+      );
+      expect(maxConcurrency).toBeLessThanOrEqual(1);
+    });
+  });
+});

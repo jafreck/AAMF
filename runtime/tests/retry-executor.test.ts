@@ -365,4 +365,121 @@ describe('RetryExecutor', () => {
       expect(onExhausted).not.toHaveBeenCalled();
     });
   });
+
+  // ─── wasRetry Field ─────────────────────────────────────────────────
+
+  describe('wasRetry', () => {
+    it('should set wasRetry to false on first-attempt success', async () => {
+      const launcher = createMockLauncher();
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 3,
+        initialDelayMs: 0,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.attempts).toBe(1);
+      expect(result.wasRetry).toBe(false);
+    });
+
+    it('should set wasRetry to true when success comes on a retry attempt', async () => {
+      let attempt = 0;
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        attempt++;
+        if (attempt < 2) {
+          return {
+            agent: inv.agent,
+            taskId: inv.taskId,
+            exitCode: 1,
+            success: false,
+            outputFiles: [],
+            duration: 100,
+            error: 'Failed',
+          };
+        }
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 100,
+        };
+      };
+
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 3,
+        initialDelayMs: 0,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.attempts).toBe(2);
+      expect(result.wasRetry).toBe(true);
+    });
+
+    it('should set wasRetry to true when all retries exhausted with maxAttempts > 1', async () => {
+      const launcher = createFailingLauncher(['code-migrator']);
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 3,
+        initialDelayMs: 0,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.wasRetry).toBe(true);
+    });
+
+    it('should set wasRetry to false when all retries exhausted with maxAttempts = 1', async () => {
+      const launcher = createFailingLauncher(['code-migrator']);
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 1,
+        initialDelayMs: 0,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.wasRetry).toBe(false);
+    });
+
+    it('should set wasRetry to true on recovery path', async () => {
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
+        agent: inv.agent,
+        taskId: inv.taskId,
+        exitCode: inv.agent === 'failure-recovery' ? 0 : 1,
+        success: inv.agent === 'failure-recovery',
+        outputFiles: [],
+        duration: 100,
+        error: inv.agent === 'failure-recovery' ? undefined : 'Failed',
+      });
+
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const recoveryInvocation: AgentInvocation = {
+        agent: 'failure-recovery',
+        contextFile: '/tmp/recovery.json',
+        progressDir: '/tmp/progress',
+        phase: 4,
+        taskId: 'task-001',
+      };
+
+      const result = await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 2,
+        initialDelayMs: 0,
+        onExhausted: async () => recoveryInvocation,
+      });
+
+      expect(result.recoveryAttempted).toBe(true);
+      expect(result.wasRetry).toBe(true);
+    });
+  });
 });

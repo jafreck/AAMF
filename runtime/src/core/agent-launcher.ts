@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { AgentInvocation, AgentName, AgentResult } from '../agents/types.js';
 import { MigrationConfig } from '../config/schema.js';
@@ -82,10 +83,12 @@ function stripVSCodeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /** Shared helper: write stdout/stderr to a per-agent log file. */
-async function writeAgentLog(logDir: string, agent: string, taskId: string, stdout: string, stderr: string): Promise<void> {
+async function writeAgentLog(logDir: string, agent: string, taskId: string, stdout: string, stderr: string, invocationId?: string): Promise<void> {
   await ensureDir(logDir);
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const filename = `${agent}-${taskId}-${timestamp}.log`;
+  const filename = invocationId
+    ? `${agent}-${taskId}-${invocationId}-${timestamp}.log`
+    : `${agent}-${taskId}-${timestamp}.log`;
   const content = `=== STDOUT ===\n${stdout}\n\n=== STDERR ===\n${stderr}\n`;
   await atomicWrite(join(logDir, filename), content);
 }
@@ -213,8 +216,16 @@ export class CopilotRunner implements AgentRunner {
   }
 
   async run(invocation: AgentInvocation): Promise<AgentResult> {
+    const invocationId = invocation.invocationId ?? randomUUID();
     const timeout = invocation.timeout ?? this.config.copilot.timeout;
     const cliCommand = this.config.copilot.cliCommand;
+
+    // Child logger with invocationId context for correlation
+    const invLogger = this.logger.child('copilot-runner');
+    invLogger.setInvocationId(invocationId);
+    invLogger.setAgent(invocation.agent);
+    if (invocation.taskId) invLogger.setTaskId(invocation.taskId);
+    if (invocation.phase !== undefined) invLogger.setPhase(invocation.phase);
 
     // Build the prompt that instructs the agent to read its context file
     const prompt = `Read your context file at: ${invocation.contextFile}\nExecute the task described in the context. Write all output files to the paths specified in the context.`;
@@ -271,17 +282,18 @@ export class CopilotRunner implements AgentRunner {
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
 
     const startTime = Date.now();
-    this.logger.info(`Launching CLI agent: ${cliCommand} ${args.join(' ')}`);
+    invLogger.info(`Launching CLI agent: ${cliCommand} ${args.join(' ')}`);
 
     // ── Heartbeat & output-directory watcher ─────────────────────────
     const HEARTBEAT_INTERVAL_MS = 30_000;
     const OUTPUT_POLL_INTERVAL_MS = 10_000;
     const agentName = invocation.agent;
     const seenFiles = new Set<string>();
+    let firstOutputDetectedAt: number | undefined;
 
     const heartbeatTimer = setInterval(() => {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      this.logger.info(`Agent ${agentName} still running (${elapsed}s elapsed)`);
+      invLogger.info(`Agent ${agentName} still running (${elapsed}s elapsed)`);
     }, HEARTBEAT_INTERVAL_MS);
 
     const outputPollTimer = setInterval(async () => {
@@ -294,7 +306,8 @@ export class CopilotRunner implements AgentRunner {
             for (const f of files) {
               if (!seenFiles.has(f)) {
                 seenFiles.add(f);
-                this.logger.info(`Agent ${agentName} produced new file: ${f}`);
+                if (firstOutputDetectedAt === undefined) firstOutputDetectedAt = Date.now();
+                invLogger.info(`Agent ${agentName} produced new file: ${f}`);
               }
             }
           }
@@ -321,7 +334,7 @@ export class CopilotRunner implements AgentRunner {
       const duration = Date.now() - startTime;
 
       const taskId = invocation.taskId ?? 'main';
-      await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr);
+      await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId);
 
       const outputFiles = await detectOutputFiles(invocation);
       const tokenUsage = ResultParser.parseTokenUsage(result.stdout + '\n' + result.stderr);
@@ -329,12 +342,14 @@ export class CopilotRunner implements AgentRunner {
       const agentResult: AgentResult = {
         agent: invocation.agent,
         taskId: invocation.taskId,
+        invocationId,
         exitCode: result.exitCode,
         success: result.exitCode === 0 && !result.killed,
         outputFiles,
         duration,
         tokenUsage,
         outputParsed: false,
+        spawnToFirstOutput: firstOutputDetectedAt !== undefined ? firstOutputDetectedAt - startTime : undefined,
         error: result.killed
           ? `Agent timed out after ${timeout}ms`
           : result.exitCode !== 0
@@ -343,7 +358,7 @@ export class CopilotRunner implements AgentRunner {
         stderr: (result.killed || result.exitCode !== 0) ? result.stderr : undefined,
       };
 
-      return finaliseResult(agentResult, result.stdout, prompt, this.logger);
+      return finaliseResult(agentResult, result.stdout, prompt, invLogger);
     } catch (err) {
       stopTimers();
       const duration = Date.now() - startTime;
@@ -351,6 +366,7 @@ export class CopilotRunner implements AgentRunner {
       return {
         agent: invocation.agent,
         taskId: invocation.taskId,
+        invocationId,
         exitCode: 1,
         success: false,
         outputFiles: [],
@@ -390,16 +406,24 @@ export class ClaudeCodeRunner implements AgentRunner {
   }
 
   async run(invocation: AgentInvocation): Promise<AgentResult> {
+    const invocationId = invocation.invocationId ?? randomUUID();
     const timeout = invocation.timeout ?? this.config.claudeCode.timeout;
     const cliCommand = this.config.claudeCode.cliCommand;
     const agentDir = this.config.claudeCode.agentDir;
+
+    // Child logger with invocationId context for correlation
+    const invLogger = this.logger.child('claude-code-runner');
+    invLogger.setInvocationId(invocationId);
+    invLogger.setAgent(invocation.agent);
+    if (invocation.taskId) invLogger.setTaskId(invocation.taskId);
+    if (invocation.phase !== undefined) invLogger.setPhase(invocation.phase);
 
     // Build the prompt that instructs the agent to read its context file
     const prompt = `Read your context file at: ${invocation.contextFile}\nExecute the task described in the context. Write all output files to the paths specified in the context.`;
 
     // Log the agent definition file path for observability
     const agentFilePath = join(this.projectRoot, agentDir, `${invocation.agent}.md`);
-    this.logger.debug(`Claude agent definition: ${agentFilePath}`);
+    invLogger.debug(`Claude agent definition: ${agentFilePath}`);
 
     const args = [
       '--agent', invocation.agent,
@@ -433,17 +457,18 @@ export class ClaudeCodeRunner implements AgentRunner {
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
 
     const startTime = Date.now();
-    this.logger.info(`Launching Claude Code agent: ${cliCommand} ${args.join(' ')}`);
+    invLogger.info(`Launching Claude Code agent: ${cliCommand} ${args.join(' ')}`);
 
     // ── Heartbeat & output-directory watcher ─────────────────────────
     const HEARTBEAT_INTERVAL_MS = 30_000;
     const OUTPUT_POLL_INTERVAL_MS = 10_000;
     const agentName = invocation.agent;
     const seenFiles = new Set<string>();
+    let firstOutputDetectedAt: number | undefined;
 
     const heartbeatTimer = setInterval(() => {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      this.logger.info(`Agent ${agentName} still running (${elapsed}s elapsed)`);
+      invLogger.info(`Agent ${agentName} still running (${elapsed}s elapsed)`);
     }, HEARTBEAT_INTERVAL_MS);
 
     const outputPollTimer = setInterval(async () => {
@@ -456,7 +481,8 @@ export class ClaudeCodeRunner implements AgentRunner {
             for (const f of files) {
               if (!seenFiles.has(f)) {
                 seenFiles.add(f);
-                this.logger.info(`Agent ${agentName} produced new file: ${f}`);
+                if (firstOutputDetectedAt === undefined) firstOutputDetectedAt = Date.now();
+                invLogger.info(`Agent ${agentName} produced new file: ${f}`);
               }
             }
           }
@@ -483,7 +509,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       const duration = Date.now() - startTime;
 
       const taskId = invocation.taskId ?? 'main';
-      await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr);
+      await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId);
 
       const outputFiles = await detectOutputFiles(invocation);
       // Use claude-code runtime to parse Claude's JSON token usage format
@@ -492,12 +518,14 @@ export class ClaudeCodeRunner implements AgentRunner {
       const agentResult: AgentResult = {
         agent: invocation.agent,
         taskId: invocation.taskId,
+        invocationId,
         exitCode: result.exitCode,
         success: result.exitCode === 0 && !result.killed,
         outputFiles,
         duration,
         tokenUsage,
         outputParsed: false,
+        spawnToFirstOutput: firstOutputDetectedAt !== undefined ? firstOutputDetectedAt - startTime : undefined,
         error: result.killed
           ? `Agent timed out after ${timeout}ms`
           : result.exitCode !== 0
@@ -506,7 +534,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         stderr: (result.killed || result.exitCode !== 0) ? result.stderr : undefined,
       };
 
-      return finaliseResult(agentResult, result.stdout, prompt, this.logger);
+      return finaliseResult(agentResult, result.stdout, prompt, invLogger);
     } catch (err) {
       stopTimers();
       const duration = Date.now() - startTime;
@@ -514,6 +542,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       return {
         agent: invocation.agent,
         taskId: invocation.taskId,
+        invocationId,
         exitCode: 1,
         success: false,
         outputFiles: [],
@@ -564,6 +593,7 @@ export class AgentLauncher {
 
   /** Launch an agent invocation and return the result */
   async launchAgent(invocation: AgentInvocation): Promise<AgentResult> {
+    const queueStart = Date.now();
     const delay = this.config.options.invocationDelayMs;
     if (delay > 0) {
       const elapsed = Date.now() - this.lastInvocationTime;
@@ -572,6 +602,11 @@ export class AgentLauncher {
       }
     }
     this.lastInvocationTime = Date.now();
-    return this.runner.run(invocation);
+    const queueDelay = Date.now() - queueStart;
+    const result = await this.runner.run(invocation);
+    if (queueDelay > 0) {
+      result.queueDelay = queueDelay;
+    }
+    return result;
   }
 }

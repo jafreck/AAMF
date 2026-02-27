@@ -186,4 +186,263 @@ describe('LogEntry', () => {
       expect(entry.level).toBe(level);
     }
   });
+
+  it('should support optional runId field', () => {
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      source: 'orchestrator',
+      runId: 'run-abc-123',
+      message: 'with runId',
+    };
+    expect(entry.runId).toBe('run-abc-123');
+  });
+
+  it('should support optional invocationId field', () => {
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      source: 'launcher',
+      invocationId: 'inv-xyz-789',
+      message: 'with invocationId',
+    };
+    expect(entry.invocationId).toBe('inv-xyz-789');
+  });
+
+  it('should support optional agent field', () => {
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      source: 'launcher',
+      agent: 'code-migrator',
+      message: 'with agent',
+    };
+    expect(entry.agent).toBe('code-migrator');
+  });
+
+  it('should support optional attempt field', () => {
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'warn',
+      source: 'retry-executor',
+      attempt: 3,
+      message: 'retrying',
+    };
+    expect(entry.attempt).toBe(3);
+  });
+
+  it('should support all new correlation fields together', () => {
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      source: 'orchestrator',
+      phase: 4,
+      taskId: 'task-001',
+      runId: 'run-1',
+      invocationId: 'inv-2',
+      agent: 'code-migrator',
+      attempt: 1,
+      message: 'full correlation',
+    };
+    expect(entry.runId).toBe('run-1');
+    expect(entry.invocationId).toBe('inv-2');
+    expect(entry.agent).toBe('code-migrator');
+    expect(entry.attempt).toBe(1);
+    expect(entry.phase).toBe(4);
+    expect(entry.taskId).toBe('task-001');
+  });
+
+  it('should leave new correlation fields undefined when not set', () => {
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      source: 'test',
+      message: 'minimal',
+    };
+    expect(entry.runId).toBeUndefined();
+    expect(entry.invocationId).toBeUndefined();
+    expect(entry.agent).toBeUndefined();
+    expect(entry.attempt).toBeUndefined();
+  });
+});
+
+// ─── New RuntimeEvent variants ────────────────────────────────────────────────
+
+describe('RuntimeEvent — agent-queued', () => {
+  it('should construct with required fields', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-queued',
+      agent: 'code-migrator',
+    };
+    expect(event.type).toBe('agent-queued');
+    expect(event.agent).toBe('code-migrator');
+  });
+
+  it('should support all optional fields', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-queued',
+      agent: 'test-writer',
+      taskId: 'task-005',
+      phase: 4,
+      runId: 'run-abc',
+      invocationId: 'inv-def',
+    };
+    expect(event.taskId).toBe('task-005');
+    expect(event.phase).toBe(4);
+    expect(event.runId).toBe('run-abc');
+    expect(event.invocationId).toBe('inv-def');
+  });
+});
+
+describe('RuntimeEvent — agent-heartbeat', () => {
+  it('should construct with required fields', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-heartbeat',
+      agent: 'code-migrator',
+      elapsedSeconds: 30,
+    };
+    expect(event.type).toBe('agent-heartbeat');
+    expect(event.agent).toBe('code-migrator');
+    expect(event.elapsedSeconds).toBe(30);
+  });
+
+  it('should support optional correlation fields', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-heartbeat',
+      agent: 'parity-verifier',
+      taskId: 'task-002',
+      runId: 'run-1',
+      invocationId: 'inv-1',
+      elapsedSeconds: 120,
+    };
+    expect(event.taskId).toBe('task-002');
+    expect(event.runId).toBe('run-1');
+    expect(event.invocationId).toBe('inv-1');
+  });
+});
+
+describe('RuntimeEvent — agent-output-file-detected', () => {
+  it('should construct with required fields', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-output-file-detected',
+      agent: 'code-migrator',
+      file: '/tmp/output/task-001.ts',
+    };
+    expect(event.type).toBe('agent-output-file-detected');
+    expect(event.file).toBe('/tmp/output/task-001.ts');
+  });
+
+  it('should support optional correlation fields', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-output-file-detected',
+      agent: 'test-writer',
+      taskId: 'task-003',
+      runId: 'run-x',
+      invocationId: 'inv-y',
+      file: 'tests/foo.test.ts',
+    };
+    expect(event.runId).toBe('run-x');
+    expect(event.invocationId).toBe('inv-y');
+    expect(event.taskId).toBe('task-003');
+  });
+});
+
+describe('RuntimeEvent — agent-timed-out', () => {
+  it('should construct with required fields', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-timed-out',
+      agent: 'code-migrator',
+      timeout: 300000,
+    };
+    expect(event.type).toBe('agent-timed-out');
+    expect(event.timeout).toBe(300000);
+  });
+
+  it('should support optional correlation fields', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-timed-out',
+      agent: 'parity-verifier',
+      taskId: 'task-010',
+      runId: 'run-z',
+      invocationId: 'inv-w',
+      timeout: 60000,
+    };
+    expect(event.runId).toBe('run-z');
+    expect(event.invocationId).toBe('inv-w');
+    expect(event.taskId).toBe('task-010');
+  });
+});
+
+describe('RuntimeEvent — existing agent events with correlation fields', () => {
+  it('should support runId and invocationId on agent-launched', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-launched',
+      agent: 'code-migrator',
+      taskId: 'task-001',
+      phase: 4,
+      runId: 'run-a',
+      invocationId: 'inv-b',
+    };
+    expect(event.runId).toBe('run-a');
+    expect(event.invocationId).toBe('inv-b');
+  });
+
+  it('should support runId and invocationId on agent-completed', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-completed',
+      agent: 'test-writer',
+      success: true,
+      duration: 5000,
+      runId: 'run-c',
+      invocationId: 'inv-d',
+    };
+    expect(event.runId).toBe('run-c');
+    expect(event.invocationId).toBe('inv-d');
+  });
+
+  it('should support runId and invocationId on agent-failed', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-failed',
+      agent: 'code-migrator',
+      error: 'timeout',
+      attempt: 2,
+      runId: 'run-e',
+      invocationId: 'inv-f',
+    };
+    expect(event.runId).toBe('run-e');
+    expect(event.invocationId).toBe('inv-f');
+  });
+
+  it('should leave runId and invocationId undefined on agent-launched when not set', () => {
+    const event: RuntimeEvent = {
+      type: 'agent-launched',
+      agent: 'code-migrator',
+    };
+    expect(event.runId).toBeUndefined();
+    expect(event.invocationId).toBeUndefined();
+  });
+});
+
+// ─── metric-recorded and report-generated ────────────────────────────────────
+
+describe('RuntimeEvent — metric-recorded', () => {
+  it('should construct with invocationId', () => {
+    const event: RuntimeEvent = {
+      type: 'metric-recorded',
+      invocationId: 'inv-abc-123',
+    };
+    expect(event.type).toBe('metric-recorded');
+    expect(event.invocationId).toBe('inv-abc-123');
+  });
+});
+
+describe('RuntimeEvent — report-generated', () => {
+  it('should construct with path', () => {
+    const event: RuntimeEvent = {
+      type: 'report-generated',
+      path: 'reports/observability/index.md',
+    };
+    expect(event.type).toBe('report-generated');
+    expect(event.path).toBe('reports/observability/index.md');
+  });
 });

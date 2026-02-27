@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, rename, stat, readdir, copyFile as fsCopyFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, stat, readdir, copyFile as fsCopyFile, rm } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { dirname, join, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -70,6 +70,13 @@ export async function listFiles(dirPath: string, pattern?: string): Promise<stri
 export async function copyFile(src: string, dest: string): Promise<void> {
   await ensureDir(dirname(dest));
   await fsCopyFile(src, dest);
+}
+
+/**
+ * Recursively remove a directory. No-op if it does not exist.
+ */
+export async function removeDir(dirPath: string): Promise<void> {
+  await rm(dirPath, { recursive: true, force: true });
 }
 
 /**
