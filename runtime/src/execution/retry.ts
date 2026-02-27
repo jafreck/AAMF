@@ -29,6 +29,8 @@ export type RetryResult = AgentResult & {
   attempts: number;
   /** Whether a failure-recovery escalation was attempted. */
   recoveryAttempted: boolean;
+  /** Whether this successful result came from a retry (i.e. not the first attempt). */
+  wasRetry: boolean;
 };
 
 /**
@@ -69,7 +71,7 @@ export class RetryExecutor {
       lastResult = await this.launcher(invocation);
 
       if (lastResult.success) {
-        return { ...lastResult, attempts: attempt, recoveryAttempted };
+        return { ...lastResult, attempts: attempt, recoveryAttempted, wasRetry: attempt > 1 };
       }
 
       this.logger.warn(`Attempt ${attempt} failed: ${lastResult.error ?? 'unknown error'}`);
@@ -96,12 +98,12 @@ export class RetryExecutor {
           // After recovery, retry the original once more
           this.logger.info(`Recovery succeeded, retrying original task ${invocation.taskId}`);
           const retryResult = await this.launcher(invocation);
-          return { ...retryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true };
+          return { ...retryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true, wasRetry: true };
         }
-        return { ...recoveryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true };
+        return { ...recoveryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true, wasRetry: true };
       }
     }
 
-    return { ...lastResult!, attempts: options.maxAttempts, recoveryAttempted };
+    return { ...lastResult!, attempts: options.maxAttempts, recoveryAttempted, wasRetry: options.maxAttempts > 1 };
   }
 }

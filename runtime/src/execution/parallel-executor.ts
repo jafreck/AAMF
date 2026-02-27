@@ -11,6 +11,13 @@ export interface AgentLauncherFn {
 /** Executes agent invocations in parallel with configurable concurrency via p-limit. */
 export class ParallelExecutor {
   private limit: ReturnType<typeof pLimit>;
+  private _activeCount = 0;
+  private _peakConcurrency = 0;
+
+  /** Maximum number of concurrently running invocations observed during executeAll. */
+  get peakConcurrency(): number {
+    return this._peakConcurrency;
+  }
 
   constructor(
     private concurrency: number,
@@ -32,6 +39,10 @@ export class ParallelExecutor {
     this.logger.info(`Executing ${invocations.length} agent invocations with concurrency ${this.concurrency}`);
     const promises = invocations.map((inv, i) =>
       this.limit(async () => {
+        this._activeCount++;
+        if (this._activeCount > this._peakConcurrency) {
+          this._peakConcurrency = this._activeCount;
+        }
         this.logger.info(`[${i + 1}/${invocations.length}] Launching ${inv.agent}${inv.taskId ? ` (${inv.taskId})` : ''}`);
         try {
           const result = await this.launcher(inv);
@@ -54,6 +65,8 @@ export class ParallelExecutor {
             outputParsed: false,
             error,
           } satisfies AgentResult;
+        } finally {
+          this._activeCount--;
         }
       })
     );

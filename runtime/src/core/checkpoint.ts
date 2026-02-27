@@ -27,6 +27,8 @@ export interface CheckpointState {
   phase3aComplete?: boolean;
   /** IDs of module groups whose task-decomposer has completed successfully. */
   completedPhase3Groups?: string[];
+  /** Number of JSONL metric records written; used to skip on resume. */
+  metricsCount: number;
 }
 
 export interface CheckpointFailedTask {
@@ -62,6 +64,7 @@ export class CheckpointManager {
         this.state.completedTaskDurationsMs ??= [];
         this.state.phase3aComplete ??= false;
         this.state.completedPhase3Groups ??= [];
+        this.state.metricsCount ??= 0;
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
         await this.save(this.state);
         return this.state;
@@ -76,6 +79,7 @@ export class CheckpointManager {
             this.state.completedTaskDurationsMs ??= [];
             this.state.phase3aComplete ??= false;
             this.state.completedPhase3Groups ??= [];
+            this.state.metricsCount ??= 0;
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
             await this.save(this.state);
             return this.state;
@@ -105,6 +109,7 @@ export class CheckpointManager {
       completedTaskDurationsMs: [],
       phase3aComplete: false,
       completedPhase3Groups: [],
+      metricsCount: 0,
     };
     await this.save(this.state);
     return this.state;
