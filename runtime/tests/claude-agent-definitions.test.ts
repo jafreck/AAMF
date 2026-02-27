@@ -15,7 +15,6 @@ const EXPECTED_AGENTS = [
   'migration-orchestrator',
   'impact-assessor',
   'knowledge-builder',
-  'large-file-analyzer',
   'migration-planner',
   'adjudicator',
   'code-migrator',
@@ -90,9 +89,9 @@ function parseFrontMatter(content: string): { frontMatter: FrontMatter; body: st
 
 describe('Claude agent definition files (.claude/agents/)', () => {
   describe('file existence', () => {
-    it('should have exactly the 14 expected agent definition files', () => {
+    it('should have exactly the 13 expected agent definition files', () => {
       // Verify all expected agents are enumerated (compile-time check via const array)
-      expect(EXPECTED_AGENTS).toHaveLength(14);
+      expect(EXPECTED_AGENTS).toHaveLength(13);
     });
 
     for (const agentName of EXPECTED_AGENTS) {

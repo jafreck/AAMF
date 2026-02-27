@@ -13,7 +13,6 @@ export type AgentName =
   | 'migration-orchestrator'
   | 'impact-assessor'
   | 'knowledge-builder'
-  | 'large-file-analyzer'
   | 'migration-planner'
   | 'task-decomposer'
   | 'adjudicator'
@@ -27,6 +26,18 @@ export type AgentName =
   | 'migration-runner'
   | 'idiomatic-reviewer'
   | 'idiomatic-refactorer';
+
+// ─── MCP Server Config ───────────────────────────────────────────────────────
+
+/**
+ * Configuration that an MCP client uses to connect to the shared KB HTTP server.
+ * The server runs for the duration of the migration and all agents connect to
+ * the same instance via this URL.
+ */
+export interface McpServerConfig {
+  /** HTTP URL of the running KB MCP server (e.g. `"http://localhost:4321/mcp"`). */
+  url: string;
+}
 
 // ─── Invocation & Results ────────────────────────────────────────────────────
 
@@ -58,6 +69,12 @@ export interface AgentInvocation {
 
   /** Timeout in milliseconds; overrides the default agent timeout. */
   timeout?: number;
+
+  /** MCP server config for the KB server; serialised as --mcp-config to the agent subprocess. */
+  mcpConfig?: McpServerConfig;
+
+  /** Path to the KB SQLite database; injected as KB_DB_PATH env var into the agent subprocess. */
+  kbDbPath?: string;
 }
 
 /**

@@ -30,7 +30,6 @@ export type AamfOutputBaseType = z.infer<typeof AamfOutputBase>;
 export const MigrationOrchestratorOutput = AamfOutputBase.extend({ agent: z.literal('migration-orchestrator') });
 export const ImpactAssessorOutput = AamfOutputBase.extend({ agent: z.literal('impact-assessor') });
 export const KnowledgeBuilderOutput = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
-export const LargeFileAnalyzerOutput = AamfOutputBase.extend({ agent: z.literal('large-file-analyzer') });
 export const MigrationPlannerOutput = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
 export const TaskDecomposerOutput = AamfOutputBase.extend({
   agent: z.literal('task-decomposer'),
@@ -60,6 +59,11 @@ export const DocumentationWriterOutput = AamfOutputBase.extend({ agent: z.litera
 export const MigrationRunnerOutput = AamfOutputBase.extend({ agent: z.literal('migration-runner') });
 export const IdiomaticReviewerOutput = AamfOutputBase.extend({ agent: z.literal('idiomatic-reviewer') });
 export const IdiomaticRefactorerOutput = AamfOutputBase.extend({ agent: z.literal('idiomatic-refactorer') });
+export const KbIndexerOutput = AamfOutputBase.extend({
+  agent: z.literal('kb-indexer'),
+  /** Absolute path to the SQLite knowledge-base database written by the indexer. */
+  dbPath: z.string().min(1),
+});
 
 /**
  * JSON schema for structured agent task results (sidecar `.result.json`).

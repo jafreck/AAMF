@@ -54,14 +54,13 @@ Execute these phases in order. On resume, skip completed phases (read from `chec
 - Input: Source codebase path, impact assessment results
 - Output: `.aamf/migration/{projectName}/knowledge-base/` directory
 - Parallelizable: YES (read-only)
-- **Important**: Large files (>500 lines) must be individually documented via `large-file-analyzer` for piecemeal migration.
 
 ### Phase 3: Migration Planning
 - Launch: `migration-planner` (spawns multiple investigator instances)
 - Launch: `adjudicator` (to select the best plan from competing proposals)
 - Input: Knowledge base, impact assessment
 - Output: `.aamf/migration/{projectName}/migration-plan.md`
-- **Important**: Large files identified in Phase 2 must be broken into separate migration tasks.
+- **Important**: Structural decomposition should come from KB index tools; markdown KB should stay high-level.
 
 ### Phase 4: Code Migration (Iterative Loop)
 For each task in the migration plan:

@@ -15,11 +15,16 @@
   "options": {
     "maxParallelAgents": 1,
     "maxRetriesPerTask": 1,
-    "largeFileThreshold": 500,
     "maxLinesPerTask": 500,
     "tokenBudget": 100000,
     "dryRun": false,
-    "resume": false
+    "resume": false,
+    "kbIndex": {
+      "enabled": true,
+      "embeddings": {
+        "enabled": true
+      }
+    }
   },
   "copilot": {
     "cliCommand": "copilot",

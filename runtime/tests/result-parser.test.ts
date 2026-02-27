@@ -9,7 +9,6 @@ import {
   MigrationOrchestratorOutput,
   ImpactAssessorOutput,
   KnowledgeBuilderOutput,
-  LargeFileAnalyzerOutput,
   MigrationPlannerOutput,
   AdjudicatorOutput,
   CodeMigratorOutput,
@@ -20,6 +19,7 @@ import {
   E2eTestCrafterOutput,
   DocumentationWriterOutput,
   MigrationRunnerOutput,
+  KbIndexerOutput,
 } from '../src/agents/result-parser.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -328,10 +328,6 @@ Here are the tasks:
       expect(() => KnowledgeBuilderOutput.parse({ status: 'completed', agent: 'knowledge-builder' })).not.toThrow();
     });
 
-    it('should validate LargeFileAnalyzerOutput', () => {
-      expect(() => LargeFileAnalyzerOutput.parse({ status: 'completed', agent: 'large-file-analyzer' })).not.toThrow();
-    });
-
     it('should validate MigrationPlannerOutput', () => {
       expect(() => MigrationPlannerOutput.parse({ status: 'completed', agent: 'migration-planner' })).not.toThrow();
     });
@@ -370,6 +366,47 @@ Here are the tasks:
 
     it('should validate MigrationRunnerOutput', () => {
       expect(() => MigrationRunnerOutput.parse({ status: 'completed', agent: 'migration-runner' })).not.toThrow();
+    });
+
+    describe('KbIndexerOutput', () => {
+      it('should validate with required dbPath field', () => {
+        expect(() =>
+          KbIndexerOutput.parse({ status: 'completed', agent: 'kb-indexer', dbPath: '/tmp/kb.db' }),
+        ).not.toThrow();
+      });
+
+      it('should reject missing dbPath', () => {
+        expect(() =>
+          KbIndexerOutput.parse({ status: 'completed', agent: 'kb-indexer' }),
+        ).toThrow();
+      });
+
+      it('should reject empty dbPath', () => {
+        expect(() =>
+          KbIndexerOutput.parse({ status: 'completed', agent: 'kb-indexer', dbPath: '' }),
+        ).toThrow();
+      });
+
+      it('should reject wrong agent literal', () => {
+        expect(() =>
+          KbIndexerOutput.parse({ status: 'completed', agent: 'code-migrator', dbPath: '/tmp/kb.db' }),
+        ).toThrow();
+      });
+
+      it('should parse correctly and expose dbPath', () => {
+        const result = KbIndexerOutput.parse({ status: 'completed', agent: 'kb-indexer', dbPath: '/var/db/kb.sqlite' });
+        expect(result.agent).toBe('kb-indexer');
+        expect(result.dbPath).toBe('/var/db/kb.sqlite');
+      });
+
+      it('should parse a KbIndexerOutput aamf-json block', () => {
+        const stdout = '```aamf-json\n{"status":"completed","agent":"kb-indexer","dbPath":"/tmp/kb.db"}\n```';
+        const result = ResultParser.parseAamfOutput(stdout, KbIndexerOutput);
+        expect(result.parsed).toBe(true);
+        if (result.parsed) {
+          expect(result.data.dbPath).toBe('/tmp/kb.db');
+        }
+      });
     });
   });
 

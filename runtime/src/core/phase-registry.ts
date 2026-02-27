@@ -18,6 +18,15 @@ export interface PhaseDefinition {
 /** The 7 ordered migration phases */
 export const PHASES: readonly PhaseDefinition[] = [
   {
+    id: 0,
+    name: 'KB Indexing',
+    description: 'Build a local knowledge-base index of the source codebase for use by subsequent agents',
+    agents: [],
+    critical: false,
+    parallel: false,
+    optional: true,
+  },
+  {
     id: 1,
     name: 'Impact Assessment',
     description: 'Analyze source codebase to determine migration scope, complexity, and risks',
@@ -28,10 +37,10 @@ export const PHASES: readonly PhaseDefinition[] = [
   {
     id: 2,
     name: 'Knowledge Base Construction',
-    description: 'Build comprehensive documentation of all source code modules, dependencies, and patterns',
-    agents: ['knowledge-builder', 'large-file-analyzer'],
+    description: 'Build high-level architecture, risk, and integration documentation for migration planning',
+    agents: ['knowledge-builder'],
     critical: true,
-    parallel: true,   // multiple large-file-analyzer instances can run in parallel
+    parallel: false,
   },
   {
     id: 3,

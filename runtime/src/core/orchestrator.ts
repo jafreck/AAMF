@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
 import { CheckpointManager } from './checkpoint.js';
@@ -24,6 +24,10 @@ import { CostEstimator } from '../budget/cost-estimator.js';
 import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite, readJson } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
+import { IndexBuilder } from '../indexer/index.js';
+import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
+import { ensurePythonDeps } from '../indexer/ensure-python-deps.js';
+import { KbServerProcess } from './kb-server-process.js';
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
 
@@ -89,6 +93,9 @@ export class MigrationError extends Error {
   }
 }
 
+/** Default timeout for the KB indexing phase when no phaseTimeouts[0] is configured (5 minutes). */
+const DEFAULT_INDEX_TIMEOUT_MS = 5 * 60_000;
+
 /**
  * The main orchestrator that sequences all 7 migration phases.
  *
@@ -100,7 +107,12 @@ export class MigrationOrchestrator {
   private readonly contextBuilder: ContextBuilder;
   private readonly tokenTracker: TokenTracker;
   private readonly progressDir: string;
+  private readonly projectRoot: string;
   private readonly singlePhase?: number;
+  private readonly kbDbPath: string;
+  private kbServer?: KbServerProcess;
+  /** Live embedding provider created during Phase 0 and disposed on shutdown. */
+  private embedder?: EmbeddingProvider;
   /** Stores the migration-planner AgentResult from Phase 3 for Phase 4 to consume. */
   private phase3PlanResult?: AgentResult;
   /**
@@ -121,10 +133,12 @@ export class MigrationOrchestrator {
     projectRoot: string,
     singlePhase?: number,
   ) {
+    this.projectRoot = projectRoot;
     this.progressDir = join(projectRoot, '.aamf', 'migration', config.projectName);
     this.contextBuilder = new ContextBuilder(config, this.progressDir);
     this.tokenTracker = new TokenTracker();
     this.singlePhase = singlePhase;
+    this.kbDbPath = join(this.progressDir, 'kb.db');
 
     const bc = config.options.buildConcurrency ?? 1;
     // 0 means unlimited → use maxParallelAgents
@@ -148,117 +162,170 @@ export class MigrationOrchestrator {
     let aborted = false;
 
     // Determine which phases to execute
-    const phasesToRun = this.singlePhase
+    const phasesToRun = this.singlePhase != null
       ? PHASES.filter(p => p.id === this.singlePhase)
       : PHASES;
 
-    if (this.singlePhase) {
+    if (this.singlePhase != null) {
       this.logger.info(`Running single phase: ${this.singlePhase}`);
     }
 
-    for (const phase of phasesToRun) {
-      // Skip optional phases that are not enabled
-      if (phase.optional && phase.id === 8 && !this.config.options.idiomaticRefactor?.enabled) {
-        this.logger.info(`Skipping optional Phase 8 (idiomaticRefactor not enabled)`);
-        phaseResults.push({
-          phase: phase.id,
-          name: phase.name,
-          success: true,
-          outputPath: undefined,
-          duration: 0,
-        });
-        continue;
-      }
+    const kbEnabled =
+      this.config.options.kbIndex?.enabled ||
+      process.env['AAMF_USE_KB_INDEX'] === '1';
 
-      // Skip already-completed phases on resume
-      if (phase.id < resumePoint.phase) {
-        phaseResults.push({
-          phase: phase.id,
-          name: phase.name,
-          success: true,
-          outputPath: state.phaseOutputs[phase.id],
-          duration: 0,
-        });
-        continue;
-      }
+    const phase0InSelection = phasesToRun.some((p) => p.id === 0);
+    const phase0SkippedByResume =
+      this.singlePhase == null &&
+      phase0InSelection &&
+      resumePoint.phase > 0 &&
+      !kbEnabled;
 
-      await this.progress.updatePhase(phase.id, 'in-progress');
-      this.logger.event({ type: 'phase-started', phase: phase.id, name: phase.name });
-      this.logger.setPhase(phase.id);
-
-      const phaseStart = Date.now();
-      let result: PhaseResult;
-
-      try {
-        result = await this.executePhase(phase);
-      } catch (err) {
-        result = {
-          phase: phase.id,
-          name: phase.name,
-          success: false,
-          duration: Date.now() - phaseStart,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
-
-      phaseResults.push(result);
-
-      if (result.success) {
-        await this.checkpoint.completePhase(phase.id, result.outputPath ?? '');
-        await this.progress.updatePhase(phase.id, 'completed');
-        this.logger.event({
-          type: 'phase-completed',
-          phase: phase.id,
-          name: phase.name,
-          success: true,
-          duration: result.duration,
-        });
+    // If this invocation won't execute Phase 0 (for example: resume from later
+    // checkpoint or run a later single phase), but KB indexing is enabled and a
+    // previously built kb.db exists, start the KB server up-front so downstream
+    // phases/agents retain KB access.
+    if (kbEnabled && (phase0SkippedByResume || !phase0InSelection)) {
+      if (await fileExists(this.kbDbPath)) {
+        await this.startKbServer();
       } else {
-        const truncatedStderr = result.stderr ? result.stderr.slice(0, 2000) : undefined;
-        await this.progress.updatePhase(phase.id, 'failed', result.error, result.exitCode, truncatedStderr);
-        this.logger.event({
-          type: 'phase-failed',
-          phase: phase.id,
-          name: phase.name,
-          error: result.error ?? 'unknown',
-          exitCode: result.exitCode,
-          stderr: truncatedStderr,
-        });
-
-        if (phase.critical) {
-          aborted = true;
-          await this.progress.appendEvent(`Migration aborted: Phase ${phase.id} failed`);
-          break;
-        }
+        this.logger.warn(
+          `KB indexing is enabled, but ${this.kbDbPath} is missing. ` +
+          'Run Phase 0 first to enable KB access for resumed/later phases.',
+        );
       }
+    }
 
-      // Budget check
-      if (this.config.options.tokenBudget) {
-        const threshold = this.tokenTracker.checkThreshold(this.config.options.tokenBudget);
-        if (threshold === 'exceeded') {
-          this.logger.event({
-            type: 'budget-exceeded',
-            usage: this.tokenTracker.getTotal(),
-            budget: this.config.options.tokenBudget,
-          });
-          await this.progress.appendEvent('Token budget exceeded — pausing migration');
-          aborted = true;
-          break;
+    try {
+      for (const phase of phasesToRun) {
+        // Skip optional Phase 0 (KB Indexing) unless enabled via config or env var
+        if (phase.optional && phase.id === 0 &&
+            !this.config.options.kbIndex?.enabled &&
+            process.env['AAMF_USE_KB_INDEX'] !== '1') {
+          this.logger.info(`Skipping optional Phase 0 (KB Indexing) — set options.kbIndex.enabled or AAMF_USE_KB_INDEX=1 to enable`);
+          continue;
         }
-        if (threshold === 'warning') {
-          const pct = Math.round(
-            (this.tokenTracker.getTotal() / this.config.options.tokenBudget) * 100,
-          );
-          this.logger.event({
-            type: 'budget-warning',
-            usage: this.tokenTracker.getTotal(),
-            budget: this.config.options.tokenBudget,
-            percentage: pct,
+
+        // Skip optional phases that are not enabled
+        if (phase.optional && phase.id === 8 && !this.config.options.idiomaticRefactor?.enabled) {
+          this.logger.info(`Skipping optional Phase 8 (idiomaticRefactor not enabled)`);
+          phaseResults.push({
+            phase: phase.id,
+            name: phase.name,
+            success: true,
+            outputPath: undefined,
+            duration: 0,
           });
+          continue;
         }
+
+        // Skip already-completed phases on resume (but not when explicitly
+        // requesting a single phase via --phase).
+        if (
+          this.singlePhase == null &&
+          phase.id < resumePoint.phase &&
+          !(phase.id === 0 && kbEnabled)
+        ) {
+          phaseResults.push({
+            phase: phase.id,
+            name: phase.name,
+            success: true,
+            outputPath: state.phaseOutputs[phase.id],
+            duration: 0,
+          });
+          continue;
+        }
+
+        await this.progress.updatePhase(phase.id, 'in-progress');
+        this.logger.event({ type: 'phase-started', phase: phase.id, name: phase.name });
+        this.logger.setPhase(phase.id);
+
+        const phaseStart = Date.now();
+        let result: PhaseResult;
+
+        try {
+          result = await this.executePhase(phase);
+        } catch (err) {
+          result = {
+            phase: phase.id,
+            name: phase.name,
+            success: false,
+            duration: Date.now() - phaseStart,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+
+        phaseResults.push(result);
+
+        // After Phase 0 completes, start the KB server so agents in subsequent phases can use it
+        if (phase.id === 0 && result.success) {
+          await this.startKbServer();
+        }
+
+        if (result.success) {
+          await this.checkpoint.completePhase(phase.id, result.outputPath ?? '');
+          await this.progress.updatePhase(phase.id, 'completed');
+          this.logger.event({
+            type: 'phase-completed',
+            phase: phase.id,
+            name: phase.name,
+            success: true,
+            duration: result.duration,
+          });
+        } else {
+          const truncatedStderr = result.stderr ? result.stderr.slice(0, 2000) : undefined;
+          await this.progress.updatePhase(phase.id, 'failed', result.error, result.exitCode, truncatedStderr);
+          this.logger.event({
+            type: 'phase-failed',
+            phase: phase.id,
+            name: phase.name,
+            error: result.error ?? 'unknown',
+            exitCode: result.exitCode,
+            stderr: truncatedStderr,
+          });
+
+          if (phase.critical) {
+            aborted = true;
+            await this.progress.appendEvent(`Migration aborted: Phase ${phase.id} failed`);
+            break;
+          }
+        }
+
+        // Budget check
+        if (this.config.options.tokenBudget) {
+          const threshold = this.tokenTracker.checkThreshold(this.config.options.tokenBudget);
+          if (threshold === 'exceeded') {
+            this.logger.event({
+              type: 'budget-exceeded',
+              usage: this.tokenTracker.getTotal(),
+              budget: this.config.options.tokenBudget,
+            });
+            await this.progress.appendEvent('Token budget exceeded — pausing migration');
+            aborted = true;
+            break;
+          }
+          if (threshold === 'warning') {
+            const pct = Math.round(
+              (this.tokenTracker.getTotal() / this.config.options.tokenBudget) * 100,
+            );
+            this.logger.event({
+              type: 'budget-warning',
+              usage: this.tokenTracker.getTotal(),
+              budget: this.config.options.tokenBudget,
+              percentage: pct,
+            });
+          }
+        }
+
+        this.progress.setTokenUsage(this.tokenTracker.getTotal());
       }
-
-      this.progress.setTokenUsage(this.tokenTracker.getTotal());
+    } finally {
+      // Always stop the KB server and dispose the embedder, whether migration succeeded, failed, or was aborted
+      await this.stopKbServer();
+      if (this.embedder) {
+        try { await this.embedder.dispose(); } catch { /* ignore */ }
+        this.embedder = undefined;
+      }
     }
 
     const totalDuration = Date.now() - startTime;
@@ -296,6 +363,8 @@ export class MigrationOrchestrator {
   private async executePhase(phase: PhaseDefinition): Promise<PhaseResult> {
     const start = Date.now();
     switch (phase.id) {
+      case 0:
+        return this.executePhase0(start);
       case 1:
         return this.executePhase1(start);
       case 2:
@@ -314,6 +383,117 @@ export class MigrationOrchestrator {
         return this.executePhase8(start);
       default:
         throw new Error(`Unknown phase: ${phase.id}`);
+    }
+  }
+
+  // ─── Phase 0: KB Indexing ─────────────────────────────────────────────
+
+  /**
+   * Execute Phase 0: build the local knowledge-base SQLite index from the
+   * source directory. Wraps the build in retry logic and a timeout.
+   */
+  async executePhase0(start: number = Date.now()): Promise<PhaseResult> {
+    const sourceRoot = resolve(this.projectRoot, this.config.source.path);
+    this.logger.info(`Building KB index at ${this.kbDbPath} (source: ${sourceRoot})`);
+
+    // Optionally set up the embedding provider for semantic search.
+    const embCfg = this.config.options.kbIndex?.embeddings;
+    if (embCfg?.enabled) {
+      const pythonBin = embCfg.pythonBin ?? 'python3';
+      const model = embCfg.model ?? 'Qwen/Qwen3-Embedding-0.6B';
+      this.logger.info(`Embeddings enabled — ensuring Python deps (python: ${pythonBin}, model: ${model})`);
+      try {
+        await ensurePythonDeps(pythonBin);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to install Python embedding deps — embeddings will be skipped: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      this.embedder = new SentenceTransformersProvider(model, pythonBin);
+      try {
+        await this.embedder.init();
+        this.logger.info(`Embedding model loaded — dims: ${this.embedder.dims}`);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to initialise embedding model — embeddings will be skipped: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        try { await this.embedder.dispose(); } catch { /* ignore */ }
+        this.embedder = undefined;
+      }
+    }
+
+    const builder = new IndexBuilder(this.kbDbPath, { rootDir: sourceRoot }, this.embedder);
+
+    const maxAttempts = this.config.options.maxRetriesPerTask;
+    const timeout =
+      this.config.copilot.phaseTimeouts?.[0] ??
+      this.config.claudeCode?.phaseTimeouts?.[0] ??
+      DEFAULT_INDEX_TIMEOUT_MS;
+
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await Promise.race([
+          builder.build(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('KB index timeout')), timeout),
+          ),
+        ]);
+        return {
+          phase: 0,
+          name: 'KB Indexing',
+          success: true,
+          outputPath: this.kbDbPath,
+          duration: Date.now() - start,
+        };
+      } catch (err) {
+        lastErr = err;
+        if (attempt < maxAttempts) {
+          this.logger.warn(`KB index attempt ${attempt} failed, retrying: ${err instanceof Error ? err.message : String(err)}`);
+          await new Promise(r => setTimeout(r, 1_000 * attempt));
+        }
+      }
+    }
+
+    return {
+      phase: 0,
+      name: 'KB Indexing',
+      success: false,
+      duration: Date.now() - start,
+      error: lastErr instanceof Error ? lastErr.message : String(lastErr),
+    };
+  }
+
+  // ─── KB Server Lifecycle ──────────────────────────────────────────────
+
+  /** Start the KB MCP server (HTTP transport). */
+  private async startKbServer(): Promise<void> {
+    this.kbServer = new KbServerProcess(this.kbDbPath, this.embedder);
+    try {
+      await this.kbServer.start();
+      this.logger.info('KB server started and ready');
+    } catch (err) {
+      this.logger.warn(
+        `KB server failed to start — agents will run without KB access: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      this.kbServer = undefined;
+    }
+  }
+
+  /** Stop the KB MCP server if it is running. */
+  private async stopKbServer(): Promise<void> {
+    if (this.kbServer) {
+      try {
+        await this.kbServer.stop();
+        this.logger.info('KB server stopped');
+      } catch {
+        // Ignore errors on shutdown
+      }
+      this.kbServer = undefined;
     }
   }
 
@@ -357,35 +537,6 @@ export class MigrationOrchestrator {
         exitCode: kbResult.exitCode,
         stderr: kbResult.stderr,
       };
-    }
-
-    // 2. Find large files from KB output — launch analyzers in parallel
-    const largeFilesDir = join(this.progressDir, 'knowledge-base', 'large-files');
-    if (await fileExists(largeFilesDir)) {
-      const { readdir } = await import('node:fs/promises');
-      const files = await readdir(largeFilesDir);
-      if (files.length > 0) {
-        const invocations: AgentInvocation[] = [];
-        for (const file of files) {
-          const ctx = await this.contextBuilder.buildContext(
-            'large-file-analyzer',
-            2,
-            `lfa-${file}`,
-            { filePath: join(largeFilesDir, file) },
-          );
-          invocations.push(
-            this.buildInvocation('large-file-analyzer', ctx, 2, `lfa-${file}`),
-          );
-        }
-
-        const parallel = new ParallelExecutor(
-          this.config.options.maxParallelAgents,
-          (inv) => this.launcher.launchAgent(inv),
-          this.logger,
-        );
-        const results = await parallel.executeAll(invocations);
-        for (const r of results) this.recordTokens(r, 2);
-      }
     }
 
     const outputPath = join(this.progressDir, 'knowledge-base');
@@ -1446,6 +1597,32 @@ export class MigrationOrchestrator {
   ): AgentInvocation {
     const phaseTimeouts = this.config.copilot.phaseTimeouts;
     const timeout = phaseTimeouts?.[phase] ?? this.config.copilot.timeout;
+
+    // Agents that benefit from KB access when the KB server is running.
+    // Essentially every agent that analyses or transforms source code.
+    const KB_AWARE_AGENTS: AgentName[] = [
+      'impact-assessor',
+      'knowledge-builder',
+      'migration-planner',
+      'adjudicator',
+      'code-migrator',
+      'parity-verifier',
+      'test-writer',
+      'failure-recovery',
+      'final-parity-checker',
+      'e2e-test-crafter',
+      'documentation-writer',
+      'idiomatic-reviewer',
+      'idiomatic-refactorer',
+    ];
+    const mcpConfig = (KB_AWARE_AGENTS.includes(agent) && this.kbServer)
+      ? this.kbServer.mcpConfig
+      : undefined;
+
+    const kbDbPath = (KB_AWARE_AGENTS.includes(agent) && this.kbServer)
+      ? this.kbDbPath
+      : undefined;
+
     return {
       agent,
       contextFile,
@@ -1453,6 +1630,8 @@ export class MigrationOrchestrator {
       phase,
       taskId,
       timeout,
+      ...(mcpConfig ? { mcpConfig } : {}),
+      ...(kbDbPath ? { kbDbPath } : {}),
     };
   }
 

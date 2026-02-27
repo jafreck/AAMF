@@ -10,7 +10,6 @@ import {
   MigrationOrchestratorOutput,
   ImpactAssessorOutput,
   KnowledgeBuilderOutput,
-  LargeFileAnalyzerOutput,
   MigrationPlannerOutput,
   TaskDecomposerOutput,
   AdjudicatorOutput,
@@ -34,7 +33,6 @@ const agentOutputSchemas: Record<AgentName, z.ZodTypeAny> = {
   'migration-orchestrator': MigrationOrchestratorOutput,
   'impact-assessor': ImpactAssessorOutput,
   'knowledge-builder': KnowledgeBuilderOutput,
-  'large-file-analyzer': LargeFileAnalyzerOutput,
   'migration-planner': MigrationPlannerOutput,
   'task-decomposer': TaskDecomposerOutput,
   'adjudicator': AdjudicatorOutput,
@@ -246,11 +244,23 @@ export class CopilotRunner implements AgentRunner {
       }
     }
 
+    // Inject MCP config for KB server access
+    // Copilot CLI uses --additional-mcp-config with { mcpServers: { name: { url } } } format
+    if (invocation.mcpConfig) {
+      const mcpServersDef = {
+        mcpServers: {
+          'aamf-kb': { url: invocation.mcpConfig.url, type: 'http' },
+        },
+      };
+      args.push('--additional-mcp-config', JSON.stringify(mcpServersDef));
+    }
+
     const env: NodeJS.ProcessEnv = {
       ...stripVSCodeEnv(process.env),
       ...(this.resolvedPath ? { PATH: this.resolvedPath } : {}),
       AAMF_PROGRESS_DIR: invocation.progressDir,
       AAMF_CONTEXT_FILE: invocation.contextFile,
+      ...(invocation.kbDbPath ? { KB_DB_PATH: invocation.kbDbPath } : {}),
     };
     if (invocation.phase !== undefined) env.AAMF_PHASE = String(invocation.phase);
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
@@ -395,11 +405,23 @@ export class ClaudeCodeRunner implements AgentRunner {
       args.push('--model', this.config.claudeCode.model);
     }
 
+    // Inject MCP config for KB server access
+    // Claude Code uses --mcp-config with a JSON string containing the server definition
+    if (invocation.mcpConfig) {
+      const mcpServersDef = {
+        mcpServers: {
+          'aamf-kb': { url: invocation.mcpConfig.url, type: 'http' },
+        },
+      };
+      args.push('--mcp-config', JSON.stringify(mcpServersDef));
+    }
+
     const env: NodeJS.ProcessEnv = {
       ...stripVSCodeEnv(process.env),
       ...(this.resolvedPath ? { PATH: this.resolvedPath } : {}),
       AAMF_PROGRESS_DIR: invocation.progressDir,
       AAMF_CONTEXT_FILE: invocation.contextFile,
+      ...(invocation.kbDbPath ? { KB_DB_PATH: invocation.kbDbPath } : {}),
     };
     if (invocation.phase !== undefined) env.AAMF_PHASE = String(invocation.phase);
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;

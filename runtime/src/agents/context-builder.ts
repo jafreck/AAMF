@@ -21,6 +21,7 @@ export interface ContextBuildOptions {
  * set of input files, an output path, and an optional payload.
  */
 export class ContextBuilder {
+
   constructor(private config: MigrationConfig, private progressDir: string) {}
 
   /**
@@ -115,18 +116,11 @@ export class ContextBuilder {
         return {
           inputFiles: [src, impactAssessment],
           outputPath: kbDir,
-          agentPayload: { largeFileThreshold: this.config.options.largeFileThreshold },
-        };
-
-      case 'large-file-analyzer':
-        return {
-          inputFiles: payload?.filePath ? [String(payload.filePath)] : [src],
-          outputPath: join(kbDir, 'large-files'),
         };
 
       case 'migration-planner':
         return {
-          inputFiles: [join(kbDir, 'index.md'), impactAssessment, join(kbDir, 'large-files')],
+          inputFiles: [join(kbDir, 'index.md'), impactAssessment],
           outputPath: join(this.progressDir, 'planning'),
         };
 

@@ -37,7 +37,6 @@ The context JSON contains:
 1. **Analyze Inputs**
    - Read the impact assessment (`.aamf/migration/{projectName}/impact-assessment.md`)
    - Read the knowledge base index (`.aamf/migration/{projectName}/knowledge-base/index.md`)
-   - Read large file analyses (`.aamf/migration/{projectName}/knowledge-base/large-files/`)
 
 2. **Generate Competing Plans**
    - Produce **at least 2 competing migration strategies** (e.g., bottom-up vs top-down, by-module vs by-layer).
@@ -50,7 +49,7 @@ The context JSON contains:
 
 4. **Produce the Final Migration Plan**
    - Break down the chosen strategy into individual, atomic migration tasks.
-   - **Large files** must be decomposed into separate tasks per migration chunk.
+  - Use KB index graph/symbol ranges to decompose large files into separate tasks per migration chunk.
    - Each task must be independently executable and verifiable.
 
 ## Task Definition Format
@@ -125,6 +124,14 @@ Write to `.aamf/migration/{projectName}/migration-plan.md`:
 | Agent | Purpose |
 |-------|---------|
 | `adjudicator` | Evaluates competing migration strategies and selects the best one |
+
+## KB MCP Tools
+
+If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer the following MCP tool over direct file reads:
+
+- **`kb_graph`** — query the import/dependency graph to determine topological ordering of modules and to identify tightly coupled components that must be migrated together.
+
+Fall back to Bash / Read / Grep tools only when the KB index is unavailable or a query cannot be satisfied by the MCP tools.
 
 ## Context Window Management
 

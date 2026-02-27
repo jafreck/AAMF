@@ -22,7 +22,6 @@ export const MigrationConfigSchema = z.object({
   options: z.object({
     maxParallelAgents: z.number().int().min(1).max(10).default(3),
     maxRetriesPerTask: z.number().int().min(1).max(5).default(3),
-    largeFileThreshold: z.number().int().default(500),
     maxLinesPerTask: z.number().int().default(500),
     tokenBudget: z.number().int().optional(),
     contextWindowStrategy: z.enum(['per-invocation', 'session']).default('per-invocation'),
@@ -73,9 +72,34 @@ export const MigrationConfigSchema = z.object({
       maxIterations: z.number().int().min(1).default(2),
     }).optional(),
     /**
+     * Options for the optional KB indexing phase (Phase 0).
+     * When enabled (or when AAMF_USE_KB_INDEX=1), the indexer builds a SQLite
+     * knowledge-base and an HTTP MCP server is started for agents to query it.
+     */
+    kbIndex: z.object({
+      enabled: z.boolean().default(false),
+      /** Embedding configuration for semantic search in the KB. */
+      embeddings: z.object({
+        /** Enable vector embeddings during indexing (requires Python + sentence-transformers). */
+        enabled: z.boolean().default(false),
+        /**
+         * Full HuggingFace model name compatible with sentence-transformers.
+         * The embedding dimensionality is auto-detected from the model at startup.
+         * Examples:
+         *   'Qwen/Qwen3-Embedding-0.6B'  (~1.5 GB)
+         *   'Qwen/Qwen3-Embedding-4B'
+         *   'BAAI/bge-small-en-v1.5'
+         *   'sentence-transformers/all-MiniLM-L6-v2'
+         */
+        model: z.string().default('Qwen/Qwen3-Embedding-0.6B'),
+        /** Path to the Python binary with sentence-transformers installed. */
+        pythonBin: z.string().default('python3'),
+      }).optional(),
+    }).optional(),
+    /**
      * When `true`, AAMF preserves the `.aamf` checkpoint directory and the
      * target output directory after the migration completes instead of
-     * deleting them.  Useful for post-run inspection and debugging.
+     * deleting them. Useful for post-run inspection and debugging.
      * Can also be enabled at runtime by setting the environment variable
      * `AAMF_KEEP_ARTIFACTS=1` without modifying the config file.
      * Default: false.

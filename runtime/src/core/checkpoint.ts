@@ -90,7 +90,7 @@ export class CheckpointManager {
     this.state = {
       projectName,
       version: CHECKPOINT_VERSION,
-      currentPhase: 1,
+      currentPhase: 0,
       currentTask: null,
       completedPhases: [],
       completedTasks: [],

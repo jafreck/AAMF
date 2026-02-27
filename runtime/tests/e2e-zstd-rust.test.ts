@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
+import { rm, readdir, readFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../src/core/runtime.js';
 import { fileExists } from '../src/util/fs.js';
@@ -76,6 +76,48 @@ async function ensureZstdSource(): Promise<void> {
   console.log(`zstd source ready at ${sourceRoot}`);
 }
 
+/**
+ * Write a migration.config.json pointing at the downloaded zstd lib/
+ * directory, targeting Rust.
+ */
+async function writeMigrationConfig(): Promise<void> {
+  const config = {
+    projectName: 'zstd-to-rust',
+    source: {
+      path: libDir,
+      language: 'c',
+      entryPoints: ['compress/zstd_compress.c'],
+      excludePatterns: [
+        '.git', '*.o', '*.lo', '*.la', '*.pc',
+        'Makefile*', '*.md', 'legacy',
+      ],
+    },
+    target: {
+      language: 'rust',
+      framework: 'stable',
+      outputPath: outputDir,
+      testFramework: 'cargo-test',
+      buildCommand: 'cargo build',
+      testCommand: 'cargo test',
+    },
+    options: {
+      maxParallelAgents: 3,
+      maxRetriesPerTask: 2,
+      maxLinesPerTask: 500,
+      tokenBudget: 2_000_000,
+      dryRun: false,
+      resume: false,
+    },
+    copilot: {
+      cliCommand: 'copilot',
+      model: 'claude-sonnet-4.6',
+      agentDir: '../../../../.github/agents',
+      timeout: 600_000, // 10 min/agent — zstd files are ~3.5× larger than lz4
+    },
+  };
+
+  await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
+}
 
 /**
  * End-to-end integration test: zstd (C) → Rust.
@@ -120,11 +162,14 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
     // 1. Download the real zstd source (cached across runs)
     await ensureZstdSource();
 
-    // 2. Clean up any previous migration artefacts
+    // 2. Write a config pointing at the downloaded source
+    await writeMigrationConfig();
+
+    // 3. Clean up any previous migration artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
 
-    // 3. Run the full migration (all 7 phases)
+    // 4. Run the full migration (all 7 phases)
     const runtime = new MigrationRuntime();
     await runtime.initialize({
       configPath,

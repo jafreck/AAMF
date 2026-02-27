@@ -53,19 +53,15 @@ The knowledge base must serve as a **context-efficient substitute for reading so
      - Side effects (I/O, state mutations, external calls)
      - Key business logic summary
 
-3. **Large File Analysis**
-   - Identify all files >500 lines of code.
-   - For each, launch the `large-file-analyzer` sub-agent to produce a detailed decomposition document.
-
-4. **Pattern Catalog**
+3. **Pattern Catalog**
    - Document recurring patterns (error handling, logging, serialization, auth, etc.)
    - Note anti-patterns or legacy constructs that need special migration attention
 
-5. **Data Model Documentation**
+4. **Data Model Documentation**
    - Document database schemas, ORM models, data transfer objects
    - Map data flow through the system
 
-6. **External Integration Points**
+5. **External Integration Points**
    - APIs consumed and exposed
    - File I/O patterns
    - Third-party SDK usage
@@ -83,8 +79,6 @@ knowledge-base/
 ├── integrations.md
 ├── modules/
 │   └── {module-name}.md
-└── large-files/
-    └── {file-name}.analysis.md
 ```
 
 ## Module Document Format
@@ -116,11 +110,14 @@ knowledge-base/
 {special considerations for migration}
 ```
 
-## Sub-Agents
+## KB MCP Tools
 
-| Agent | Purpose |
-|-------|---------|
-| `large-file-analyzer` | Detailed analysis of files >500 lines |
+If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer the following MCP tools over direct file reads:
+
+- **`kb_graph`** — query the import/dependency graph. Use this to discover what a module imports and what imports it, instead of grepping for `import` statements across files.
+- **`kb_lookup`** — retrieve a specific symbol's definition, signature, docstring, and source location by name. Use this to enumerate a module's public API without reading the entire file.
+
+Fall back to Bash / Read / Grep tools only when the KB index is unavailable or a query cannot be satisfied by the MCP tools.
 
 ## Context Window Management
 
@@ -147,7 +144,6 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
   "status": "<completed | failed | needs-review>",
   "outputFiles": ["<paths to knowledge base files written>"],
   "modulesDocumented": 0,
-  "largeFilesAnalyzed": 0,
   "notes": "<summary of coverage and any modules that could not be fully documented>"
 }
 ```
@@ -164,8 +160,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
     ".aamf/migration/my-project/knowledge-base/modules/auth.md"
   ],
   "modulesDocumented": 12,
-  "largeFilesAnalyzed": 2,
-  "notes": "All modules documented. Two files exceeded 500 lines and were delegated to large-file-analyzer."
+   "notes": "All modules documented. KB index-backed graph and symbol lookups were used for structural detail."
 }
 ```
 

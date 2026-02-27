@@ -105,6 +105,15 @@ Write the full assessment to `.aamf/migration/{projectName}/impact-assessment.md
 
 None — this is a **leaf agent**.
 
+## KB MCP Tools
+
+If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer the following MCP tools over direct file reads:
+
+- **`kb_search`** — full-text and semantic search across the indexed codebase. Use this to locate symbols, files, or patterns instead of running `grep` or `find`.
+- **`kb_lookup`** — retrieve a specific symbol's definition, type, docstring, and location by name. Use this instead of reading a whole file to find a function or class.
+
+Fall back to Bash / Read / Grep tools only when the KB index is unavailable or a query cannot be satisfied by the MCP tools.
+
 ## Context Window Management
 
 - **Do NOT read entire large files**. Use `wc -l`, `head`, `tail`, and grep to gather metrics without loading full file contents.

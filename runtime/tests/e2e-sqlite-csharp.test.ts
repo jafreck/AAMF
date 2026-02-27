@@ -94,7 +94,6 @@ async function writeMigrationConfig(): Promise<void> {
     options: {
       maxParallelAgents: 3,
       maxRetriesPerTask: 2,
-      largeFileThreshold: 500,
       maxLinesPerTask: 500,
       tokenBudget: 500000,
       dryRun: false,

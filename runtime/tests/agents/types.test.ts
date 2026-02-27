@@ -8,6 +8,7 @@ import type {
   PhaseResult,
   FailedTask,
   TaskDetails,
+  McpServerConfig,
 } from '../../src/agents/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -186,6 +187,47 @@ describe('AgentInvocation', () => {
     expect(inv.taskId).toBe('task-001');
     expect(inv.additionalArgs?.['--dry-run']).toBe('true');
     expect(inv.timeout).toBe(60_000);
+  });
+
+  it('should support optional mcpConfig field', () => {
+    const mcpConfig: McpServerConfig = {
+      url: 'http://localhost:4321/mcp',
+    };
+    const inv: AgentInvocation = {
+      agent: 'impact-assessor',
+      contextFile: '/tmp/context.json',
+      progressDir: '/tmp/progress',
+      mcpConfig,
+    };
+    expect(inv.mcpConfig).toBeDefined();
+    expect(inv.mcpConfig?.url).toBe('http://localhost:4321/mcp');
+  });
+
+  it('should omit mcpConfig when not provided', () => {
+    const inv: AgentInvocation = {
+      agent: 'knowledge-builder',
+      contextFile: '/tmp/ctx.json',
+      progressDir: '/tmp/progress',
+    };
+    expect(inv.mcpConfig).toBeUndefined();
+  });
+});
+
+// ─── McpServerConfig ──────────────────────────────────────────────────────────
+
+describe('McpServerConfig', () => {
+  it('should require a url field', () => {
+    const cfg: McpServerConfig = {
+      url: 'http://localhost:4321/mcp',
+    };
+    expect(cfg.url).toBe('http://localhost:4321/mcp');
+  });
+
+  it('should accept any localhost URL', () => {
+    const cfg: McpServerConfig = {
+      url: 'http://127.0.0.1:9999/mcp',
+    };
+    expect(cfg.url).toContain('9999');
   });
 });
 
