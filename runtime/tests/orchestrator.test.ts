@@ -785,6 +785,77 @@ describe('MigrationOrchestrator', () => {
   // ─── structuredOutput Integration ──────────────────────────────────
 
   describe('structuredOutput Integration', () => {
+    it('should apply maxRetriesPerTask to Phase 3 task-decomposer invocations', async () => {
+      const launcherFn = vi.fn(async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'task-decomposer' && inv.taskId === 'core') {
+          return {
+            agent: inv.agent,
+            taskId: inv.taskId,
+            exitCode: 1,
+            success: false,
+            outputFiles: [],
+            duration: 100,
+            tokenUsage: { prompt: 100, completion: 0, total: 100 },
+            outputParsed: false,
+            error: 'transient task-decomposer failure',
+          };
+        }
+
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 100,
+          tokenUsage: { prompt: 100, completion: 0, total: 100 },
+          outputParsed: true,
+        };
+      });
+
+      const { orchestrator, checkpoint, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 2,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+          },
+        },
+        3,
+      );
+
+      const planningDir = join(progressDir, 'planning');
+      await mkdir(planningDir, { recursive: true });
+      await writeFile(
+        join(planningDir, 'groups.json'),
+        JSON.stringify([{ id: 'core', name: 'Core', analysisFiles: [] }], null, 2),
+      );
+      await writeFile(join(planningDir, 'strategy.md'), '# strategy\n');
+
+      await checkpoint.completePhase3a();
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(false);
+      const phase3 = result.phases.find((p) => p.phase === 3);
+      expect(phase3?.error).toContain('task-decomposer failed for 1 group(s): core');
+
+      const coreTaskDecomposerInvocations = mockLauncher.invocations.filter(
+        (inv) => inv.agent === 'task-decomposer' && inv.taskId === 'core',
+      );
+      expect(coreTaskDecomposerInvocations).toHaveLength(2);
+    });
+
     it('should fail Phase 3 when a task-decomposer output file violates schema', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, progressDir } = await setupOrchestrator(
