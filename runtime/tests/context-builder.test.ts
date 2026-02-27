@@ -155,7 +155,7 @@ describe('ContextBuilder', () => {
 
       expect(context.inputFiles).toContain('src/auth.ts');
       expect(context.inputFiles).toContain('kb/auth.md');
-      expect(context.outputPath).toContain('__tests__');
+      expect(context.outputPath).toBe('/tmp/target');
     });
 
     it('should route failure-recovery to failure report + source/target', async () => {
