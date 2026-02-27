@@ -31,6 +31,10 @@ export class Logger {
   private source = 'runtime';
   private phase?: number;
   private taskId?: string;
+  private runId?: string;
+  private invocationId?: string;
+  private agent?: string;
+  private attempt?: number;
   private dirReady = false;
 
   /**
@@ -49,6 +53,12 @@ export class Logger {
       this.consoleEnabled = optsOrParent.consoleEnabled;
       this.dirReady = optsOrParent.dirReady;
       this.source = source!;
+      this.runId = optsOrParent.runId;
+      this.invocationId = optsOrParent.invocationId;
+      this.agent = optsOrParent.agent;
+      this.attempt = optsOrParent.attempt;
+      this.phase = optsOrParent.phase;
+      this.taskId = optsOrParent.taskId;
       // Share the write chain with parent so all children serialize through one queue
       this.writeChain = optsOrParent.writeChain;
     } else {
@@ -70,6 +80,22 @@ export class Logger {
 
   setTaskId(taskId?: string): void {
     this.taskId = taskId;
+  }
+
+  setRunId(runId: string): void {
+    this.runId = runId;
+  }
+
+  setInvocationId(invocationId: string): void {
+    this.invocationId = invocationId;
+  }
+
+  setAgent(agent: string): void {
+    this.agent = agent;
+  }
+
+  setAttempt(attempt: number): void {
+    this.attempt = attempt;
   }
 
   /* ── level helpers ───────────────────────────────────────── */
@@ -105,10 +131,12 @@ export class Logger {
 
   /* ── agent log file ──────────────────────────────────────── */
 
-  async writeAgentLog(agent: string, taskId: string, content: string): Promise<void> {
+  async writeAgentLog(agent: string, taskId: string, content: string, invocationId?: string): Promise<void> {
     await this.ensureLogDir();
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `${agent}-${taskId}-${ts}.log`;
+    const filename = invocationId
+      ? `${agent}-${taskId}-${invocationId}-${ts}.log`
+      : `${agent}-${taskId}-${ts}.log`;
     await writeFile(join(this.logDir, filename), content, 'utf-8');
   }
 
@@ -124,6 +152,10 @@ export class Logger {
       source: this.source,
       ...(this.phase !== undefined && { phase: this.phase }),
       ...(this.taskId !== undefined && { taskId: this.taskId }),
+      ...(this.runId !== undefined && { runId: this.runId }),
+      ...(this.invocationId !== undefined && { invocationId: this.invocationId }),
+      ...(this.agent !== undefined && { agent: this.agent }),
+      ...(this.attempt !== undefined && { attempt: this.attempt }),
       message,
       ...(data !== undefined && { data }),
     };
@@ -132,7 +164,14 @@ export class Logger {
       const time = format(now, 'HH:mm:ss');
       const tag = level.toUpperCase().padEnd(5);
       const colorize = LEVEL_COLOR[level];
-      const line = `${chalk.dim(`[${time}]`)} ${colorize(tag)} ${chalk.cyan(this.source)}: ${message}`;
+      const tags: string[] = [];
+      if (this.runId) tags.push(`run=${this.runId}`);
+      if (this.invocationId) tags.push(`inv=${this.invocationId}`);
+      if (this.phase !== undefined) tags.push(`phase=${this.phase}`);
+      if (this.taskId) tags.push(`task=${this.taskId}`);
+      if (this.agent) tags.push(`agent=${this.agent}`);
+      const corr = tags.length > 0 ? ' ' + chalk.dim(tags.join(' ')) : '';
+      const line = `${chalk.dim(`[${time}]`)} ${colorize(tag)} ${chalk.cyan(this.source)}${corr}: ${message}`;
       // eslint-disable-next-line no-console
       console.log(line);
     }

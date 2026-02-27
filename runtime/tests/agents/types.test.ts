@@ -133,6 +133,67 @@ describe('AgentResult', () => {
     });
   });
 
+  describe('invocationId field', () => {
+    it('should be undefined when not provided', () => {
+      const result = makeBaseAgentResult();
+      expect(result.invocationId).toBeUndefined();
+    });
+
+    it('should carry a correlation identifier when set', () => {
+      const result = makeBaseAgentResult({ invocationId: 'inv-abc-123' });
+      expect(result.invocationId).toBe('inv-abc-123');
+    });
+  });
+
+  describe('queueDelay field', () => {
+    it('should be undefined when not provided', () => {
+      const result = makeBaseAgentResult();
+      expect(result.queueDelay).toBeUndefined();
+    });
+
+    it('should carry milliseconds spent in queue', () => {
+      const result = makeBaseAgentResult({ queueDelay: 250 });
+      expect(result.queueDelay).toBe(250);
+    });
+
+    it('should accept zero for immediate execution', () => {
+      const result = makeBaseAgentResult({ queueDelay: 0 });
+      expect(result.queueDelay).toBe(0);
+    });
+  });
+
+  describe('spawnToFirstOutput field', () => {
+    it('should be undefined when not provided', () => {
+      const result = makeBaseAgentResult();
+      expect(result.spawnToFirstOutput).toBeUndefined();
+    });
+
+    it('should carry milliseconds from spawn to first output', () => {
+      const result = makeBaseAgentResult({ spawnToFirstOutput: 1500 });
+      expect(result.spawnToFirstOutput).toBe(1500);
+    });
+
+    it('should accept zero for immediate output', () => {
+      const result = makeBaseAgentResult({ spawnToFirstOutput: 0 });
+      expect(result.spawnToFirstOutput).toBe(0);
+    });
+  });
+
+  describe('combination: all duration breakdown fields', () => {
+    it('should carry invocationId with queueDelay and spawnToFirstOutput', () => {
+      const result = makeBaseAgentResult({
+        invocationId: 'inv-full',
+        queueDelay: 50,
+        spawnToFirstOutput: 800,
+        duration: 5000,
+      });
+      expect(result.invocationId).toBe('inv-full');
+      expect(result.queueDelay).toBe(50);
+      expect(result.spawnToFirstOutput).toBe(800);
+      expect(result.duration).toBe(5000);
+    });
+  });
+
   describe('existing fields', () => {
     it('should include required fields: agent, exitCode, success, outputFiles, duration', () => {
       const result = makeBaseAgentResult();
