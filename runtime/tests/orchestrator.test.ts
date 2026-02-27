@@ -2835,8 +2835,8 @@ describe('MigrationOrchestrator', () => {
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'code-migrator') {
           callCount++;
-          // Fail the first two attempts, succeed on third
-          if (callCount <= 2) {
+          // Fail the first attempt, succeed on retry
+          if (callCount === 1) {
             return { exitCode: 1, success: false, error: 'Code migration failed' };
           }
         }
@@ -2848,7 +2848,7 @@ describe('MigrationOrchestrator', () => {
         launcherFn,
         {
           options: {
-            maxRetriesPerTask: 3,
+            maxRetriesPerTask: 2,
             modelRouting: {
               enabled: true,
               defaultModel: 'gpt-5-mini',
@@ -2856,8 +2856,8 @@ describe('MigrationOrchestrator', () => {
               criticalModel: 'claude-opus-4.6',
               heavyThreshold: 40,
               criticalThreshold: 70,
-              criticalTaskPatterns: ['task-*'],
-              escalateOnRetryAttempt: 2,
+              // task score (~36) starts in normal tier, then retry escalation promotes to heavy
+              escalateOnRetryAttempt: 1,
             },
           },
         },
@@ -2871,6 +2871,172 @@ describe('MigrationOrchestrator', () => {
         (inv: AgentInvocation) => inv.agent === 'code-migrator',
       );
       expect(migratorInvocations.length).toBeGreaterThanOrEqual(2);
+      expect(migratorInvocations[0]!.modelOverride).toBeUndefined();
+      expect(migratorInvocations[1]!.modelOverride).toBe('gpt-4.1');
+    });
+
+    it('should escalate normal-tier retries to heavy tier', async () => {
+      const simpleTask: MigrationTask = {
+        id: 'task-001',
+        name: 'Simple Module',
+        sourceFiles: ['src/simple.py'],
+        targetFiles: ['src/simple.ts'],
+        knowledgeBaseRef: 'kb/task-001.md',
+        dependencies: [],
+        complexity: 'simple',
+        description: 'A simple task',
+        acceptanceCriteria: ['works'],
+        parityChecks: ['matches'],
+        lineRange: { start: 1, end: 20 },
+      };
+
+      let callCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          callCount++;
+          if (callCount === 1) {
+            return { exitCode: 1, success: false, error: 'Code migration failed' };
+          }
+        }
+        return {};
+      });
+
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 2,
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 80,
+              criticalThreshold: 95,
+              escalateOnRetryAttempt: 1,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, [simpleTask]);
+      await orchestrator.run();
+
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator' && inv.taskId === 'task-001',
+      );
+      expect(migratorInvocations.length).toBe(2);
+      expect(migratorInvocations[0]!.modelOverride).toBeUndefined();
+      expect(migratorInvocations[1]!.modelOverride).toBe('gpt-4.1');
+    });
+
+    it('should enforce maxCriticalTasks cap during retry escalation', async () => {
+      let task002Attempt = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator' && inv.taskId === 'task-002') {
+          task002Attempt++;
+          if (task002Attempt === 1) {
+            return { exitCode: 1, success: false, error: 'Code migration failed' };
+          }
+        }
+        return {};
+      });
+
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 2,
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-*'],
+              maxCriticalTasks: 1,
+              escalateOnRetryAttempt: 2,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      const task001Invocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator' && inv.taskId === 'task-001',
+      );
+      const task002Invocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator' && inv.taskId === 'task-002',
+      );
+
+      expect(task001Invocations[0]!.modelOverride).toBe('claude-opus-4.6');
+      expect(task002Invocations.length).toBeGreaterThanOrEqual(2);
+      expect(task002Invocations[0]!.modelOverride).toBeUndefined();
+      expect(task002Invocations[1]!.modelOverride).toBeUndefined();
+    });
+
+    it('should enforce maxEscalationCostUsd cap during retry escalation', async () => {
+      const simpleTask: MigrationTask = {
+        id: 'task-001',
+        name: 'Simple Module',
+        sourceFiles: ['src/simple.py'],
+        targetFiles: ['src/simple.ts'],
+        knowledgeBaseRef: 'kb/task-001.md',
+        dependencies: [],
+        complexity: 'simple',
+        description: 'A simple task',
+        acceptanceCriteria: ['works'],
+        parityChecks: ['matches'],
+        lineRange: { start: 1, end: 20 },
+      };
+
+      let callCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          callCount++;
+          if (callCount === 1) {
+            return { exitCode: 1, success: false, error: 'Code migration failed' };
+          }
+        }
+        return {};
+      });
+
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 2,
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 80,
+              criticalThreshold: 95,
+              escalateOnRetryAttempt: 2,
+              maxEscalationCostUsd: 0.000001,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, [simpleTask]);
+      await orchestrator.run();
+
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator' && inv.taskId === 'task-001',
+      );
+      expect(migratorInvocations.length).toBe(2);
+      expect(migratorInvocations[0]!.modelOverride).toBeUndefined();
+      expect(migratorInvocations[1]!.modelOverride).toBeUndefined();
     });
 
     it('should apply transient-failure fallback before retry escalation', async () => {

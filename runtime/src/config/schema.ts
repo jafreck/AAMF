@@ -125,7 +125,7 @@ export const MigrationConfigSchema = z.object({
       criticalThreshold: z.number().int().min(0).max(100).default(70),
       /** Agent names that always route to the critical model. */
       criticalAgents: z.array(z.string()).optional(),
-      /** Task ID patterns (glob/regex) that always route to the critical model. */
+      /** Task ID glob patterns (`*` and `?`) that always route to the critical model. */
       criticalTaskPatterns: z.array(z.string()).optional(),
       /** Max tasks routed to heavy/critical models per run. 0 = unlimited. */
       maxCriticalTasks: z.number().int().min(0).default(0),
