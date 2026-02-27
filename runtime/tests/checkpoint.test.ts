@@ -214,4 +214,48 @@ describe('CheckpointManager', () => {
     const data = await readJson(join(tempDir, 'checkpoint.json'));
     expect(data).toBeDefined();
   });
+
+  // ─── metricsCount ─────────────────────────────────────────────────
+
+  it('should initialize metricsCount to 0 on fresh state', async () => {
+    const state = await manager.load('test-project');
+    expect(state.metricsCount).toBe(0);
+  });
+
+  it('should preserve metricsCount on reload', async () => {
+    const state = await manager.load('test-project');
+    state.metricsCount = 42;
+    await manager.save(state);
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.metricsCount).toBe(42);
+  });
+
+  it('should default metricsCount to 0 when field is absent in stored checkpoint (backward compat)', async () => {
+    const { writeJson } = await import('../src/util/fs.js');
+    const oldState = {
+      projectName: 'old-project',
+      version: 1,
+      currentPhase: 2,
+      currentTask: null,
+      completedPhases: [1],
+      completedTasks: ['task-001'],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 1,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      // metricsCount intentionally omitted
+    };
+    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const loaded = await manager3.load('old-project');
+    expect(loaded.metricsCount).toBe(0);
+  });
 });

@@ -255,4 +255,87 @@ describe('ParallelExecutor', () => {
       expect(results[2]!.outputFiles).toEqual(['/output/c.ts']);
     });
   });
+
+  // ─── Peak Concurrency ─────────────────────────────────────────────
+
+  describe('peakConcurrency', () => {
+    it('should start at 0 before executeAll is called', () => {
+      const launcher = createMockLauncher();
+      const logger = createSilentLogger(tempDir);
+      const executor = new ParallelExecutor(3, launcher, logger);
+
+      expect(executor.peakConcurrency).toBe(0);
+    });
+
+    it('should track peak concurrency during executeAll', async () => {
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        await new Promise((r) => setTimeout(r, 50));
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 50,
+        };
+      };
+
+      const logger = createSilentLogger(tempDir);
+      const executor = new ParallelExecutor(3, launcher, logger);
+      await executor.executeAll([makeInvocation('a'), makeInvocation('b'), makeInvocation('c')]);
+
+      expect(executor.peakConcurrency).toBeGreaterThan(0);
+      expect(executor.peakConcurrency).toBeLessThanOrEqual(3);
+    });
+
+    it('should report peakConcurrency of 1 with concurrency limit of 1', async () => {
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        await new Promise((r) => setTimeout(r, 10));
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 10,
+        };
+      };
+
+      const logger = createSilentLogger(tempDir);
+      const executor = new ParallelExecutor(1, launcher, logger);
+      await executor.executeAll([makeInvocation('a'), makeInvocation('b'), makeInvocation('c')]);
+
+      expect(executor.peakConcurrency).toBe(1);
+    });
+
+    it('should remain 0 when executeAll is called with empty list', async () => {
+      const launcher = createMockLauncher();
+      const logger = createSilentLogger(tempDir);
+      const executor = new ParallelExecutor(3, launcher, logger);
+
+      await executor.executeAll([]);
+
+      expect(executor.peakConcurrency).toBe(0);
+    });
+
+    it('should track peak concurrency even when invocations throw', async () => {
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.taskId === 'b') throw new Error('crash');
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 10,
+        };
+      };
+
+      const logger = createSilentLogger(tempDir);
+      const executor = new ParallelExecutor(3, launcher, logger);
+      await executor.executeAll([makeInvocation('a'), makeInvocation('b'), makeInvocation('c')]);
+
+      expect(executor.peakConcurrency).toBeGreaterThan(0);
+    });
+  });
 });
