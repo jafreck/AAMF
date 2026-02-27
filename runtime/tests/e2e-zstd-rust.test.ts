@@ -84,9 +84,9 @@ async function writeMigrationConfig(): Promise<void> {
   const config = {
     projectName: 'zstd-to-rust',
     source: {
-      path: libDir,
+      path: sourceRoot,
       language: 'c',
-      entryPoints: ['compress/zstd_compress.c'],
+      entryPoints: ['lib/compress/zstd_compress.c', 'programs/zstdcli.c'],
       excludePatterns: [
         '.git', '*.o', '*.lo', '*.la', '*.pc',
         'Makefile*', '*.md', 'legacy',
@@ -101,18 +101,25 @@ async function writeMigrationConfig(): Promise<void> {
       testCommand: 'cargo test',
     },
     options: {
-      maxParallelAgents: 3,
-      maxRetriesPerTask: 2,
-      maxLinesPerTask: 500,
-      tokenBudget: 2_000_000,
+      maxParallelAgents: 5,
+      maxRetriesPerTask: 3,
+      maxLinesPerTask: 750,
+      tokenBudget: 10_000_000,
       dryRun: false,
-      resume: false,
+      resume: true,
+      keepArtifacts: true,
+      kbIndex: {
+        enabled: true,
+        embeddings: {
+          enabled: true,
+        },
+      },
     },
     copilot: {
       cliCommand: 'copilot',
       model: 'claude-sonnet-4.6',
       agentDir: '../../../../.github/agents',
-      timeout: 600_000, // 10 min/agent — zstd files are ~3.5× larger than lz4
+      timeout: 3_600_000, // 1 hour/agent
     },
   };
 
