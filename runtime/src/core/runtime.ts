@@ -10,7 +10,7 @@ import { PHASES } from './phase-registry.js';
 import { Logger } from '../logging/logger.js';
 import { MigrationResult } from '../agents/types.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
-import { fileExists } from '../util/fs.js';
+import { fileExists, removeDir } from '../util/fs.js';
 
 export interface RuntimeOptions {
   configPath: string;
@@ -164,6 +164,22 @@ export class MigrationRuntime {
 
     // Print summary
     this.printSummary(result);
+
+    // Cleanup artifacts unless retention is enabled
+    try {
+      const shouldKeepArtifacts =
+        process.env.AAMF_KEEP_ARTIFACTS === '1' || this.config.options.keepArtifacts;
+      if (shouldKeepArtifacts) {
+        this.logger.info('Artifact retention enabled — keeping progress and output directories');
+      } else {
+        this.logger.info('Cleaning up progress and output directories');
+        await removeDir(this.progressDir);
+        await removeDir(this.config.target.outputPath);
+      }
+    } catch (err) {
+      this.logger.warn(`Artifact cleanup failed: ${err}`);
+    }
+
     return result;
   }
 

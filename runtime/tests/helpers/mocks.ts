@@ -97,6 +97,8 @@ export function createMockConfig(overrides?: Partial<MigrationConfig>): Migratio
       maxBlockedTasks: 0,
       maxInfraRetries: 3,
       avgTokensPerTask: 5000,
+      keepArtifacts: false,
+      contextWindowStrategy: 'per-invocation' as const,
     },
     copilot: {
       cliCommand: 'copilot',
