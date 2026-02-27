@@ -187,7 +187,7 @@ export class ContextBuilder {
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
             ...(payload?.parityReport ? [String(payload.parityReport)] : []),
           ],
-          outputPath: join(out, '__tests__'),
+          outputPath: out,
           agentPayload: { taskId, testType: payload?.testType ?? 'unit' },
         };
 
