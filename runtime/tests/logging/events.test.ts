@@ -446,3 +446,22 @@ describe('RuntimeEvent — report-generated', () => {
     expect(event.path).toBe('reports/observability/index.md');
   });
 });
+
+describe('RuntimeEvent — model-routing-decision', () => {
+  it('should construct with all required fields', () => {
+    const event: RuntimeEvent = {
+      type: 'model-routing-decision',
+      taskId: 'task-001',
+      tier: 'heavy',
+      selectedModel: 'claude-opus-4.5',
+      reason: 'complexity score 55 >= heavyThreshold 40',
+      score: 55,
+    };
+    expect(event.type).toBe('model-routing-decision');
+    expect(event.taskId).toBe('task-001');
+    expect(event.tier).toBe('heavy');
+    expect(event.selectedModel).toBe('claude-opus-4.5');
+    expect(event.reason).toBe('complexity score 55 >= heavyThreshold 40');
+    expect(event.score).toBe(55);
+  });
+});

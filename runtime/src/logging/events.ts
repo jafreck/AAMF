@@ -36,4 +36,5 @@ export type RuntimeEvent =
   | { type: 'budget-exceeded'; usage: number; budget: number }
   | { type: 'migration-interrupted'; reason: string }
   | { type: 'metric-recorded'; invocationId: string }
+  | { type: 'model-routing-decision'; taskId: string; tier: string; selectedModel: string; reason: string; score: number }
   | { type: 'report-generated'; path: string };

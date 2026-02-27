@@ -384,6 +384,33 @@ export interface InvocationMetric {
   tokensTotal: number;
   /** Estimated cost in USD for this invocation. */
   costUsd: number;
+  /** Model routing tier assigned to this invocation. */
+  routingTier?: ModelTier;
+  /** Human-readable reason for the routing decision. */
+  routingReason?: string;
+  /** Incremental cost (USD) attributed to model escalation. */
+  escalationCostUsd?: number;
+}
+
+// ─── Model Routing ───────────────────────────────────────────────────────────
+
+/** Tier assigned to a task by the model routing policy. */
+export type ModelTier = 'normal' | 'heavy' | 'critical';
+
+/**
+ * The outcome of the model routing policy for a single invocation.
+ */
+export interface RoutingDecision {
+  /** Computed tier for the task. */
+  tier: ModelTier;
+  /** Model identifier selected for the invocation. */
+  selectedModel: string;
+  /** Human-readable reason for the routing decision. */
+  reason: string;
+  /** Numeric complexity score (0–100) that drove the tier selection. */
+  score: number;
+  /** Whether the model was escalated from a lower tier (e.g. due to retries). */
+  escalated: boolean;
 }
 
 // ─── Task Details ────────────────────────────────────────────────────────────

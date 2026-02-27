@@ -118,6 +118,19 @@ export class CostEstimator {
     return this.estimate(model, promptTokens, completionTokens);
   }
 
+  /**
+   * Project the cost of a single invocation given a model and average
+   * token count. Used for pre-invocation cap enforcement.
+   *
+   * @param model - Model identifier.
+   * @param avgTokensPerTask - Estimated total tokens for the invocation.
+   * @returns Projected total cost in USD.
+   */
+  projectCost(model: string, avgTokensPerTask: number): { total: number } {
+    const { total } = this.estimateFromTotal(model, avgTokensPerTask);
+    return { total };
+  }
+
   /** Return the list of model identifiers with known pricing. */
   getSupportedModels(): string[] {
     return Object.keys(MODEL_PRICING);

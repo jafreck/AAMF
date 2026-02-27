@@ -112,6 +112,35 @@ export const MigrationConfigSchema = z.object({
      * creates granular commits during migration (per code-modifying agent and
      * per completed Phase 4 task).
      */
+    /**
+     * Model routing configuration for intelligent model selection.
+     * When enabled, the orchestrator selects models based on task complexity,
+     * file count, dependencies, and retry history.
+     */
+    modelRouting: z.object({
+      /** Enable model routing. When false, all tasks use the default model. */
+      enabled: z.boolean().default(false),
+      /** Model used for normal-tier tasks. */
+      defaultModel: z.string().optional(),
+      /** Model used for heavy-tier tasks (score >= heavyThreshold). */
+      heavyModel: z.string().optional(),
+      /** Model used for critical-tier tasks (score >= criticalThreshold). */
+      criticalModel: z.string().optional(),
+      /** Score threshold (0–100) at which a task is promoted to heavy tier. */
+      heavyThreshold: z.number().int().min(0).max(100).default(40),
+      /** Score threshold (0–100) at which a task is promoted to critical tier. */
+      criticalThreshold: z.number().int().min(0).max(100).default(70),
+      /** Agent names that always route to the critical model. */
+      criticalAgents: z.array(z.string()).optional(),
+      /** Task ID patterns (glob/regex) that always route to the critical model. */
+      criticalTaskPatterns: z.array(z.string()).optional(),
+      /** Max tasks routed to heavy/critical models per run. 0 = unlimited. */
+      maxCriticalTasks: z.number().int().min(0).default(0),
+      /** Max incremental cost (USD) for escalated invocations. 0 = unlimited. */
+      maxEscalationCostUsd: z.number().min(0).default(0),
+      /** Retry attempt number at which to escalate model tier. */
+      escalateOnRetryAttempt: z.number().int().min(1).default(2),
+    }).optional(),
     git: z.object({
       /** Enable automatic git init/add/commit operations. */
       enabled: z.boolean().default(true),

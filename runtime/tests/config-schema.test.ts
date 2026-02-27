@@ -365,8 +365,65 @@ describe('MigrationConfigSchema', () => {
       expect(result.options.contextWindowTokens).toBeUndefined();
     });
 
-    describe('kbIndex option', () => {
-      it('should leave kbIndex undefined when omitted', () => {
+    describe('modelRouting option', () => {
+      it('should leave modelRouting undefined when omitted', () => {
+        const result = MigrationConfigSchema.parse(validConfig);
+        expect(result.options.modelRouting).toBeUndefined();
+      });
+
+      it('should default enabled to false when modelRouting is {}', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { modelRouting: {} },
+        });
+        expect(result.options.modelRouting?.enabled).toBe(false);
+      });
+
+      it('should default thresholds and caps correctly', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { modelRouting: {} },
+        });
+        const mr = result.options.modelRouting;
+        expect(mr?.heavyThreshold).toBe(40);
+        expect(mr?.criticalThreshold).toBe(70);
+        expect(mr?.maxCriticalTasks).toBe(0);
+        expect(mr?.maxEscalationCostUsd).toBe(0);
+        expect(mr?.escalateOnRetryAttempt).toBe(2);
+      });
+
+      it('should accept modelRouting with enabled: true and heavyModel', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { modelRouting: { enabled: true, heavyModel: 'claude-opus-4.5' } },
+        });
+        expect(result.options.modelRouting?.enabled).toBe(true);
+        expect(result.options.modelRouting?.heavyModel).toBe('claude-opus-4.5');
+      });
+
+      it('should accept criticalAgents as an array of strings', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { modelRouting: { criticalAgents: ['code-migrator', 'parity-verifier'] } },
+        });
+        expect(result.options.modelRouting?.criticalAgents).toEqual(['code-migrator', 'parity-verifier']);
+      });
+
+      it('should accept criticalTaskPatterns as an array of strings', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { modelRouting: { criticalTaskPatterns: ['task-00*'] } },
+        });
+        expect(result.options.modelRouting?.criticalTaskPatterns).toEqual(['task-00*']);
+      });
+
+      it('should parse config without modelRouting with enabled: false default', () => {
+        const result = MigrationConfigSchema.parse(validConfig);
+        expect(result.options.modelRouting?.enabled ?? false).toBe(false);
+      });
+    });
+
+    describe('kbIndex option', () => {      it('should leave kbIndex undefined when omitted', () => {
         const result = MigrationConfigSchema.parse(validConfig);
         expect(result.options.kbIndex).toBeUndefined();
       });
