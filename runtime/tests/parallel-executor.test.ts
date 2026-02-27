@@ -148,7 +148,6 @@ describe('ParallelExecutor', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
@@ -182,7 +181,6 @@ describe('ParallelExecutor', () => {
         options: {
           maxParallelAgents: 1,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
@@ -213,7 +211,6 @@ describe('ParallelExecutor', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,

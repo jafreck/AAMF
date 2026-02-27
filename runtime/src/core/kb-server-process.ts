@@ -12,8 +12,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { openReadOnly } from '../kb-server/db.js';
-import { getKbMeta } from '../indexer/db.js';
-import { SentenceTransformersProvider } from '../indexer/embedder.js';
+import type { EmbeddingProvider } from '../indexer/embedder.js';
 import { createKbMcpServer } from '../kb-server/server.js';
 import type { McpServerConfig } from '../agents/types.js';
 
@@ -38,10 +37,16 @@ export class KbServerProcess {
   private httpServer: http.Server | null = null;
   private _port: number | null = null;
   private db: import('better-sqlite3').Database | null = null;
-  private embedder: SentenceTransformersProvider | null = null;
+  private readonly embedder: EmbeddingProvider | undefined;
 
-  constructor(dbPath: string) {
+  /**
+   * @param dbPath     Path to the KB SQLite database.
+   * @param embedder   Optional pre-initialised embedding provider for semantic search.
+   *                   The caller owns the lifecycle — `stop()` will NOT dispose it.
+   */
+  constructor(dbPath: string, embedder?: EmbeddingProvider) {
     this.dbPath = dbPath;
+    this.embedder = embedder;
   }
 
   /**
@@ -64,19 +69,7 @@ export class KbServerProcess {
 
     this.db = openReadOnly(this.dbPath);
 
-    // Spin up a live embedder if the KB was indexed with one.
-    const modelName = getKbMeta(this.db, 'embedding_model');
-    if (modelName) {
-      this.embedder = new SentenceTransformersProvider(modelName);
-      try {
-        await this.embedder.init();
-      } catch {
-        // Model not available at serve time — fall back to structural search only.
-        this.embedder = null;
-      }
-    }
-
-    const mcpServer = createKbMcpServer(this.db, this.dbPath, this.embedder ?? undefined);
+    const mcpServer = createKbMcpServer(this.db, this.dbPath, this.embedder);
 
     // Stateless transport: each POST request gets its own temporary session.
     const transport = new StreamableHTTPServerTransport({
@@ -116,12 +109,6 @@ export class KbServerProcess {
    * Resolves immediately if the server was never started.
    */
   async stop(): Promise<void> {
-    // Dispose the embedder (kills the Python subprocess if one was started).
-    if (this.embedder) {
-      try { await this.embedder.dispose(); } catch { /* best-effort */ }
-      this.embedder = null;
-    }
-
     // Close the read-only DB handle.
     if (this.db) {
       try { this.db.close(); } catch { /* best-effort */ }

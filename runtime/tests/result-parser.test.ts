@@ -9,7 +9,6 @@ import {
   MigrationOrchestratorOutput,
   ImpactAssessorOutput,
   KnowledgeBuilderOutput,
-  LargeFileAnalyzerOutput,
   MigrationPlannerOutput,
   AdjudicatorOutput,
   CodeMigratorOutput,
@@ -327,10 +326,6 @@ Here are the tasks:
 
     it('should validate KnowledgeBuilderOutput', () => {
       expect(() => KnowledgeBuilderOutput.parse({ status: 'completed', agent: 'knowledge-builder' })).not.toThrow();
-    });
-
-    it('should validate LargeFileAnalyzerOutput', () => {
-      expect(() => LargeFileAnalyzerOutput.parse({ status: 'completed', agent: 'large-file-analyzer' })).not.toThrow();
     });
 
     it('should validate MigrationPlannerOutput', () => {

@@ -37,10 +37,10 @@ export const PHASES: readonly PhaseDefinition[] = [
   {
     id: 2,
     name: 'Knowledge Base Construction',
-    description: 'Build comprehensive documentation of all source code modules, dependencies, and patterns',
-    agents: ['knowledge-builder', 'large-file-analyzer'],
+    description: 'Build high-level architecture, risk, and integration documentation for migration planning',
+    agents: ['knowledge-builder'],
     critical: true,
-    parallel: true,   // multiple large-file-analyzer instances can run in parallel
+    parallel: false,
   },
   {
     id: 3,

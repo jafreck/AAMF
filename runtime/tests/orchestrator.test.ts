@@ -207,7 +207,6 @@ describe('MigrationOrchestrator', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 1,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
@@ -235,7 +234,6 @@ describe('MigrationOrchestrator', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 2,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
@@ -274,7 +272,6 @@ describe('MigrationOrchestrator', () => {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 1,
-            largeFileThreshold: 500,
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
@@ -323,7 +320,6 @@ describe('MigrationOrchestrator', () => {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 1,
-            largeFileThreshold: 500,
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
@@ -376,7 +372,6 @@ describe('MigrationOrchestrator', () => {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 1,
-            largeFileThreshold: 500,
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
@@ -484,6 +479,62 @@ describe('MigrationOrchestrator', () => {
       expect(agentsInvoked).not.toContain('migration-planner');
       expect(agentsInvoked).not.toContain('code-migrator');
     });
+
+    it('should re-run phase 0 on resume when kbIndex is enabled', async () => {
+      const launcherFn = createMockLauncher();
+      const config = createMockConfig({
+        source: {
+          path: tempDir,
+          language: 'python',
+          excludePatterns: ['node_modules', '.git'],
+        },
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: true,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          kbIndex: { enabled: true, embeddings: { enabled: false } },
+        },
+      });
+
+      const logger = createSilentLogger(tempDir);
+      const progressDir = join(tempDir, '.aamf', 'migration', config.projectName);
+      await ensureDir(progressDir);
+      await writeFile(join(progressDir, 'kb.db'), '');
+
+      const checkpoint = new CheckpointManager(progressDir, logger);
+      await checkpoint.load(config.projectName);
+      await checkpoint.completePhase(0, join(progressDir, 'kb.db'));
+
+      const progressFile = join(progressDir, 'progress.md');
+      const progress = new ProgressWriter(progressFile);
+      await progress.initialize(config);
+
+      const mockLauncher = new MockAgentLauncher(launcherFn);
+      const orchestrator = new MigrationOrchestrator(
+        config,
+        checkpoint,
+        mockLauncher as any,
+        progress,
+        logger,
+        tempDir,
+      );
+
+      const phase0Spy = vi.spyOn(orchestrator as any, 'executePhase0');
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      expect(phase0Spy).toHaveBeenCalledTimes(1);
+      phase0Spy.mockRestore();
+    });
   });
 
   // ─── Critical Phase Failure ────────────────────────────────────────
@@ -516,7 +567,6 @@ describe('MigrationOrchestrator', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 1,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
@@ -590,7 +640,6 @@ describe('MigrationOrchestrator', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           tokenBudget: 1000,
           dryRun: false,
@@ -627,7 +676,6 @@ describe('MigrationOrchestrator', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           tokenBudget: 1000,
           dryRun: false,
@@ -828,7 +876,6 @@ describe('MigrationOrchestrator', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           tokenBudget: 500,
           dryRun: false,
@@ -909,7 +956,6 @@ describe('MigrationOrchestrator', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 2,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
@@ -967,7 +1013,6 @@ describe('MigrationOrchestrator', () => {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 2,
-            largeFileThreshold: 500,
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
@@ -1110,7 +1155,6 @@ describe('MigrationOrchestrator', () => {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 1,
-            largeFileThreshold: 500,
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
@@ -1187,7 +1231,6 @@ describe('MigrationOrchestrator', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
@@ -1228,7 +1271,7 @@ describe('MigrationOrchestrator', () => {
       {
         const logger = createSilentLogger(tempDir);
         const infoSpy = vi.spyOn(logger, 'info');
-        const config = createMockConfig({ options: { maxParallelAgents: 3, maxRetriesPerTask: 3, largeFileThreshold: 500, maxLinesPerTask: 500, dryRun: false, resume: false, invocationDelayMs: 0, buildConcurrency: 1, continueOnBlocked: true, maxBlockedTasks: 0, maxInfraRetries: 3, avgTokensPerTask: 1000 } });
+        const config = createMockConfig({ options: { maxParallelAgents: 3, maxRetriesPerTask: 3, maxLinesPerTask: 500, dryRun: false, resume: false, invocationDelayMs: 0, buildConcurrency: 1, continueOnBlocked: true, maxBlockedTasks: 0, maxInfraRetries: 3, avgTokensPerTask: 1000 } });
         const progressDir2 = join(tempDir, 'sub1', '.aamf', 'migration', config.projectName);
         await ensureDir(progressDir2);
         const checkpoint = new CheckpointManager(progressDir2, logger);
@@ -1250,7 +1293,7 @@ describe('MigrationOrchestrator', () => {
         const infoSpy = vi.spyOn(logger, 'info');
         const config = createMockConfig({
           target: { language: 'typescript', outputPath: '/tmp/target', testCommand: 'npm test' },
-          options: { maxParallelAgents: 3, maxRetriesPerTask: 3, largeFileThreshold: 500, maxLinesPerTask: 500, dryRun: false, resume: false, invocationDelayMs: 0, buildConcurrency: 1, continueOnBlocked: true, maxBlockedTasks: 0, maxInfraRetries: 3, avgTokensPerTask: 1000 },
+          options: { maxParallelAgents: 3, maxRetriesPerTask: 3, maxLinesPerTask: 500, dryRun: false, resume: false, invocationDelayMs: 0, buildConcurrency: 1, continueOnBlocked: true, maxBlockedTasks: 0, maxInfraRetries: 3, avgTokensPerTask: 1000 },
         });
         const progressDir3 = join(tempDir, 'sub2', '.aamf', 'migration', config.projectName);
         await ensureDir(progressDir3);
@@ -1727,7 +1770,6 @@ describe('MigrationOrchestrator', () => {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 3,
-            largeFileThreshold: 500,
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
@@ -1760,7 +1802,6 @@ describe('MigrationOrchestrator', () => {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 3,
-            largeFileThreshold: 500,
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
@@ -1801,7 +1842,6 @@ describe('MigrationOrchestrator', () => {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 3,
-            largeFileThreshold: 500,
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,
@@ -1866,7 +1906,6 @@ describe('MigrationOrchestrator', () => {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 3,
-            largeFileThreshold: 500,
             maxLinesPerTask: 500,
             dryRun: false,
             resume: false,

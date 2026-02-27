@@ -29,22 +29,17 @@ The knowledge base must serve as a **context-efficient substitute for reading so
      - Side effects (I/O, state mutations, external calls)
      - Key business logic summary
 
-3. **Large File Analysis**
-   - Identify all files >500 lines of code.
-   - For each, launch the `large-file-analyzer` sub-agent to produce a detailed decomposition document.
-   - The decomposition must identify logical sections, classes, functions, and natural split points for piecemeal migration.
-
-4. **Pattern Catalog**
+3. **Pattern Catalog**
    - Document recurring patterns (error handling, logging, serialization, auth, etc.)
    - Note anti-patterns or legacy constructs that need special migration attention
    - Document any code generation or metaprogramming patterns
 
-5. **Data Model Documentation**
+4. **Data Model Documentation**
    - Document database schemas, ORM models, data transfer objects
    - Map data flow through the system
    - Document serialization formats (JSON schemas, protobuf, XML, etc.)
 
-6. **External Integration Points**
+5. **External Integration Points**
    - APIs consumed (HTTP clients, gRPC, message queues)
    - APIs exposed (REST endpoints, GraphQL, WebSocket)
    - File I/O patterns
@@ -64,26 +59,15 @@ knowledge-base/
 ├── modules/
 │   ├── {module-name}.md        # Per-module documentation
 │   └── ...
-└── large-files/
-    ├── {file-name}.analysis.md # Per-large-file decomposition
-    └── ...
 ```
 
-## Sub-Agents (launched via CLI)
+## KB MCP Tools
 
-| Agent | Purpose |
-|-------|---------|
-| `large-file-analyzer` | Detailed analysis and decomposition of files >500 lines |
+If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer MCP tools over exhaustive code layout markdown:
 
-Launch `large-file-analyzer` for each file identified as >500 lines:
-```
-copilot --agent large-file-analyzer \
-  --context <file-path> \
-  --progress-dir .aamf/migration/{projectName} \
-  --output knowledge-base/large-files/{file-name}.analysis.md
-```
-
-Multiple `large-file-analyzer` instances may be launched in parallel (read-only agent).
+- **`kb_graph`** for module and symbol dependency topology.
+- **`kb_lookup`** for API surface/signature/source locations.
+- **`kb_snippet`** for targeted line-range extraction when behavior details are needed.
 
 ## Context Window Management
 
@@ -145,7 +129,6 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
   "status": "<completed | failed | needs-review>",
   "outputFiles": ["<paths to knowledge base files written>"],
   "modulesDocumented": 0,
-  "largeFilesAnalyzed": 0,
   "notes": "<summary of coverage and any modules that could not be fully documented>"
 }
 ```
@@ -159,12 +142,10 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
   "outputFiles": [
     ".aamf/migration/my-project/knowledge-base/index.md",
     ".aamf/migration/my-project/knowledge-base/architecture.md",
-    ".aamf/migration/my-project/knowledge-base/modules/auth.md",
-    ".aamf/migration/my-project/knowledge-base/large-files/payment-processor.analysis.md"
+      ".aamf/migration/my-project/knowledge-base/modules/auth.md"
   ],
   "modulesDocumented": 12,
-  "largeFilesAnalyzed": 2,
-  "notes": "All modules documented. Two files exceeded 500 lines and were delegated to large-file-analyzer."
+   "notes": "All modules documented. KB index-backed graph and symbol lookups were used for structural detail."
 }
 ```
 

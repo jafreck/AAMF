@@ -13,7 +13,6 @@ You are the **Migration Planner** — responsible for creating a comprehensive, 
 1. **Analyze Inputs**
    - Read the impact assessment (`.aamf/migration/{projectName}/impact-assessment.md`)
    - Read the knowledge base index (`.aamf/migration/{projectName}/knowledge-base/index.md`)
-   - Read large file analyses (`.aamf/migration/{projectName}/knowledge-base/large-files/`)
    - Understand module dependencies, complexity ratings, and risk factors
 
 2. **Generate Competing Plans**
@@ -32,7 +31,7 @@ You are the **Migration Planner** — responsible for creating a comprehensive, 
 
 4. **Produce the Final Migration Plan**
    - Break down the chosen strategy into individual, atomic migration tasks.
-   - **Large files** (identified by large-file-analyzer) must be decomposed into separate tasks per migration chunk.
+  - Use KB index graph/symbol ranges to decompose large files into separate tasks per migration chunk.
    - Each task must be independently executable and verifiable.
 
 ## Task Definition Format
@@ -153,7 +152,7 @@ copilot --agent adjudicator \
 
 - **Do not read source code files** — rely entirely on the knowledge base and impact assessment.
 - Read only the knowledge base documents relevant to the current planning phase.
-- When generating task breakdowns for large files, read only the corresponding `large-files/{name}.analysis.md` — not the source file itself.
+- Use KB index tooling (graph/lookup/snippet) for code-layout and dependency detail, and keep markdown KB focused on high-level architecture and risks.
 - Write the plan incrementally, one phase at a time.
 - If the plan exceeds ~200 tasks, organize into sub-plans by module and reference them from the main plan.
 

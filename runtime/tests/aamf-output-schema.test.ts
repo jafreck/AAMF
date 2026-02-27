@@ -3,7 +3,6 @@ import {
   MigrationOrchestratorOutput,
   ImpactAssessorOutput,
   KnowledgeBuilderOutput,
-  LargeFileAnalyzerOutput,
   MigrationPlannerOutput,
   AdjudicatorOutput,
   CodeMigratorOutput,
@@ -54,19 +53,6 @@ describe('Per-agent output schemas', () => {
     it('rejects wrong agent literal', () => {
       expect(() =>
         KnowledgeBuilderOutput.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
-      ).toThrow();
-    });
-  });
-
-  describe('LargeFileAnalyzerOutput', () => {
-    it('accepts valid output', () => {
-      expect(() =>
-        LargeFileAnalyzerOutput.parse({ status: VALID_STATUS, agent: 'large-file-analyzer' }),
-      ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        LargeFileAnalyzerOutput.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
       ).toThrow();
     });
   });

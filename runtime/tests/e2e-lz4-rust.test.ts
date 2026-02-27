@@ -96,7 +96,6 @@ async function writeMigrationConfig(): Promise<void> {
     options: {
       maxParallelAgents: 3,
       maxRetriesPerTask: 2,
-      largeFileThreshold: 500,
       maxLinesPerTask: 500,
       tokenBudget: 500000,
       dryRun: false,
@@ -484,7 +483,6 @@ describe.skipIf(!runKbIndexE2E)('E2E lz4 C → Rust Migration with KB Index', ()
       options: {
         maxParallelAgents: 3,
         maxRetriesPerTask: 2,
-        largeFileThreshold: 500,
         maxLinesPerTask: 500,
         tokenBudget: 500000,
         dryRun: false,

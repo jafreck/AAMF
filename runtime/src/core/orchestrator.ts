@@ -169,6 +169,32 @@ export class MigrationOrchestrator {
       this.logger.info(`Running single phase: ${this.singlePhase}`);
     }
 
+    const kbEnabled =
+      this.config.options.kbIndex?.enabled ||
+      process.env['AAMF_USE_KB_INDEX'] === '1';
+
+    const phase0InSelection = phasesToRun.some((p) => p.id === 0);
+    const phase0SkippedByResume =
+      this.singlePhase == null &&
+      phase0InSelection &&
+      resumePoint.phase > 0 &&
+      !kbEnabled;
+
+    // If this invocation won't execute Phase 0 (for example: resume from later
+    // checkpoint or run a later single phase), but KB indexing is enabled and a
+    // previously built kb.db exists, start the KB server up-front so downstream
+    // phases/agents retain KB access.
+    if (kbEnabled && (phase0SkippedByResume || !phase0InSelection)) {
+      if (await fileExists(this.kbDbPath)) {
+        await this.startKbServer();
+      } else {
+        this.logger.warn(
+          `KB indexing is enabled, but ${this.kbDbPath} is missing. ` +
+          'Run Phase 0 first to enable KB access for resumed/later phases.',
+        );
+      }
+    }
+
     try {
       for (const phase of phasesToRun) {
         // Skip optional Phase 0 (KB Indexing) unless enabled via config or env var
@@ -194,7 +220,11 @@ export class MigrationOrchestrator {
 
         // Skip already-completed phases on resume (but not when explicitly
         // requesting a single phase via --phase).
-        if (this.singlePhase == null && phase.id < resumePoint.phase) {
+        if (
+          this.singlePhase == null &&
+          phase.id < resumePoint.phase &&
+          !(phase.id === 0 && kbEnabled)
+        ) {
           phaseResults.push({
             phase: phase.id,
             name: phase.name,
@@ -441,7 +471,7 @@ export class MigrationOrchestrator {
 
   /** Start the KB MCP server (HTTP transport). */
   private async startKbServer(): Promise<void> {
-    this.kbServer = new KbServerProcess(this.kbDbPath);
+    this.kbServer = new KbServerProcess(this.kbDbPath, this.embedder);
     try {
       await this.kbServer.start();
       this.logger.info('KB server started and ready');
@@ -506,35 +536,6 @@ export class MigrationOrchestrator {
         exitCode: kbResult.exitCode,
         stderr: kbResult.stderr,
       };
-    }
-
-    // 2. Find large files from KB output — launch analyzers in parallel
-    const largeFilesDir = join(this.progressDir, 'knowledge-base', 'large-files');
-    if (await fileExists(largeFilesDir)) {
-      const { readdir } = await import('node:fs/promises');
-      const files = await readdir(largeFilesDir);
-      if (files.length > 0) {
-        const invocations: AgentInvocation[] = [];
-        for (const file of files) {
-          const ctx = await this.contextBuilder.buildContext(
-            'large-file-analyzer',
-            2,
-            `lfa-${file}`,
-            { filePath: join(largeFilesDir, file) },
-          );
-          invocations.push(
-            this.buildInvocation('large-file-analyzer', ctx, 2, `lfa-${file}`),
-          );
-        }
-
-        const parallel = new ParallelExecutor(
-          this.config.options.maxParallelAgents,
-          (inv) => this.launcher.launchAgent(inv),
-          this.logger,
-        );
-        const results = await parallel.executeAll(invocations);
-        for (const r of results) this.recordTokens(r, 2);
-      }
     }
 
     const outputPath = join(this.progressDir, 'knowledge-base');
@@ -1469,7 +1470,6 @@ export class MigrationOrchestrator {
     const KB_AWARE_AGENTS: AgentName[] = [
       'impact-assessor',
       'knowledge-builder',
-      'large-file-analyzer',
       'migration-planner',
       'adjudicator',
       'code-migrator',

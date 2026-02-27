@@ -172,7 +172,7 @@ export class IndexBuilder {
       if (this.embedder) {
         const [[embedding]] = await Promise.all([this.embedder.embed([summary])]);
         db.prepare(
-          'INSERT OR REPLACE INTO symbol_semantic_embeddings(rowid, embedding) VALUES (?, json(?))',
+          'INSERT OR REPLACE INTO symbol_semantic_embeddings(rowid, embedding) VALUES (CAST(? AS INTEGER), json(?))',
         ).run(symbolId, JSON.stringify(embedding));
       }
     } finally {
@@ -349,7 +349,7 @@ export class IndexBuilder {
       .all() as Array<{ id: number; name: string; signature: string }>;
 
     const insertEmbed = db.prepare(
-      'INSERT OR REPLACE INTO symbol_embeddings(rowid, embedding) VALUES (?, json(?))',
+      'INSERT OR REPLACE INTO symbol_embeddings(rowid, embedding) VALUES (CAST(? AS INTEGER), json(?))',
     );
 
     for (let i = 0; i < symbols.length; i += EMBED_BATCH_SIZE) {
