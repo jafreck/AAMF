@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MigrationRuntime } from '../src/core/runtime.js';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { MigrationRuntime, validateSourceAvailability } from '../src/core/runtime.js';
 import type { MigrationResult } from '../src/agents/types.js';
 
 /** Build a minimal MigrationResult for printSummary tests. */
@@ -17,6 +20,52 @@ function makeResult(overrides: Partial<MigrationResult> = {}): MigrationResult {
 }
 
 describe('MigrationRuntime', () => {
+  describe('validateSourceAvailability', () => {
+    it('passes when source directory and entry points exist', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'aamf-runtime-test-'));
+      const sourceDir = join(root, 'src');
+      await mkdir(join(sourceDir, 'lib'), { recursive: true });
+      await writeFile(join(sourceDir, 'lib', 'entry.c'), 'int main(void) { return 0; }\n', 'utf-8');
+
+      const config = {
+        source: {
+          path: sourceDir,
+          entryPoints: ['lib/entry.c'],
+        },
+      } as any;
+
+      await expect(validateSourceAvailability(config)).resolves.toBeUndefined();
+      await rm(root, { recursive: true, force: true });
+    });
+
+    it('fails when source directory is missing', async () => {
+      const config = {
+        source: {
+          path: '/tmp/aamf-does-not-exist-source',
+          entryPoints: ['main.c'],
+        },
+      } as any;
+
+      await expect(validateSourceAvailability(config)).rejects.toThrow('Source path does not exist');
+    });
+
+    it('fails when configured entry point is missing', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'aamf-runtime-test-'));
+      const sourceDir = join(root, 'src');
+      await mkdir(sourceDir, { recursive: true });
+
+      const config = {
+        source: {
+          path: sourceDir,
+          entryPoints: ['missing.c'],
+        },
+      } as any;
+
+      await expect(validateSourceAvailability(config)).rejects.toThrow('Configured source entry point not found');
+      await rm(root, { recursive: true, force: true });
+    });
+  });
+
   describe('printSummary', () => {
     let runtime: MigrationRuntime;
     let consoleSpy: ReturnType<typeof vi.spyOn>;

@@ -1,4 +1,5 @@
 import { join, resolve } from 'node:path';
+import { readdir } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
 import { CheckpointManager } from './checkpoint.js';
@@ -22,7 +23,7 @@ import { RetryExecutor } from '../execution/retry.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
 import { Logger } from '../logging/logger.js';
-import { fileExists, countFileLines, atomicWrite, readJson } from '../util/fs.js';
+import { fileExists, countFileLines, atomicWrite, readJson, ensureDir } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
 import { IndexBuilder } from '../indexer/index.js';
 import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
@@ -560,6 +561,9 @@ export class MigrationOrchestrator {
     // ── Step 3a: migration-planner (fast, serial) ──────────────────────────
     //   Reads the knowledge base and emits planning/groups.json +
     //   planning/strategy.md.  Expected to take ~5-10 min.
+    //   Pre-create the planning directory so the agent can write files into it
+    //   (migration-planner does not have shell/execute access to mkdir itself).
+    await ensureDir(planningDir);
     const checkpointState = this.checkpoint.getState();
     if (!checkpointState.phase3aComplete) {
       const planContext = await this.contextBuilder.buildContext('migration-planner', 3);
@@ -590,6 +594,32 @@ export class MigrationOrchestrator {
         const adjInv = this.buildInvocation('adjudicator', adjCtx, 3);
         const adjResult = await this.launcher.launchAgent(adjInv);
         this.recordTokens(adjResult, 3);
+      } else {
+        // Helpful diagnostics: if strategy variant artifacts exist without the
+        // canonical competing-strategies.md trigger file, adjudication is
+        // skipped and planning continues.
+        try {
+          const planningEntries = await readdir(planningDir);
+          const progressEntries = await readdir(this.progressDir);
+          const hasVariantArtifacts = [...planningEntries, ...progressEntries]
+            .some((name) => /^strategy-[a-z0-9_-]+\.md$/i.test(name));
+
+          if (hasVariantArtifacts) {
+            this.logger.warn(
+              'Detected strategy-* markdown artifacts but missing competing-strategies.md; ' +
+              'skipping adjudicator. If multiple viable strategies exist, write ' +
+              'competing-strategies.md in the phase progress directory.',
+            );
+          } else {
+            this.logger.info(
+              'No competing-strategies.md found; adjudicator not invoked (single strategy assumed).',
+            );
+          }
+        } catch {
+          this.logger.info(
+            'No competing-strategies.md found; adjudicator not invoked (single strategy assumed).',
+          );
+        }
       }
 
       // Checkpoint after step 3a.  If step 3b fails partway through, the

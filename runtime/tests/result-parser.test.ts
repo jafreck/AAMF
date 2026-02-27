@@ -10,6 +10,7 @@ import {
   ImpactAssessorOutput,
   KnowledgeBuilderOutput,
   MigrationPlannerOutput,
+  TaskDecomposerOutput,
   AdjudicatorOutput,
   CodeMigratorOutput,
   ParityVerifierOutput,
@@ -503,6 +504,48 @@ intermediate text
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.status).toBe('needs-review');
+      }
+    });
+
+    it('should parse task-decomposer output when some task detail fields are omitted', () => {
+      const stdout = `\
+\
+\`\`\`aamf-json
+{
+  "status": "completed",
+  "agent": "task-decomposer",
+  "taskId": "group-3-compress-strategies",
+  "tasks": [
+    {
+      "id": "task-301",
+      "name": "Migrate CWKSP arena allocator",
+      "sourceFiles": ["lib/compress/zstd_cwksp.h"],
+      "targetFiles": ["src/compress/cwksp.rs"],
+      "knowledgeBaseRef": "knowledge-base/modules/compress.md",
+      "dependencies": [],
+      "complexity": "complex",
+      "description": "Detailed task",
+      "acceptanceCriteria": ["criterion"],
+      "parityChecks": ["check"]
+    },
+    {
+      "id": "task-302",
+      "name": "Migrate fast matchfinder",
+      "sourceFiles": ["lib/compress/zstd_fast.c"],
+      "targetFiles": ["src/compress/fast.rs"],
+      "knowledgeBaseRef": "knowledge-base/modules/compress.md",
+      "dependencies": ["task-301"],
+      "complexity": "moderate"
+    }
+  ]
+}
+\`\`\``;
+
+      const result = ResultParser.parseAamfOutput(stdout, TaskDecomposerOutput);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.agent).toBe('task-decomposer');
+        expect(result.data.tasks?.length).toBe(2);
       }
     });
   });

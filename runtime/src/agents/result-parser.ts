@@ -42,9 +42,9 @@ export const TaskDecomposerOutput = AamfOutputBase.extend({
     knowledgeBaseRef: z.string(),
     dependencies: z.array(z.string()),
     complexity: z.enum(['simple', 'moderate', 'complex']),
-    description: z.string(),
-    acceptanceCriteria: z.array(z.string()),
-    parityChecks: z.array(z.string()),
+    description: z.string().optional(),
+    acceptanceCriteria: z.array(z.string()).optional(),
+    parityChecks: z.array(z.string()).optional(),
     lineRange: z.object({ start: z.number(), end: z.number() }).optional(),
   })).optional(),
 });
