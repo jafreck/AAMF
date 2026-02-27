@@ -1,4 +1,5 @@
 import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
@@ -1749,14 +1750,18 @@ export class MigrationOrchestrator {
    * through this method for consistent event emission.
    */
   private async launchAgentWithEvents(invocation: AgentInvocation): Promise<AgentResult> {
+    const invocationId = randomUUID();
+    const taggedInvocation = { ...invocation, invocationId };
+
     this.logger.event({
       type: 'agent-launched',
       agent: invocation.agent,
       taskId: invocation.taskId,
       phase: invocation.phase,
+      invocationId,
     });
 
-    const result = await this.launcher.launchAgent(invocation);
+    const result = await this.launcher.launchAgent(taggedInvocation);
 
     if (result.success) {
       this.logger.event({
@@ -1773,7 +1778,6 @@ export class MigrationOrchestrator {
         agent: result.agent,
         taskId: result.taskId,
         error: result.error ?? 'unknown',
-        attempt: 1,
         invocationId: result.invocationId,
       });
     }
