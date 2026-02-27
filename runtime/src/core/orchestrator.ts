@@ -164,6 +164,7 @@ export class MigrationOrchestrator {
     private readonly progress: ProgressWriter,
     private readonly logger: Logger,
     projectRoot: string,
+    runId: string,
     singlePhase?: number,
   ) {
     this.projectRoot = projectRoot;
@@ -183,7 +184,7 @@ export class MigrationOrchestrator {
       : config.copilot.costOverrides;
     this.costEstimatorInstance = new CostEstimator(overrides);
     this.reportGenerator = new ReportGenerator();
-    this.runId = randomUUID();
+    this.runId = runId;
   }
 
   // ─── Public API ──────────────────────────────────────────────────────

@@ -72,6 +72,7 @@ export class MigrationRuntime {
   private progressDir!: string;
   private projectRoot!: string;
   private phase?: number;
+  private runId!: string;
 
   async initialize(options: RuntimeOptions): Promise<void> {
     // 1. Load config
@@ -100,8 +101,8 @@ export class MigrationRuntime {
     });
 
     // 3a. Generate a stable runId for this execution
-    const runId = randomUUID();
-    this.logger.setRunId(runId);
+    this.runId = randomUUID();
+    this.logger.setRunId(this.runId);
 
     // 4. Create checkpoint manager
     this.checkpoint = new CheckpointManager(this.progressDir, this.logger);
@@ -116,7 +117,7 @@ export class MigrationRuntime {
     // 7. Validate agent files exist
     await this.validateAgentFiles();
 
-    this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName} (runId=${runId})`);
+    this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName} (runId=${this.runId})`);
     this.logger.info(`Source: ${this.config.source.language} → Target: ${this.config.target.language}`);
 
     // 8. Setup graceful shutdown
@@ -159,6 +160,7 @@ export class MigrationRuntime {
       this.progress,
       this.logger,
       this.projectRoot,
+      this.runId,
       this.phase,
     );
 

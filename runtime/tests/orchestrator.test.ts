@@ -179,6 +179,7 @@ async function setupOrchestrator(
     progress,
     logger,
     tempDir,
+    'test-run-id',
     singlePhase,
   );
 
@@ -512,6 +513,7 @@ describe('MigrationOrchestrator', () => {
         progress,
         logger,
         tempDir,
+        'test-run-id',
       );
 
       await writeMigrationPlan(progressDir);
@@ -588,6 +590,7 @@ describe('MigrationOrchestrator', () => {
         progress,
         logger,
         tempDir,
+        'test-run-id',
       );
 
       const phase0Spy = vi.spyOn(orchestrator as any, 'executePhase0');
@@ -770,6 +773,7 @@ describe('MigrationOrchestrator', () => {
         progress,
         logger,
         tempDir,
+        'test-run-id',
       );
 
       await writeMigrationPlan(progressDir);
@@ -1446,7 +1450,7 @@ describe('MigrationOrchestrator', () => {
       await progress.initialize(config);
 
       const mockLauncher = new MockAgentLauncher(launcherFn);
-      const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, tempDir);
+      const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, tempDir, 'test-run-id');
 
       await writeMigrationPlan(progressDir);
       await orchestrator.run();
@@ -1472,7 +1476,7 @@ describe('MigrationOrchestrator', () => {
         const progress = new ProgressWriter(join(progressDir2, 'progress.md'));
         await progress.initialize(config);
         const mockLauncher = new MockAgentLauncher(launcherFn);
-        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub1'));
+        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub1'), 'test-run-id');
         await writeMigrationPlan(progressDir2);
         await orchestrator.run();
         // 2 tasks * 1000 * 2 = 4,000
@@ -1495,7 +1499,7 @@ describe('MigrationOrchestrator', () => {
         const progress = new ProgressWriter(join(progressDir3, 'progress.md'));
         await progress.initialize(config);
         const mockLauncher = new MockAgentLauncher(launcherFn);
-        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub2'));
+        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub2'), 'test-run-id');
         await writeMigrationPlan(progressDir3);
         await orchestrator.run();
         // 2 tasks * 1000 * 3 = 6,000
@@ -1707,6 +1711,7 @@ describe('MigrationOrchestrator', () => {
         progress2,
         logger,
         tempDir,
+        'test-run-id',
       );
 
       const infoSpy = vi.spyOn(logger, 'info');
@@ -1811,7 +1816,7 @@ describe('MigrationOrchestrator', () => {
       await checkpoint1.load(config.projectName);
       const progress1 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress1.initialize(config);
-      const orch1 = new MigrationOrchestrator(config, checkpoint1, new MockAgentLauncher(launcherFn) as any, progress1, logger, tempDir);
+      const orch1 = new MigrationOrchestrator(config, checkpoint1, new MockAgentLauncher(launcherFn) as any, progress1, logger, tempDir, 'test-run-id');
       const result1 = await orch1.run();
 
       expect(result1.cumulativeDuration).toBe(result1.totalDuration);
@@ -1831,7 +1836,7 @@ describe('MigrationOrchestrator', () => {
 
       const progress2 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress2.initialize(config2);
-      const orch2 = new MigrationOrchestrator(config2, checkpoint2, new MockAgentLauncher(launcherFn) as any, progress2, logger, tempDir);
+      const orch2 = new MigrationOrchestrator(config2, checkpoint2, new MockAgentLauncher(launcherFn) as any, progress2, logger, tempDir, 'test-run-id');
       const result2 = await orch2.run();
 
       expect(result2.cumulativeDuration).toBe(afterFirst + result2.totalDuration);
