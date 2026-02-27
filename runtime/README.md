@@ -77,6 +77,7 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | | `tokenBudget` | Total token budget across all LLM calls. Default: `2000000`. |
 | | `dryRun` | If `true`, validates config and plans work without executing agents. Default: `false`. |
 | | `resume` | If `true`, resumes from the last checkpoint instead of starting fresh. Default: `false`. |
+| | `keepArtifacts` | If `true`, preserves `.aamf` and output directories after migration. Overridden by `AAMF_KEEP_ARTIFACTS=1` env var. Default: `false`. |
 | **copilot** | `cliCommand` | Path or name of the Copilot CLI binary. Default: `"copilot"`. |
 | | `model` | Model to use via `--model` flag (e.g. `gpt-4o`, `claude-sonnet-4`). |
 | | `agentDir` | Path to the directory containing `.agent.md` prompt files. Default: `".github/agents"`. |
@@ -174,6 +175,26 @@ The runtime writes several artifacts to track migration progress:
 - **`checkpoint.json`** — Machine-readable snapshot of migration state, enabling `--resume`. Located alongside `progress.md`.
 - **Per-agent logs** — Each agent invocation writes stdout/stderr to the `logs/` directory with timestamped filenames.
 - **`migration.log`** — Unified log of all runtime events (phase transitions, task completions, errors, timing).
+
+## Artifact Retention
+
+By default, AAMF cleans up the `.aamf` checkpoint directory and the target output directory (`target.outputPath`) after a migration completes. To preserve these directories for post-run inspection or debugging, you can enable artifact retention in two ways:
+
+1. **Config option** — set `options.keepArtifacts` to `true` in `migration.config.json`:
+   ```json
+   { "options": { "keepArtifacts": true } }
+   ```
+2. **Environment variable** — set `AAMF_KEEP_ARTIFACTS=1` at runtime:
+   ```bash
+   AAMF_KEEP_ARTIFACTS=1 npx aamf migrate -c migration.config.json
+   ```
+
+**Precedence:** The environment variable takes priority over the config file. If `AAMF_KEEP_ARTIFACTS=1` is set, artifacts are retained regardless of the `keepArtifacts` config value.
+
+| Directories affected | Description |
+|----------------------|-------------|
+| `.aamf/migration/{projectName}/` | Checkpoint, progress, logs, knowledge base, and planning artifacts |
+| `target.outputPath` | Migrated output code |
 
 ## Troubleshooting
 
