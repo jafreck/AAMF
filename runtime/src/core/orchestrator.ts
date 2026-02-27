@@ -60,6 +60,8 @@ const INFRASTRUCTURE_ERROR_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: str
   { pattern: /network error|connection (refused|reset|timed out)/i, label: 'network' },
   { pattern: /could not resolve host|DNS resolution failed/i, label: 'network' },
   { pattern: /failed to download|registry .* unavailable/i, label: 'network' },
+  // Model/API transport failures
+  { pattern: /HTTP\/2 GOAWAY|connection_error|\b503\b|service unavailable/i, label: 'network' },
   // Timeout
   { pattern: /timed? ?out|deadline exceeded/i, label: 'timeout' },
   // Permission errors (typically environment misconfiguration)
@@ -118,8 +120,7 @@ const TaskFileSchema = z.array(
       .object({
         start: z.number().int().min(1),
         end: z.number().int().min(1),
-      })
-      .optional(),
+      }),
   }).strict(),
 );
 
@@ -150,6 +151,8 @@ export class MigrationOrchestrator {
    * are serialised to avoid file-lock contention.
    */
   private readonly buildLimiter: ReturnType<typeof pLimit>;
+  /** Serializes git mutations to keep commits deterministic. */
+  private readonly gitLimiter: ReturnType<typeof pLimit>;
   private readonly metricsCollector: MetricsCollector;
   private readonly costEstimatorInstance: CostEstimator;
   private readonly reportGenerator: ReportGenerator;
@@ -177,7 +180,7 @@ export class MigrationOrchestrator {
     const bc = config.options.buildConcurrency ?? 1;
     // 0 means unlimited → use maxParallelAgents
     this.buildLimiter = pLimit(bc === 0 ? config.options.maxParallelAgents : bc);
-
+    this.gitLimiter = pLimit(1);
     this.metricsCollector = new MetricsCollector();
     const overrides = config.agentRuntime === 'claude-code'
       ? config.claudeCode?.costOverrides
@@ -185,6 +188,7 @@ export class MigrationOrchestrator {
     this.costEstimatorInstance = new CostEstimator(overrides);
     this.reportGenerator = new ReportGenerator();
     this.runId = runId;
+    this.gitLimiter = pLimit(1);
   }
 
   // ─── Public API ──────────────────────────────────────────────────────
@@ -204,6 +208,8 @@ export class MigrationOrchestrator {
 
     this.logger.event({ type: 'migration-started', projectName: this.config.projectName });
     await this.progress.appendEvent('Migration started');
+
+    await this.ensureGitRepositoryReady();
 
     const phaseResults: PhaseResult[] = [];
     let aborted = false;
@@ -988,9 +994,13 @@ export class MigrationOrchestrator {
       }
 
       // Select non-overlapping batch for parallel execution
+      const phase4Parallelism = this.isGitAutomationEnabled()
+        ? 1
+        : this.config.options.maxParallelAgents;
+
       const batch = MigrationOrchestrator.selectNonOverlappingBatch(
         readyTasks,
-        this.config.options.maxParallelAgents,
+        phase4Parallelism,
       );
 
       this.logger.info(`Executing batch of ${batch.length} task(s) in parallel (${readyTasks.length} ready)`);
@@ -1105,11 +1115,18 @@ export class MigrationOrchestrator {
       },
     );
     const migratorInv = this.buildInvocation('code-migrator', migratorCtx, 4, task.id);
+    const fallbackModel = this.getFailureRecoveryModel();
 
     const migratorResult = await retryExec.executeWithRetry(migratorInv, {
       maxAttempts: this.config.options.maxRetriesPerTask,
       onRetry: async (attempt, error) => {
         this.logger.warn(`Retry ${attempt} for ${task.id}: ${error}`);
+        if (fallbackModel && this.isTransientModelFailure(error) && migratorInv.modelOverride !== fallbackModel) {
+          migratorInv.modelOverride = fallbackModel;
+          this.logger.warn(
+            `Switching ${task.id} code-migrator retries to fallback model: ${fallbackModel}`,
+          );
+        }
         await this.checkpoint.failTask(task.id, error, attempt, false);
       },
       onExhausted: async (taskId, lastError) => {
@@ -1147,6 +1164,8 @@ export class MigrationOrchestrator {
       return;
     }
 
+    await this.commitForAgent('code-migrator', 4, task.id, task.name);
+
     // b–c. Parity + test-writer in parallel
     const parityCtx = await this.contextBuilder.buildContext(
       'parity-verifier',
@@ -1180,6 +1199,9 @@ export class MigrationOrchestrator {
     this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
     if (parityResult) this.recordTokens(parityResult, 4);
     if (testResult) this.recordTokens(testResult, 4);
+    if (testResult?.success) {
+      await this.commitForAgent('test-writer', 4, task.id, task.name);
+    }
 
     // b2. Check parity result and retry if non-minor issues found
     const maxParityRetries = this.config.options.maxRetriesPerTask;
@@ -1237,6 +1259,8 @@ export class MigrationOrchestrator {
           this.logger.warn(`Re-migration failed for ${task.id} on attempt ${attempt}`);
           continue;
         }
+
+        await this.commitForAgent('code-migrator', 4, task.id, task.name);
 
         // Re-run parity-verifier
         const reParityCtx = await this.contextBuilder.buildContext(
@@ -1322,6 +1346,8 @@ export class MigrationOrchestrator {
       progressMsg += ` — avg ${formatDuration(avgMs)}/task, ~${formatDuration(etaMs)} remaining`;
     }
     this.logger.info(progressMsg);
+
+    await this.commitForTask(task);
   }
 
   // ─── Phase 5: Final Parity Verification ──────────────────────────────
@@ -1383,6 +1409,9 @@ export class MigrationOrchestrator {
           );
           const fixResult = await this.launchAgentWithEvents(fixInv);
           this.recordTokens(fixResult, 5);
+          if (fixResult.success) {
+            await this.commitForAgent('code-migrator', 5, `fix-${iteration}-${fixes.indexOf(fix)}`);
+          }
         }
       } else {
         this.logger.warn('Max loop-back iterations reached, proceeding with remaining issues');
@@ -1405,17 +1434,33 @@ export class MigrationOrchestrator {
     const e2eCtx = await this.contextBuilder.buildContext('e2e-test-crafter', 6);
     const docCtx = await this.contextBuilder.buildContext('documentation-writer', 6);
 
-    const parallel = new ParallelExecutor(
-      2,
-      (inv) => this.launchAgentWithEvents(inv),
-      this.logger,
-    );
+    const results: AgentResult[] = [];
+    if (this.isGitAutomationEnabled()) {
+      const e2eResult = await this.launchAgentWithEvents(
+        this.buildInvocation('e2e-test-crafter', e2eCtx, 6),
+      );
+      results.push(e2eResult);
+      if (e2eResult.success) await this.commitForAgent('e2e-test-crafter', 6);
 
-    const results = await parallel.executeAll([
-      this.buildInvocation('e2e-test-crafter', e2eCtx, 6),
-      this.buildInvocation('documentation-writer', docCtx, 6),
-    ]);
-    this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
+      const docResult = await this.launchAgentWithEvents(
+        this.buildInvocation('documentation-writer', docCtx, 6),
+      );
+      results.push(docResult);
+      if (docResult.success) await this.commitForAgent('documentation-writer', 6);
+    } else {
+      const parallel = new ParallelExecutor(
+        2,
+        (inv) => this.launchAgentWithEvents(inv),
+        this.logger,
+      );
+
+      const parallelResults = await parallel.executeAll([
+        this.buildInvocation('e2e-test-crafter', e2eCtx, 6),
+        this.buildInvocation('documentation-writer', docCtx, 6),
+      ]);
+      this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
+      results.push(...parallelResults);
+    }
 
     for (const r of results) this.recordTokens(r, 6);
 
@@ -1494,6 +1539,9 @@ export class MigrationOrchestrator {
           const refactorInv = this.buildInvocation('idiomatic-refactorer', refactorCtx, 8);
           const refactorResult = await this.launchAgentWithEvents(refactorInv);
           this.recordTokens(refactorResult, 8);
+          if (refactorResult.success) {
+            await this.commitForAgent('idiomatic-refactorer', 8, issue.file);
+          }
           if (!refactorResult.success) {
             return {
               phase: 8,
@@ -1677,6 +1725,8 @@ export class MigrationOrchestrator {
         continue;
       }
 
+      await this.commitForAgent('code-migrator', 4, task.id, task.name);
+
       // 3. Re-run the command
       cmdResult = await this.runCommand(label, command, task.id);
       if (cmdResult.success) {
@@ -1735,6 +1785,120 @@ export class MigrationOrchestrator {
     return result.issues.some((i) => i.severity !== 'minor');
   }
 
+  private isGitAutomationEnabled(): boolean {
+    return this.config.options.git?.enabled === true;
+  }
+
+  private async ensureGitRepositoryReady(): Promise<void> {
+    if (!this.isGitAutomationEnabled()) return;
+
+    const gitCfg = this.config.options.git;
+    if (!gitCfg?.autoInit) return;
+
+    await ensureDir(this.config.target.outputPath);
+
+    const probe = await this.runGit(['rev-parse', '--is-inside-work-tree']);
+    if (probe.success && probe.stdout.trim() === 'true') return;
+
+    const init = await this.runGit(['init']);
+    if (!init.success) {
+      this.logger.warn(`Failed to initialize git repository at output path: ${init.stderr || init.stdout}`);
+      return;
+    }
+
+    await this.runGit(['config', 'user.name', gitCfg.authorName]);
+    await this.runGit(['config', 'user.email', gitCfg.authorEmail]);
+    this.logger.info(`Initialized git repository at ${this.config.target.outputPath}`);
+  }
+
+  private async commitForAgent(agent: AgentName, phase: number, taskId?: string, detail?: string): Promise<void> {
+    if (!this.isGitAutomationEnabled()) return;
+    if (!this.config.options.git?.commitByAgent) return;
+
+    const scope = taskId ? `task ${taskId}` : `phase ${phase}`;
+    const suffix = detail ? ` (${detail})` : '';
+    const message = `aamf: ${agent} updated output for ${scope}${suffix}`;
+    await this.commitIfDirty(message);
+  }
+
+  private async commitForTask(task: MigrationTask): Promise<void> {
+    if (!this.isGitAutomationEnabled()) return;
+    if (!this.config.options.git?.commitPerTask) return;
+
+    const message = `aamf: complete ${task.id} - ${task.name}`;
+    await this.commitIfDirty(message, true);
+  }
+
+  private async commitIfDirty(message: string, allowEmpty: boolean = false): Promise<void> {
+    await this.gitLimiter(async () => {
+      await this.ensureGitRepositoryReady();
+
+      const status = await this.runGit(['status', '--porcelain']);
+      if (!status.success) {
+        this.logger.warn(`Unable to inspect git status before commit: ${status.stderr || status.stdout}`);
+        return;
+      }
+      const hasWorkingTreeChanges = !!status.stdout.trim();
+      if (!hasWorkingTreeChanges && !allowEmpty) return;
+
+      if (hasWorkingTreeChanges) {
+        const add = await this.runGit(['add', '-A']);
+        if (!add.success) {
+          this.logger.warn(`Unable to stage git changes: ${add.stderr || add.stdout}`);
+          return;
+        }
+      }
+
+      const staged = await this.runGit(['diff', '--cached', '--name-only']);
+      if (!staged.success) return;
+      const stagedCount = staged.stdout.split('\n').filter(Boolean).length;
+      if (stagedCount === 0 && !allowEmpty) return;
+
+      const commitArgs = allowEmpty
+        ? ['commit', '--allow-empty', '-m', message]
+        : ['commit', '-m', message];
+      const commit = await this.runGit(commitArgs);
+      if (!commit.success) {
+        this.logger.warn(`Git commit failed for message "${message}": ${commit.stderr || commit.stdout}`);
+        return;
+      }
+
+      this.logger.info(`Created git commit (${stagedCount} file(s)): ${message}`);
+    });
+  }
+
+  private async runGit(args: string[]): Promise<{
+    success: boolean;
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+  }> {
+    try {
+      const resolvedPath = this.launcher.getResolvedPath();
+      const result = await spawnWithTimeout('git', args, {
+        cwd: this.config.target.outputPath,
+        timeout: this.config.copilot.timeout,
+        env: {
+          ...process.env,
+          ...(resolvedPath ? { PATH: resolvedPath } : {}),
+        },
+      });
+      return {
+        success: result.exitCode === 0 && !result.killed,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        stdout: '',
+        stderr: err instanceof Error ? err.message : String(err),
+        exitCode: -1,
+      };
+    }
+  }
+
   private buildInvocation(
     agent: AgentName,
     contextFile: string,
@@ -1769,6 +1933,10 @@ export class MigrationOrchestrator {
       ? this.kbDbPath
       : undefined;
 
+    const modelOverride = agent === 'failure-recovery'
+      ? this.getFailureRecoveryModel()
+      : undefined;
+
     return {
       agent,
       contextFile,
@@ -1776,9 +1944,22 @@ export class MigrationOrchestrator {
       phase,
       taskId,
       timeout,
+      ...(modelOverride ? { modelOverride } : {}),
       ...(mcpConfig ? { mcpConfig } : {}),
       ...(kbDbPath ? { kbDbPath } : {}),
     };
+  }
+
+  private getFailureRecoveryModel(): string | undefined {
+    if (this.config.agentRuntime === 'claude-code') {
+      return this.config.claudeCode?.failureRecoveryModel;
+    }
+    return this.config.copilot.failureRecoveryModel;
+  }
+
+  private isTransientModelFailure(errorText: string): boolean {
+    return /\b503\b|HTTP\/2 GOAWAY|connection_error|Failed to get response from the AI model|service unavailable/i
+      .test(errorText);
   }
 
   private recordTokens(result: AgentResult, phase: number): void {

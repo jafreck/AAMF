@@ -15,7 +15,8 @@
       "complexity",
       "description",
       "acceptanceCriteria",
-      "parityChecks"
+      "parityChecks",
+      "lineRange"
     ],
     "properties": {
       "id": {

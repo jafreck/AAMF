@@ -72,8 +72,8 @@ export class MockAgentLauncher {
 // ─── Mock Config ─────────────────────────────────────────────────────────────
 
 /** Returns a valid MigrationConfig object for testing. */
-export function createMockConfig(overrides?: Partial<MigrationConfig>): MigrationConfig {
-  return {
+export function createMockConfig(overrides?: any): MigrationConfig {
+  const base: MigrationConfig = {
     projectName: 'test-project',
     source: {
       path: '/tmp/source',
@@ -97,8 +97,16 @@ export function createMockConfig(overrides?: Partial<MigrationConfig>): Migratio
       maxBlockedTasks: 0,
       maxInfraRetries: 3,
       avgTokensPerTask: 5000,
+      contextWindowStrategy: 'per-invocation',
       keepArtifacts: false,
-      contextWindowStrategy: 'per-invocation' as const,
+      git: {
+        enabled: false,
+        autoInit: true,
+        commitByAgent: true,
+        commitPerTask: true,
+        authorName: 'AAMF Migration Bot',
+        authorEmail: 'aamf@local.invalid',
+      },
     },
     copilot: {
       cliCommand: 'copilot',
@@ -109,8 +117,32 @@ export function createMockConfig(overrides?: Partial<MigrationConfig>): Migratio
       inheritShellPath: false,
       extraPath: [],
     },
-    ...overrides,
   };
+
+  return {
+    ...base,
+    ...overrides,
+    source: {
+      ...base.source,
+      ...(overrides?.source ?? {}),
+    },
+    target: {
+      ...base.target,
+      ...(overrides?.target ?? {}),
+    },
+    options: {
+      ...base.options,
+      ...(overrides?.options ?? {}),
+    },
+    copilot: {
+      ...base.copilot,
+      ...(overrides?.copilot ?? {}),
+    },
+    environment: {
+      ...base.environment,
+      ...(overrides?.environment ?? {}),
+    },
+  } as MigrationConfig;
 }
 
 // ─── Task Factory ────────────────────────────────────────────────────────────
@@ -128,6 +160,7 @@ export function makeTask(id: string, deps: string[] = []): MigrationTask {
     description: `Migrate ${id}`,
     acceptanceCriteria: ['works'],
     parityChecks: ['matches'],
+    lineRange: { start: 1, end: 200 },
   };
 }
 

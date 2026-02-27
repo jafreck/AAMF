@@ -23,8 +23,36 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.maxBlockedTasks).toBe(0);
     expect(result.options.maxInfraRetries).toBe(3);
     expect(result.options.avgTokensPerTask).toBe(5000);
+    expect(result.options.git?.enabled).toBe(true);
+    expect(result.options.git?.autoInit).toBe(true);
+    expect(result.options.git?.commitByAgent).toBe(true);
+    expect(result.options.git?.commitPerTask).toBe(true);
     expect(result.copilot.cliCommand).toBe('copilot');
     expect(result.copilot.timeout).toBe(300000);
+    expect(result.copilot.failureRecoveryModel).toBeUndefined();
+  });
+
+  it('should accept git automation overrides', () => {
+    const result = MigrationConfigSchema.parse({
+      ...validConfig,
+      options: {
+        git: {
+          enabled: false,
+          autoInit: false,
+          commitByAgent: false,
+          commitPerTask: true,
+          authorName: 'Custom Bot',
+          authorEmail: 'custom@example.com',
+        },
+      },
+    });
+
+    expect(result.options.git?.enabled).toBe(false);
+    expect(result.options.git?.autoInit).toBe(false);
+    expect(result.options.git?.commitByAgent).toBe(false);
+    expect(result.options.git?.commitPerTask).toBe(true);
+    expect(result.options.git?.authorName).toBe('Custom Bot');
+    expect(result.options.git?.authorEmail).toBe('custom@example.com');
   });
 
   it('should reject invalid project name', () => {
@@ -64,6 +92,23 @@ describe('MigrationConfigSchema', () => {
   });
 
   describe('Additional Validation', () => {
+    it('should accept copilot.failureRecoveryModel override', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        copilot: { failureRecoveryModel: 'gpt-4.1' },
+      });
+      expect(result.copilot.failureRecoveryModel).toBe('gpt-4.1');
+    });
+
+    it('should accept claudeCode.failureRecoveryModel override', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        agentRuntime: 'claude-code',
+        claudeCode: { failureRecoveryModel: 'claude-sonnet-4.5' },
+      });
+      expect(result.claudeCode.failureRecoveryModel).toBe('claude-sonnet-4.5');
+    });
+
     it('should reject maxRetriesPerTask above 5', () => {
       const result = MigrationConfigSchema.safeParse({
         ...validConfig,

@@ -20,6 +20,7 @@ When KB index tooling is available, treat it as the authoritative source of stru
   - `groupId`
   - `groupName`
   - `taskSchemaPath` (absolute path to canonical JSON Schema)
+  - `maxLinesPerTask` (hard per-task source line budget)
 
 ## Responsibilities
 
@@ -41,6 +42,10 @@ The same schema path is also provided in `inputFiles` so it is available even wh
 - Dependencies should be acyclic and reference valid task IDs.
 - Prefer smaller tasks for large files or high-risk code.
 - Ensure every group-relevant source file appears in at least one task.
+- Treat `maxLinesPerTask` as a hard constraint.
+- Every task object must include `lineRange`.
+- If a source file exceeds `maxLinesPerTask`, split it into multiple tasks with non-overlapping `lineRange` values so each task scope is at or below `maxLinesPerTask` lines.
+- Do not emit any task whose scoped source slice (its `lineRange`) exceeds `maxLinesPerTask`.
 
 ## Output Format
 

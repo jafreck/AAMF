@@ -15,7 +15,10 @@ import {
 } from './helpers/mocks.js';
 import { AgentInvocation, AgentResult, AgentName, MigrationTask } from '../src/agents/types.js';
 import { Logger } from '../src/logging/logger.js';
+import { ensureDir } from '../src/util/fs.js';
+import { spawnWithTimeout } from '../src/util/process.js';
 import { ensureDir, fileExists } from '../src/util/fs.js';
+import { spawnWithTimeout } from '../src/util/process.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -83,6 +86,7 @@ const DEFAULT_PLANNING_TASKS: MigrationTask[] = [
     description: 'Migrate auth module',
     acceptanceCriteria: ['works'],
     parityChecks: ['matches'],
+    lineRange: { start: 1, end: 200 },
   },
   {
     id: 'task-002',
@@ -95,6 +99,7 @@ const DEFAULT_PLANNING_TASKS: MigrationTask[] = [
     description: 'Migrate database layer',
     acceptanceCriteria: ['works'],
     parityChecks: ['matches'],
+    lineRange: { start: 1, end: 200 },
   },
 ];
 
@@ -110,6 +115,7 @@ const SINGLE_AUTH_TASK: MigrationTask = {
   description: 'Migrate auth',
   acceptanceCriteria: ['works'],
   parityChecks: ['matches'],
+  lineRange: { start: 1, end: 200 },
 };
 
 /**
@@ -155,7 +161,7 @@ async function writeParityReport(
 async function setupOrchestrator(
   tempDir: string,
   launcherFn: (inv: AgentInvocation) => Promise<AgentResult>,
-  configOverrides?: Partial<ReturnType<typeof createMockConfig>>,
+  configOverrides?: Parameters<typeof createMockConfig>[0],
   singlePhase?: number,
 ) {
   const config = createMockConfig(configOverrides);
@@ -937,6 +943,7 @@ describe('MigrationOrchestrator', () => {
         description: 'Migrate s01',
         acceptanceCriteria: ['works'],
         parityChecks: ['matches'],
+        lineRange: { start: 1, end: 200 },
       }];
       await writePhase3PlanningArtifacts(progressDir, planningTasks);
 
@@ -1090,6 +1097,80 @@ describe('MigrationOrchestrator', () => {
   // ─── Phase 4 Specifics ─────────────────────────────────────────────
 
   describe('Phase 4 Specifics', () => {
+    it('should auto-init git in output path and create per-agent/per-task commits', async () => {
+      const outputDir = join(tempDir, 'target-output');
+      await ensureDir(outputDir);
+
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'code-migrator' && inv.taskId) {
+          const id = inv.taskId.replace('task-', '');
+          const filePath = join(outputDir, 'src', `task-${id}.ts`);
+          await ensureDir(join(outputDir, 'src'));
+          await writeFile(filePath, `export const task${id} = ${Number(id)};\n`);
+        }
+
+        if (inv.agent === 'test-writer' && inv.taskId) {
+          const id = inv.taskId.replace('task-', '');
+          const testPath = join(outputDir, 'tests', `task-${id}.test.ts`);
+          await ensureDir(join(outputDir, 'tests'));
+          await writeFile(testPath, `import { describe, it, expect } from 'vitest';\n\ndescribe('task-${id}', () => {\n  it('should be defined', () => {\n    expect(true).toBe(true);\n  });\n});\n`);
+        }
+
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 100,
+          tokenUsage: { prompt: 100, completion: 50, total: 150 },
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: outputDir,
+        },
+        options: {
+          maxParallelAgents: 2,
+          maxRetriesPerTask: 3,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          git: {
+            enabled: true,
+            autoInit: true,
+            commitByAgent: true,
+            commitPerTask: true,
+            authorName: 'AAMF Migration Bot',
+            authorEmail: 'aamf@local.invalid',
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const gitHead = await readFile(join(outputDir, '.git', 'HEAD'), 'utf-8');
+      expect(gitHead.trim().length).toBeGreaterThan(0);
+
+      const log = await spawnWithTimeout('git', ['log', '--pretty=%s'], { cwd: outputDir });
+      expect(log.exitCode).toBe(0);
+      expect(log.stdout).toContain('aamf: code-migrator updated output for task task-001');
+      expect(log.stdout).toContain('aamf: test-writer updated output for task task-001');
+      expect(log.stdout).toContain('aamf: complete task-001 - User Auth Module');
+    });
+
     it('should process migration tasks from plan', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(tempDir, launcherFn);
@@ -1663,9 +1744,9 @@ describe('MigrationOrchestrator', () => {
       await writeFile(join(progressDir, 'migration-plan.md'), threeTaskPlan);
       // Write planning artifacts for the three tasks so Phase 3 succeeds during the resume run.
       const threeTasks: MigrationTask[] = [
-        { id: 'task-001', name: 'Module A', sourceFiles: ['src/a.py'], targetFiles: ['src/a.ts'], knowledgeBaseRef: 'kb/task-001.md', dependencies: [], complexity: 'simple', description: 'Migrate A', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
-        { id: 'task-002', name: 'Module B', sourceFiles: ['src/b.py'], targetFiles: ['src/b.ts'], knowledgeBaseRef: 'kb/task-002.md', dependencies: [], complexity: 'simple', description: 'Migrate B', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
-        { id: 'task-003', name: 'Module C', sourceFiles: ['src/c.py'], targetFiles: ['src/c.ts'], knowledgeBaseRef: 'kb/task-003.md', dependencies: ['task-001'], complexity: 'simple', description: 'Migrate C', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
+        { id: 'task-001', name: 'Module A', sourceFiles: ['src/a.py'], targetFiles: ['src/a.ts'], knowledgeBaseRef: 'kb/task-001.md', dependencies: [], complexity: 'simple', description: 'Migrate A', acceptanceCriteria: ['works'], parityChecks: ['matches'], lineRange: { start: 1, end: 200 } },
+        { id: 'task-002', name: 'Module B', sourceFiles: ['src/b.py'], targetFiles: ['src/b.ts'], knowledgeBaseRef: 'kb/task-002.md', dependencies: [], complexity: 'simple', description: 'Migrate B', acceptanceCriteria: ['works'], parityChecks: ['matches'], lineRange: { start: 1, end: 200 } },
+        { id: 'task-003', name: 'Module C', sourceFiles: ['src/c.py'], targetFiles: ['src/c.ts'], knowledgeBaseRef: 'kb/task-003.md', dependencies: ['task-001'], complexity: 'simple', description: 'Migrate C', acceptanceCriteria: ['works'], parityChecks: ['matches'], lineRange: { start: 1, end: 200 } },
       ];
       await writePhase3PlanningArtifacts(progressDir, threeTasks);
 

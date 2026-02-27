@@ -239,8 +239,9 @@ export class CopilotRunner implements AgentRunner {
       '-s',
     ];
 
-    if (this.config.copilot.model) {
-      args.push('--model', this.config.copilot.model);
+    const model = invocation.modelOverride ?? this.config.copilot.model;
+    if (model) {
+      args.push('--model', model);
     }
 
     // Grant access to source and output directories
@@ -429,8 +430,9 @@ export class ClaudeCodeRunner implements AgentRunner {
       '-p', prompt,
     ];
 
-    if (this.config.claudeCode.model) {
-      args.push('--model', this.config.claudeCode.model);
+    const model = invocation.modelOverride ?? this.config.claudeCode.model;
+    if (model) {
+      args.push('--model', model);
     }
 
     // Inject MCP config for KB server access

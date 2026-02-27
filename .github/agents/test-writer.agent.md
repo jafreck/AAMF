@@ -77,6 +77,13 @@ Create intermediate directories as needed.
 - Do NOT introduce new dependencies; use only packages already in `package.json`
 - Run `npx vitest run` and confirm all tests pass before writing your result summary
 
+## Git Commit Requirement
+
+- Treat the migrated output directory as a git repository.
+- After successfully writing/modifying tests, stage and commit your changes.
+- Use a clear message format: `aamf: test-writer <taskId or suite> - tests`.
+- If there are no file changes to commit, do not create an empty commit.
+
 ## Output Format
 
 Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track test writing results. It **must** be the last fenced code block in your output.
