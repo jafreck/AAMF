@@ -44,7 +44,6 @@
   "copilot": {
     "cliCommand": "copilot",
     "model": "claude-sonnet-4.6",
-    "failureRecoveryModel": "claude-opus-4.6",
     "agentDir": "../../../../.github/agents",
     "timeout": 3600000
   }
