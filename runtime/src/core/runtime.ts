@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { resolve, join, dirname } from 'node:path';
 import { stat } from 'node:fs/promises';
 import { loadConfig, applyOverrides } from '../config/loader.js';
@@ -98,6 +99,10 @@ export class MigrationRuntime {
       console: true,
     });
 
+    // 3a. Generate a stable runId for this execution
+    const runId = randomUUID();
+    this.logger.setRunId(runId);
+
     // 4. Create checkpoint manager
     this.checkpoint = new CheckpointManager(this.progressDir, this.logger);
 
@@ -111,7 +116,7 @@ export class MigrationRuntime {
     // 7. Validate agent files exist
     await this.validateAgentFiles();
 
-    this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName}`);
+    this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName} (runId=${runId})`);
     this.logger.info(`Source: ${this.config.source.language} → Target: ${this.config.target.language}`);
 
     // 8. Setup graceful shutdown

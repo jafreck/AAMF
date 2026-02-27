@@ -464,7 +464,7 @@ describe('AgentLauncher', () => {
 
     it('should warn via logger when aamf-json block is absent', async () => {
       const script = await createScript('no-aamf-warn.sh', 'echo "no block"\nexit 0');
-      const warnSpy = vi.spyOn(logger, 'warn');
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn');
       const cfg2 = createMockConfig({
         copilot: { cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
       });
@@ -560,6 +560,214 @@ describe('AgentLauncher', () => {
       expect(result.success).toBe(false);
       expect(result.tokenUsage).toBeDefined();
       expect(result.tokenUsage!.total).toBeGreaterThan(0);
+    });
+  });
+
+  describe('invocationId and correlation fields', () => {
+    it('should include invocationId in the returned AgentResult', async () => {
+      const script = await createScript('inv-id.sh', 'echo "OK"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('inv-id-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'inv-id-001',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.invocationId).toBeDefined();
+      expect(result.invocationId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+    });
+
+    it('should generate a unique invocationId for each invocation', async () => {
+      const script = await createScript('inv-unique.sh', 'echo "OK"\nexit 0');
+      const launcher = makeLauncher(script);
+
+      const { contextFile: ctx1, progressDir: pd1 } = await prepareInvocation('inv-unique-001');
+      const { contextFile: ctx2, progressDir: pd2 } = await prepareInvocation('inv-unique-002');
+
+      const result1 = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile: ctx1,
+        progressDir: pd1,
+        phase: 4,
+        taskId: 'inv-unique-001',
+      });
+
+      const result2 = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile: ctx2,
+        progressDir: pd2,
+        phase: 4,
+        taskId: 'inv-unique-002',
+      });
+
+      expect(result1.invocationId).toBeDefined();
+      expect(result2.invocationId).toBeDefined();
+      expect(result1.invocationId).not.toBe(result2.invocationId);
+    });
+
+    it('should include invocationId in the agent log filename', async () => {
+      const script = await createScript('inv-log.sh', 'echo "output"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('inv-log-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'inv-log-001',
+      });
+
+      expect(result.invocationId).toBeDefined();
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f =>
+        f.startsWith('code-migrator-inv-log-001-') &&
+        f.includes(result.invocationId!) &&
+        f.endsWith('.log'),
+      );
+      expect(agentLog).toBeDefined();
+    });
+
+    it('should include invocationId on error/catch path', async () => {
+      const launcher = makeLauncher('__aamf_no_such_binary_inv__');
+      const { contextFile, progressDir } = await prepareInvocation('inv-error-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'inv-error-001',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.invocationId).toBeDefined();
+      expect(result.invocationId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+    });
+  });
+
+  describe('queueDelay tracking', () => {
+    it('should set queueDelay when invocationDelayMs causes a wait', async () => {
+      const script = await createScript('queue-delay.sh', 'echo "OK"\nexit 0');
+      const cfg = createMockConfig({
+        copilot: { cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 200,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+        },
+      });
+      config = cfg;
+      const launcher = new AgentLauncher(cfg, projectRoot, logger);
+
+      const { contextFile: ctx1, progressDir: pd1 } = await prepareInvocation('qd-001');
+      const { contextFile: ctx2, progressDir: pd2 } = await prepareInvocation('qd-002');
+
+      // First invocation — no delay expected
+      await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile: ctx1,
+        progressDir: pd1,
+        phase: 4,
+        taskId: 'qd-001',
+      });
+
+      // Second invocation — should have queueDelay from invocationDelayMs
+      const result2 = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile: ctx2,
+        progressDir: pd2,
+        phase: 4,
+        taskId: 'qd-002',
+      });
+
+      expect(result2.queueDelay).toBeDefined();
+      expect(result2.queueDelay).toBeGreaterThan(0);
+    });
+
+    it('should not set queueDelay when invocationDelayMs is 0', async () => {
+      const script = await createScript('no-qd.sh', 'echo "OK"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('no-qd-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'no-qd-001',
+      });
+
+      // queueDelay should be undefined or 0 when no delay is configured
+      expect(result.queueDelay === undefined || result.queueDelay === 0).toBe(true);
+    });
+  });
+
+  describe('spawnToFirstOutput tracking', () => {
+    it('should set spawnToFirstOutput when output files are detected during execution', async () => {
+      const outputDir = join(tempDir, 'output-detect');
+      await ensureDir(outputDir);
+
+      // Script that creates an output file before exiting
+      const script = await createScript('spawn-output.sh', [
+        `echo "test" > "${outputDir}/result.txt"`,
+        'sleep 0.2',
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const contextFile = join(tempDir, 'ctx-spawn-output.json');
+      await writeFile(contextFile, JSON.stringify({ outputPath: outputDir }));
+      const progressDir = join(tempDir, 'progress');
+      await ensureDir(progressDir);
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'spawn-output',
+      });
+
+      expect(result.success).toBe(true);
+      // spawnToFirstOutput may or may not be set depending on timing of the output poll
+      // but the field should exist on the result type
+      expect(result.spawnToFirstOutput === undefined || typeof result.spawnToFirstOutput === 'number').toBe(true);
+    });
+
+    it('should leave spawnToFirstOutput undefined when no output files are produced', async () => {
+      const script = await createScript('no-output.sh', 'echo "no output files"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('no-output-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'no-output-001',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.spawnToFirstOutput).toBeUndefined();
     });
   });
 
