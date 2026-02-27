@@ -785,6 +785,64 @@ describe('MigrationOrchestrator', () => {
   // ─── structuredOutput Integration ──────────────────────────────────
 
   describe('structuredOutput Integration', () => {
+    it('should fail Phase 3 when a task-decomposer output file violates schema', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        undefined,
+        3,
+      );
+
+      const planningDir = join(progressDir, 'planning');
+      await mkdir(planningDir, { recursive: true });
+      const group = { id: 'core', name: 'Core', analysisFiles: [] };
+      await writeFile(join(planningDir, 'groups.json'), JSON.stringify([group], null, 2));
+      await writeFile(join(planningDir, 'strategy.md'), '# strategy\n');
+
+      const invalidTasks = [
+        {
+          id: 'task-001',
+          name: 'Invalid missing required fields',
+          sourceFiles: ['src/a.c'],
+          targetFiles: ['src/a.rs'],
+          knowledgeBaseRef: 'kb/a.md',
+          dependencies: [],
+          complexity: 'simple',
+        },
+      ];
+      await writeFile(join(planningDir, 'tasks-core.json'), JSON.stringify(invalidTasks, null, 2));
+
+      const checkpoint = {
+        projectName: 'test-project',
+        version: 1,
+        currentPhase: 3,
+        currentTask: null,
+        completedPhases: [],
+        completedTasks: [],
+        failedTasks: [],
+        blockedTasks: [],
+        phaseOutputs: {},
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        startedAt: new Date().toISOString(),
+        lastCheckpoint: new Date().toISOString(),
+        resumeCount: 0,
+        cumulativeDurationMs: 0,
+        completedTaskDurationsMs: [],
+        phase3aComplete: true,
+        completedPhase3Groups: [],
+      };
+      await writeFile(join(progressDir, 'checkpoint.json'), JSON.stringify(checkpoint, null, 2));
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(false);
+      const phase3 = result.phases.find((p) => p.phase === 3);
+      expect(phase3).toBeDefined();
+      expect(phase3?.error).toContain('Schema validation failed');
+      expect(phase3?.error).toContain('tasks-core.json');
+    });
+
     it('should read Phase 4 tasks from planning artifacts produced by task-decomposers', async () => {
       // In the two-step Phase 3 design, task-decomposer writes per-group task JSON files.
       // The orchestrator merges them into tasks-merged.json and passes the task list to Phase 4
@@ -794,7 +852,7 @@ describe('MigrationOrchestrator', () => {
 
       // Write planning artifacts with a specific unique task — no migration-plan.md needed
       const planningTasks: MigrationTask[] = [{
-        id: 'task-s01',
+        id: 'task-101',
         name: 'Structured Task 1',
         sourceFiles: ['src/s01.py'],
         targetFiles: ['src/s01.ts'],
@@ -815,7 +873,7 @@ describe('MigrationOrchestrator', () => {
       );
       // code-migrator should have been invoked for the task from planning artifacts
       expect(codeMigratorInvocations.length).toBeGreaterThanOrEqual(1);
-      expect(codeMigratorInvocations[0]!.taskId).toBe('task-s01');
+      expect(codeMigratorInvocations[0]!.taskId).toBe('task-101');
     });
 
     it('should invoke code-migrators for tasks loaded via planning artifacts (Phase 3 merge)', async () => {

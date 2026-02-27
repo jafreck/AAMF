@@ -29,6 +29,7 @@ import { IndexBuilder } from '../indexer/index.js';
 import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
 import { ensurePythonDeps } from '../indexer/ensure-python-deps.js';
 import { KbServerProcess } from './kb-server-process.js';
+import { z } from 'zod';
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
 
@@ -96,6 +97,27 @@ export class MigrationError extends Error {
 
 /** Default timeout for the KB indexing phase when no phaseTimeouts[0] is configured (5 minutes). */
 const DEFAULT_INDEX_TIMEOUT_MS = 5 * 60_000;
+
+const TaskFileSchema = z.array(
+  z.object({
+    id: z.string().regex(/^task-\d+$/),
+    name: z.string().min(1),
+    sourceFiles: z.array(z.string().min(1)).min(1),
+    targetFiles: z.array(z.string().min(1)).min(1),
+    knowledgeBaseRef: z.string().min(1),
+    dependencies: z.array(z.string().regex(/^task-\d+$/)),
+    complexity: z.enum(['simple', 'moderate', 'complex']),
+    description: z.string().min(1),
+    acceptanceCriteria: z.array(z.string().min(1)).min(1),
+    parityChecks: z.array(z.string().min(1)).min(1),
+    lineRange: z
+      .object({
+        start: z.number().int().min(1),
+        end: z.number().int().min(1),
+      })
+      .optional(),
+  }).strict(),
+);
 
 /**
  * The main orchestrator that sequences all 7 migration phases.
@@ -675,7 +697,7 @@ export class MigrationOrchestrator {
       );
       const results = await parallel.executeAll(invocations);
 
-      const failedGroupIds: string[] = [];
+      const failedGroups: Array<{ id: string; reason: string }> = [];
       for (const [i, r] of results.entries()) {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const group = remainingGroups[i]!;
@@ -683,20 +705,27 @@ export class MigrationOrchestrator {
         if (r.success) {
           await this.checkpoint.completePhase3Group(group.id);
         } else {
-          failedGroupIds.push(group.id);
+          const reason = r.error ?? r.parseError ?? 'unknown';
+          failedGroups.push({ id: group.id, reason });
           this.logger.error(
-            `task-decomposer failed for group "${group.id}": ${r.error ?? 'unknown'}`,
+            `task-decomposer failed for group "${group.id}": ${reason}`,
           );
         }
       }
 
-      if (failedGroupIds.length > 0) {
+      if (failedGroups.length > 0) {
+        const failedGroupIds = failedGroups.map(f => f.id);
+        const details = failedGroups
+          .map(f => `${f.id} (${f.reason})`)
+          .join('; ');
         return {
           phase: 3,
           name: 'Migration Planning',
           success: false,
           duration: Date.now() - start,
-          error: `task-decomposer failed for ${failedGroupIds.length} group(s): ${failedGroupIds.join(', ')}`,
+          error:
+            `task-decomposer failed for ${failedGroupIds.length} group(s): ${failedGroupIds.join(', ')}. ` +
+            `Details: ${details}`,
         };
       }
     } else {
@@ -712,8 +741,29 @@ export class MigrationOrchestrator {
     for (const group of groups) {
       const taskFile = join(planningDir, `tasks-${group.id}.json`);
       if (await fileExists(taskFile)) {
-        const groupTasks = await readJson<MigrationTask[]>(taskFile);
-        allTasks.push(...groupTasks);
+        const groupTasksRaw = await readJson<unknown>(taskFile);
+        const parsed = TaskFileSchema.safeParse(groupTasksRaw);
+        if (!parsed.success) {
+          const issueSummary = parsed.error.issues
+            .slice(0, 5)
+            .map((issue) => {
+              const path = issue.path.length > 0 ? issue.path.join('.') : '(root)';
+              return `${path}: ${issue.message}`;
+            })
+            .join('; ');
+          const validationError =
+            `Invalid task-decomposer output for group "${group.id}" at ${taskFile}. ` +
+            `Schema validation failed: ${issueSummary}`;
+          this.logger.error(validationError);
+          return {
+            phase: 3,
+            name: 'Migration Planning',
+            success: false,
+            duration: Date.now() - start,
+            error: validationError,
+          };
+        }
+        allTasks.push(...parsed.data);
       } else {
         this.logger.warn(
           `Expected task file not found for group "${group.id}": ${taskFile}`,

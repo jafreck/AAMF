@@ -507,7 +507,7 @@ intermediate text
       }
     });
 
-    it('should parse task-decomposer output when some task detail fields are omitted', () => {
+    it('should parse metadata-only task-decomposer output', () => {
       const stdout = `\
 \
 \`\`\`aamf-json
@@ -515,6 +515,29 @@ intermediate text
   "status": "completed",
   "agent": "task-decomposer",
   "taskId": "group-3-compress-strategies",
+  "outputFiles": [".aamf/migration/demo/planning/tasks-group-3-compress-strategies.json"],
+  "taskCount": 2
+}
+\`\`\``;
+
+      const result = ResultParser.parseAamfOutput(stdout, TaskDecomposerOutput);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.agent).toBe('task-decomposer');
+        expect(result.data.outputFiles.length).toBe(1);
+        expect(result.data.taskCount).toBe(2);
+      }
+    });
+
+    it('should reject task-decomposer output that embeds tasks in aamf-json', () => {
+      const stdout = `\
+\
+\`\`\`aamf-json
+{
+  "status": "completed",
+  "agent": "task-decomposer",
+  "taskId": "group-3-compress-strategies",
+  "outputFiles": [".aamf/migration/demo/planning/tasks-group-3-compress-strategies.json"],
   "tasks": [
     {
       "id": "task-301",
@@ -523,29 +546,16 @@ intermediate text
       "targetFiles": ["src/compress/cwksp.rs"],
       "knowledgeBaseRef": "knowledge-base/modules/compress.md",
       "dependencies": [],
-      "complexity": "complex",
-      "description": "Detailed task",
-      "acceptanceCriteria": ["criterion"],
-      "parityChecks": ["check"]
-    },
-    {
-      "id": "task-302",
-      "name": "Migrate fast matchfinder",
-      "sourceFiles": ["lib/compress/zstd_fast.c"],
-      "targetFiles": ["src/compress/fast.rs"],
-      "knowledgeBaseRef": "knowledge-base/modules/compress.md",
-      "dependencies": ["task-301"],
-      "complexity": "moderate"
+      "complexity": "complex"
     }
   ]
 }
 \`\`\``;
 
       const result = ResultParser.parseAamfOutput(stdout, TaskDecomposerOutput);
-      expect(result.parsed).toBe(true);
-      if (result.parsed) {
-        expect(result.data.agent).toBe('task-decomposer');
-        expect(result.data.tasks?.length).toBe(2);
+      expect(result.parsed).toBe(false);
+      if (!result.parsed) {
+        expect(result.error).toContain('schema validation failed');
       }
     });
   });

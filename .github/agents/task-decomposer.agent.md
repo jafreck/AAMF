@@ -56,6 +56,8 @@ Each task object must include:
 
 Your response must end with a fenced `aamf-json` code block and it must be the **last fenced block**.
 
+The file `.aamf/migration/{projectName}/planning/tasks-{groupId}.json` is the single source of truth for task payload. Do not duplicate task objects in stdout metadata.
+
 ### Schema
 
 ```json
@@ -64,10 +66,15 @@ Your response must end with a fenced `aamf-json` code block and it must be the *
   "status": "<completed | failed | needs-review>",
   "taskId": "<groupId>",
   "outputFiles": [".aamf/migration/{projectName}/planning/tasks-{groupId}.json"],
-  "tasks": [],
+  "taskCount": 0,
   "notes": "<brief decomposition summary>"
 }
 ```
+
+### Required rule
+
+- Do **not** include a `tasks` field in the `aamf-json` block.
+- Write the full task array only to `tasks-{groupId}.json`.
 
 ### Example
 
@@ -77,20 +84,7 @@ Your response must end with a fenced `aamf-json` code block and it must be the *
   "status": "completed",
   "taskId": "core",
   "outputFiles": [".aamf/migration/my-project/planning/tasks-core.json"],
-  "tasks": [
-    {
-      "id": "task-101",
-      "name": "Migrate core constants",
-      "sourceFiles": ["src/core/constants.c"],
-      "targetFiles": ["src/core/constants.rs"],
-      "knowledgeBaseRef": "knowledge-base/modules/core.md",
-      "dependencies": [],
-      "complexity": "simple",
-      "description": "Translate core constants and exports.",
-      "acceptanceCriteria": ["Compiles", "Public constants preserved"],
-      "parityChecks": ["Constant values match source"]
-    }
-  ],
+  "taskCount": 8,
   "notes": "Decomposed core group into 8 tasks with no dependency cycles."
 }
 ```

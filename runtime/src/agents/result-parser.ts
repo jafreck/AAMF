@@ -33,20 +33,12 @@ export const KnowledgeBuilderOutput = AamfOutputBase.extend({ agent: z.literal('
 export const MigrationPlannerOutput = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
 export const TaskDecomposerOutput = AamfOutputBase.extend({
   agent: z.literal('task-decomposer'),
-  /** Parsed tasks for this module group — mirrors the MigrationTask[] schema. */
-  tasks: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    sourceFiles: z.array(z.string()),
-    targetFiles: z.array(z.string()),
-    knowledgeBaseRef: z.string(),
-    dependencies: z.array(z.string()),
-    complexity: z.enum(['simple', 'moderate', 'complex']),
-    description: z.string().optional(),
-    acceptanceCriteria: z.array(z.string()).optional(),
-    parityChecks: z.array(z.string()).optional(),
-    lineRange: z.object({ start: z.number(), end: z.number() }).optional(),
-  })).optional(),
+  /** The task artifact file written by this agent (source of truth for task payload). */
+  outputFiles: z.array(z.string().min(1)).min(1),
+  /** Optional metadata count for observability; authoritative tasks live in outputFiles. */
+  taskCount: z.number().int().nonnegative().optional(),
+  /** Disallow embedding task payload in stdout aamf-json to avoid dual-source drift. */
+  tasks: z.never().optional(),
 });
 export const AdjudicatorOutput = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
 export const CodeMigratorOutput = AamfOutputBase.extend({ agent: z.literal('code-migrator') });

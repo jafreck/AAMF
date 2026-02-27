@@ -159,6 +159,7 @@ function finaliseResult(
     agentResult.outputParsed = false;
     agentResult.parseError = parseResult.error;
     agentResult.success = false;
+    agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
   }
 
   // Fallback: if token usage is still unknown, estimate from prompt length
