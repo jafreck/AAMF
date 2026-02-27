@@ -420,6 +420,68 @@ export class ResultParser {
   }
 
   /**
+   * Parse a numeric value that may use shorthand suffixes (e.g. `41.3k` → 41300).
+   */
+  private static parseShorthandNumber(value: string): number {
+    const match = value.trim().match(/^([\d.]+)\s*([kmKM])?$/);
+    if (!match) return NaN;
+    const num = parseFloat(match[1]!);
+    const suffix = match[2]?.toLowerCase();
+    if (suffix === 'k') return Math.round(num * 1000);
+    if (suffix === 'm') return Math.round(num * 1000000);
+    return Math.round(num);
+  }
+
+  /**
+   * Parse token usage from Copilot CLI headless usage summary format.
+   *
+   * Extracts per-model `tokens_in`, `tokens_out`, and `tokens_cached` from
+   * the `Breakdown by AI model:` section, sums them across models, and
+   * returns the standard token usage shape. Supports numeric shorthand
+   * suffixes (e.g. `41.3k` → 41300, `2.5m` → 2500000) and both singular
+   * and plural `Premium request(s)` variants.
+   *
+   * @param output - Raw agent output text (stdout or stderr).
+   * @returns Parsed token counts, or `undefined` if no Copilot CLI usage block is found.
+   */
+  static parseCopilotCliUsage(
+    output: string,
+  ): { prompt: number; completion: number; total: number; cachedInput?: number } | undefined {
+    const breakdownMatch = output.match(/Breakdown by AI model:/i);
+    if (!breakdownMatch) return undefined;
+
+    const afterBreakdown = output.slice(breakdownMatch.index! + breakdownMatch[0].length);
+
+    const tokenLineRegex = /tokens_in:\s*([\d.]+[kmKM]?)\s*,\s*tokens_out:\s*([\d.]+[kmKM]?)(?:\s*,\s*tokens_cached:\s*([\d.]+[kmKM]?))?/g;
+
+    let totalPrompt = 0;
+    let totalCompletion = 0;
+    let totalCached = 0;
+    let hasCached = false;
+    let foundAny = false;
+
+    let lineMatch: RegExpExecArray | null;
+    while ((lineMatch = tokenLineRegex.exec(afterBreakdown)) !== null) {
+      foundAny = true;
+      totalPrompt += ResultParser.parseShorthandNumber(lineMatch[1]!);
+      totalCompletion += ResultParser.parseShorthandNumber(lineMatch[2]!);
+      if (lineMatch[3]) {
+        totalCached += ResultParser.parseShorthandNumber(lineMatch[3]);
+        hasCached = true;
+      }
+    }
+
+    if (!foundAny) return undefined;
+
+    return {
+      prompt: totalPrompt,
+      completion: totalCompletion,
+      total: totalPrompt + totalCompletion,
+      ...(hasCached && { cachedInput: totalCached }),
+    };
+  }
+
+  /**
    * Parse token usage from agent stdout/stderr output.
    *
    * Recognises formats such as `prompt_tokens: 1234`, `completion-tokens: 567`,
@@ -428,14 +490,15 @@ export class ResultParser {
    * {@link CostEstimator.estimateFromTotal}).
    *
    * When `runtime` is `'claude-code'`, delegates to {@link parseClaudeTokenUsage}
-   * to handle Claude's JSON-based usage format instead.
+   * to handle Claude's JSON-based usage format instead. When `runtime` is
+   * `'copilot-cli'`, delegates to {@link parseCopilotCliUsage}.
    *
    * **Note:** Regex-based token extraction from free-form text is unreliable.
    * Agents should emit structured token data inside their `aamf-json` block
    * under the `tokenUsage` field for accurate accounting.
    *
    * @param output - Raw agent output text.
-   * @param runtime - Optional runtime identifier; pass `'claude-code'` to parse Claude JSON format.
+   * @param runtime - Optional runtime identifier; pass `'claude-code'` or `'copilot-cli'` for specialised parsers.
    * @returns Parsed token counts, or `undefined` if no usage data is found.
    */
   static parseTokenUsage(
@@ -444,6 +507,9 @@ export class ResultParser {
   ): { prompt: number; completion: number; total: number } | undefined {
     if (runtime === 'claude-code') {
       return ResultParser.parseClaudeTokenUsage(output);
+    }
+    if (runtime === 'copilot-cli') {
+      return ResultParser.parseCopilotCliUsage(output);
     }
 
     const promptMatch = output.match(/prompt[\s_-]*tokens?:?\s*(\d+)/i);

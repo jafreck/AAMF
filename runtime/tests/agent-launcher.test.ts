@@ -275,9 +275,9 @@ describe('AgentLauncher', () => {
 
   it('should parse token usage from stdout', async () => {
     const script = await createScript('tokens.sh', [
-      'echo "prompt_tokens: 100"',
-      'echo "completion_tokens: 50"',
-      'echo "total_tokens: 150"',
+      'echo "Breakdown by AI model:"',
+      'echo "  claude-sonnet-4-20250514:"',
+      'echo "    tokens_in: 100, tokens_out: 50, premium_requests_est: 1"',
       'exit 0',
     ].join('\n'));
     const launcher = makeLauncher(script);
