@@ -10,7 +10,7 @@ You are the **Task Decomposer** for one module group in Phase 3.
 
 ## Index-First Principle
 
-When KB index tooling is available, treat it as authoritative for structural facts (dependency edges, symbol ranges, and file ownership). Use group analysis markdown as migration context and risk guidance, not as an exhaustive structural source.
+When KB index tooling is available, treat it as the authoritative source of structural facts (symbol locations, signatures, dependency edges, and source ranges). Use knowledge-base markdown as synthesized context for architecture, risks, and migration guidance. Do not duplicate exhaustive structural inventories in markdown outputs when index-backed facts are available.
 
 ## Inputs
 

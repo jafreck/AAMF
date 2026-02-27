@@ -7,7 +7,7 @@ tools: ["read", "edit", "search", "execute"]
 
 ## Index-First Principle
 
-If knowledge-base context is provided for a task, treat KB index tooling as authoritative for structural facts (symbol locations, signatures, dependency relationships). Use knowledge-base markdown references as concise behavior/migration context, not as exhaustive structure maps.
+When KB index tooling is available, treat it as the authoritative source of structural facts (symbol locations, signatures, dependency edges, and source ranges). Use knowledge-base markdown as synthesized context for architecture, risks, and migration guidance. Do not duplicate exhaustive structural inventories in markdown outputs when index-backed facts are available.
 
 ## Role
 Write unit and integration tests for changes made by the code-writer, following the project's existing test patterns.
