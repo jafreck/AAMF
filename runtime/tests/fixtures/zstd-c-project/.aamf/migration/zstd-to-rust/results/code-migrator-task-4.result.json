@@ -1,0 +1,35 @@
+{
+  "taskId": "task-4",
+  "agent": "code-migrator",
+  "status": "completed",
+  "outputFiles": [
+    "tmp/zstd-rust-output/programs/src/util.rs"
+  ],
+  "parity": "pass",
+  "issues": [
+    {
+      "severity": "minor",
+      "description": "set_file_stat() uses unsafe extern chown(2) directly because the libc crate is not a declared dependency. Behaviour is equivalent to the C original but relies on platform ABI stability.",
+      "sourceLocation": "programs/util.c:298-344",
+      "targetLocation": "programs/src/util.rs:set_file_stat"
+    },
+    {
+      "severity": "minor",
+      "description": "utime_file() uses unsafe extern utimensat() for POSIX 2008 nanosecond precision; std::fs::set_times() is nightly-only. Behaviour matches C ZSTD_USE_UTIMENSAT=1 path.",
+      "sourceLocation": "programs/util.c:260-291",
+      "targetLocation": "programs/src/util.rs:utime_file"
+    },
+    {
+      "severity": "minor",
+      "description": "FileNamesTable.ref_filename() clones the string rather than storing a raw pointer as the C version does. External callers no longer need to manage string lifetime separately; behaviour is equivalent.",
+      "sourceLocation": "programs/util.c:758-763",
+      "targetLocation": "programs/src/util.rs:FileNamesTable::ref_filename"
+    }
+  ],
+  "metrics": {
+    "linesOfCode": 1008,
+    "tokensUsed": 6500,
+    "durationMs": 120000
+  },
+  "notes": "Full migration of programs/util.c (1643 LoC) and programs/util.h (363 LoC). FileNamesTable converted from manual pointer/buffer management to Vec<String>. Platform-specific stat_t replaced with std::fs::Metadata. Core counting implemented natively for Linux (/proc/cpuinfo) and macOS (sysctlbyname). Directory traversal uses std::fs::read_dir. File compiles cleanly with zero warnings on stable Rust 2021 edition."
+}
