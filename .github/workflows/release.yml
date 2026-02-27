@@ -24,10 +24,20 @@ jobs:
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: runtime/node_modules
+          path: |
+            lore/node_modules
+            runtime/node_modules
           key: ${{ runner.os }}-node-20.x-${{ hashFiles('runtime/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-20.x-
+
+      - name: Install Lore dependencies
+        working-directory: lore
+        run: npm ci
+
+      - name: Build Lore
+        working-directory: lore
+        run: npm run build
 
       - name: Install dependencies
         working-directory: runtime
