@@ -41,11 +41,30 @@ export type RetryResult = AgentResult & {
 export class RetryExecutor {
   constructor(private launcher: AgentLauncherFn, private logger: Logger) {}
 
+  /** Heuristic classification for transient infrastructure/model transport failures. */
+  private isInfrastructureFailure(errorText: string): boolean {
+    return /\b503\b|goaway|connection_error|service unavailable|network error|connection (refused|reset|timed out)|deadline exceeded|timed? ?out/i
+      .test(errorText);
+  }
+
   /**
    * Calculate backoff delay with exponential increase and jitter.
    * delay = min(initialDelay * 2^(attempt-1) + random jitter, maxDelay)
    */
-  private calculateBackoff(attempt: number, initialDelayMs: number, maxDelayMs: number): number {
+  private calculateBackoff(
+    attempt: number,
+    initialDelayMs: number,
+    maxDelayMs: number,
+    isInfrastructureFailure: boolean,
+  ): number {
+    if (isInfrastructureFailure) {
+      // For transient infra/model transport failures, retry quickly.
+      // Keep waits short to avoid long stalls between attempts.
+      const exponential = 250 * Math.pow(2, attempt - 1);
+      const jitter = Math.random() * 100;
+      return Math.min(exponential + jitter, 2_000);
+    }
+
     const exponential = initialDelayMs * Math.pow(2, attempt - 1);
     const jitter = Math.random() * initialDelayMs * 0.5;
     return Math.min(exponential + jitter, maxDelayMs);
@@ -79,8 +98,13 @@ export class RetryExecutor {
           await options.onRetry(attempt, lastResult.error ?? 'unknown error');
         }
 
-        const delay = this.calculateBackoff(attempt, initialDelayMs, maxDelayMs);
-        this.logger.info(`Backing off ${Math.round(delay)}ms before retry ${attempt + 1}`);
+        const errorText = lastResult.error ?? 'unknown error';
+        const isInfra = this.isInfrastructureFailure(errorText);
+        const delay = this.calculateBackoff(attempt, initialDelayMs, maxDelayMs, isInfra);
+        this.logger.info(
+          `Backing off ${Math.round(delay)}ms before retry ${attempt + 1}` +
+          (isInfra ? ' (infra-fast-retry)' : ''),
+        );
         await this.sleep(delay);
       }
     }

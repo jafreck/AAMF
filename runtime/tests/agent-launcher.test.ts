@@ -89,6 +89,33 @@ describe('AgentLauncher', () => {
     expect(logContent).toContain('-s');
   });
 
+  it('should prefer invocation modelOverride over configured model', async () => {
+    const script = await createScript('echo-args-override.sh', 'echo "ARGS:$@"\nexit 0');
+    const launcher = makeLauncher(script, 'primary-model');
+    const { contextFile, progressDir } = await prepareInvocation('model-override');
+
+    const result = await launcher.launchAgent({
+      agent: 'code-migrator',
+      contextFile,
+      progressDir,
+      phase: 4,
+      taskId: 'model-override',
+      modelOverride: 'fallback-model',
+    });
+
+    expect(result.success).toBe(true);
+
+    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+    const logFiles = await readdir(logDir);
+    const agentLog = logFiles.find(f => f.startsWith('code-migrator-model-override'));
+    expect(agentLog).toBeDefined();
+
+    const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+    expect(logContent).toContain('--model');
+    expect(logContent).toContain('fallback-model');
+    expect(logContent).not.toContain('primary-model');
+  });
+
   it('should inject environment variables into spawned process', async () => {
     const script = await createScript('print-env.sh', [
       'echo "PROGRESS_DIR:$AAMF_PROGRESS_DIR"',

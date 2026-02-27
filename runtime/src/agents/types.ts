@@ -70,6 +70,9 @@ export interface AgentInvocation {
   /** Timeout in milliseconds; overrides the default agent timeout. */
   timeout?: number;
 
+  /** Model override for this single invocation (e.g. fallback model on infra failures). */
+  modelOverride?: string;
+
   /** MCP server config for the KB server; serialised as --mcp-config to the agent subprocess. */
   mcpConfig?: McpServerConfig;
 

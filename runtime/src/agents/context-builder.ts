@@ -141,6 +141,7 @@ export class ContextBuilder {
             groupId: payload?.groupId,
             groupName: payload?.groupName,
             taskSchemaPath: TASK_DECOMPOSER_SCHEMA_PATH,
+            maxLinesPerTask: this.config.options.maxLinesPerTask,
           },
         };
       }

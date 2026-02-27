@@ -92,6 +92,13 @@ None — this is a **leaf agent**.
 - Include the date and migration version in the documentation header.
 - Do not duplicate full symbol inventories or exhaustive dependency graphs in narrative docs when KB index already provides them.
 
+## Git Commit Requirement
+
+- Treat the migrated output directory as a git repository.
+- After successfully writing/updating documentation or inline doc comments, stage and commit your changes.
+- Use a clear message format: `aamf: documentation-writer <doc scope>`.
+- If there are no file changes to commit, do not create an empty commit.
+
 ## Output Format
 
 Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track documentation writing results. It **must** be the last fenced code block in your output.

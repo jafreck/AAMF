@@ -105,6 +105,27 @@ export const MigrationConfigSchema = z.object({
      * Default: false.
      */
     keepArtifacts: z.boolean().default(false),
+    /**
+     * Git commit automation for migrated output.
+     *
+     * When enabled, AAMF ensures `target.outputPath` is a Git repository and
+     * creates granular commits during migration (per code-modifying agent and
+     * per completed Phase 4 task).
+     */
+    git: z.object({
+      /** Enable automatic git init/add/commit operations. */
+      enabled: z.boolean().default(true),
+      /** Ensure `target.outputPath` is a git repository (initialise if needed). */
+      autoInit: z.boolean().default(true),
+      /** Commit after successful code-modifying agent invocations. */
+      commitByAgent: z.boolean().default(true),
+      /** Commit after each successfully completed Phase 4 task. */
+      commitPerTask: z.boolean().default(true),
+      /** Local git author name used when repository identity is not configured. */
+      authorName: z.string().default('AAMF Migration Bot'),
+      /** Local git author email used when repository identity is not configured. */
+      authorEmail: z.string().default('aamf@local.invalid'),
+    }).optional(),
   }).default({
     maxParallelAgents: 3,
     maxRetriesPerTask: 3,
@@ -119,10 +140,19 @@ export const MigrationConfigSchema = z.object({
     maxInfraRetries: 3,
     avgTokensPerTask: 5000,
     keepArtifacts: false,
+    git: {
+      enabled: true,
+      autoInit: true,
+      commitByAgent: true,
+      commitPerTask: true,
+      authorName: 'AAMF Migration Bot',
+      authorEmail: 'aamf@local.invalid',
+    },
   }),
   copilot: z.object({
     cliCommand: z.string().default('copilot'),
     model: z.string().optional(),
+    failureRecoveryModel: z.string().optional(),
     agentDir: z.string().default('.github/agents'),
     timeout: z.number().int().default(300_000),
     costOverrides: z.record(
@@ -142,6 +172,7 @@ export const MigrationConfigSchema = z.object({
   claudeCode: z.object({
     cliCommand: z.string().default('claude'),
     model: z.string().optional(),
+    failureRecoveryModel: z.string().optional(),
     agentDir: z.string().default('.claude/agents'),
     timeout: z.number().int().default(300_000),
     contextWindowTokens: z.number().int().optional(),

@@ -143,6 +143,28 @@ describe('RetryExecutor', () => {
       // Should have had at least 1 sleep call
       expect(sleepSpy.mock.calls.length).toBeGreaterThan(0);
     });
+
+    it('should use fast backoff profile for infrastructure failures', async () => {
+      const launcher = createFailingLauncher(
+        ['code-migrator'],
+        'Execution failed: CAPIError: 503 {"error":{"message":"HTTP/2 GOAWAY connection terminated","type":"connection_error"}}',
+      );
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const sleepSpy = vi.spyOn(executor as any, 'sleep').mockResolvedValue(undefined);
+
+      await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 4,
+        initialDelayMs: 10_000,
+        maxDelayMs: 30_000,
+      });
+
+      for (const call of sleepSpy.mock.calls) {
+        expect(call[0]).toBeLessThanOrEqual(2_000);
+      }
+      expect(sleepSpy.mock.calls.length).toBeGreaterThan(0);
+    });
   });
 
   // ─── Callbacks ─────────────────────────────────────────────────────

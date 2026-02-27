@@ -146,6 +146,13 @@ copilot --agent test-writer \
 - The full E2E suite should run in a reasonable time (<5 minutes if possible).
 - Use test fixtures and factories for data setup rather than hardcoding values.
 
+## Git Commit Requirement
+
+- Treat the migrated output directory as a git repository.
+- After successfully writing/updating E2E plan or test files, stage and commit your changes.
+- Use a clear message format: `aamf: e2e-test-crafter <phase or suite scope>`.
+- If there are no file changes to commit, do not create an empty commit.
+
 ## Output Format
 
 Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record E2E test crafting results. It **must** be the last fenced code block in your output.

@@ -148,6 +148,13 @@ The runtime reads this file first. If it is missing or invalid, the runtime fall
 - Never skip behavior — if something is hard to migrate, attempt it and flag for review.
 - Bill of materials: you must account for every function, class, constant, and type in your source scope.
 
+## Git Commit Requirement
+
+- Treat the migrated output directory as a git repository.
+- After successfully modifying files, stage and commit your changes.
+- Use a clear message format: `aamf: code-migrator <taskId> - <task name or scope>`.
+- If there are no file changes to commit, do not create an empty commit.
+
 ## Output Format
 
 Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track migration task results. It **must** be the last fenced code block in your output.

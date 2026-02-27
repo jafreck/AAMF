@@ -35,6 +35,13 @@ When KB index tooling is available, treat it as the authoritative source of stru
 - Do not introduce new dependencies or imports that are not already available in the project.
 - Keep the change minimal and idiomatic for `config.target.language`.
 
+## Git Commit Requirement
+
+- Treat the migrated output directory as a git repository.
+- After successfully applying the refactor, stage and commit your changes.
+- Use a clear message format: `aamf: idiomatic-refactorer <targetFile>`.
+- If there are no file changes to commit, do not create an empty commit.
+
 ## Output Format
 
 Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime. It **must** be the last fenced code block in your output.
