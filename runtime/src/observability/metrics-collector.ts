@@ -70,10 +70,10 @@ export class MetricsCollector {
    * @param peakConcurrency - externally-tracked peak concurrency (e.g. from ParallelExecutor).
    *   If provided, it overrides the time-series–derived peak.
    */
-  async writeSummary(dir: string): Promise<void> {
+  async writeSummary(dir: string, peakConcurrency?: number): Promise<void> {
     const metricsDir = join(dir, 'metrics');
     await ensureDir(metricsDir);
-    const agg = this.getAggregates();
+    const agg = this.getAggregates(peakConcurrency);
     const filePath = join(metricsDir, SUMMARY_FILE);
     const { writeFile } = await import('node:fs/promises');
     await writeFile(filePath, JSON.stringify(agg, null, 2) + '\n', 'utf-8');

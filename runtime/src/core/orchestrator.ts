@@ -198,7 +198,7 @@ export class MigrationOrchestrator {
 
     // Restore metrics from JSONL if resuming
     if (state.resumeCount > 0) {
-      await this.metricsCollector.loadFromJsonl(this.progressDir, state.metricsCount);
+      await this.metricsCollector.loadFromJsonl(this.progressDir, 0);
     }
 
     this.logger.event({ type: 'migration-started', projectName: this.config.projectName });
@@ -404,7 +404,7 @@ export class MigrationOrchestrator {
 
     // Write observability metrics summary and report
     try {
-      await this.metricsCollector.writeSummary(this.progressDir);
+      await this.metricsCollector.writeSummary(this.progressDir, this._peakConcurrency);
       const metricsDir = join(this.progressDir, 'metrics');
       const reportDir = join(this.progressDir, 'reports', 'observability');
       const aggregates = this.metricsCollector.getAggregates(this._peakConcurrency);
@@ -1846,9 +1846,9 @@ export class MigrationOrchestrator {
       startTime,
       endTime,
       durationMs: result.duration,
-      attemptNumber: 1,
-      maxAttempts: 1,
-      wasRetry: false,
+      attemptNumber: invocation.attemptNumber ?? 1,
+      maxAttempts: invocation.maxAttempts ?? 1,
+      wasRetry: (invocation.attemptNumber ?? 1) > 1,
       status: result.success ? 'success' : 'failed',
       model,
       tokensPrompt,

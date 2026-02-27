@@ -68,7 +68,8 @@ export class RetryExecutor {
     for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
       this.logger.info(`Attempt ${attempt}/${options.maxAttempts} for ${invocation.agent}${invocation.taskId ? ` (${invocation.taskId})` : ''}`);
 
-      lastResult = await this.launcher(invocation);
+      const attemptInv = { ...invocation, attemptNumber: attempt, maxAttempts: options.maxAttempts };
+      lastResult = await this.launcher(attemptInv);
 
       if (lastResult.success) {
         return { ...lastResult, attempts: attempt, recoveryAttempted, wasRetry: attempt > 1 };
@@ -97,7 +98,7 @@ export class RetryExecutor {
         if (recoveryResult.success) {
           // After recovery, retry the original once more
           this.logger.info(`Recovery succeeded, retrying original task ${invocation.taskId}`);
-          const retryResult = await this.launcher(invocation);
+          const retryResult = await this.launcher({ ...invocation, attemptNumber: options.maxAttempts + 1, maxAttempts: options.maxAttempts + 1 });
           return { ...retryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true, wasRetry: true };
         }
         return { ...recoveryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true, wasRetry: true };
