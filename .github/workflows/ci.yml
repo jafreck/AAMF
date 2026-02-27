@@ -36,6 +36,10 @@ jobs:
         working-directory: lore
         run: npm ci
 
+      - name: Build Lore
+        working-directory: lore
+        run: npm run build
+
       - name: Install dependencies
         working-directory: runtime
         run: npm ci
