@@ -2145,4 +2145,74 @@ describe('MigrationOrchestrator', () => {
       expect(refactorCount).toBe(0);
     });
   });
+
+  // ─── Agent Event Correlation ──────────────────────────────────────
+
+  describe('Agent Event Correlation', () => {
+    it('should emit agent-launched event when an agent is invoked', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+      const events: Array<Record<string, unknown>> = [];
+      vi.spyOn(logger, 'event').mockImplementation((ev) => { events.push(ev as any); });
+
+      await orchestrator.run();
+
+      const launchedEvents = events.filter(e => e.type === 'agent-launched');
+      expect(launchedEvents.length).toBeGreaterThan(0);
+      expect(launchedEvents[0]).toHaveProperty('agent');
+    });
+
+    it('should emit agent-completed event with invocationId on success', async () => {
+      const launcherFn = createMockLauncher(() => ({
+        invocationId: 'test-inv-123',
+      }));
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+      const events: Array<Record<string, unknown>> = [];
+      vi.spyOn(logger, 'event').mockImplementation((ev) => { events.push(ev as any); });
+
+      await orchestrator.run();
+
+      const completedEvents = events.filter(e => e.type === 'agent-completed');
+      expect(completedEvents.length).toBeGreaterThan(0);
+      const withInvId = completedEvents.find(e => e.invocationId === 'test-inv-123');
+      expect(withInvId).toBeDefined();
+      expect(withInvId!.success).toBe(true);
+      expect(withInvId!.duration).toBeDefined();
+    });
+
+    it('should emit agent-failed event with invocationId on failure', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'impact-assessor') {
+          return { exitCode: 1, success: false, error: 'test error', invocationId: 'fail-inv-456' };
+        }
+        return {};
+      });
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+      const events: Array<Record<string, unknown>> = [];
+      vi.spyOn(logger, 'event').mockImplementation((ev) => { events.push(ev as any); });
+
+      await orchestrator.run();
+
+      const failedEvents = events.filter(e => e.type === 'agent-failed');
+      expect(failedEvents.length).toBeGreaterThan(0);
+      const withInvId = failedEvents.find(e => e.invocationId === 'fail-inv-456');
+      expect(withInvId).toBeDefined();
+      expect(withInvId!.error).toBe('test error');
+    });
+
+    it('should emit both agent-launched and agent-completed for a successful phase', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+      const events: Array<Record<string, unknown>> = [];
+      vi.spyOn(logger, 'event').mockImplementation((ev) => { events.push(ev as any); });
+
+      await orchestrator.run();
+
+      const launchedCount = events.filter(e => e.type === 'agent-launched').length;
+      const completedCount = events.filter(e => e.type === 'agent-completed').length;
+      // Every launched agent should have a corresponding completed event
+      expect(launchedCount).toBeGreaterThan(0);
+      expect(completedCount).toBe(launchedCount);
+    });
+  });
 });

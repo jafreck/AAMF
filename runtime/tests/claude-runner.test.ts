@@ -389,4 +389,85 @@ describe('ClaudeCodeRunner', () => {
     expect(logContent).toContain('=== STDOUT ===');
     expect(logContent).toContain('=== STDERR ===');
   });
+
+  describe('invocationId correlation', () => {
+    it('should include invocationId in the returned AgentResult', async () => {
+      const script = await createScript('claude-inv-id.sh', 'echo "OK"\nexit 0');
+      const runner = makeRunner(script);
+      const { contextFile, progressDir } = await prepareInvocation('claude-inv-001');
+
+      const result = await runner.run({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'claude-inv-001',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.invocationId).toBeDefined();
+      expect(result.invocationId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+    });
+
+    it('should generate unique invocationIds across invocations', async () => {
+      const script = await createScript('claude-inv-uniq.sh', 'echo "OK"\nexit 0');
+      const runner = makeRunner(script);
+
+      const { contextFile: ctx1, progressDir: pd1 } = await prepareInvocation('claude-inv-uniq-1');
+      const { contextFile: ctx2, progressDir: pd2 } = await prepareInvocation('claude-inv-uniq-2');
+
+      const r1 = await runner.run({
+        agent: 'code-migrator', contextFile: ctx1, progressDir: pd1, phase: 4, taskId: 'claude-inv-uniq-1',
+      });
+      const r2 = await runner.run({
+        agent: 'code-migrator', contextFile: ctx2, progressDir: pd2, phase: 4, taskId: 'claude-inv-uniq-2',
+      });
+
+      expect(r1.invocationId).not.toBe(r2.invocationId);
+    });
+
+    it('should include invocationId in agent log filename', async () => {
+      const script = await createScript('claude-inv-log.sh', 'echo "out"\nexit 0');
+      const runner = makeRunner(script);
+      const { contextFile, progressDir } = await prepareInvocation('claude-inv-log');
+
+      const result = await runner.run({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'claude-inv-log',
+      });
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f =>
+        f.startsWith('code-migrator-claude-inv-log-') &&
+        f.includes(result.invocationId!) &&
+        f.endsWith('.log'),
+      );
+      expect(agentLog).toBeDefined();
+    });
+
+    it('should include invocationId on error/catch path', async () => {
+      const runner = makeRunner('__aamf_no_such_claude_inv__');
+      const { contextFile, progressDir } = await prepareInvocation('claude-inv-err');
+
+      const result = await runner.run({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'claude-inv-err',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.invocationId).toBeDefined();
+      expect(result.invocationId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+    });
+  });
 });
