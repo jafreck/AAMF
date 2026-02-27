@@ -126,4 +126,17 @@ describe('CostEstimator', () => {
     expect(result.output).toBe(0);
     expect(result.total).toBe(0);
   });
+
+  it('should project cost for a model and average token count', () => {
+    const result = estimator.projectCost('claude-sonnet-4.5', 5000);
+    expect(result.total).toBeGreaterThan(0);
+    // Cross-check: projectCost should match estimateFromTotal
+    const expected = estimator.estimateFromTotal('claude-sonnet-4.5', 5000);
+    expect(result.total).toBeCloseTo(expected.total, 10);
+  });
+
+  it('should project cost of zero for zero tokens', () => {
+    const result = estimator.projectCost('gpt-4.1', 0);
+    expect(result.total).toBe(0);
+  });
 });

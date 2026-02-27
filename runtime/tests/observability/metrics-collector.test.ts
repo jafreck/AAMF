@@ -286,6 +286,127 @@ describe('MetricsCollector', () => {
       expect(peakBucket.concurrency).toBeGreaterThanOrEqual(2);
     });
 
+    it('should return zero routing aggregates when no routing metrics present', () => {
+      collector.record(makeMetric());
+      const agg = collector.getAggregates();
+      expect(agg.escalationCount).toBe(0);
+      expect(agg.escalationsByTier).toEqual({});
+      expect(agg.totalEscalationCostUsd).toBe(0);
+      expect(agg.retriesAvoidedByRouting).toBe(0);
+    });
+
+    it('should compute routing aggregates from routed invocations', () => {
+      // Normal tier — not counted as escalation
+      collector.record(makeMetric({ routingTier: 'normal', attemptNumber: 1, status: 'success' }));
+      // Heavy tier, success on first attempt → escalation + retry avoided
+      collector.record(
+        makeMetric({
+          routingTier: 'heavy',
+          attemptNumber: 1,
+          status: 'success',
+          escalationCostUsd: 0.02,
+        }),
+      );
+      // Critical tier, success on first attempt → escalation + retry avoided
+      collector.record(
+        makeMetric({
+          routingTier: 'critical',
+          attemptNumber: 1,
+          status: 'success',
+          escalationCostUsd: 0.05,
+        }),
+      );
+      // Heavy tier, second attempt (retry) → escalation, no retry avoided
+      collector.record(
+        makeMetric({
+          routingTier: 'heavy',
+          attemptNumber: 2,
+          wasRetry: true,
+          status: 'success',
+          escalationCostUsd: 0.03,
+        }),
+      );
+      // Critical tier, failed → escalation, no retry avoided
+      collector.record(
+        makeMetric({
+          routingTier: 'critical',
+          attemptNumber: 1,
+          status: 'failed',
+          escalationCostUsd: 0.04,
+        }),
+      );
+      // No routingTier set at all — not counted
+      collector.record(makeMetric());
+
+      const agg = collector.getAggregates();
+      expect(agg.escalationCount).toBe(4);
+      expect(agg.escalationsByTier).toEqual({ heavy: 2, critical: 2 });
+      expect(agg.totalEscalationCostUsd).toBeCloseTo(0.14, 6);
+      expect(agg.retriesAvoidedByRouting).toBe(2);
+    });
+
+    it('should count zero escalations when all metrics have normal tier', () => {
+      collector.record(makeMetric({ routingTier: 'normal', attemptNumber: 1, status: 'success' }));
+      collector.record(makeMetric({ routingTier: 'normal', attemptNumber: 1, status: 'success' }));
+      const agg = collector.getAggregates();
+      expect(agg.escalationCount).toBe(0);
+      expect(agg.escalationsByTier).toEqual({});
+      expect(agg.retriesAvoidedByRouting).toBe(0);
+    });
+
+    it('should sum escalationCostUsd from all metrics regardless of tier', () => {
+      // Normal tier with escalationCostUsd — still summed
+      collector.record(
+        makeMetric({ routingTier: 'normal', escalationCostUsd: 0.01 }),
+      );
+      // No routingTier with escalationCostUsd — still summed
+      collector.record(makeMetric({ escalationCostUsd: 0.02 }));
+      // Heavy tier with escalationCostUsd
+      collector.record(
+        makeMetric({
+          routingTier: 'heavy',
+          attemptNumber: 1,
+          status: 'success',
+          escalationCostUsd: 0.03,
+        }),
+      );
+      const agg = collector.getAggregates();
+      expect(agg.totalEscalationCostUsd).toBeCloseTo(0.06, 6);
+    });
+
+    it('should not count retriesAvoidedByRouting for cancelled status', () => {
+      collector.record(
+        makeMetric({
+          routingTier: 'heavy',
+          attemptNumber: 1,
+          status: 'cancelled',
+        }),
+      );
+      const agg = collector.getAggregates();
+      expect(agg.escalationCount).toBe(1);
+      expect(agg.retriesAvoidedByRouting).toBe(0);
+    });
+
+    it('should include routing aggregate fields in writeSummary output', async () => {
+      collector.record(
+        makeMetric({
+          routingTier: 'heavy',
+          attemptNumber: 1,
+          status: 'success',
+          escalationCostUsd: 0.05,
+        }),
+      );
+      await collector.writeSummary(tmpDir);
+      const raw = await readFile(join(tmpDir, 'metrics', 'summary.json'), 'utf-8');
+      const summary = JSON.parse(raw);
+      expect(summary).toHaveProperty('escalationCount', 1);
+      expect(summary).toHaveProperty('escalationsByTier');
+      expect(summary.escalationsByTier).toEqual({ heavy: 1 });
+      expect(summary).toHaveProperty('totalEscalationCostUsd');
+      expect(summary.totalEscalationCostUsd).toBeCloseTo(0.05, 6);
+      expect(summary).toHaveProperty('retriesAvoidedByRouting', 1);
+    });
+
     it('should compute parallelism of 1 for non-overlapping invocations', () => {
       collector.record(
         makeMetric({

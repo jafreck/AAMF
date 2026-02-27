@@ -1,3 +1,5 @@
+import type { ModelTier } from '../agents/types.js';
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogEntry {
@@ -36,4 +38,5 @@ export type RuntimeEvent =
   | { type: 'budget-exceeded'; usage: number; budget: number }
   | { type: 'migration-interrupted'; reason: string }
   | { type: 'metric-recorded'; invocationId: string }
+  | { type: 'model-routing-decision'; taskId: string; tier: ModelTier; selectedModel: string; reason: string; score: number }
   | { type: 'report-generated'; path: string };

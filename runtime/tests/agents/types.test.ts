@@ -10,6 +10,8 @@ import type {
   TaskDetails,
   McpServerConfig,
   InvocationMetric,
+  ModelTier,
+  RoutingDecision,
 } from '../../src/agents/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -523,5 +525,66 @@ describe('InvocationMetric', () => {
     });
     expect(metric.tokensTotal).toBe(0);
     expect(metric.costUsd).toBe(0);
+  });
+
+  it('should accept optional routingTier field', () => {
+    const metric = makeBaseMetric({ routingTier: 'heavy' });
+    expect(metric.routingTier).toBe('heavy');
+  });
+
+  it('should accept optional routingReason field', () => {
+    const metric = makeBaseMetric({ routingReason: 'high complexity score' });
+    expect(metric.routingReason).toBe('high complexity score');
+  });
+
+  it('should accept optional escalationCostUsd field', () => {
+    const metric = makeBaseMetric({ escalationCostUsd: 0.12 });
+    expect(metric.escalationCostUsd).toBe(0.12);
+  });
+
+  it('should leave routing fields undefined when not provided', () => {
+    const metric = makeBaseMetric();
+    expect(metric.routingTier).toBeUndefined();
+    expect(metric.routingReason).toBeUndefined();
+    expect(metric.escalationCostUsd).toBeUndefined();
+  });
+});
+
+// ─── ModelTier ─────────────────────────────────────────────────────────────────
+
+describe('ModelTier', () => {
+  it('should accept all three tier values', () => {
+    const tiers: ModelTier[] = ['normal', 'heavy', 'critical'];
+    expect(tiers).toEqual(['normal', 'heavy', 'critical']);
+  });
+});
+
+// ─── RoutingDecision ──────────────────────────────────────────────────────────
+
+describe('RoutingDecision', () => {
+  it('should construct with all required fields', () => {
+    const decision: RoutingDecision = {
+      tier: 'heavy',
+      selectedModel: 'claude-opus-4.5',
+      reason: 'complexity score exceeded heavy threshold',
+      score: 55,
+      escalated: false,
+    };
+    expect(decision.tier).toBe('heavy');
+    expect(decision.selectedModel).toBe('claude-opus-4.5');
+    expect(decision.reason).toBe('complexity score exceeded heavy threshold');
+    expect(decision.score).toBe(55);
+    expect(decision.escalated).toBe(false);
+  });
+
+  it('should represent an escalated decision', () => {
+    const decision: RoutingDecision = {
+      tier: 'critical',
+      selectedModel: 'claude-opus-4.6',
+      reason: 'retry escalation at attempt 2',
+      score: 80,
+      escalated: true,
+    };
+    expect(decision.escalated).toBe(true);
   });
 });

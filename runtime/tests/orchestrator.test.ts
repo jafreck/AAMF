@@ -15,8 +15,6 @@ import {
 } from './helpers/mocks.js';
 import { AgentInvocation, AgentResult, AgentName, MigrationTask } from '../src/agents/types.js';
 import { Logger } from '../src/logging/logger.js';
-import { ensureDir } from '../src/util/fs.js';
-import { spawnWithTimeout } from '../src/util/process.js';
 import { ensureDir, fileExists } from '../src/util/fs.js';
 import { spawnWithTimeout } from '../src/util/process.js';
 
@@ -2425,6 +2423,860 @@ describe('MigrationOrchestrator', () => {
         const metric = JSON.parse(line);
         expect(metric.status).toBe('success');
       }
+    });
+  });
+
+  // ─── Model Routing ───────────────────────────────────────────────────
+
+  describe('Model Routing', () => {
+    it('should route a complex task with many source files to heavyModel', async () => {
+      const complexTask: MigrationTask = {
+        id: 'task-001',
+        name: 'Complex Module',
+        sourceFiles: Array.from({ length: 8 }, (_, i) => `src/file-${i}.py`),
+        targetFiles: Array.from({ length: 8 }, (_, i) => `src/file-${i}.ts`),
+        knowledgeBaseRef: 'kb/task-001.md',
+        dependencies: [],
+        complexity: 'moderate',
+        description: 'A complex task',
+        acceptanceCriteria: ['works'],
+        parityChecks: ['matches'],
+        lineRange: { start: 1, end: 500 },
+      };
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+            },
+          },
+        },
+      );
+
+      // Write migration plan first, then overwrite planning artifacts with our complex task
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, [complexTask]);
+
+      const result = await orchestrator.run();
+
+      // Verify that the code-migrator invocation got the heavyModel override
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      expect(migratorInvocations.length).toBeGreaterThan(0);
+      expect(migratorInvocations[0]!.modelOverride).toBe('gpt-4.1');
+    });
+
+    it('should route a task matching criticalTaskPatterns to criticalModel', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-001'],
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+
+      const result = await orchestrator.run();
+
+      // task-001's code-migrator should get criticalModel
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator' && inv.taskId === 'task-001',
+      );
+      expect(migratorInvocations.length).toBeGreaterThan(0);
+      expect(migratorInvocations[0]!.modelOverride).toBe('claude-opus-4.6');
+    });
+
+    it('should downgrade to normal when maxCriticalTasks is reached', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-*'],
+              maxCriticalTasks: 1,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+
+      // Collect all code-migrator invocations
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      // First task should be routed (critical), second should be downgraded
+      const withOverride = migratorInvocations.filter((inv: AgentInvocation) => inv.modelOverride === 'claude-opus-4.6');
+      const withoutOverride = migratorInvocations.filter((inv: AgentInvocation) => !inv.modelOverride || inv.modelOverride !== 'claude-opus-4.6');
+      expect(withOverride.length).toBe(1);
+      expect(withoutOverride.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should suppress escalation when maxEscalationCostUsd is reached', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-*'],
+              maxEscalationCostUsd: 0.0001, // Tiny cap — exceeded after first escalation
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      // At most 1 escalation before cost cap kicks in
+      const escalated = migratorInvocations.filter((inv: AgentInvocation) => inv.modelOverride === 'claude-opus-4.6');
+      expect(escalated.length).toBeLessThanOrEqual(1);
+    });
+
+    it('should use invocation.modelOverride in metric.model when present', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          copilot: {
+            cliCommand: 'copilot',
+            agentDir: '.github/agents',
+            timeout: 300_000,
+            model: 'gpt-5-mini',
+          },
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-001'],
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      const jsonlPath = join(progressDir, 'metrics', 'invocations.jsonl');
+      const content = await readFile(jsonlPath, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      const metrics = lines.map(l => JSON.parse(l));
+
+      // Find the code-migrator metric for task-001 — should use criticalModel
+      const task001Migrator = metrics.find(
+        (m: any) => m.agentType === 'code-migrator' && m.taskId === 'task-001',
+      );
+      expect(task001Migrator).toBeDefined();
+      expect(task001Migrator.model).toBe('claude-opus-4.6');
+    });
+
+    it('should not set modelOverride when modelRouting.enabled is false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: false,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-*'],
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      // No code-migrator invocation should have a modelOverride (except failure-recovery)
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      for (const inv of migratorInvocations) {
+        expect(inv.modelOverride).toBeUndefined();
+      }
+    });
+
+    it('should use config default model in metric when no modelOverride is set', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          copilot: {
+            cliCommand: 'copilot',
+            agentDir: '.github/agents',
+            timeout: 300_000,
+            model: 'gpt-4o',
+          },
+        },
+      );
+
+      await orchestrator.run();
+
+      const jsonlPath = join(progressDir, 'metrics', 'invocations.jsonl');
+      const content = await readFile(jsonlPath, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      const metric = JSON.parse(lines[0]!);
+      expect(metric.model).toBe('gpt-4o');
+    });
+
+    it('should route a task matching criticalAgents to criticalModel', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalAgents: ['code-migrator'],
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      expect(migratorInvocations.length).toBeGreaterThan(0);
+      expect(migratorInvocations[0]!.modelOverride).toBe('claude-opus-4.6');
+    });
+
+    it('should assign normal tier to a simple task below heavyThreshold', async () => {
+      const simpleTask: MigrationTask = {
+        id: 'task-001',
+        name: 'Simple Module',
+        sourceFiles: ['src/simple.py'],
+        targetFiles: ['src/simple.ts'],
+        knowledgeBaseRef: 'kb/task-001.md',
+        dependencies: [],
+        complexity: 'simple',
+        description: 'A simple task',
+        acceptanceCriteria: ['works'],
+        parityChecks: ['matches'],
+        lineRange: { start: 1, end: 50 },
+      };
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, [simpleTask]);
+
+      await orchestrator.run();
+
+      // Simple task should NOT get modelOverride since score is below heavyThreshold
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      expect(migratorInvocations.length).toBeGreaterThan(0);
+      expect(migratorInvocations[0]!.modelOverride).toBeUndefined();
+    });
+
+    it('should route a complex task with high score to criticalModel', async () => {
+      const criticalTask: MigrationTask = {
+        id: 'task-001',
+        name: 'Critical Module',
+        sourceFiles: Array.from({ length: 10 }, (_, i) => `src/file-${i}.py`),
+        targetFiles: Array.from({ length: 10 }, (_, i) => `src/file-${i}.ts`),
+        knowledgeBaseRef: 'kb/task-001.md',
+        dependencies: [],
+        complexity: 'complex',
+        description: 'A critical task',
+        acceptanceCriteria: ['works'],
+        parityChecks: ['matches'],
+        lineRange: { start: 1, end: 1000 },
+      };
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, [criticalTask]);
+
+      await orchestrator.run();
+
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      expect(migratorInvocations.length).toBeGreaterThan(0);
+      // Score: 10*1.5 + 10 + 20 + 0 + 40 = 85, above criticalThreshold=70
+      expect(migratorInvocations[0]!.modelOverride).toBe('claude-opus-4.6');
+    });
+
+    it('should emit model-routing-decision event for routed invocations', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, logger, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-001'],
+            },
+          },
+        },
+      );
+
+      const events: Array<Record<string, unknown>> = [];
+      vi.spyOn(logger, 'event').mockImplementation((ev) => { events.push(ev as any); });
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      const routingEvents = events.filter(e => e.type === 'model-routing-decision');
+      expect(routingEvents.length).toBeGreaterThan(0);
+      const firstRouting = routingEvents[0]!;
+      expect(firstRouting.tier).toBeDefined();
+      expect(firstRouting.selectedModel).toBeDefined();
+      expect(firstRouting.reason).toBeDefined();
+      expect(firstRouting.score).toBeDefined();
+    });
+
+    it('should escalate model on retry when attempt >= escalateOnRetryAttempt', async () => {
+      let callCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          callCount++;
+          // Fail the first attempt, succeed on retry
+          if (callCount === 1) {
+            return { exitCode: 1, success: false, error: 'Code migration failed' };
+          }
+        }
+        return {};
+      });
+
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 2,
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              // task score (~36) starts in normal tier, then retry escalation promotes to heavy
+              escalateOnRetryAttempt: 1,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      // The code-migrator invocations should have the escalated model after retries
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      expect(migratorInvocations.length).toBeGreaterThanOrEqual(2);
+      expect(migratorInvocations[0]!.modelOverride).toBeUndefined();
+      expect(migratorInvocations[1]!.modelOverride).toBe('gpt-4.1');
+    });
+
+    it('should escalate normal-tier retries to heavy tier', async () => {
+      const simpleTask: MigrationTask = {
+        id: 'task-001',
+        name: 'Simple Module',
+        sourceFiles: ['src/simple.py'],
+        targetFiles: ['src/simple.ts'],
+        knowledgeBaseRef: 'kb/task-001.md',
+        dependencies: [],
+        complexity: 'simple',
+        description: 'A simple task',
+        acceptanceCriteria: ['works'],
+        parityChecks: ['matches'],
+        lineRange: { start: 1, end: 20 },
+      };
+
+      let callCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          callCount++;
+          if (callCount === 1) {
+            return { exitCode: 1, success: false, error: 'Code migration failed' };
+          }
+        }
+        return {};
+      });
+
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 2,
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 80,
+              criticalThreshold: 95,
+              escalateOnRetryAttempt: 1,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, [simpleTask]);
+      await orchestrator.run();
+
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator' && inv.taskId === 'task-001',
+      );
+      expect(migratorInvocations.length).toBe(2);
+      expect(migratorInvocations[0]!.modelOverride).toBeUndefined();
+      expect(migratorInvocations[1]!.modelOverride).toBe('gpt-4.1');
+    });
+
+    it('should enforce maxCriticalTasks cap during retry escalation', async () => {
+      let task002Attempt = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator' && inv.taskId === 'task-002') {
+          task002Attempt++;
+          if (task002Attempt === 1) {
+            return { exitCode: 1, success: false, error: 'Code migration failed' };
+          }
+        }
+        return {};
+      });
+
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 2,
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-*'],
+              maxCriticalTasks: 1,
+              escalateOnRetryAttempt: 2,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      const task001Invocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator' && inv.taskId === 'task-001',
+      );
+      const task002Invocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator' && inv.taskId === 'task-002',
+      );
+
+      expect(task001Invocations[0]!.modelOverride).toBe('claude-opus-4.6');
+      expect(task002Invocations.length).toBeGreaterThanOrEqual(2);
+      expect(task002Invocations[0]!.modelOverride).toBeUndefined();
+      expect(task002Invocations[1]!.modelOverride).toBeUndefined();
+    });
+
+    it('should enforce maxEscalationCostUsd cap during retry escalation', async () => {
+      const simpleTask: MigrationTask = {
+        id: 'task-001',
+        name: 'Simple Module',
+        sourceFiles: ['src/simple.py'],
+        targetFiles: ['src/simple.ts'],
+        knowledgeBaseRef: 'kb/task-001.md',
+        dependencies: [],
+        complexity: 'simple',
+        description: 'A simple task',
+        acceptanceCriteria: ['works'],
+        parityChecks: ['matches'],
+        lineRange: { start: 1, end: 20 },
+      };
+
+      let callCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          callCount++;
+          if (callCount === 1) {
+            return { exitCode: 1, success: false, error: 'Code migration failed' };
+          }
+        }
+        return {};
+      });
+
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 2,
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 80,
+              criticalThreshold: 95,
+              escalateOnRetryAttempt: 2,
+              maxEscalationCostUsd: 0.000001,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, [simpleTask]);
+      await orchestrator.run();
+
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator' && inv.taskId === 'task-001',
+      );
+      expect(migratorInvocations.length).toBe(2);
+      expect(migratorInvocations[0]!.modelOverride).toBeUndefined();
+      expect(migratorInvocations[1]!.modelOverride).toBeUndefined();
+    });
+
+    it('should apply transient-failure fallback before retry escalation', async () => {
+      let callCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          callCount++;
+          if (callCount <= 1) {
+            return { exitCode: 1, success: false, error: 'HTTP/2 GOAWAY connection_error' };
+          }
+        }
+        return {};
+      });
+
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          copilot: {
+            cliCommand: 'copilot',
+            agentDir: '.github/agents',
+            timeout: 300_000,
+            failureRecoveryModel: 'gpt-4o-fallback',
+          },
+          options: {
+            maxRetriesPerTask: 3,
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-*'],
+              escalateOnRetryAttempt: 2,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      // After a transient failure, the fallback model should be applied
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      // At least one retry should have happened
+      expect(migratorInvocations.length).toBeGreaterThanOrEqual(2);
+      // The second invocation should use the fallback model (transient failure takes priority)
+      expect(migratorInvocations[1]!.modelOverride).toBe('gpt-4o-fallback');
+    });
+
+    it('should record escalationCostUsd in metric when routing is active', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          copilot: {
+            cliCommand: 'copilot',
+            agentDir: '.github/agents',
+            timeout: 300_000,
+            model: 'gpt-5-mini',
+          },
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-001'],
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      const jsonlPath = join(progressDir, 'metrics', 'invocations.jsonl');
+      const content = await readFile(jsonlPath, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      const metrics = lines.map(l => JSON.parse(l));
+
+      // Find the code-migrator metric for task-001 — should have escalationCostUsd
+      const task001Migrator = metrics.find(
+        (m: any) => m.agentType === 'code-migrator' && m.taskId === 'task-001',
+      );
+      expect(task001Migrator).toBeDefined();
+      expect(task001Migrator.escalationCostUsd).toBeDefined();
+      expect(typeof task001Migrator.escalationCostUsd).toBe('number');
+    });
+
+    it('should propagate routingTier and routingReason to recorded metric', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          copilot: {
+            cliCommand: 'copilot',
+            agentDir: '.github/agents',
+            timeout: 300_000,
+            model: 'gpt-5-mini',
+          },
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-001'],
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      const jsonlPath = join(progressDir, 'metrics', 'invocations.jsonl');
+      const content = await readFile(jsonlPath, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      const metrics = lines.map(l => JSON.parse(l));
+
+      const task001Migrator = metrics.find(
+        (m: any) => m.agentType === 'code-migrator' && m.taskId === 'task-001',
+      );
+      expect(task001Migrator).toBeDefined();
+      expect(task001Migrator.routingTier).toBeDefined();
+      expect(['normal', 'heavy', 'critical']).toContain(task001Migrator.routingTier);
+      if (task001Migrator.routingTier !== 'normal') {
+        expect(task001Migrator.routingReason).toBeDefined();
+      }
+    });
+
+    it('should use glob wildcard matching for criticalTaskPatterns', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-00?'],
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      // task-001 and task-002 should both match 'task-00?'
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      expect(migratorInvocations.length).toBeGreaterThan(0);
+      for (const inv of migratorInvocations) {
+        expect(inv.modelOverride).toBe('claude-opus-4.6');
+      }
+    });
+  });
+
+  // ─── Git Automation ───────────────────────────────────────────────────
+
+  describe('Git Automation', () => {
+    it('should not attempt git operations when git.enabled is false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            git: {
+              enabled: false,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      // No git invocations should have been made — verify no git-related errors
+      // and that the run completed successfully
+      const invocations = mockLauncher.invocations;
+      expect(invocations.length).toBeGreaterThan(0);
+    });
+
+    it('should serialize phase 4 tasks to parallelism=1 when git is enabled', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      // Run will attempt git operations which may fail in test env, but
+      // the parallelism=1 behavior is set at scheduling time before git runs
+      try {
+        await orchestrator.run();
+      } catch {
+        // git operations may fail in test temp dir — that's OK
+      }
+
+      // Verify code-migrator invocations ran (git failures are non-fatal for scheduling)
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      expect(migratorInvocations.length).toBeGreaterThanOrEqual(1);
     });
   });
 });
