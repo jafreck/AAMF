@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "prepare": "npm run build"
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@types/better-sqlite3": "^7.6.13",
