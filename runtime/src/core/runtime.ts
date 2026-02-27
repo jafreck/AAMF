@@ -11,7 +11,7 @@ import { PHASES } from './phase-registry.js';
 import { Logger } from '../logging/logger.js';
 import { MigrationResult } from '../agents/types.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
-import { fileExists, removeDir } from '../util/fs.js';
+import { fileExists } from '../util/fs.js';
 
 export interface RuntimeOptions {
   configPath: string;
@@ -72,6 +72,7 @@ export class MigrationRuntime {
   private progressDir!: string;
   private projectRoot!: string;
   private phase?: number;
+  private runId!: string;
 
   async initialize(options: RuntimeOptions): Promise<void> {
     // 1. Load config
@@ -100,8 +101,8 @@ export class MigrationRuntime {
     });
 
     // 3a. Generate a stable runId for this execution
-    const runId = randomUUID();
-    this.logger.setRunId(runId);
+    this.runId = randomUUID();
+    this.logger.setRunId(this.runId);
 
     // 4. Create checkpoint manager
     this.checkpoint = new CheckpointManager(this.progressDir, this.logger);
@@ -116,7 +117,7 @@ export class MigrationRuntime {
     // 7. Validate agent files exist
     await this.validateAgentFiles();
 
-    this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName} (runId=${runId})`);
+    this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName} (runId=${this.runId})`);
     this.logger.info(`Source: ${this.config.source.language} → Target: ${this.config.target.language}`);
 
     // 8. Setup graceful shutdown
@@ -159,6 +160,7 @@ export class MigrationRuntime {
       this.progress,
       this.logger,
       this.projectRoot,
+      this.runId,
       this.phase,
     );
 
@@ -169,22 +171,6 @@ export class MigrationRuntime {
 
     // Print summary
     this.printSummary(result);
-
-    // Cleanup artifacts unless retention is enabled
-    try {
-      const shouldKeepArtifacts =
-        process.env.AAMF_KEEP_ARTIFACTS === '1' || this.config.options.keepArtifacts;
-      if (shouldKeepArtifacts) {
-        this.logger.info('Artifact retention enabled — keeping progress and output directories');
-      } else {
-        this.logger.info('Cleaning up progress and output directories');
-        await removeDir(this.progressDir);
-        await removeDir(this.config.target.outputPath);
-      }
-    } catch (err) {
-      this.logger.warn(`Artifact cleanup failed: ${err}`);
-    }
-
     return result;
   }
 

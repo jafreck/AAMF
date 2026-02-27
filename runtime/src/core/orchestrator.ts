@@ -30,6 +30,9 @@ import { IndexBuilder } from '../indexer/index.js';
 import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
 import { ensurePythonDeps } from '../indexer/ensure-python-deps.js';
 import { KbServerProcess } from './kb-server-process.js';
+import { MetricsCollector } from '../observability/metrics-collector.js';
+import { ReportGenerator } from '../observability/report-generator.js';
+import type { InvocationMetric } from '../agents/types.js';
 import { z } from 'zod';
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
@@ -147,6 +150,12 @@ export class MigrationOrchestrator {
    * are serialised to avoid file-lock contention.
    */
   private readonly buildLimiter: ReturnType<typeof pLimit>;
+  private readonly metricsCollector: MetricsCollector;
+  private readonly costEstimatorInstance: CostEstimator;
+  private readonly reportGenerator: ReportGenerator;
+  private readonly runId: string;
+  /** Tracks the maximum concurrency observed across all ParallelExecutor instances. */
+  private _peakConcurrency = 0;
 
   constructor(
     private readonly config: MigrationConfig,
@@ -155,6 +164,7 @@ export class MigrationOrchestrator {
     private readonly progress: ProgressWriter,
     private readonly logger: Logger,
     projectRoot: string,
+    runId: string,
     singlePhase?: number,
   ) {
     this.projectRoot = projectRoot;
@@ -167,6 +177,14 @@ export class MigrationOrchestrator {
     const bc = config.options.buildConcurrency ?? 1;
     // 0 means unlimited → use maxParallelAgents
     this.buildLimiter = pLimit(bc === 0 ? config.options.maxParallelAgents : bc);
+
+    this.metricsCollector = new MetricsCollector();
+    const overrides = config.agentRuntime === 'claude-code'
+      ? config.claudeCode?.costOverrides
+      : config.copilot.costOverrides;
+    this.costEstimatorInstance = new CostEstimator(overrides);
+    this.reportGenerator = new ReportGenerator();
+    this.runId = runId;
   }
 
   // ─── Public API ──────────────────────────────────────────────────────
@@ -178,6 +196,11 @@ export class MigrationOrchestrator {
 
     // Restore token usage from checkpoint
     this.tokenTracker.loadFromCheckpoint(state.tokenUsage);
+
+    // Restore metrics from JSONL if resuming
+    if (state.resumeCount > 0) {
+      await this.metricsCollector.loadFromJsonl(this.progressDir, 0);
+    }
 
     this.logger.event({ type: 'migration-started', projectName: this.config.projectName });
     await this.progress.appendEvent('Migration started');
@@ -379,6 +402,23 @@ export class MigrationOrchestrator {
     });
     this.progress.setCumulativeDuration(cumulativeDurationMs);
     await this.progress.finalize(migrationResult);
+
+    // Write observability metrics summary and report
+    try {
+      await this.metricsCollector.writeSummary(this.progressDir, this._peakConcurrency);
+      const metricsDir = join(this.progressDir, 'metrics');
+      const reportDir = join(this.progressDir, 'reports', 'observability');
+      const aggregates = this.metricsCollector.getAggregates(this._peakConcurrency);
+      await this.reportGenerator.generate(
+        metricsDir,
+        reportDir,
+        this.metricsCollector.getMetrics(),
+        aggregates,
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to write observability report: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     return migrationResult;
   }
 
@@ -710,6 +750,7 @@ export class MigrationOrchestrator {
         this.logger,
       );
       const results = await parallel.executeAll(invocations);
+      this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
 
       const failedGroups: Array<{ id: string; reason: string; attempts: number }> = [];
       for (const [i, r] of results.entries()) {
@@ -1136,6 +1177,7 @@ export class MigrationOrchestrator {
       this.buildInvocation('parity-verifier', parityCtx, 4, task.id),
       this.buildInvocation('test-writer', testCtx, 4, task.id),
     ]);
+    this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
     if (parityResult) this.recordTokens(parityResult, 4);
     if (testResult) this.recordTokens(testResult, 4);
 
@@ -1373,6 +1415,7 @@ export class MigrationOrchestrator {
       this.buildInvocation('e2e-test-crafter', e2eCtx, 6),
       this.buildInvocation('documentation-writer', docCtx, 6),
     ]);
+    this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
 
     for (const r of results) this.recordTokens(r, 6);
 
@@ -1752,6 +1795,7 @@ export class MigrationOrchestrator {
   private async launchAgentWithEvents(invocation: AgentInvocation): Promise<AgentResult> {
     const invocationId = randomUUID();
     const taggedInvocation = { ...invocation, invocationId };
+    const startTime = new Date().toISOString();
 
     this.logger.event({
       type: 'agent-launched',
@@ -1780,6 +1824,48 @@ export class MigrationOrchestrator {
         error: result.error ?? 'unknown',
         invocationId: result.invocationId,
       });
+    }
+
+    // Record invocation metric
+    const endTime = new Date().toISOString();
+    const model = this.config.agentRuntime === 'claude-code'
+      ? (this.config.claudeCode?.model ?? 'unknown')
+      : (this.config.copilot.model ?? 'unknown');
+    const tokensPrompt = result.tokenUsage?.prompt ?? 0;
+    const tokensCompletion = result.tokenUsage?.completion ?? 0;
+    const tokensTotal = result.tokenUsage?.total ?? 0;
+    const costEstimate = this.costEstimatorInstance.estimate(
+      model, tokensPrompt, tokensCompletion, result.tokenUsage?.cachedInput,
+    );
+
+    const metric: InvocationMetric = {
+      runId: this.runId,
+      phase: invocation.phase ?? 0,
+      taskId: invocation.taskId ?? '',
+      agentType: invocation.agent,
+      invocationId,
+      startTime,
+      endTime,
+      durationMs: result.duration,
+      attemptNumber: invocation.attemptNumber ?? 1,
+      maxAttempts: invocation.maxAttempts ?? 1,
+      wasRetry: (invocation.attemptNumber ?? 1) > 1,
+      status: result.success ? 'success' : 'failed',
+      model,
+      tokensPrompt,
+      tokensCompletion,
+      tokensTotal,
+      costUsd: costEstimate.total,
+    };
+
+    this.metricsCollector.record(metric);
+    try {
+      await this.metricsCollector.writeJsonl(this.progressDir);
+      const st = this.checkpoint.getState();
+      st.metricsCount = (st.metricsCount ?? 0) + 1;
+      await this.checkpoint.save(st);
+    } catch {
+      // Non-fatal: metrics persistence failure should not abort migration
     }
 
     return result;

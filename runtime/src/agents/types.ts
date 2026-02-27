@@ -78,6 +78,12 @@ export interface AgentInvocation {
 
   /** Pre-generated invocation ID for log correlation; runners use this instead of generating their own. */
   invocationId?: string;
+
+  /** Current attempt number (1-based), set by RetryExecutor. */
+  attemptNumber?: number;
+
+  /** Maximum attempts allowed, set by RetryExecutor. */
+  maxAttempts?: number;
 }
 
 /**
@@ -333,6 +339,51 @@ export interface FailedTask {
   /** Whether the failure-recovery agent has already been invoked. */
   recoveryAttempted: boolean;
 }
+
+// ─── Invocation Metrics ──────────────────────────────────────────────────────
+
+/**
+ * Structured metric record emitted for every agent invocation.
+ * Captured at launch/complete/fail boundaries for observability reporting.
+ */
+export interface InvocationMetric {
+  /** Run identifier for the migration session. */
+  runId: string;
+  /** Migration phase number (1-based). */
+  phase: number;
+  /** Task identifier, when the invocation targets a specific task. */
+  taskId: string;
+  /** Agent type that was invoked. */
+  agentType: AgentName;
+  /** Unique identifier for this specific invocation. */
+  invocationId: string;
+  /** ISO-8601 timestamp when the invocation started. */
+  startTime: string;
+  /** ISO-8601 timestamp when the invocation ended. */
+  endTime: string;
+  /** Wall-clock duration in milliseconds. */
+  durationMs: number;
+  /** 1-based attempt number for this invocation. */
+  attemptNumber: number;
+  /** Maximum retry attempts configured for this invocation. */
+  maxAttempts: number;
+  /** Whether this invocation is a retry of a previous attempt. */
+  wasRetry: boolean;
+  /** Outcome of the invocation. */
+  status: 'success' | 'failed' | 'cancelled';
+  /** Model identifier used for this invocation. */
+  model: string;
+  /** Number of prompt (input) tokens consumed. */
+  tokensPrompt: number;
+  /** Number of completion (output) tokens consumed. */
+  tokensCompletion: number;
+  /** Total tokens consumed (prompt + completion). */
+  tokensTotal: number;
+  /** Estimated cost in USD for this invocation. */
+  costUsd: number;
+}
+
+// ─── Task Details ────────────────────────────────────────────────────────────
 
 /**
  * Extended details about a task's execution, used for reporting and

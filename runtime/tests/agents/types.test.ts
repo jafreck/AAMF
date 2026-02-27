@@ -9,6 +9,7 @@ import type {
   FailedTask,
   TaskDetails,
   McpServerConfig,
+  InvocationMetric,
 } from '../../src/agents/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -442,5 +443,85 @@ describe('TaskDetails', () => {
   it('should hold a parityScore between 0 and 1', () => {
     const details: TaskDetails = { parityScore: 0.95 };
     expect(details.parityScore).toBe(0.95);
+  });
+});
+
+// ─── InvocationMetric ─────────────────────────────────────────────────────────
+
+describe('InvocationMetric', () => {
+  function makeBaseMetric(overrides?: Partial<InvocationMetric>): InvocationMetric {
+    return {
+      runId: 'run-001',
+      phase: 4,
+      taskId: 'task-001',
+      agentType: 'code-migrator',
+      invocationId: 'inv-abc-123',
+      startTime: '2026-02-27T06:00:00.000Z',
+      endTime: '2026-02-27T06:00:05.000Z',
+      durationMs: 5000,
+      attemptNumber: 1,
+      maxAttempts: 3,
+      wasRetry: false,
+      status: 'success',
+      model: 'claude-opus-4',
+      tokensPrompt: 1000,
+      tokensCompletion: 500,
+      tokensTotal: 1500,
+      costUsd: 0.045,
+      ...overrides,
+    };
+  }
+
+  it('should construct with all 17 required fields', () => {
+    const metric = makeBaseMetric();
+    expect(metric.runId).toBe('run-001');
+    expect(metric.phase).toBe(4);
+    expect(metric.taskId).toBe('task-001');
+    expect(metric.agentType).toBe('code-migrator');
+    expect(metric.invocationId).toBe('inv-abc-123');
+    expect(metric.startTime).toBe('2026-02-27T06:00:00.000Z');
+    expect(metric.endTime).toBe('2026-02-27T06:00:05.000Z');
+    expect(metric.durationMs).toBe(5000);
+    expect(metric.attemptNumber).toBe(1);
+    expect(metric.maxAttempts).toBe(3);
+    expect(metric.wasRetry).toBe(false);
+    expect(metric.status).toBe('success');
+    expect(metric.model).toBe('claude-opus-4');
+    expect(metric.tokensPrompt).toBe(1000);
+    expect(metric.tokensCompletion).toBe(500);
+    expect(metric.tokensTotal).toBe(1500);
+    expect(metric.costUsd).toBe(0.045);
+  });
+
+  it('should accept status "success"', () => {
+    const metric = makeBaseMetric({ status: 'success' });
+    expect(metric.status).toBe('success');
+  });
+
+  it('should accept status "failed"', () => {
+    const metric = makeBaseMetric({ status: 'failed' });
+    expect(metric.status).toBe('failed');
+  });
+
+  it('should accept status "cancelled"', () => {
+    const metric = makeBaseMetric({ status: 'cancelled' });
+    expect(metric.status).toBe('cancelled');
+  });
+
+  it('should represent a retry with wasRetry true and attemptNumber > 1', () => {
+    const metric = makeBaseMetric({ wasRetry: true, attemptNumber: 2 });
+    expect(metric.wasRetry).toBe(true);
+    expect(metric.attemptNumber).toBe(2);
+  });
+
+  it('should allow zero tokens and zero cost', () => {
+    const metric = makeBaseMetric({
+      tokensPrompt: 0,
+      tokensCompletion: 0,
+      tokensTotal: 0,
+      costUsd: 0,
+    });
+    expect(metric.tokensTotal).toBe(0);
+    expect(metric.costUsd).toBe(0);
   });
 });

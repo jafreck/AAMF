@@ -422,3 +422,27 @@ describe('RuntimeEvent — existing agent events with correlation fields', () =>
     expect(event.invocationId).toBeUndefined();
   });
 });
+
+// ─── metric-recorded and report-generated ────────────────────────────────────
+
+describe('RuntimeEvent — metric-recorded', () => {
+  it('should construct with invocationId', () => {
+    const event: RuntimeEvent = {
+      type: 'metric-recorded',
+      invocationId: 'inv-abc-123',
+    };
+    expect(event.type).toBe('metric-recorded');
+    expect(event.invocationId).toBe('inv-abc-123');
+  });
+});
+
+describe('RuntimeEvent — report-generated', () => {
+  it('should construct with path', () => {
+    const event: RuntimeEvent = {
+      type: 'report-generated',
+      path: 'reports/observability/index.md',
+    };
+    expect(event.type).toBe('report-generated');
+    expect(event.path).toBe('reports/observability/index.md');
+  });
+});

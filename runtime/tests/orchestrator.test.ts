@@ -15,7 +15,7 @@ import {
 } from './helpers/mocks.js';
 import { AgentInvocation, AgentResult, AgentName, MigrationTask } from '../src/agents/types.js';
 import { Logger } from '../src/logging/logger.js';
-import { ensureDir } from '../src/util/fs.js';
+import { ensureDir, fileExists } from '../src/util/fs.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -179,6 +179,7 @@ async function setupOrchestrator(
     progress,
     logger,
     tempDir,
+    'test-run-id',
     singlePhase,
   );
 
@@ -512,6 +513,7 @@ describe('MigrationOrchestrator', () => {
         progress,
         logger,
         tempDir,
+        'test-run-id',
       );
 
       await writeMigrationPlan(progressDir);
@@ -588,6 +590,7 @@ describe('MigrationOrchestrator', () => {
         progress,
         logger,
         tempDir,
+        'test-run-id',
       );
 
       const phase0Spy = vi.spyOn(orchestrator as any, 'executePhase0');
@@ -770,6 +773,7 @@ describe('MigrationOrchestrator', () => {
         progress,
         logger,
         tempDir,
+        'test-run-id',
       );
 
       await writeMigrationPlan(progressDir);
@@ -1446,7 +1450,7 @@ describe('MigrationOrchestrator', () => {
       await progress.initialize(config);
 
       const mockLauncher = new MockAgentLauncher(launcherFn);
-      const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, tempDir);
+      const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, tempDir, 'test-run-id');
 
       await writeMigrationPlan(progressDir);
       await orchestrator.run();
@@ -1472,7 +1476,7 @@ describe('MigrationOrchestrator', () => {
         const progress = new ProgressWriter(join(progressDir2, 'progress.md'));
         await progress.initialize(config);
         const mockLauncher = new MockAgentLauncher(launcherFn);
-        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub1'));
+        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub1'), 'test-run-id');
         await writeMigrationPlan(progressDir2);
         await orchestrator.run();
         // 2 tasks * 1000 * 2 = 4,000
@@ -1495,7 +1499,7 @@ describe('MigrationOrchestrator', () => {
         const progress = new ProgressWriter(join(progressDir3, 'progress.md'));
         await progress.initialize(config);
         const mockLauncher = new MockAgentLauncher(launcherFn);
-        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub2'));
+        const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub2'), 'test-run-id');
         await writeMigrationPlan(progressDir3);
         await orchestrator.run();
         // 2 tasks * 1000 * 3 = 6,000
@@ -1707,6 +1711,7 @@ describe('MigrationOrchestrator', () => {
         progress2,
         logger,
         tempDir,
+        'test-run-id',
       );
 
       const infoSpy = vi.spyOn(logger, 'info');
@@ -1811,7 +1816,7 @@ describe('MigrationOrchestrator', () => {
       await checkpoint1.load(config.projectName);
       const progress1 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress1.initialize(config);
-      const orch1 = new MigrationOrchestrator(config, checkpoint1, new MockAgentLauncher(launcherFn) as any, progress1, logger, tempDir);
+      const orch1 = new MigrationOrchestrator(config, checkpoint1, new MockAgentLauncher(launcherFn) as any, progress1, logger, tempDir, 'test-run-id');
       const result1 = await orch1.run();
 
       expect(result1.cumulativeDuration).toBe(result1.totalDuration);
@@ -1831,7 +1836,7 @@ describe('MigrationOrchestrator', () => {
 
       const progress2 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress2.initialize(config2);
-      const orch2 = new MigrationOrchestrator(config2, checkpoint2, new MockAgentLauncher(launcherFn) as any, progress2, logger, tempDir);
+      const orch2 = new MigrationOrchestrator(config2, checkpoint2, new MockAgentLauncher(launcherFn) as any, progress2, logger, tempDir, 'test-run-id');
       const result2 = await orch2.run();
 
       expect(result2.cumulativeDuration).toBe(afterFirst + result2.totalDuration);
@@ -2213,6 +2218,132 @@ describe('MigrationOrchestrator', () => {
       // Every launched agent should have a corresponding completed event
       expect(launchedCount).toBeGreaterThan(0);
       expect(completedCount).toBe(launchedCount);
+    });
+  });
+
+  // ─── Observability Metrics ──────────────────────────────────────────
+
+  describe('Observability Metrics', () => {
+    it('should write metrics JSONL file during run', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+
+      await orchestrator.run();
+
+      const jsonlPath = join(progressDir, 'metrics', 'invocations.jsonl');
+      const jsonlExists = await fileExists(jsonlPath);
+      expect(jsonlExists).toBe(true);
+
+      const content = await readFile(jsonlPath, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      expect(lines.length).toBeGreaterThan(0);
+
+      // Each line should be valid JSON with expected fields
+      const metric = JSON.parse(lines[0]!);
+      expect(metric).toHaveProperty('runId');
+      expect(metric).toHaveProperty('agentType');
+      expect(metric).toHaveProperty('startTime');
+      expect(metric).toHaveProperty('endTime');
+      expect(metric).toHaveProperty('durationMs');
+      expect(metric).toHaveProperty('status');
+      expect(metric).toHaveProperty('model');
+      expect(metric).toHaveProperty('tokensTotal');
+      expect(metric).toHaveProperty('costUsd');
+    });
+
+    it('should write metrics summary.json at end of run', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+
+      await orchestrator.run();
+
+      const summaryPath = join(progressDir, 'metrics', 'summary.json');
+      const summaryExists = await fileExists(summaryPath);
+      expect(summaryExists).toBe(true);
+
+      const raw = await readFile(summaryPath, 'utf-8');
+      const summary = JSON.parse(raw);
+      expect(summary).toHaveProperty('totalInvocations');
+      expect(summary.totalInvocations).toBeGreaterThan(0);
+      expect(summary).toHaveProperty('totalTokens');
+      expect(summary).toHaveProperty('totalCost');
+      expect(summary).toHaveProperty('peakParallelInvocations');
+    });
+
+    it('should generate observability report at end of run', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+
+      await orchestrator.run();
+
+      const reportPath = join(progressDir, 'reports', 'observability', 'index.md');
+      const reportExists = await fileExists(reportPath);
+      expect(reportExists).toBe(true);
+
+      const content = await readFile(reportPath, 'utf-8');
+      expect(content).toContain('Observability Report');
+    });
+
+    it('should increment metricsCount in checkpoint for each invocation', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint } = await setupOrchestrator(tempDir, launcherFn);
+
+      await orchestrator.run();
+
+      const state = checkpoint.getState();
+      expect(state.metricsCount).toBeGreaterThan(0);
+    });
+
+    it('should record model from config in metrics', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        copilot: {
+          cliCommand: 'copilot',
+          agentDir: '.github/agents',
+          timeout: 300_000,
+          model: 'gpt-4o',
+        },
+      });
+
+      await orchestrator.run();
+
+      const jsonlPath = join(progressDir, 'metrics', 'invocations.jsonl');
+      const content = await readFile(jsonlPath, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      const metric = JSON.parse(lines[0]!);
+      expect(metric.model).toBe('gpt-4o');
+    });
+
+    it('should record token usage in metrics', async () => {
+      const launcherFn = createMockLauncher(() => ({
+        tokenUsage: { prompt: 1000, completion: 500, total: 1500 },
+      }));
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+
+      await orchestrator.run();
+
+      const jsonlPath = join(progressDir, 'metrics', 'invocations.jsonl');
+      const content = await readFile(jsonlPath, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      const metric = JSON.parse(lines[0]!);
+      expect(metric.tokensPrompt).toBe(1000);
+      expect(metric.tokensCompletion).toBe(500);
+      expect(metric.tokensTotal).toBe(1500);
+    });
+
+    it('should record success status for successful invocations', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+
+      await orchestrator.run();
+
+      const jsonlPath = join(progressDir, 'metrics', 'invocations.jsonl');
+      const content = await readFile(jsonlPath, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      for (const line of lines) {
+        const metric = JSON.parse(line);
+        expect(metric.status).toBe('success');
+      }
     });
   });
 });
