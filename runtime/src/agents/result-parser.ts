@@ -30,7 +30,6 @@ export type AamfOutputBaseType = z.infer<typeof AamfOutputBase>;
 export const MigrationOrchestratorOutput = AamfOutputBase.extend({ agent: z.literal('migration-orchestrator') });
 export const ImpactAssessorOutput = AamfOutputBase.extend({ agent: z.literal('impact-assessor') });
 export const KnowledgeBuilderOutput = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
-export const LargeFileAnalyzerOutput = AamfOutputBase.extend({ agent: z.literal('large-file-analyzer') });
 export const MigrationPlannerOutput = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
 export const AdjudicatorOutput = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
 export const CodeMigratorOutput = AamfOutputBase.extend({ agent: z.literal('code-migrator') });

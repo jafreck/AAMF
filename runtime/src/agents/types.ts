@@ -13,7 +13,6 @@ export type AgentName =
   | 'migration-orchestrator'
   | 'impact-assessor'
   | 'knowledge-builder'
-  | 'large-file-analyzer'
   | 'migration-planner'
   | 'adjudicator'
   | 'code-migrator'

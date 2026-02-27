@@ -25,8 +25,8 @@ describe('Phase Registry', () => {
     }
   });
 
-  it('should allow parallelism for phases 2 and 6', () => {
-    expect(PHASES.find(p => p.id === 2)?.parallel).toBe(true);
+  it('should allow parallelism for phase 6 only', () => {
+    expect(PHASES.find(p => p.id === 2)?.parallel).toBe(false);
     expect(PHASES.find(p => p.id === 6)?.parallel).toBe(true);
   });
 

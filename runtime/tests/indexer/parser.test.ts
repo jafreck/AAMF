@@ -66,4 +66,9 @@ function hello(name) {
     // Should not throw; result may be null if grammar not installed.
     expect(() => pool.parse('javascript', source)).not.toThrow();
   });
+
+  it('should parse large sources (>32KB) without throwing', () => {
+    const largeSource = 'const x = 1;\n'.repeat(4000);
+    expect(() => pool.parse('javascript', largeSource)).not.toThrow();
+  });
 });

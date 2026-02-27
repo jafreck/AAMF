@@ -77,17 +77,6 @@ describe('ContextBuilder', () => {
       expect(context.inputFiles).toContain('/tmp/source');
       expect(context.inputFiles.some((f: string) => f.includes('impact-assessment.md'))).toBe(true);
       expect(context.outputPath).toContain('knowledge-base');
-      expect(context.payload?.largeFileThreshold).toBe(500);
-    });
-
-    it('should route large-file-analyzer to specific file path from payload', async () => {
-      const contextPath = await builder.buildContext('large-file-analyzer', 2, 'lfa-big.py', {
-        filePath: '/tmp/source/big.py',
-      });
-      const context = await readJson<AgentContext>(contextPath);
-
-      expect(context.inputFiles).toContain('/tmp/source/big.py');
-      expect(context.outputPath).toContain('large-files');
     });
 
     it('should route migration-planner to KB index + impact assessment', async () => {
@@ -232,7 +221,6 @@ describe('ContextBuilder', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
@@ -265,7 +253,6 @@ describe('ContextBuilder', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
@@ -298,7 +285,6 @@ describe('ContextBuilder', () => {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
-          largeFileThreshold: 500,
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,

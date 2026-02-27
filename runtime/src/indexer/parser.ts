@@ -11,6 +11,15 @@ import { createRequire } from 'node:module';
 
 const esmRequire = createRequire(import.meta.url);
 
+/**
+ * Size of chunks returned to tree-sitter when parsing source text.
+ *
+ * We intentionally stream source via callback input instead of passing a raw
+ * string to avoid a tree-sitter binding bug that can throw `Invalid argument`
+ * on large files when it chunks strings internally.
+ */
+const PARSER_CHUNK_SIZE = 4096;
+
 // ─── Grammar package map ──────────────────────────────────────────────────────
 
 /**
@@ -61,7 +70,7 @@ export class ParserPool {
     const parser = this.parsers.get(language);
     if (!parser) return null;
 
-    return parser.parse(source);
+    return parser.parse((offset) => source.slice(offset, offset + PARSER_CHUNK_SIZE));
   }
 
   // ─── Private helpers ────────────────────────────────────────────────────────
