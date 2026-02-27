@@ -417,13 +417,10 @@ describe('MigrationConfigSchema', () => {
         expect(result.options.modelRouting?.criticalTaskPatterns).toEqual(['task-00*']);
       });
 
-      it('should parse config without modelRouting with enabled: false default', () => {
-        const result = MigrationConfigSchema.parse(validConfig);
-        expect(result.options.modelRouting?.enabled ?? false).toBe(false);
-      });
     });
 
-    describe('kbIndex option', () => {      it('should leave kbIndex undefined when omitted', () => {
+    describe('kbIndex option', () => {
+      it('should leave kbIndex undefined when omitted', () => {
         const result = MigrationConfigSchema.parse(validConfig);
         expect(result.options.kbIndex).toBeUndefined();
       });

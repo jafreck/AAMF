@@ -106,13 +106,6 @@ export const MigrationConfigSchema = z.object({
      */
     keepArtifacts: z.boolean().default(false),
     /**
-     * Git commit automation for migrated output.
-     *
-     * When enabled, AAMF ensures `target.outputPath` is a Git repository and
-     * creates granular commits during migration (per code-modifying agent and
-     * per completed Phase 4 task).
-     */
-    /**
      * Model routing configuration for intelligent model selection.
      * When enabled, the orchestrator selects models based on task complexity,
      * file count, dependencies, and retry history.
@@ -141,6 +134,13 @@ export const MigrationConfigSchema = z.object({
       /** Retry attempt number at which to escalate model tier. */
       escalateOnRetryAttempt: z.number().int().min(1).default(2),
     }).optional(),
+    /**
+     * Git commit automation for migrated output.
+     *
+     * When enabled, AAMF ensures `target.outputPath` is a Git repository and
+     * creates granular commits during migration (per code-modifying agent and
+     * per completed Phase 4 task).
+     */
     git: z.object({
       /** Enable automatic git init/add/commit operations. */
       enabled: z.boolean().default(true),
