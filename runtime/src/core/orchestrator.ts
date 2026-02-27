@@ -1,4 +1,5 @@
 import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
@@ -525,7 +526,7 @@ export class MigrationOrchestrator {
   private async executePhase1(start: number): Promise<PhaseResult> {
     const contextFile = await this.contextBuilder.buildContext('impact-assessor', 1);
     const inv = this.buildInvocation('impact-assessor', contextFile, 1);
-    const result = await this.launcher.launchAgent(inv);
+    const result = await this.launchAgentWithEvents(inv);
     this.recordTokens(result, 1);
 
     const outputPath = join(this.progressDir, 'impact-assessment.md');
@@ -547,7 +548,7 @@ export class MigrationOrchestrator {
     // 1. Launch knowledge-builder
     const kbContext = await this.contextBuilder.buildContext('knowledge-builder', 2);
     const kbInv = this.buildInvocation('knowledge-builder', kbContext, 2);
-    const kbResult = await this.launcher.launchAgent(kbInv);
+    const kbResult = await this.launchAgentWithEvents(kbInv);
     this.recordTokens(kbResult, 2);
 
     if (!kbResult.success) {
@@ -590,7 +591,7 @@ export class MigrationOrchestrator {
     if (!checkpointState.phase3aComplete) {
       const planContext = await this.contextBuilder.buildContext('migration-planner', 3);
       const planInv = this.buildInvocation('migration-planner', planContext, 3);
-      const planResult = await this.launcher.launchAgent(planInv);
+      const planResult = await this.launchAgentWithEvents(planInv);
       this.recordTokens(planResult, 3);
 
       if (!planResult.success) {
@@ -614,7 +615,7 @@ export class MigrationOrchestrator {
           decisionType: 'migration-strategy',
         });
         const adjInv = this.buildInvocation('adjudicator', adjCtx, 3);
-        const adjResult = await this.launcher.launchAgent(adjInv);
+        const adjResult = await this.launchAgentWithEvents(adjInv);
         this.recordTokens(adjResult, 3);
       } else {
         // Helpful diagnostics: if strategy variant artifacts exist without the
@@ -694,7 +695,7 @@ export class MigrationOrchestrator {
         this.config.options.maxParallelAgents,
         async (inv) => {
           const retryExec = new RetryExecutor(
-            (attemptInv) => this.launcher.launchAgent(attemptInv),
+            (attemptInv) => this.launchAgentWithEvents(attemptInv),
             this.logger,
           );
           return retryExec.executeWithRetry(inv, {
@@ -923,7 +924,7 @@ export class MigrationOrchestrator {
 
     // 4. Process tasks
     const retryExec = new RetryExecutor(
-      (inv) => this.launcher.launchAgent(inv),
+      (inv) => this.launchAgentWithEvents(inv),
       this.logger,
     );
 
@@ -1128,7 +1129,7 @@ export class MigrationOrchestrator {
 
     const parallel = new ParallelExecutor(
       2,
-      (inv) => this.launcher.launchAgent(inv),
+      (inv) => this.launchAgentWithEvents(inv),
       this.logger,
     );
     const [parityResult, testResult] = await parallel.executeAll([
@@ -1167,7 +1168,7 @@ export class MigrationOrchestrator {
           },
         );
         const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
-        const recoveryResult = await this.launcher.launchAgent(recoveryInv);
+        const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
         this.recordTokens(recoveryResult, 4);
 
         if (!recoveryResult.success) {
@@ -1187,7 +1188,7 @@ export class MigrationOrchestrator {
           },
         );
         const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
-        const reMigrateResult = await this.launcher.launchAgent(reMigrateInv);
+        const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
         this.recordTokens(reMigrateResult, 4);
 
         if (!reMigrateResult.success) {
@@ -1206,7 +1207,7 @@ export class MigrationOrchestrator {
           },
         );
         const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
-        const reParityResult = await this.launcher.launchAgent(reParityInv);
+        const reParityResult = await this.launchAgentWithEvents(reParityInv);
         this.recordTokens(reParityResult, 4);
 
         parityPassed = await this.checkParityResult(task.id);
@@ -1289,7 +1290,7 @@ export class MigrationOrchestrator {
     for (let iteration = 0; iteration <= MAX_LOOPBACK; iteration++) {
       const ctx = await this.contextBuilder.buildContext('final-parity-checker', 5);
       const inv = this.buildInvocation('final-parity-checker', ctx, 5);
-      const result = await this.launcher.launchAgent(inv);
+      const result = await this.launchAgentWithEvents(inv);
       this.recordTokens(result, 5);
 
       if (!result.success) {
@@ -1338,7 +1339,7 @@ export class MigrationOrchestrator {
             5,
             `fix-${iteration}-${fixes.indexOf(fix)}`,
           );
-          const fixResult = await this.launcher.launchAgent(fixInv);
+          const fixResult = await this.launchAgentWithEvents(fixInv);
           this.recordTokens(fixResult, 5);
         }
       } else {
@@ -1364,7 +1365,7 @@ export class MigrationOrchestrator {
 
     const parallel = new ParallelExecutor(
       2,
-      (inv) => this.launcher.launchAgent(inv),
+      (inv) => this.launchAgentWithEvents(inv),
       this.logger,
     );
 
@@ -1411,7 +1412,7 @@ export class MigrationOrchestrator {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
       const reviewCtx = await this.contextBuilder.buildContext('idiomatic-reviewer', 8);
       const reviewInv = this.buildInvocation('idiomatic-reviewer', reviewCtx, 8);
-      const reviewResult = await this.launcher.launchAgent(reviewInv);
+      const reviewResult = await this.launchAgentWithEvents(reviewInv);
       this.recordTokens(reviewResult, 8);
 
       if (!reviewResult.success) {
@@ -1448,7 +1449,7 @@ export class MigrationOrchestrator {
             idiomaticReport: reportPath,
           });
           const refactorInv = this.buildInvocation('idiomatic-refactorer', refactorCtx, 8);
-          const refactorResult = await this.launcher.launchAgent(refactorInv);
+          const refactorResult = await this.launchAgentWithEvents(refactorInv);
           this.recordTokens(refactorResult, 8);
           if (!refactorResult.success) {
             return {
@@ -1605,7 +1606,7 @@ export class MigrationOrchestrator {
         },
       );
       const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
-      const recoveryResult = await this.launcher.launchAgent(recoveryInv);
+      const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
       this.recordTokens(recoveryResult, 4);
 
       if (!recoveryResult.success) {
@@ -1625,7 +1626,7 @@ export class MigrationOrchestrator {
         },
       );
       const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
-      const reMigrateResult = await this.launcher.launchAgent(reMigrateInv);
+      const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
       this.recordTokens(reMigrateResult, 4);
 
       if (!reMigrateResult.success) {
@@ -1741,5 +1742,46 @@ export class MigrationOrchestrator {
     if (result.tokenUsage) {
       this.tokenTracker.record(result.agent, phase, result.tokenUsage.total, result.tokenUsage.cachedInput);
     }
+  }
+
+  /**
+   * Wrapper around `launcher.launchAgent()` that emits agent lifecycle events
+   * with invocationId correlation. All orchestrator agent launches should go
+   * through this method for consistent event emission.
+   */
+  private async launchAgentWithEvents(invocation: AgentInvocation): Promise<AgentResult> {
+    const invocationId = randomUUID();
+    const taggedInvocation = { ...invocation, invocationId };
+
+    this.logger.event({
+      type: 'agent-launched',
+      agent: invocation.agent,
+      taskId: invocation.taskId,
+      phase: invocation.phase,
+      invocationId,
+    });
+
+    const result = await this.launcher.launchAgent(taggedInvocation);
+
+    if (result.success) {
+      this.logger.event({
+        type: 'agent-completed',
+        agent: result.agent,
+        taskId: result.taskId,
+        success: true,
+        duration: result.duration,
+        invocationId: result.invocationId,
+      });
+    } else {
+      this.logger.event({
+        type: 'agent-failed',
+        agent: result.agent,
+        taskId: result.taskId,
+        error: result.error ?? 'unknown',
+        invocationId: result.invocationId,
+      });
+    }
+
+    return result;
   }
 }

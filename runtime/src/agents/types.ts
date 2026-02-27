@@ -75,6 +75,9 @@ export interface AgentInvocation {
 
   /** Path to the KB SQLite database; injected as KB_DB_PATH env var into the agent subprocess. */
   kbDbPath?: string;
+
+  /** Pre-generated invocation ID for log correlation; runners use this instead of generating their own. */
+  invocationId?: string;
 }
 
 /**
@@ -118,6 +121,15 @@ export interface AgentResult {
 
   /** Error message describing why output parsing failed, if applicable. */
   parseError?: string;
+
+  /** Unique identifier for this specific invocation, for log correlation. */
+  invocationId?: string;
+
+  /** Time in milliseconds the invocation spent waiting in the queue before launch. */
+  queueDelay?: number;
+
+  /** Time in milliseconds from process spawn to the first output file being detected. */
+  spawnToFirstOutput?: number;
 }
 
 // ─── Agent Context ───────────────────────────────────────────────────────────
