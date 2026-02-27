@@ -24,6 +24,14 @@ export interface MetricsAggregate {
   costByAgent: Record<string, number>;
   peakParallelInvocations: number;
   parallelismOverTime: ParallelismBucket[];
+  /** Number of invocations routed to a non-normal tier (heavy or critical). */
+  escalationCount: number;
+  /** Escalation count broken down by tier. */
+  escalationsByTier: Record<string, number>;
+  /** Sum of escalationCostUsd across all metrics that carry it. */
+  totalEscalationCostUsd: number;
+  /** Routed invocations (tier != normal) that succeeded on first attempt. */
+  retriesAvoidedByRouting: number;
 }
 
 export interface ParallelismBucket {
@@ -112,6 +120,11 @@ export class MetricsCollector {
     let totalTokens = 0;
     let totalCost = 0;
 
+    const escalationsByTier: Record<string, number> = {};
+    let escalationCount = 0;
+    let totalEscalationCostUsd = 0;
+    let retriesAvoidedByRouting = 0;
+
     for (const m of this.metrics) {
       invocationsByAgent[m.agentType] = (invocationsByAgent[m.agentType] ?? 0) + 1;
       tokensByAgent[m.agentType] = (tokensByAgent[m.agentType] ?? 0) + m.tokensTotal;
@@ -123,6 +136,18 @@ export class MetricsCollector {
         totalRetries++;
         retriesByAgent[m.agentType] = (retriesByAgent[m.agentType] ?? 0) + 1;
         retriesByPhase[m.phase] = (retriesByPhase[m.phase] ?? 0) + 1;
+      }
+
+      if (m.routingTier && m.routingTier !== 'normal') {
+        escalationCount++;
+        escalationsByTier[m.routingTier] = (escalationsByTier[m.routingTier] ?? 0) + 1;
+        if (m.status === 'success' && m.attemptNumber === 1) {
+          retriesAvoidedByRouting++;
+        }
+      }
+
+      if (m.escalationCostUsd != null) {
+        totalEscalationCostUsd += m.escalationCostUsd;
       }
     }
 
@@ -145,6 +170,10 @@ export class MetricsCollector {
       costByAgent,
       peakParallelInvocations: peak,
       parallelismOverTime,
+      escalationCount,
+      escalationsByTier,
+      totalEscalationCostUsd,
+      retriesAvoidedByRouting,
     };
   }
 

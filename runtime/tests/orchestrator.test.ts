@@ -2967,6 +2967,51 @@ describe('MigrationOrchestrator', () => {
       expect(typeof task001Migrator.escalationCostUsd).toBe('number');
     });
 
+    it('should propagate routingTier and routingReason to recorded metric', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          copilot: {
+            cliCommand: 'copilot',
+            agentDir: '.github/agents',
+            timeout: 300_000,
+            model: 'gpt-5-mini',
+          },
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 40,
+              criticalThreshold: 70,
+              criticalTaskPatterns: ['task-001'],
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      const jsonlPath = join(progressDir, 'metrics', 'invocations.jsonl');
+      const content = await readFile(jsonlPath, 'utf-8');
+      const lines = content.split('\n').filter(l => l.trim().length > 0);
+      const metrics = lines.map(l => JSON.parse(l));
+
+      const task001Migrator = metrics.find(
+        (m: any) => m.agentType === 'code-migrator' && m.taskId === 'task-001',
+      );
+      expect(task001Migrator).toBeDefined();
+      expect(task001Migrator.routingTier).toBeDefined();
+      expect(['normal', 'heavy', 'critical']).toContain(task001Migrator.routingTier);
+      if (task001Migrator.routingTier !== 'normal') {
+        expect(task001Migrator.routingReason).toBeDefined();
+      }
+    });
+
     it('should use glob wildcard matching for criticalTaskPatterns', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
