@@ -11,6 +11,7 @@ import {
   ImpactAssessorOutput,
   KnowledgeBuilderOutput,
   MigrationPlannerOutput,
+  TaskDecomposerOutput,
   AdjudicatorOutput,
   CodeMigratorOutput,
   ParityVerifierOutput,
@@ -33,6 +34,7 @@ const agentOutputSchemas: Record<AgentName, z.ZodTypeAny> = {
   'impact-assessor': ImpactAssessorOutput,
   'knowledge-builder': KnowledgeBuilderOutput,
   'migration-planner': MigrationPlannerOutput,
+  'task-decomposer': TaskDecomposerOutput,
   'adjudicator': AdjudicatorOutput,
   'code-migrator': CodeMigratorOutput,
   'parity-verifier': ParityVerifierOutput,
@@ -139,11 +141,14 @@ function finaliseResult(
   const schema = agentOutputSchemas[agentResult.agent];
   const parseResult = ResultParser.parseAamfOutput(stdout, schema);
   if (parseResult.parsed) {
-    agentResult.structuredOutput = parseResult.data as Record<string, unknown>;
+    const parsedData = parseResult.data as Record<string, unknown> & {
+      tokenUsage?: AgentResult['tokenUsage'];
+    };
+    agentResult.structuredOutput = parsedData;
     agentResult.outputParsed = true;
     // Prefer tokenUsage from structured output over regex-based parsing
-    if (parseResult.data.tokenUsage) {
-      agentResult.tokenUsage = parseResult.data.tokenUsage;
+    if (parsedData.tokenUsage) {
+      agentResult.tokenUsage = parsedData.tokenUsage;
     }
   } else if (parseResult.error === MISSING_BLOCK_ERROR) {
     // Block absent — warn but leave success unchanged
@@ -154,6 +159,7 @@ function finaliseResult(
     agentResult.outputParsed = false;
     agentResult.parseError = parseResult.error;
     agentResult.success = false;
+    agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
   }
 
   // Fallback: if token usage is still unknown, estimate from prompt length

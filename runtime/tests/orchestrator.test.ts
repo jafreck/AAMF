@@ -13,7 +13,7 @@ import {
   createMockConfig,
   createSilentLogger,
 } from './helpers/mocks.js';
-import { AgentInvocation, AgentResult, AgentName } from '../src/agents/types.js';
+import { AgentInvocation, AgentResult, AgentName, MigrationTask } from '../src/agents/types.js';
 import { Logger } from '../src/logging/logger.js';
 import { ensureDir } from '../src/util/fs.js';
 
@@ -66,6 +66,69 @@ async function writeMigrationPlan(progressDir: string, content?: string): Promis
 - matches
 `;
   await writeFile(join(progressDir, 'migration-plan.md'), content ?? defaultPlan);
+  // Also write planning artifacts required by the two-step Phase 3 design.
+  await writePhase3PlanningArtifacts(progressDir);
+}
+
+/** Default task list matching writeMigrationPlan — used to populate planning artifacts. */
+const DEFAULT_PLANNING_TASKS: MigrationTask[] = [
+  {
+    id: 'task-001',
+    name: 'User Auth Module',
+    sourceFiles: ['src/task-001.py'],
+    targetFiles: ['src/task-001.ts'],
+    knowledgeBaseRef: 'kb/task-001.md',
+    dependencies: [],
+    complexity: 'moderate',
+    description: 'Migrate auth module',
+    acceptanceCriteria: ['works'],
+    parityChecks: ['matches'],
+  },
+  {
+    id: 'task-002',
+    name: 'Database Layer',
+    sourceFiles: ['src/task-002.py'],
+    targetFiles: ['src/task-002.ts'],
+    knowledgeBaseRef: 'kb/task-002.md',
+    dependencies: ['task-001'],
+    complexity: 'moderate',
+    description: 'Migrate database layer',
+    acceptanceCriteria: ['works'],
+    parityChecks: ['matches'],
+  },
+];
+
+/** Single-task fixture matching the inline singleTaskPlan markdown used in Phase 4 tests. */
+const SINGLE_AUTH_TASK: MigrationTask = {
+  id: 'task-001',
+  name: 'Auth Module',
+  sourceFiles: ['src/auth.py'],
+  targetFiles: ['src/auth.ts'],
+  knowledgeBaseRef: 'kb/auth.md',
+  dependencies: [],
+  complexity: 'simple',
+  description: 'Migrate auth',
+  acceptanceCriteria: ['works'],
+  parityChecks: ['matches'],
+};
+
+/**
+ * Write Phase 3 planning artifacts consumed by the two-step migration planner:
+ *   planning/groups.json     — module groups emitted by migration-planner
+ *   planning/tasks-core.json — task list emitted by task-decomposer for the "core" group
+ *
+ * Any test that exercises Phase 3 or later must call this (writeMigrationPlan calls it
+ * automatically; tests that write a custom migration plan must call it explicitly).
+ */
+async function writePhase3PlanningArtifacts(
+  progressDir: string,
+  tasks: MigrationTask[] = DEFAULT_PLANNING_TASKS,
+): Promise<void> {
+  const planningDir = join(progressDir, 'planning');
+  await mkdir(planningDir, { recursive: true });
+  const group = { id: 'core', name: 'Core', analysisFiles: [] };
+  await writeFile(join(planningDir, 'groups.json'), JSON.stringify([group], null, 2));
+  await writeFile(join(planningDir, 'tasks-core.json'), JSON.stringify(tasks, null, 2));
 }
 
 /** Write a final-parity-report.md with fix entries. */
@@ -722,35 +785,85 @@ describe('MigrationOrchestrator', () => {
   // ─── structuredOutput Integration ──────────────────────────────────
 
   describe('structuredOutput Integration', () => {
-    it('should read Phase 4 tasks from structuredOutput when outputParsed is true', async () => {
-      // Migration-planner returns structured tasks → no migration-plan.md needed
-      const launcherFn = createMockLauncher((inv) => {
-        if (inv.agent === 'migration-planner') {
-          return {
-            outputParsed: true,
-            structuredOutput: {
-              tasks: [
-                {
-                  id: 'task-s01',
-                  name: 'Structured Task 1',
-                  sourceFiles: ['src/s01.py'],
-                  targetFiles: ['src/s01.ts'],
-                  knowledgeBaseRef: 'kb/s01.md',
-                  dependencies: [],
-                  complexity: 'simple',
-                  description: 'Migrate s01',
-                  acceptanceCriteria: ['works'],
-                  parityChecks: ['matches'],
-                },
-              ],
-            },
-          };
-        }
-        return {};
-      });
+    it('should fail Phase 3 when a task-decomposer output file violates schema', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        undefined,
+        3,
+      );
 
-      // Note: no migration-plan.md written to progressDir
-      const { orchestrator, mockLauncher } = await setupOrchestrator(tempDir, launcherFn);
+      const planningDir = join(progressDir, 'planning');
+      await mkdir(planningDir, { recursive: true });
+      const group = { id: 'core', name: 'Core', analysisFiles: [] };
+      await writeFile(join(planningDir, 'groups.json'), JSON.stringify([group], null, 2));
+      await writeFile(join(planningDir, 'strategy.md'), '# strategy\n');
+
+      const invalidTasks = [
+        {
+          id: 'task-001',
+          name: 'Invalid missing required fields',
+          sourceFiles: ['src/a.c'],
+          targetFiles: ['src/a.rs'],
+          knowledgeBaseRef: 'kb/a.md',
+          dependencies: [],
+          complexity: 'simple',
+        },
+      ];
+      await writeFile(join(planningDir, 'tasks-core.json'), JSON.stringify(invalidTasks, null, 2));
+
+      const checkpoint = {
+        projectName: 'test-project',
+        version: 1,
+        currentPhase: 3,
+        currentTask: null,
+        completedPhases: [],
+        completedTasks: [],
+        failedTasks: [],
+        blockedTasks: [],
+        phaseOutputs: {},
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        startedAt: new Date().toISOString(),
+        lastCheckpoint: new Date().toISOString(),
+        resumeCount: 0,
+        cumulativeDurationMs: 0,
+        completedTaskDurationsMs: [],
+        phase3aComplete: true,
+        completedPhase3Groups: [],
+      };
+      await writeFile(join(progressDir, 'checkpoint.json'), JSON.stringify(checkpoint, null, 2));
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(false);
+      const phase3 = result.phases.find((p) => p.phase === 3);
+      expect(phase3).toBeDefined();
+      expect(phase3?.error).toContain('Schema validation failed');
+      expect(phase3?.error).toContain('tasks-core.json');
+    });
+
+    it('should read Phase 4 tasks from planning artifacts produced by task-decomposers', async () => {
+      // In the two-step Phase 3 design, task-decomposer writes per-group task JSON files.
+      // The orchestrator merges them into tasks-merged.json and passes the task list to Phase 4
+      // via structuredOutput.  This test verifies that specific task content drives Phase 4.
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+
+      // Write planning artifacts with a specific unique task — no migration-plan.md needed
+      const planningTasks: MigrationTask[] = [{
+        id: 'task-101',
+        name: 'Structured Task 1',
+        sourceFiles: ['src/s01.py'],
+        targetFiles: ['src/s01.ts'],
+        knowledgeBaseRef: 'kb/s01.md',
+        dependencies: [],
+        complexity: 'simple',
+        description: 'Migrate s01',
+        acceptanceCriteria: ['works'],
+        parityChecks: ['matches'],
+      }];
+      await writePhase3PlanningArtifacts(progressDir, planningTasks);
 
       const result = await orchestrator.run();
 
@@ -758,13 +871,14 @@ describe('MigrationOrchestrator', () => {
       const codeMigratorInvocations = mockLauncher.invocations.filter(
         (i) => i.agent === 'code-migrator',
       );
-      // code-migrator should have been invoked for the structured task
+      // code-migrator should have been invoked for the task from planning artifacts
       expect(codeMigratorInvocations.length).toBeGreaterThanOrEqual(1);
-      expect(codeMigratorInvocations[0]!.taskId).toBe('task-s01');
+      expect(codeMigratorInvocations[0]!.taskId).toBe('task-101');
     });
 
-    it('should fall back to ResultParser when Phase 3 outputParsed is false', async () => {
-      // Default mock returns outputParsed: false, so Phase 4 must read file
+    it('should invoke code-migrators for tasks loaded via planning artifacts (Phase 3 merge)', async () => {
+      // The new two-step Phase 3 always writes tasks-merged.json and sets phase3PlanResult;
+      // this test confirms that Phase 4 picks up the tasks and invokes code-migrators.
       const launcherFn = createMockLauncher();
       const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
         tempDir,
@@ -776,7 +890,7 @@ describe('MigrationOrchestrator', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(true);
-      // code-migrator should have been invoked (tasks parsed from file)
+      // code-migrator should have been invoked (tasks loaded from planning artifacts)
       const codeMigratorInvocations = mockLauncher.invocations.filter(
         (i) => i.agent === 'code-migrator',
       );
@@ -921,6 +1035,8 @@ describe('MigrationOrchestrator', () => {
       const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
 
       await writeFile(join(progressDir, 'migration-plan.md'), '# Migration Plan\n\nNo tasks defined.\n');
+      // Write empty planning artifacts so Phase 3 succeeds with zero tasks.
+      await writePhase3PlanningArtifacts(progressDir, []);
 
       const result = await orchestrator.run();
 
@@ -929,16 +1045,18 @@ describe('MigrationOrchestrator', () => {
       expect(phase4!.success).toBe(true);
     });
 
-    it('should fail phase 4 when migration-plan.md is missing', async () => {
+    it('should fail phase 3 when planning/groups.json is missing', async () => {
+      // No planning artifacts written — migration-planner mock succeeds but groups.json
+      // does not exist, so Phase 3 fails with an informative error.
       const launcherFn = createMockLauncher();
       const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
 
       const result = await orchestrator.run();
 
-      const phase4 = result.phases.find((p) => p.phase === 4);
-      expect(phase4).toBeDefined();
-      expect(phase4!.success).toBe(false);
-      expect(phase4!.error).toContain('migration-plan.md');
+      const phase3 = result.phases.find((p) => p.phase === 3);
+      expect(phase3).toBeDefined();
+      expect(phase3!.success).toBe(false);
+      expect(phase3!.error).toContain('groups.json');
     });
 
     it('should block tasks that fail after max retries', async () => {
@@ -991,6 +1109,7 @@ describe('MigrationOrchestrator', () => {
 - matches
 `;
       await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       const result = await orchestrator.run();
 
@@ -1049,6 +1168,7 @@ describe('MigrationOrchestrator', () => {
 - matches
 `;
       await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       // Write a parity sidecar with critical issues (will be read after parity-verifier runs)
       await ensureDir(join(progressDir, 'results'));
@@ -1109,6 +1229,7 @@ describe('MigrationOrchestrator', () => {
 - matches
 `;
       await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       // Write a parity sidecar with only minor issues
       await ensureDir(join(progressDir, 'results'));
@@ -1191,6 +1312,7 @@ describe('MigrationOrchestrator', () => {
 - matches
 `;
       await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       // Write a parity sidecar with major issues that downgrade to minor after retry
       // but since the file persists, we simulate "only minor remaining"
@@ -1362,6 +1484,7 @@ describe('MigrationOrchestrator', () => {
 - matches
 `;
       await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       const infoSpy = vi.spyOn(logger, 'info');
 
@@ -1463,6 +1586,13 @@ describe('MigrationOrchestrator', () => {
 - matches
 `;
       await writeFile(join(progressDir, 'migration-plan.md'), threeTaskPlan);
+      // Write planning artifacts for the three tasks so Phase 3 succeeds during the resume run.
+      const threeTasks: MigrationTask[] = [
+        { id: 'task-001', name: 'Module A', sourceFiles: ['src/a.py'], targetFiles: ['src/a.ts'], knowledgeBaseRef: 'kb/task-001.md', dependencies: [], complexity: 'simple', description: 'Migrate A', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
+        { id: 'task-002', name: 'Module B', sourceFiles: ['src/b.py'], targetFiles: ['src/b.ts'], knowledgeBaseRef: 'kb/task-002.md', dependencies: [], complexity: 'simple', description: 'Migrate B', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
+        { id: 'task-003', name: 'Module C', sourceFiles: ['src/c.py'], targetFiles: ['src/c.ts'], knowledgeBaseRef: 'kb/task-003.md', dependencies: ['task-001'], complexity: 'simple', description: 'Migrate C', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
+      ];
+      await writePhase3PlanningArtifacts(progressDir, threeTasks);
 
       // First run to get 1 task completed (so checkpoint has 1 prior duration)
       const checkpoint1 = new CheckpointManager(progressDir, logger);
@@ -1476,8 +1606,24 @@ describe('MigrationOrchestrator', () => {
       seedState.completedTaskDurationsMs = [3000];
       await checkpoint1.save(seedState);
 
-      // Resume run: task-002 and task-003 remain; after task-002 completes we now have 2 durations
-      const config2 = createMockConfig({ options: { resume: true } });
+      // Resume run: task-002 and task-003 remain; after task-002 completes we now have 2 durations.
+      // Use a complete options object so maxRetriesPerTask etc. are not accidentally undefined.
+      const config2 = createMockConfig({
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          largeFileThreshold: 500,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: true,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+        },
+      });
       const checkpoint2 = new CheckpointManager(progressDir, logger);
       await checkpoint2.load(config2.projectName);
       const progress2 = new ProgressWriter(join(progressDir, 'progress.md'));

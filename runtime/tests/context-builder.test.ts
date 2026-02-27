@@ -85,7 +85,9 @@ describe('ContextBuilder', () => {
 
       expect(context.inputFiles.some((f: string) => f.includes('index.md'))).toBe(true);
       expect(context.inputFiles.some((f: string) => f.includes('impact-assessment.md'))).toBe(true);
-      expect(context.outputPath).toContain('migration-plan.md');
+      // Output path is now the planning/ directory (migration-planner emits groups.json +
+      // strategy.md; task-decomposers emit tasks-<group>.json into the same directory)
+      expect(context.outputPath).toContain('planning');
     });
 
     it('should route adjudicator to competing strategies file', async () => {
@@ -97,6 +99,24 @@ describe('ContextBuilder', () => {
 
       expect(context.inputFiles).toContain('/tmp/strategies.md');
       expect(context.outputPath).toContain('adjudication-result.md');
+    });
+
+    it('should pass task-decomposer schema path in both inputFiles and payload', async () => {
+      const contextPath = await builder.buildContext('task-decomposer', 3, 'core', {
+        strategyFile: '/tmp/strategy.md',
+        analysisFiles: ['/tmp/kb-core.md'],
+        groupId: 'core',
+        groupName: 'Core',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      const schemaFile = context.inputFiles.find((f: string) =>
+        f.endsWith('/runtime/src/agents/task-decomposer.tasks.schema.json'),
+      );
+      expect(schemaFile).toBeDefined();
+      expect(context.payload?.taskSchemaPath).toBe(schemaFile);
+      expect(context.inputFiles).toContain('/tmp/strategy.md');
+      expect(context.inputFiles).toContain('/tmp/kb-core.md');
     });
 
     it('should route code-migrator with task-specific source/target files', async () => {

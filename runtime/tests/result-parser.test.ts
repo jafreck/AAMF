@@ -10,6 +10,7 @@ import {
   ImpactAssessorOutput,
   KnowledgeBuilderOutput,
   MigrationPlannerOutput,
+  TaskDecomposerOutput,
   AdjudicatorOutput,
   CodeMigratorOutput,
   ParityVerifierOutput,
@@ -503,6 +504,58 @@ intermediate text
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.status).toBe('needs-review');
+      }
+    });
+
+    it('should parse metadata-only task-decomposer output', () => {
+      const stdout = `\
+\
+\`\`\`aamf-json
+{
+  "status": "completed",
+  "agent": "task-decomposer",
+  "taskId": "group-3-compress-strategies",
+  "outputFiles": [".aamf/migration/demo/planning/tasks-group-3-compress-strategies.json"],
+  "taskCount": 2
+}
+\`\`\``;
+
+      const result = ResultParser.parseAamfOutput(stdout, TaskDecomposerOutput);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.agent).toBe('task-decomposer');
+        expect(result.data.outputFiles.length).toBe(1);
+        expect(result.data.taskCount).toBe(2);
+      }
+    });
+
+    it('should reject task-decomposer output that embeds tasks in aamf-json', () => {
+      const stdout = `\
+\
+\`\`\`aamf-json
+{
+  "status": "completed",
+  "agent": "task-decomposer",
+  "taskId": "group-3-compress-strategies",
+  "outputFiles": [".aamf/migration/demo/planning/tasks-group-3-compress-strategies.json"],
+  "tasks": [
+    {
+      "id": "task-301",
+      "name": "Migrate CWKSP arena allocator",
+      "sourceFiles": ["lib/compress/zstd_cwksp.h"],
+      "targetFiles": ["src/compress/cwksp.rs"],
+      "knowledgeBaseRef": "knowledge-base/modules/compress.md",
+      "dependencies": [],
+      "complexity": "complex"
+    }
+  ]
+}
+\`\`\``;
+
+      const result = ResultParser.parseAamfOutput(stdout, TaskDecomposerOutput);
+      expect(result.parsed).toBe(false);
+      if (!result.parsed) {
+        expect(result.error).toContain('schema validation failed');
       }
     });
   });

@@ -1,4 +1,5 @@
 import { resolve, join, dirname } from 'node:path';
+import { stat } from 'node:fs/promises';
 import { loadConfig, applyOverrides } from '../config/loader.js';
 import { MigrationConfig } from '../config/schema.js';
 import { MigrationOrchestrator } from './orchestrator.js';
@@ -17,6 +18,48 @@ export interface RuntimeOptions {
   dryRun?: boolean;
   phase?: number;   // run only this phase
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
+}
+
+/**
+ * Verify that the configured source path exists and configured entry points
+ * are present before any migration phases run.
+ */
+export async function validateSourceAvailability(config: MigrationConfig): Promise<void> {
+  const sourcePath = config.source.path;
+
+  let sourceStat;
+  try {
+    sourceStat = await stat(sourcePath);
+  } catch {
+    throw new Error(
+      `Source path does not exist: ${sourcePath}. ` +
+      'Ensure the source code is downloaded/present before running migration.',
+    );
+  }
+
+  if (!sourceStat.isDirectory()) {
+    throw new Error(`Source path is not a directory: ${sourcePath}`);
+  }
+
+  for (const entryPoint of config.source.entryPoints ?? []) {
+    const resolvedEntryPoint = resolve(sourcePath, entryPoint);
+    let entryStat;
+    try {
+      entryStat = await stat(resolvedEntryPoint);
+    } catch {
+      throw new Error(
+        `Configured source entry point not found: ${entryPoint} ` +
+        `(resolved: ${resolvedEntryPoint})`,
+      );
+    }
+
+    if (!entryStat.isFile()) {
+      throw new Error(
+        `Configured source entry point is not a file: ${entryPoint} ` +
+        `(resolved: ${resolvedEntryPoint})`,
+      );
+    }
+  }
 }
 
 export class MigrationRuntime {
@@ -40,6 +83,9 @@ export class MigrationRuntime {
       resume: options.resume,
     });
     this.phase = options.phase;
+
+    // Fail fast if source tree or configured entry points are missing.
+    await validateSourceAvailability(this.config);
 
     // 2. Setup directories
     this.progressDir = join(this.projectRoot, '.aamf', 'migration', this.config.projectName);

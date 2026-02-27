@@ -96,7 +96,30 @@ export const MigrationConfigSchema = z.object({
         pythonBin: z.string().default('python3'),
       }).optional(),
     }).optional(),
-  }).default({}),
+    /**
+     * When `true`, AAMF preserves the `.aamf` checkpoint directory and the
+     * target output directory after the migration completes instead of
+     * deleting them. Useful for post-run inspection and debugging.
+     * Can also be enabled at runtime by setting the environment variable
+     * `AAMF_KEEP_ARTIFACTS=1` without modifying the config file.
+     * Default: false.
+     */
+    keepArtifacts: z.boolean().default(false),
+  }).default({
+    maxParallelAgents: 3,
+    maxRetriesPerTask: 3,
+    maxLinesPerTask: 500,
+    contextWindowStrategy: 'per-invocation',
+    dryRun: false,
+    resume: false,
+    invocationDelayMs: 0,
+    buildConcurrency: 1,
+    continueOnBlocked: true,
+    maxBlockedTasks: 0,
+    maxInfraRetries: 3,
+    avgTokensPerTask: 5000,
+    keepArtifacts: false,
+  }),
   copilot: z.object({
     cliCommand: z.string().default('copilot'),
     model: z.string().optional(),
@@ -111,7 +134,11 @@ export const MigrationConfigSchema = z.object({
     ).optional().describe('Per-model cost overrides (USD per 1M tokens)'),
     /** Per-phase timeout overrides in milliseconds, keyed by phase number. */
     phaseTimeouts: z.record(z.coerce.number(), z.number().int()).optional(),
-  }).default({}),
+  }).default({
+    cliCommand: 'copilot',
+    agentDir: '.github/agents',
+    timeout: 300_000,
+  }),
   claudeCode: z.object({
     cliCommand: z.string().default('claude'),
     model: z.string().optional(),
@@ -127,7 +154,11 @@ export const MigrationConfigSchema = z.object({
     ).optional().describe('Per-model cost overrides (USD per 1M tokens)'),
     /** Per-phase timeout overrides in milliseconds, keyed by phase number. */
     phaseTimeouts: z.record(z.coerce.number(), z.number().int()).optional(),
-  }).default({}),
+  }).default({
+    cliCommand: 'claude',
+    agentDir: '.claude/agents',
+    timeout: 300_000,
+  }),
   environment: z.object({
     /** Whether to resolve PATH from a login shell at startup (default: true). */
     inheritShellPath: z.boolean().default(true),
@@ -144,7 +175,10 @@ export const MigrationConfigSchema = z.object({
      * Supports ~ for home directory expansion.
      */
     extraPath: z.array(z.string()).default([]),
-  }).default({}),
+  }).default({
+    inheritShellPath: true,
+    extraPath: [],
+  }),
 });
 
 export type MigrationConfig = z.infer<typeof MigrationConfigSchema>;

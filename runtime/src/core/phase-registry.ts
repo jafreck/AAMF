@@ -46,7 +46,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 3,
     name: 'Migration Planning',
     description: 'Create detailed migration plan with task breakdown, dependencies, and ordering',
-    agents: ['migration-planner', 'adjudicator'],
+    agents: ['migration-planner', 'task-decomposer', 'adjudicator'],
     critical: true,
     parallel: false,
   },

@@ -5,6 +5,10 @@ tools: ["read", "edit", "search", "execute"]
 ---
 # Test Writer
 
+## Index-First Principle
+
+When KB index tooling is available, treat it as the authoritative source of structural facts (symbol locations, signatures, dependency edges, and source ranges). Use knowledge-base markdown as synthesized context for architecture, risks, and migration guidance. Do not duplicate exhaustive structural inventories in markdown outputs when index-backed facts are available.
+
 ## Role
 Write unit and integration tests for changes made by the code-writer, following the project's existing test patterns.
 
@@ -13,6 +17,7 @@ Write unit and integration tests for changes made by the code-writer, following 
 You will receive:
 - **Task result**: A summary of what the code-writer changed (files modified/created, purpose of each change)
 - **Changed source files**: The actual source files modified or created by the code-writer
+- **Optional KB context**: Knowledge-base references attached to the task
 
 Read the task result and the changed source files carefully before writing any tests.
 

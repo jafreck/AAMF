@@ -1,7 +1,12 @@
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AgentName, AgentContext } from './types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { writeJson, ensureDir } from '../util/fs.js';
+
+const TASK_DECOMPOSER_SCHEMA_PATH = fileURLToPath(
+  new URL('./task-decomposer.tasks.schema.json', import.meta.url),
+);
 
 /** Options for building an agent context file. */
 export interface ContextBuildOptions {
@@ -121,8 +126,24 @@ export class ContextBuilder {
       case 'migration-planner':
         return {
           inputFiles: [join(kbDir, 'index.md'), impactAssessment],
-          outputPath: migrationPlan,
+          outputPath: join(this.progressDir, 'planning'),
         };
+
+      case 'task-decomposer': {
+        const strategyFile = String(payload?.strategyFile ?? join(this.progressDir, 'planning', 'strategy.md'));
+        const analysisFiles = Array.isArray(payload?.analysisFiles)
+          ? (payload.analysisFiles as string[])
+          : [];
+        return {
+          inputFiles: [TASK_DECOMPOSER_SCHEMA_PATH, strategyFile, ...analysisFiles],
+          outputPath: join(this.progressDir, 'planning', `tasks-${taskId ?? 'unknown'}.json`),
+          agentPayload: {
+            groupId: payload?.groupId,
+            groupName: payload?.groupName,
+            taskSchemaPath: TASK_DECOMPOSER_SCHEMA_PATH,
+          },
+        };
+      }
 
       case 'adjudicator':
         return {

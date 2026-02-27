@@ -145,6 +145,7 @@ async function writeMigrationConfig(): Promise<void> {
  *   AAMF_E2E=1 npx vitest run tests/e2e-lz4-rust.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
+const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -170,9 +171,9 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
   }, 10_800_000); // 3-hour timeout — ~5–7 K lines of C, 7 phases × many LLM round-trips
 
   afterAll(async () => {
-    // KEEP migrated output for manual review — skip cleanup
-    // await rm(aamfRoot, { recursive: true, force: true });
-    // await rm(outputDir, { recursive: true, force: true });
+    if (keepArtifacts) return;
+    await rm(aamfRoot, { recursive: true, force: true });
+    await rm(outputDir, { recursive: true, force: true });
   });
 
   // ── Source verification ──────────────────────────────────────────────────

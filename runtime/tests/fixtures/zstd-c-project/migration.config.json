@@ -1,10 +1,11 @@
 {
   "projectName": "zstd-to-rust",
   "source": {
-    "path": "./zstd-src/zstd-1.5.6/lib",
+    "path": "./zstd-src/zstd-1.5.7",
     "language": "c",
     "entryPoints": [
-      "compress/zstd_compress.c"
+      "lib/compress/zstd_compress.c",
+      "programs/zstdcli.c"
     ],
     "excludePatterns": [
       ".git",
@@ -26,13 +27,13 @@
     "testCommand": "cargo test"
   },
   "options": {
-    "maxParallelAgents": 3,
-    "maxRetriesPerTask": 2,
-    "largeFileThreshold": 500,
-    "maxLinesPerTask": 500,
-    "tokenBudget": 2000000,
+    "maxParallelAgents": 8,
+    "maxRetriesPerTask": 3,
+    "maxLinesPerTask": 750,
+    "tokenBudget": 10000000,
     "dryRun": false,
     "resume": true,
+    "keepArtifacts": true,
     "kbIndex": {
       "enabled": true,
       "embeddings": {
@@ -44,6 +45,6 @@
     "cliCommand": "copilot",
     "model": "claude-sonnet-4.6",
     "agentDir": "../../../../.github/agents",
-    "timeout": 1800000
+    "timeout": 3600000
   }
 }

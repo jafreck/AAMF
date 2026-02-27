@@ -31,6 +31,15 @@ export const MigrationOrchestratorOutput = AamfOutputBase.extend({ agent: z.lite
 export const ImpactAssessorOutput = AamfOutputBase.extend({ agent: z.literal('impact-assessor') });
 export const KnowledgeBuilderOutput = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
 export const MigrationPlannerOutput = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
+export const TaskDecomposerOutput = AamfOutputBase.extend({
+  agent: z.literal('task-decomposer'),
+  /** The task artifact file written by this agent (source of truth for task payload). */
+  outputFiles: z.array(z.string().min(1)).min(1),
+  /** Optional metadata count for observability; authoritative tasks live in outputFiles. */
+  taskCount: z.number().int().nonnegative().optional(),
+  /** Disallow embedding task payload in stdout aamf-json to avoid dual-source drift. */
+  tasks: z.never().optional(),
+});
 export const AdjudicatorOutput = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
 export const CodeMigratorOutput = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
 export const ParityVerifierOutput = AamfOutputBase.extend({ agent: z.literal('parity-verifier') });

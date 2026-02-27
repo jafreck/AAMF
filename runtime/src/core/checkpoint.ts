@@ -23,6 +23,10 @@ export interface CheckpointState {
   resumeCount: number;
   cumulativeDurationMs: number;             // total wall-clock ms across all resume runs
   completedTaskDurationsMs: number[];       // wall-clock ms per completed task, in order
+  /** True once the migration-planner (step 3a) finishes successfully. */
+  phase3aComplete?: boolean;
+  /** IDs of module groups whose task-decomposer has completed successfully. */
+  completedPhase3Groups?: string[];
 }
 
 export interface CheckpointFailedTask {
@@ -56,6 +60,8 @@ export class CheckpointManager {
         this.state.resumeCount += 1;
         this.state.cumulativeDurationMs ??= 0;
         this.state.completedTaskDurationsMs ??= [];
+        this.state.phase3aComplete ??= false;
+        this.state.completedPhase3Groups ??= [];
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
         await this.save(this.state);
         return this.state;
@@ -68,6 +74,8 @@ export class CheckpointManager {
             this.state.resumeCount += 1;
             this.state.cumulativeDurationMs ??= 0;
             this.state.completedTaskDurationsMs ??= [];
+            this.state.phase3aComplete ??= false;
+            this.state.completedPhase3Groups ??= [];
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
             await this.save(this.state);
             return this.state;
@@ -95,6 +103,8 @@ export class CheckpointManager {
       resumeCount: 0,
       cumulativeDurationMs: 0,
       completedTaskDurationsMs: [],
+      phase3aComplete: false,
+      completedPhase3Groups: [],
     };
     await this.save(this.state);
     return this.state;
@@ -180,6 +190,32 @@ export class CheckpointManager {
   async setCurrentTask(taskId: string): Promise<void> {
     const state = this.getState();
     state.currentTask = taskId;
+    await this.save(state);
+  }
+
+  /**
+   * Mark Phase 3 step 3a (migration-planner) as complete.
+   * Subsequent resumes will skip re-running the migration-planner and jump
+   * directly to step 3b (task-decomposer fan-out).
+   */
+  async completePhase3a(): Promise<void> {
+    const state = this.getState();
+    state.phase3aComplete = true;
+    state.completedPhase3Groups ??= [];
+    await this.save(state);
+  }
+
+  /**
+   * Record that the task-decomposer for a specific module group finished
+   * successfully.  On resume, completed groups are skipped so only failed
+   * ones are retried.
+   */
+  async completePhase3Group(groupId: string): Promise<void> {
+    const state = this.getState();
+    state.completedPhase3Groups ??= [];
+    if (!state.completedPhase3Groups.includes(groupId)) {
+      state.completedPhase3Groups.push(groupId);
+    }
     await this.save(state);
   }
 

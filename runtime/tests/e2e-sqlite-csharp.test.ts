@@ -129,6 +129,7 @@ async function writeMigrationConfig(): Promise<void> {
  *   AAMF_E2E=1 npx vitest run tests/e2e-sqlite-csharp.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
+const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -154,6 +155,7 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
   }, 43_200_000); // 12-hour timeout — ~250 K lines of C amalgamation, 7 phases × many LLM round-trips
 
   afterAll(async () => {
+    if (keepArtifacts) return;
     // Clean up migration artefacts (keep downloaded source for cache)
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rm, readdir, readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { rm, readdir, readFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../src/core/runtime.js';
 import { fileExists } from '../src/util/fs.js';
@@ -12,9 +12,9 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 /**
  * Override via environment variables:
- *   ZSTD_VERSION — e.g. "1.5.6"  (default: 1.5.6)
+ *   ZSTD_VERSION — e.g. "1.5.7"  (default: 1.5.7)
  */
-const ZSTD_VERSION = process.env.ZSTD_VERSION ?? '1.5.6';
+const ZSTD_VERSION = process.env.ZSTD_VERSION ?? '1.5.7';
 const ZSTD_TAG     = `v${ZSTD_VERSION}`;
 const ZSTD_TARBALL = `zstd-${ZSTD_VERSION}.tar.gz`;
 const ZSTD_URL     = `https://github.com/facebook/zstd/releases/download/${ZSTD_TAG}/${ZSTD_TARBALL}`;
@@ -59,11 +59,18 @@ async function ensureZstdSource(): Promise<void> {
     timeout: 30_000,
   });
 
-  // Verify the key library files are present
-  const files = await readdir(libDir);
-  if (!files.includes('zstd.h')) {
+  // Verify both the library and the programs directory are present
+  const libFiles = await readdir(libDir);
+  if (!libFiles.includes('zstd.h')) {
     throw new Error(
-      `Expected zstd.h in ${libDir}, found: ${files.join(', ')}`,
+      `Expected zstd.h in ${libDir}, found: ${libFiles.join(', ')}`,
+    );
+  }
+  const progDir = join(sourceRoot, 'programs');
+  const progFiles = await readdir(progDir);
+  if (!progFiles.includes('zstdcli.c')) {
+    throw new Error(
+      `Expected zstdcli.c in ${progDir}, found: ${progFiles.join(', ')}`,
     );
   }
   console.log(`zstd source ready at ${sourceRoot}`);
@@ -77,9 +84,9 @@ async function writeMigrationConfig(): Promise<void> {
   const config = {
     projectName: 'zstd-to-rust',
     source: {
-      path: libDir,
+      path: sourceRoot,
       language: 'c',
-      entryPoints: ['compress/zstd_compress.c'],
+      entryPoints: ['lib/compress/zstd_compress.c', 'programs/zstdcli.c'],
       excludePatterns: [
         '.git', '*.o', '*.lo', '*.la', '*.pc',
         'Makefile*', '*.md', 'legacy',
@@ -94,18 +101,25 @@ async function writeMigrationConfig(): Promise<void> {
       testCommand: 'cargo test',
     },
     options: {
-      maxParallelAgents: 3,
-      maxRetriesPerTask: 2,
-      maxLinesPerTask: 500,
-      tokenBudget: 2_000_000,
+      maxParallelAgents: 5,
+      maxRetriesPerTask: 3,
+      maxLinesPerTask: 750,
+      tokenBudget: 10_000_000,
       dryRun: false,
-      resume: false,
+      resume: true,
+      keepArtifacts: true,
+      kbIndex: {
+        enabled: true,
+        embeddings: {
+          enabled: true,
+        },
+      },
     },
     copilot: {
       cliCommand: 'copilot',
       model: 'claude-sonnet-4.6',
       agentDir: '../../../../.github/agents',
-      timeout: 600_000, // 10 min/agent — zstd files are ~3.5× larger than lz4
+      timeout: 3_600_000, // 1 hour/agent
     },
   };
 
@@ -115,21 +129,24 @@ async function writeMigrationConfig(): Promise<void> {
 /**
  * End-to-end integration test: zstd (C) → Rust.
  *
- * Downloads the official zstd v1.5.6 release from GitHub and runs the
- * full AAMF migration pipeline to produce an idiomatic Rust port.
+ * Downloads the official zstd v1.5.7 release from GitHub and runs the
+ * full AAMF migration pipeline to produce an idiomatic Rust port of the
+ * entire zstd codebase — library and CLI.
  *
  * zstd (Zstandard) is Facebook's high-ratio, high-speed compression library.
- * The core lib/ directory is structured into subdirectories:
+ * The full repository is structured as:
  *   - lib/compress/        — compression engine (~15 K lines across ~10 files)
  *   - lib/decompress/      — decompression engine (~5 K lines)
  *   - lib/common/          — shared types, entropy coding, xxhash (~8 K lines)
  *   - lib/dictBuilder/     — dictionary builder (~3 K lines)
  *   - lib/zstd.h           — public API header
+ *   - programs/            — zstd CLI tool (~8 K lines)
  *
- * Total: ~50 K lines of C, exercising AAMF's large-file decomposition and
- * multi-directory source traversal. Correctness is objectively verifiable:
- * compress a buffer in C, decompress in Rust (and vice versa) — byte-for-byte
- * identicality proves the port is correct.
+ * Total: ~80 K lines of C, exercising AAMF's large-file decomposition,
+ * multi-directory source traversal, and cross-module dependency resolution.
+ * Correctness is objectively verifiable: compress a buffer in C, decompress
+ * in Rust (and vice versa) — byte-for-byte identicality proves the port
+ * is correct.
  *
  * Gated behind the AAMF_E2E=1 environment variable because it requires:
  * - A working `copilot` CLI binary on PATH
@@ -137,12 +154,13 @@ async function writeMigrationConfig(): Promise<void> {
  * - A valid Copilot subscription
  *
  * The zstd version can be overridden with:
- *   ZSTD_VERSION=1.5.6
+ *   ZSTD_VERSION=1.5.7
  *
  * Run with:
  *   AAMF_E2E=1 npx vitest run tests/e2e-zstd-rust.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
+const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -165,36 +183,46 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
       logLevel: 'info',
     });
     result = await runtime.run();
-  }, 21_600_000); // 6-hour timeout — ~50 K lines of C, larger than lz4
+  }, 57_600_000); // 16-hour timeout — ~50 K lines of C, larger than lz4
 
   afterAll(async () => {
-    // KEEP migrated output for manual review — skip cleanup
-    // await rm(aamfRoot, { recursive: true, force: true });
-    // await rm(outputDir, { recursive: true, force: true });
+    if (keepArtifacts) return;
+    await rm(aamfRoot, { recursive: true, force: true });
+    await rm(outputDir, { recursive: true, force: true });
   });
 
   // ── Source verification ──────────────────────────────────────────────────
 
-  it('should have downloaded the zstd library source', async () => {
+  it('should have downloaded the full zstd source', async () => {
+    // Library
     expect(await fileExists(join(libDir, 'zstd.h'))).toBe(true);
     expect(await fileExists(join(libDir, 'compress'))).toBe(true);
     expect(await fileExists(join(libDir, 'decompress'))).toBe(true);
+    // CLI programs
+    expect(await fileExists(join(sourceRoot, 'programs', 'zstdcli.c'))).toBe(true);
   });
 
   it('should contain all core zstd C source directories', async () => {
-    const files = await readdir(libDir);
-    expect(files).toContain('compress');
-    expect(files).toContain('decompress');
-    expect(files).toContain('common');
-    expect(files).toContain('zstd.h');
+    const libFiles = await readdir(libDir);
+    expect(libFiles).toContain('compress');
+    expect(libFiles).toContain('decompress');
+    expect(libFiles).toContain('common');
+    expect(libFiles).toContain('zstd.h');
+
+    const rootFiles = await readdir(sourceRoot);
+    expect(rootFiles).toContain('lib');
+    expect(rootFiles).toContain('programs');
   });
 
-  it('should contain the main compression and decompression source files', async () => {
+  it('should contain the main compression, decompression, and CLI source files', async () => {
     const compressFiles = await readdir(join(libDir, 'compress'));
     expect(compressFiles).toContain('zstd_compress.c');
 
     const decompressFiles = await readdir(join(libDir, 'decompress'));
     expect(decompressFiles).toContain('zstd_decompress.c');
+
+    const programFiles = await readdir(join(sourceRoot, 'programs'));
+    expect(programFiles).toContain('zstdcli.c');
   });
 
   it('should have large files to exercise task splitting', async () => {
@@ -203,6 +231,9 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
 
     const decompress = await readFile(join(libDir, 'decompress', 'zstd_decompress.c'), 'utf-8');
     expect(decompress.split('\n').length).toBeGreaterThan(1000);
+
+    const cli = await readFile(join(sourceRoot, 'programs', 'zstdcli.c'), 'utf-8');
+    expect(cli.split('\n').length).toBeGreaterThan(100);
   });
 
   // ── Overall result ───────────────────────────────────────────────────────
@@ -349,6 +380,30 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
       f => f.toLowerCase().includes('decompress') && f.toLowerCase().endsWith('.rs'),
     );
     expect(hasDecompress).toBe(true);
+  });
+
+  it('should produce a CLI / programs port in the output', async () => {
+    const outputFiles = (await readdir(outputDir, { recursive: true })) as string[];
+    const rsFiles = outputFiles.filter(f => f.endsWith('.rs'));
+
+    // Expect either a dedicated programs/ directory or a main.rs / cli.rs
+    const hasCli = outputFiles.some(f =>
+      f.toLowerCase().includes('main') ||
+      f.toLowerCase().includes('cli') ||
+      f.toLowerCase().includes('program'),
+    );
+
+    // Or the CLI logic was folded into the library crate as a binary target
+    let hasMainInContent = false;
+    for (const f of rsFiles.slice(0, 20)) {
+      const content = await readFile(join(outputDir, f), 'utf-8');
+      if (content.includes('fn main(')) {
+        hasMainInContent = true;
+        break;
+      }
+    }
+
+    expect(hasCli || hasMainInContent).toBe(true);
   });
 
   it('should produce Rust test files in the output', async () => {

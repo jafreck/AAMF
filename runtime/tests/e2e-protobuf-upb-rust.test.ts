@@ -115,6 +115,7 @@ async function writeMigrationConfig(): Promise<void> {
  * Run:  AAMF_E2E=1 npx vitest run tests/e2e-protobuf-upb-rust.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
+const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -131,7 +132,9 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
   }, 43_200_000); // 12-hour timeout -- ~40-50 K lines of C with complex interdependencies
 
   afterAll(async () => {
-    // KEEP output for manual review
+    if (keepArtifacts) return;
+    await rm(aamfRoot, { recursive: true, force: true });
+    await rm(outputDir, { recursive: true, force: true });
   });
 
   // -- Source verification --

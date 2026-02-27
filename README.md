@@ -6,6 +6,11 @@ AAMF is a TypeScript runtime that orchestrates AI agents to migrate extremely la
 
 Typical use cases include porting a 100k+ line Python monolith to TypeScript, a COBOL system to Go, or a Java codebase to Rust.
 
+## Repository Layout
+
+- `runtime/` — migration orchestration runtime, agent execution, checkpointing, KB server.
+- `lore/` — extracted knowledge-base indexing project (source walking, parsing, extraction, SQLite index + embeddings).
+
 ---
 
 ## Projects Ported Using AAMF
@@ -150,7 +155,14 @@ The `knowledge-builder` agent documents all modules, producing a structured know
 
 ### Phase 3 — Migration Planning
 
-The `migration-planner` reads the knowledge base and impact assessment, then produces `migration-plan.md` — a dependency-ordered list of migration tasks. If competing strategies are generated (`competing-strategies.md`), the `adjudicator` agent is spawned to select the best approach.
+Phase 3 is a two-step flow:
+
+1. `migration-planner` (Step 3a) reads the knowledge base + impact assessment and writes planning artifacts under `.aamf/migration/{project}/planning/` (notably `groups.json` and `strategy.md`).
+2. Runtime (Step 3b) launches `task-decomposer` in parallel per module group and merges outputs into `planning/tasks-merged.json`.
+
+Adjudication trigger contract:
+- If the planner identifies multiple viable strategies, it **must** write `.aamf/migration/{project}/competing-strategies.md`.
+- Runtime checks for that file and, when present, spawns `adjudicator` before task decomposition.
 
 ### Phase 4 — Iterative Migration
 

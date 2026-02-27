@@ -31,7 +31,10 @@ export async function spawnWithTimeout(
   const start = performance.now();
 
   return new Promise<SpawnResult>((resolve, reject) => {
-    const child = spawn(command, args, { ...spawnOpts, stdio: ['ignore', 'pipe', 'pipe'] });
+    // detached: true gives the child its own process group (PGID = child.pid).
+    // This makes killProcessTree(child.pid) correctly sweep all grandchildren
+    // (e.g. Electron helpers spawned by the copilot CLI) via process.kill(-pid).
+    const child = spawn(command, args, { ...spawnOpts, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -55,8 +58,23 @@ export async function spawnWithTimeout(
       }, timeout);
     }
 
-    child.on('close', (code) => {
+    // Listen on 'exit' (not 'close') so we resolve as soon as the direct child
+    // exits, without waiting for its stdio streams to drain.  Electron-based
+    // CLIs (e.g. the copilot CLI) fork GPU/renderer helper processes that
+    // inherit the pipe write-ends; those helpers are reparented to launchd
+    // when the main process exits, and they can hold the write end open
+    // indefinitely — preventing 'close' from ever firing.
+    //
+    // After resolving on 'exit' we immediately destroy our read ends, which:
+    //   1. forces EOF on child.stdout/stderr so their 'data' listeners stop, and
+    //   2. prevents the open FDs from keeping the Node event loop alive.
+    child.on('exit', (code) => {
       if (timer) clearTimeout(timer);
+      // Flush any data that arrived before exit, then close the read ends.
+      // Destroying does not lose already-buffered chunks — those are in
+      // stdoutChunks/stderrChunks which were populated by the 'data' listeners.
+      child.stdout!.destroy();
+      child.stderr!.destroy();
       const duration = performance.now() - start;
       resolve({
         exitCode: code ?? 1,

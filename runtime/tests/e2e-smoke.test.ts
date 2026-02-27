@@ -26,6 +26,7 @@ const outputDir = join(tmpRoot, 'e2e-output');
  *   AAMF_E2E=1 npx vitest run tests/e2e-smoke.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
+const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E Smoke Test', () => {
   beforeAll(async () => {
@@ -35,6 +36,7 @@ describe.skipIf(!runE2E)('E2E Smoke Test', () => {
   });
 
   afterAll(async () => {
+    if (keepArtifacts) return;
     // Clean up artefacts created during the test (even after failures)
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(tmpRoot, { recursive: true, force: true });
