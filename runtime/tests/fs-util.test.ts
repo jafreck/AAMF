@@ -10,6 +10,7 @@ import {
   writeJson,
   listFiles,
   copyFile,
+  removeDir,
 } from '../src/util/fs.js';
 
 describe('fs utilities', () => {
@@ -130,6 +131,33 @@ describe('fs utilities', () => {
       const tsFiles = await listFiles(tempDir, '.ts');
       expect(tsFiles).toEqual(expect.arrayContaining(['a.ts', 'c.ts']));
       expect(tsFiles).toHaveLength(2);
+    });
+  });
+
+  describe('removeDir', () => {
+    it('should remove a directory and its contents', async () => {
+      const dirPath = join(tempDir, 'to-remove');
+      await ensureDir(join(dirPath, 'nested'));
+      await writeFile(join(dirPath, 'file.txt'), 'data');
+      await writeFile(join(dirPath, 'nested', 'deep.txt'), 'deep');
+
+      await removeDir(dirPath);
+
+      expect(await fileExists(dirPath)).toBe(false);
+    });
+
+    it('should not throw when directory does not exist', async () => {
+      const dirPath = join(tempDir, 'nonexistent');
+      await expect(removeDir(dirPath)).resolves.toBeUndefined();
+    });
+
+    it('should remove an empty directory', async () => {
+      const dirPath = join(tempDir, 'empty-dir');
+      await ensureDir(dirPath);
+
+      await removeDir(dirPath);
+
+      expect(await fileExists(dirPath)).toBe(false);
     });
   });
 

@@ -179,6 +179,16 @@ describe('createMockConfig', () => {
     const config = createMockConfig({ projectName: 'my-project' });
     expect(config.projectName).toBe('my-project');
   });
+
+  it('should default keepArtifacts to false', () => {
+    const config = createMockConfig();
+    expect(config.options.keepArtifacts).toBe(false);
+  });
+
+  it('should default contextWindowStrategy to per-invocation', () => {
+    const config = createMockConfig();
+    expect(config.options.contextWindowStrategy).toBe('per-invocation');
+  });
 });
 
 // ─── makeTask ─────────────────────────────────────────────────────────────────
