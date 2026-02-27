@@ -12,6 +12,14 @@ vi.mock('../src/util/fs.js', async (importOriginal) => {
   return { ...actual, removeDir: (...args: [string]) => removeDirMock(...args) };
 });
 
+// Mock MigrationOrchestrator so real run() exercises the actual cleanup path
+const mockOrchestratorRun = vi.fn<() => Promise<MigrationResult>>();
+vi.mock('../src/core/orchestrator.js', () => ({
+  MigrationOrchestrator: vi.fn().mockImplementation(function () {
+    return { run: mockOrchestratorRun };
+  }),
+}));
+
 /** Build a minimal MigrationResult for printSummary tests. */
 function makeResult(overrides: Partial<MigrationResult> = {}): MigrationResult {
   return {
@@ -161,35 +169,12 @@ describe('MigrationRuntime', () => {
         initialize: vi.fn().mockResolvedValue(undefined),
       };
 
-      // Stub orchestrator creation by mocking run() to bypass orchestrator entirely
-      // We call the post-orchestrator logic by invoking the real run() with a mocked orchestrator
-      const mockOrchestratorRun = vi.fn<() => Promise<MigrationResult>>().mockResolvedValue(makeResult());
-      vi.spyOn(runtime as any, 'run').mockImplementation(async function (this: any) {
-        // Simulate the real run() flow after orchestrator returns
-        const result = await mockOrchestratorRun();
-        await this.logger.flush();
-        this.printSummary(result);
-
-        try {
-          const shouldKeepArtifacts =
-            process.env.AAMF_KEEP_ARTIFACTS === '1' || this.config.options.keepArtifacts;
-          if (shouldKeepArtifacts) {
-            this.logger.info('Artifact retention enabled — keeping progress and output directories');
-          } else {
-            this.logger.info('Cleaning up progress and output directories');
-            const { removeDir } = await import('../src/util/fs.js');
-            await removeDir(this.progressDir);
-            await removeDir(this.config.target.outputPath);
-          }
-        } catch (err) {
-          this.logger.warn(`Artifact cleanup failed: ${err}`);
-        }
-
-        return result;
-      });
+      // Mock orchestrator to return a successful result so real run() cleanup path is exercised
+      mockOrchestratorRun.mockResolvedValue(makeResult());
 
       consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       removeDirMock.mockClear();
+      mockOrchestratorRun.mockClear();
       delete process.env.AAMF_KEEP_ARTIFACTS;
     });
 
