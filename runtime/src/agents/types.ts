@@ -82,6 +82,12 @@ export interface AgentInvocation {
   /** Pre-generated invocation ID for log correlation; runners use this instead of generating their own. */
   invocationId?: string;
 
+  /** Routing tier assigned by the model routing policy (undefined when routing is inactive). */
+  routingTier?: ModelTier;
+
+  /** Human-readable reason for the routing decision. */
+  routingReason?: string;
+
   /** Current attempt number (1-based), set by RetryExecutor. */
   attemptNumber?: number;
 

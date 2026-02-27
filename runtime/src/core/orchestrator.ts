@@ -1124,8 +1124,9 @@ export class MigrationOrchestrator {
     const fallbackModel = this.getFailureRecoveryModel();
 
     // Capture the initial routing decision for retry-aware escalation
+    // Do NOT apply caps here — buildInvocation already incremented cap counters.
     const initialRoutingDecision = this.config.options.modelRouting?.enabled
-      ? this.applyRoutingCaps(this.selectModelForInvocation(task, 'code-migrator'))
+      ? this.selectModelForInvocation(task, 'code-migrator')
       : undefined;
 
     const migratorResult = await retryExec.executeWithRetry(migratorInv, {
@@ -2082,12 +2083,17 @@ export class MigrationOrchestrator {
       : undefined;
 
     let modelOverride = failureRecoveryOverride;
+    let routingTier: ModelTier | undefined;
+    let routingReason: string | undefined;
 
     // Apply model routing when enabled and no failure-recovery override
     if (!failureRecoveryOverride && this.config.options.modelRouting?.enabled) {
       const decision = this.applyRoutingCaps(
         this.selectModelForInvocation(task, agent),
       );
+
+      routingTier = decision.tier;
+      routingReason = decision.reason;
 
       if (decision.tier !== 'normal') {
         modelOverride = decision.selectedModel;
@@ -2128,6 +2134,7 @@ export class MigrationOrchestrator {
       taskId,
       timeout,
       ...(modelOverride ? { modelOverride } : {}),
+      ...(routingTier ? { routingTier, routingReason } : {}),
       ...(mcpConfig ? { mcpConfig } : {}),
       ...(kbDbPath ? { kbDbPath } : {}),
     };
@@ -2204,7 +2211,7 @@ export class MigrationOrchestrator {
     );
 
     // Compute routing metadata for the metric
-    const routingDecision = this.config.options.modelRouting?.enabled && invocation.modelOverride
+    const routingDecision = this.config.options.modelRouting?.enabled && invocation.routingTier
       ? (() => {
           const defaultModel = this.config.options.modelRouting!.defaultModel ?? configModel;
           const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
@@ -2232,6 +2239,7 @@ export class MigrationOrchestrator {
       tokensCompletion,
       tokensTotal,
       costUsd: costEstimate.total,
+      ...(invocation.routingTier ? { routingTier: invocation.routingTier, routingReason: invocation.routingReason } : {}),
       ...(routingDecision ? { escalationCostUsd: routingDecision.incrementalCost } : {}),
     };
 
