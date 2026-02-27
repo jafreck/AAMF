@@ -192,6 +192,11 @@ describe('MigrationConfigSchema', () => {
       expect(result.copilot.phaseTimeouts).toBeUndefined();
     });
 
+    it('should default keepArtifacts to false when omitted', () => {
+      const result = MigrationConfigSchema.parse(validConfig);
+      expect(result.options.keepArtifacts).toBe(false);
+    });
+
     it('should default avgTokensPerTask to 5000 when omitted', () => {
       const result = MigrationConfigSchema.parse(validConfig);
       expect(result.options.avgTokensPerTask).toBe(5000);

@@ -242,6 +242,22 @@ The `CostEstimator` provides approximate USD cost estimates using per-model pric
 
 ---
 
+## Artifact Retention
+
+By default, AAMF removes the `.aamf` checkpoint directory and the target output directory after a migration completes. To keep these artifacts for debugging or inspection:
+
+- **Config:** set `"keepArtifacts": true` in `options`.
+- **Environment variable:** set `AAMF_KEEP_ARTIFACTS=1` (takes precedence over config).
+
+```bash
+# Keep artifacts via env var
+AAMF_KEEP_ARTIFACTS=1 npx aamf migrate -c migration.config.json
+```
+
+See [runtime/README.md](runtime/README.md#artifact-retention) for full details on which directories are affected and precedence rules.
+
+---
+
 ## Progress Observability
 
 All migration state is observable in `.aamf/migration/{projectName}/`:
