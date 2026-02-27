@@ -692,23 +692,45 @@ export class MigrationOrchestrator {
 
       const parallel = new ParallelExecutor(
         this.config.options.maxParallelAgents,
-        (inv) => this.launcher.launchAgent(inv),
+        async (inv) => {
+          const retryExec = new RetryExecutor(
+            (attemptInv) => this.launcher.launchAgent(attemptInv),
+            this.logger,
+          );
+          return retryExec.executeWithRetry(inv, {
+            maxAttempts: this.config.options.maxRetriesPerTask,
+            onRetry: async (attempt, error) => {
+              this.logger.warn(
+                `Retry ${attempt} for task-decomposer${inv.taskId ? ` (${inv.taskId})` : ''}: ${error}`,
+              );
+            },
+          });
+        },
         this.logger,
       );
       const results = await parallel.executeAll(invocations);
 
-      const failedGroups: Array<{ id: string; reason: string }> = [];
+      const failedGroups: Array<{ id: string; reason: string; attempts: number }> = [];
       for (const [i, r] of results.entries()) {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const group = remainingGroups[i]!;
+        const attempts =
+          'attempts' in r && typeof (r as { attempts?: unknown }).attempts === 'number'
+            ? (r as { attempts: number }).attempts
+            : 1;
         this.recordTokens(r, 3);
         if (r.success) {
           await this.checkpoint.completePhase3Group(group.id);
+          if (attempts > 1) {
+            this.logger.info(
+              `task-decomposer recovered for group "${group.id}" after ${attempts} attempt(s)`,
+            );
+          }
         } else {
           const reason = r.error ?? r.parseError ?? 'unknown';
-          failedGroups.push({ id: group.id, reason });
+          failedGroups.push({ id: group.id, reason, attempts });
           this.logger.error(
-            `task-decomposer failed for group "${group.id}": ${reason}`,
+            `task-decomposer failed for group "${group.id}" after ${attempts} attempt(s): ${reason}`,
           );
         }
       }
@@ -716,7 +738,7 @@ export class MigrationOrchestrator {
       if (failedGroups.length > 0) {
         const failedGroupIds = failedGroups.map(f => f.id);
         const details = failedGroups
-          .map(f => `${f.id} (${f.reason})`)
+          .map(f => `${f.id} (${f.reason}; attempts=${f.attempts})`)
           .join('; ');
         return {
           phase: 3,
