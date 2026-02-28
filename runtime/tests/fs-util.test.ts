@@ -11,6 +11,7 @@ import {
   listFiles,
   copyFile,
   removeDir,
+  countFileLines,
 } from '../src/util/fs.js';
 
 describe('fs utilities', () => {
@@ -132,6 +133,14 @@ describe('fs utilities', () => {
       expect(tsFiles).toEqual(expect.arrayContaining(['a.ts', 'c.ts']));
       expect(tsFiles).toHaveLength(2);
     });
+
+    it('should filter by extension without leading dot', async () => {
+      await writeFile(join(tempDir, 'a.ts'), '');
+      await writeFile(join(tempDir, 'b.js'), '');
+
+      const tsFiles = await listFiles(tempDir, 'ts');
+      expect(tsFiles).toEqual(['a.ts']);
+    });
   });
 
   describe('removeDir', () => {
@@ -180,6 +189,19 @@ describe('fs utilities', () => {
       await copyFile(src, dest);
       const content = await readFile(dest, 'utf-8');
       expect(content).toBe('deep copy');
+    });
+  });
+
+  describe('countFileLines', () => {
+    it('counts newline characters in a file', async () => {
+      const filePath = join(tempDir, 'lines.txt');
+      await writeFile(filePath, 'a\nb\ncd\n');
+
+      await expect(countFileLines(filePath)).resolves.toBe(3);
+    });
+
+    it('rejects when file does not exist', async () => {
+      await expect(countFileLines(join(tempDir, 'missing.txt'))).rejects.toBeDefined();
     });
   });
 });

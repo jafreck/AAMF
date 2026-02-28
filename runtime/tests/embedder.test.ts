@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { SentenceTransformersProvider, Qwen3EmbeddingProvider } from '../src/indexer/embedder.js';
+import { SentenceTransformersProvider, Qwen3EmbeddingProvider } from '@aamf/lore';
 
 const ENABLED = process.env.AAMF_EMBEDDER === '1';
 

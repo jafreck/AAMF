@@ -11,8 +11,8 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { EmbeddingProvider } from '@aamf/lore';
 import { openReadOnly } from '../kb-server/db.js';
-import type { EmbeddingProvider } from '../indexer/embedder.js';
 import { createKbMcpServer } from '../kb-server/server.js';
 import type { McpServerConfig } from '../agents/types.js';
 

@@ -9,10 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join, resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { openDb } from '../src/indexer/db.js';
-import type { Database } from '../src/indexer/db.js';
-import { buildCallGraph, topoSort, detectCycles } from '../src/indexer/call-graph.js';
-import { IndexBuilder } from '../src/indexer/index.js';
+import { openDb, type Database, buildCallGraph, topoSort, detectCycles, IndexBuilder } from '@aamf/lore';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

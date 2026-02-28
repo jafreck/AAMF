@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ParserPool } from '../../../src/indexer/parser.js';
-import { CSharpExtractor } from '../../../src/indexer/extractors/csharp.js';
+import { ParserPool, CSharpExtractor } from '@aamf/lore';
 
 function parse(source: string) {
   const pool = new ParserPool();

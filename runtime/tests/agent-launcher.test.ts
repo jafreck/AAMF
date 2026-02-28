@@ -149,6 +149,55 @@ describe('AgentLauncher', () => {
     expect(logContent).toContain('TASK_ID:env-test');
   });
 
+  it('should strip VS Code IPC variables while preserving unrelated env vars', async () => {
+    const prevIpc = process.env['VSCODE_IPC_HOOK_CLI'];
+    const prevTerm = process.env['TERM_PROGRAM'];
+    const prevCustom = process.env['AAMF_TEST_CUSTOM_ENV'];
+    process.env['VSCODE_IPC_HOOK_CLI'] = 'vscode-ipc-token';
+    process.env['TERM_PROGRAM'] = 'vscode';
+    process.env['AAMF_TEST_CUSTOM_ENV'] = 'preserved';
+
+    try {
+      const script = await createScript('print-env-filter.sh', [
+        'echo "VSCODE_IPC_HOOK_CLI:$VSCODE_IPC_HOOK_CLI"',
+        'echo "TERM_PROGRAM:$TERM_PROGRAM"',
+        'echo "AAMF_TEST_CUSTOM_ENV:$AAMF_TEST_CUSTOM_ENV"',
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('env-filter');
+
+      const result = await launcher.launchAgent({
+        agent: 'impact-assessor',
+        contextFile,
+        progressDir,
+        phase: 1,
+        taskId: 'env-filter',
+      });
+
+      expect(result.success).toBe(true);
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f => f.startsWith('impact-assessor-env-filter'));
+      expect(agentLog).toBeDefined();
+
+      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      expect(logContent).toContain('VSCODE_IPC_HOOK_CLI:');
+      expect(logContent).not.toContain('vscode-ipc-token');
+      expect(logContent).toContain('TERM_PROGRAM:');
+      expect(logContent).not.toContain('TERM_PROGRAM:vscode');
+      expect(logContent).toContain('AAMF_TEST_CUSTOM_ENV:preserved');
+    } finally {
+      if (prevIpc === undefined) delete process.env['VSCODE_IPC_HOOK_CLI'];
+      else process.env['VSCODE_IPC_HOOK_CLI'] = prevIpc;
+      if (prevTerm === undefined) delete process.env['TERM_PROGRAM'];
+      else process.env['TERM_PROGRAM'] = prevTerm;
+      if (prevCustom === undefined) delete process.env['AAMF_TEST_CUSTOM_ENV'];
+      else process.env['AAMF_TEST_CUSTOM_ENV'] = prevCustom;
+    }
+  });
+
   it('should report success for exit code 0', async () => {
     const script = await createScript('success.sh', 'echo "OK"\nexit 0');
     const launcher = makeLauncher(script);
@@ -746,6 +795,41 @@ describe('AgentLauncher', () => {
 
       // queueDelay should be undefined or 0 when no delay is configured
       expect(result.queueDelay === undefined || result.queueDelay === 0).toBe(true);
+    });
+  });
+
+  describe('runner init path resolution', () => {
+    it('should prepend environment.extraPath entries when inheritShellPath is false', async () => {
+      const script = await createScript('print-path.sh', 'echo "PATH_VALUE:$PATH"\nexit 0');
+      const cfg = createMockConfig({
+        copilot: { cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
+        environment: {
+          inheritShellPath: false,
+          extraPath: ['/tmp/aamf-extra-bin'],
+        },
+      });
+      config = cfg;
+      const launcher = new AgentLauncher(cfg, projectRoot, logger);
+      await launcher.init();
+
+      const { contextFile, progressDir } = await prepareInvocation('extra-path-001');
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'extra-path-001',
+      });
+
+      expect(result.success).toBe(true);
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f => f.startsWith('code-migrator-extra-path-001'));
+      expect(agentLog).toBeDefined();
+
+      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      expect(logContent).toContain('PATH_VALUE:/tmp/aamf-extra-bin:');
     });
   });
 

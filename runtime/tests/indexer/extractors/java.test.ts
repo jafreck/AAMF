@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ParserPool } from '../../../src/indexer/parser.js';
-import { JavaExtractor } from '../../../src/indexer/extractors/java.js';
+import { ParserPool, JavaExtractor } from '@aamf/lore';
 
 function parse(source: string) {
   const pool = new ParserPool();

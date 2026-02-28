@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm, realpath } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { spawnWithTimeout } from '../src/util/process.js';
+import { tmpdir, homedir } from 'node:os';
+import { spawnWithTimeout, resolveLoginPath, killProcessTree } from '../src/util/process.js';
 
 describe('spawnWithTimeout', () => {
   let tempDir: string;
@@ -62,5 +62,29 @@ describe('spawnWithTimeout', () => {
   it('should track duration', async () => {
     const result = await spawnWithTimeout('node', ['-e', 'setTimeout(() => {}, 100)']);
     expect(result.duration).toBeGreaterThanOrEqual(80);
+  });
+
+  it('should resolve login PATH and prepend expanded extraPath entries', async () => {
+    const result = await resolveLoginPath({ shell: '/bin/sh', extraPath: ['~/aamf-extra-bin'] });
+    expect(result.startsWith(`${homedir()}/aamf-extra-bin:`)).toBe(true);
+  });
+
+  it('should fall back to process PATH when shell invocation fails', async () => {
+    const baseline = process.env.PATH ?? '';
+    const result = await resolveLoginPath({ shell: '/definitely/not/a/shell' });
+    expect(result).toBe(baseline);
+  });
+
+  it('should still prepend extraPath when shell invocation fails', async () => {
+    const baseline = process.env.PATH ?? '';
+    const result = await resolveLoginPath({
+      shell: '/definitely/not/a/shell',
+      extraPath: ['/tmp/aamf-extra'],
+    });
+    expect(result).toBe(`/tmp/aamf-extra:${baseline}`);
+  });
+
+  it('killProcessTree should not throw for a non-existent pid', async () => {
+    await expect(killProcessTree(999_999)).resolves.toBeUndefined();
   });
 });

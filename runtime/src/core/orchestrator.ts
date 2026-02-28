@@ -28,10 +28,15 @@ import { CostEstimator } from '../budget/cost-estimator.js';
 import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite, readJson, ensureDir } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
-import { IndexBuilder } from '../indexer/index.js';
-import { openDb, computeSourceFingerprint, getKbFingerprint } from '../indexer/db.js';
-import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
-import { ensurePythonDeps } from '../indexer/ensure-python-deps.js';
+import {
+  IndexBuilder,
+  openDb,
+  computeSourceFingerprint,
+  getKbFingerprint,
+  SentenceTransformersProvider,
+  type EmbeddingProvider,
+  ensurePythonDeps,
+} from '@aamf/lore';
 import { KbServerProcess } from './kb-server-process.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';

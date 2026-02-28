@@ -203,6 +203,42 @@ describe('MigrationOrchestrator', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  describe('phase routing and KB pre-start behavior', () => {
+    it('executePhase should throw for unknown phase id', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      await expect((orchestrator as any).executePhase({ id: 999 } as any)).rejects.toThrow('Unknown phase: 999');
+    });
+
+    it('should warn when KB is enabled for a later single phase but kb.db is missing', async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn');
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator } = await setupOrchestrator(
+          tempDir,
+          launcherFn,
+          {
+            options: {
+              kbIndex: { enabled: true, embeddings: { enabled: false } },
+            },
+          },
+          1,
+        );
+
+        const result = await orchestrator.run();
+
+        expect(result.phases.some(p => p.phase === 1)).toBe(true);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('KB indexing is enabled, but'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+  });
+
   // ─── Phase 0: KB Indexing ──────────────────────────────────────────
 
   describe('Phase 0: KB Indexing', () => {
@@ -329,7 +365,7 @@ describe('MigrationOrchestrator', () => {
 
     it('executePhase0 should return success: false when timeout is exceeded', async () => {
       // Mock IndexBuilder to simulate a slow build that exceeds the timeout
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockImplementation(
         () => new Promise<void>(() => { /* never resolves */ }),
       );
@@ -370,15 +406,15 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should pass embedder to IndexBuilder when embeddings.enabled is true', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
       // Mock ensurePythonDeps to avoid actually running pip
-      const depsMod = await import('../src/indexer/ensure-python-deps.js');
+      const depsMod = await import('@aamf/lore');
       const depsSpy = vi.spyOn(depsMod, 'ensurePythonDeps').mockResolvedValue(undefined);
 
       // Mock embedder init() to avoid spawning a real Python process
-      const { SentenceTransformersProvider } = await import('../src/indexer/embedder.js');
+      const { SentenceTransformersProvider } = await import('@aamf/lore');
       const initSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'init').mockResolvedValue(undefined);
       const disposeSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'dispose').mockResolvedValue(undefined);
 
@@ -419,16 +455,16 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should skip embeddings gracefully when ensurePythonDeps fails', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const depsMod = await import('../src/indexer/ensure-python-deps.js');
+      const depsMod = await import('@aamf/lore');
       const depsSpy = vi.spyOn(depsMod, 'ensurePythonDeps').mockRejectedValue(
         new Error('python3 not found'),
       );
 
       // Mock init to simulate failure (Python not available)
-      const { SentenceTransformersProvider } = await import('../src/indexer/embedder.js');
+      const { SentenceTransformersProvider } = await import('@aamf/lore');
       const initSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'init').mockRejectedValue(
         new Error('Embedding subprocess exited with code 1 before handshake'),
       );
@@ -469,10 +505,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should skip build when KB fingerprint matches', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('abc123');
       const mockDb = { close: vi.fn() };
       const openDbSpy = vi.spyOn(dbMod, 'openDb').mockReturnValue(mockDb as any);
@@ -510,10 +546,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should rebuild when KB fingerprint does not match', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('new-fp');
       const mockDb = { close: vi.fn() };
       const openDbSpy = vi.spyOn(dbMod, 'openDb').mockReturnValue(mockDb as any);
@@ -550,10 +586,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should rebuild when no KB database exists', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('some-fp');
 
       try {
@@ -575,10 +611,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should rebuild when existing KB is corrupt/unreadable', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('some-fp');
       const openDbSpy = vi.spyOn(dbMod, 'openDb').mockImplementation(() => {
         throw new Error('database disk image is malformed');
@@ -611,10 +647,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should log skip message when fingerprint matches', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('match-fp');
       const mockDb = { close: vi.fn() };
       const openDbSpy = vi.spyOn(dbMod, 'openDb').mockReturnValue(mockDb as any);
@@ -649,10 +685,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should log rebuild message when fingerprint does not match', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('new-fp');
 
       try {

@@ -12,8 +12,8 @@
  * is supplied, clearly indicating the degradation in `mode_used`.
  */
 
+import type { EmbeddingProvider } from '@aamf/lore';
 import type { Database } from '../db.js';
-import type { EmbeddingProvider } from '../../indexer/embedder.js';
 
 // ─── Tool definition ──────────────────────────────────────────────────────────
 

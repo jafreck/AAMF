@@ -12,7 +12,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join, resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { IndexBuilder } from '../src/indexer/index.js';
+import { IndexBuilder } from '@aamf/lore';
 import { openReadOnly } from '../src/kb-server/db.js';
 import type { Database } from '../src/kb-server/db.js';
 import { handler as lookupHandler } from '../src/kb-server/tools/lookup.js';
