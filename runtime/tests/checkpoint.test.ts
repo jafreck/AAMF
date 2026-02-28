@@ -215,6 +215,49 @@ describe('CheckpointManager', () => {
     expect(data).toBeDefined();
   });
 
+  it('should remove task from blocked when completed', async () => {
+    await manager.load('test-project');
+    await manager.blockTask('task-001');
+    await manager.completeTask('task-001');
+
+    const state = manager.getState();
+    expect(state.blockedTasks).not.toContain('task-001');
+    expect(state.completedTasks).toContain('task-001');
+  });
+
+  it('should remove task from both failed and blocked when completed', async () => {
+    await manager.load('test-project');
+    await manager.failTask('task-001', 'some error', 1, false);
+    await manager.blockTask('task-001');
+    await manager.completeTask('task-001');
+
+    const state = manager.getState();
+    expect(state.failedTasks).toHaveLength(0);
+    expect(state.blockedTasks).not.toContain('task-001');
+    expect(state.completedTasks).toContain('task-001');
+  });
+
+  it('should not affect other blocked tasks when completing one', async () => {
+    await manager.load('test-project');
+    await manager.blockTask('task-001');
+    await manager.blockTask('task-002');
+    await manager.completeTask('task-001');
+
+    const state = manager.getState();
+    expect(state.blockedTasks).not.toContain('task-001');
+    expect(state.blockedTasks).toContain('task-002');
+    expect(state.completedTasks).toContain('task-001');
+  });
+
+  it('should handle completing a task that was never blocked', async () => {
+    await manager.load('test-project');
+    await manager.completeTask('task-001');
+
+    const state = manager.getState();
+    expect(state.blockedTasks).toHaveLength(0);
+    expect(state.completedTasks).toContain('task-001');
+  });
+
   // ─── metricsCount ─────────────────────────────────────────────────
 
   it('should initialize metricsCount to 0 on fresh state', async () => {
@@ -257,6 +300,55 @@ describe('CheckpointManager', () => {
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');
     expect(loaded.metricsCount).toBe(0);
+  });
+
+  // ─── token persistence & resume merge ─────────────────────────────
+
+  it('should persist token usage data across save and reload', async () => {
+    const state = await manager.load('test-project');
+    state.tokenUsage = {
+      total: 15000,
+      byPhase: { 1: 5000, 2: 10000 },
+      byAgent: { 'code-migrator': 12000, 'parity-verifier': 3000 },
+    };
+    await manager.save(state);
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.tokenUsage.total).toBe(15000);
+    expect(reloaded.tokenUsage.byPhase[1]).toBe(5000);
+    expect(reloaded.tokenUsage.byPhase[2]).toBe(10000);
+    expect(reloaded.tokenUsage.byAgent['code-migrator']).toBe(12000);
+    expect(reloaded.tokenUsage.byAgent['parity-verifier']).toBe(3000);
+  });
+
+  it('should round-trip TokenTracker data through checkpoint save and reload', async () => {
+    const { TokenTracker } = await import('../src/budget/token-tracker.js');
+
+    // Build tracker state
+    const tracker = new TokenTracker();
+    tracker.record('agent-a', 1, 1000);
+    tracker.record('agent-b', 2, 2000);
+    tracker.record('agent-a', 2, 500);
+
+    // Save to checkpoint
+    const state = await manager.load('test-project');
+    state.tokenUsage = tracker.toCheckpointData();
+    await manager.save(state);
+
+    // Reload and restore tracker
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+
+    const tracker2 = new TokenTracker();
+    tracker2.loadFromCheckpoint(reloaded.tokenUsage);
+
+    const data = tracker2.toCheckpointData();
+    expect(data.total).toBe(3500);
+    expect(data.byAgent['agent-a']).toBe(1500);
+    expect(data.byAgent['agent-b']).toBe(2000);
+    expect(data.byPhase[1]).toBe(1000);
+    expect(data.byPhase[2]).toBe(2500);
   });
 
   // ─── phase0Fingerprint ───────────────────────────────────────────

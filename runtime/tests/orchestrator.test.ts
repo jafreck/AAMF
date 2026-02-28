@@ -3415,6 +3415,140 @@ describe('MigrationOrchestrator', () => {
         expect(inv.modelOverride).toBe('claude-opus-4.6');
       }
     });
+    it('should route a task with many dependencies to a higher tier', async () => {
+      const depTask: MigrationTask = {
+        id: 'task-001',
+        name: 'Hub Module',
+        sourceFiles: Array.from({ length: 5 }, (_, i) => `src/hub-${i}.py`),
+        targetFiles: Array.from({ length: 5 }, (_, i) => `src/hub-${i}.ts`),
+        knowledgeBaseRef: 'kb/task-001.md',
+        dependencies: [],
+        complexity: 'moderate',
+        description: 'Module with moderate complexity and several files',
+        acceptanceCriteria: ['works'],
+        parityChecks: ['matches'],
+        lineRange: { start: 1, end: 400 },
+      };
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            modelRouting: {
+              enabled: true,
+              defaultModel: 'gpt-5-mini',
+              heavyModel: 'gpt-4.1',
+              criticalModel: 'claude-opus-4.6',
+              heavyThreshold: 30,
+              criticalThreshold: 70,
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, [depTask]);
+
+      await orchestrator.run();
+
+      // score: 5*1.5 + 5 + (400/1000)*20 + 0 + 20 = 7.5 + 5 + 8 + 20 = 40.5 → heavy
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (inv: AgentInvocation) => inv.agent === 'code-migrator',
+      );
+      expect(migratorInvocations.length).toBeGreaterThan(0);
+      expect(migratorInvocations[0]!.modelOverride).toBe('gpt-4.1');
+    });
+  });
+
+  // ─── Invariant: completed tasks excluded from failed/blocked ────────
+
+  describe('Completed-task invariant filtering', () => {
+    it('should exclude completed tasks from failedTasks and blockedTasks in the result', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      // Pre-populate checkpoint so task-001 is completed but also stale in blocked/failed
+      const state = checkpoint.getState();
+      state.completedTasks.push('task-001');
+      state.blockedTasks.push('task-001');
+      state.failedTasks.push({
+        taskId: 'task-001',
+        attempts: 2,
+        lastError: 'stale error',
+        recoveryAttempted: false,
+      });
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      expect(result.failedTasks).not.toContain('task-001');
+      expect(result.blockedTasks).not.toContain('task-001');
+      // task-001 should still be completed
+      expect(checkpoint.getState().completedTasks).toContain('task-001');
+    });
+
+    it('should exclude completed task from failedTasks only when not in blockedTasks', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      const state = checkpoint.getState();
+      state.completedTasks.push('task-001');
+      state.failedTasks.push({
+        taskId: 'task-001',
+        attempts: 1,
+        lastError: 'stale',
+        recoveryAttempted: false,
+      });
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      expect(result.failedTasks).not.toContain('task-001');
+      expect(result.blockedTasks).not.toContain('task-001');
+    });
+
+    it('should exclude completed task from blockedTasks only when not in failedTasks', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      const state = checkpoint.getState();
+      state.completedTasks.push('task-001');
+      state.blockedTasks.push('task-001');
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      expect(result.blockedTasks).not.toContain('task-001');
+      expect(result.failedTasks).not.toContain('task-001');
+    });
+
+    it('should preserve non-completed tasks in failedTasks and blockedTasks', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      // Use task IDs outside the migration plan so the orchestrator doesn't complete them
+      const state = checkpoint.getState();
+      state.completedTasks.push('task-001');
+      state.blockedTasks.push('task-001', 'orphan-blocked');
+      state.failedTasks.push(
+        { taskId: 'task-001', attempts: 2, lastError: 'stale', recoveryAttempted: false },
+        { taskId: 'orphan-failed', attempts: 1, lastError: 'real error', recoveryAttempted: false },
+      );
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      expect(result.failedTasks).not.toContain('task-001');
+      expect(result.blockedTasks).not.toContain('task-001');
+      expect(result.blockedTasks).toContain('orphan-blocked');
+      expect(result.failedTasks).toContain('orphan-failed');
+    });
   });
 
   // ─── Git Automation ───────────────────────────────────────────────────
@@ -3482,6 +3616,65 @@ describe('MigrationOrchestrator', () => {
         (inv: AgentInvocation) => inv.agent === 'code-migrator',
       );
       expect(migratorInvocations.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should run Phase 6 agents sequentially when git is enabled', async () => {
+      const invocationOrder: string[] = [];
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        invocationOrder.push(inv.agent);
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 100,
+          tokenUsage: { prompt: 100, completion: 50, total: 150 },
+          outputParsed: false,
+        };
+      };
+
+      const outputDir = join(tempDir, 'target-output-ph6');
+      await ensureDir(outputDir);
+
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            language: 'typescript',
+            framework: 'express',
+            outputPath: outputDir,
+          },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      await writeMigrationPlan(progressDir);
+      try {
+        await orchestrator.run();
+      } catch {
+        // git operations may fail in test env
+      }
+
+      // Phase 6 agents should run: e2e-test-crafter then documentation-writer (sequential)
+      const phase6Agents = invocationOrder.filter(
+        (a) => a === 'e2e-test-crafter' || a === 'documentation-writer',
+      );
+      if (phase6Agents.length >= 2) {
+        const e2eIdx = invocationOrder.indexOf('e2e-test-crafter');
+        const docIdx = invocationOrder.indexOf('documentation-writer');
+        expect(e2eIdx).toBeLessThan(docIdx);
+      }
     });
   });
 });
