@@ -1374,6 +1374,204 @@ describe('MigrationOrchestrator', () => {
       expect(log.stdout).toContain('aamf: complete task-001 - User Auth Module');
     });
 
+    it('should not create git repository when git.enabled is false', async () => {
+      const outputDir = join(tempDir, 'target-no-git');
+      await ensureDir(outputDir);
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: { language: 'typescript', framework: 'express', outputPath: outputDir },
+        options: {
+          git: {
+            enabled: false,
+            autoInit: true,
+            commitByAgent: true,
+            commitPerTask: true,
+            authorName: 'AAMF Migration Bot',
+            authorEmail: 'aamf@local.invalid',
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const gitDirExists = await fileExists(join(outputDir, '.git', 'HEAD'));
+      expect(gitDirExists).toBe(false);
+    });
+
+    it('should create task-level commits but not agent-level commits when commitByAgent is false', async () => {
+      const outputDir = join(tempDir, 'target-no-agent-commits');
+      await ensureDir(outputDir);
+
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'code-migrator' && inv.taskId) {
+          const id = inv.taskId.replace('task-', '');
+          await ensureDir(join(outputDir, 'src'));
+          await writeFile(join(outputDir, 'src', `task-${id}.ts`), `export const task${id} = ${Number(id)};\n`);
+        }
+        return {
+          agent: inv.agent, taskId: inv.taskId, exitCode: 0, success: true,
+          outputFiles: [], duration: 100, tokenUsage: { prompt: 100, completion: 50, total: 150 },
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: { language: 'typescript', framework: 'express', outputPath: outputDir },
+        options: {
+          git: {
+            enabled: true,
+            autoInit: true,
+            commitByAgent: false,
+            commitPerTask: true,
+            authorName: 'AAMF Migration Bot',
+            authorEmail: 'aamf@local.invalid',
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const log = await spawnWithTimeout('git', ['log', '--pretty=%s'], { cwd: outputDir });
+      expect(log.exitCode).toBe(0);
+      expect(log.stdout).toContain('aamf: complete task-001');
+      expect(log.stdout).not.toContain('aamf: code-migrator updated output');
+    });
+
+    it('should create agent-level commits but not task-level commits when commitPerTask is false', async () => {
+      const outputDir = join(tempDir, 'target-no-task-commits');
+      await ensureDir(outputDir);
+
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'code-migrator' && inv.taskId) {
+          const id = inv.taskId.replace('task-', '');
+          await ensureDir(join(outputDir, 'src'));
+          await writeFile(join(outputDir, 'src', `task-${id}.ts`), `export const task${id} = ${Number(id)};\n`);
+        }
+        return {
+          agent: inv.agent, taskId: inv.taskId, exitCode: 0, success: true,
+          outputFiles: [], duration: 100, tokenUsage: { prompt: 100, completion: 50, total: 150 },
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: { language: 'typescript', framework: 'express', outputPath: outputDir },
+        options: {
+          git: {
+            enabled: true,
+            autoInit: true,
+            commitByAgent: true,
+            commitPerTask: false,
+            authorName: 'AAMF Migration Bot',
+            authorEmail: 'aamf@local.invalid',
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const log = await spawnWithTimeout('git', ['log', '--pretty=%s'], { cwd: outputDir });
+      expect(log.exitCode).toBe(0);
+      expect(log.stdout).toContain('aamf: code-migrator updated output');
+      expect(log.stdout).not.toContain('aamf: complete task-001');
+    });
+
+    it('should skip empty task commits when allowEmptyTaskCommits is false', async () => {
+      const outputDir = join(tempDir, 'target-no-empty-commits');
+      await ensureDir(outputDir);
+
+      // Launcher writes a file only for the code-migrator so agent commits exist,
+      // but the task-level commit has nothing new to stage.
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'code-migrator' && inv.taskId) {
+          const id = inv.taskId.replace('task-', '');
+          await ensureDir(join(outputDir, 'src'));
+          await writeFile(join(outputDir, 'src', `task-${id}.ts`), `export const task${id} = ${Number(id)};\n`);
+        }
+        return {
+          agent: inv.agent, taskId: inv.taskId, exitCode: 0, success: true,
+          outputFiles: [], duration: 100, tokenUsage: { prompt: 100, completion: 50, total: 150 },
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: { language: 'typescript', framework: 'express', outputPath: outputDir },
+        options: {
+          git: {
+            enabled: true,
+            autoInit: true,
+            commitByAgent: true,
+            commitPerTask: true,
+            allowEmptyTaskCommits: false,
+            authorName: 'AAMF Migration Bot',
+            authorEmail: 'aamf@local.invalid',
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const log = await spawnWithTimeout('git', ['log', '--pretty=%s'], { cwd: outputDir });
+      expect(log.exitCode).toBe(0);
+      // Agent commits exist (code-migrator wrote files), but task "complete" commit
+      // should be skipped since there are no new changes after the agent commit.
+      expect(log.stdout).toContain('aamf: code-migrator updated output');
+      expect(log.stdout).not.toContain('aamf: complete task-001');
+    });
+
+    it('should apply failureRecoveryModel as modelOverride on transient errors', async () => {
+      let callCount = 0;
+      const capturedInvocations: AgentInvocation[] = [];
+
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        capturedInvocations.push({ ...inv });
+        if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
+          callCount++;
+          if (callCount === 1) {
+            return {
+              agent: inv.agent, taskId: inv.taskId, exitCode: 1, success: false,
+              outputFiles: [], duration: 100,
+              error: 'HTTP/2 GOAWAY received from upstream',
+              tokenUsage: { prompt: 100, completion: 50, total: 150 },
+              outputParsed: false,
+            };
+          }
+        }
+        return {
+          agent: inv.agent, taskId: inv.taskId, exitCode: 0, success: true,
+          outputFiles: [], duration: 100,
+          tokenUsage: { prompt: 100, completion: 50, total: 150 },
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        copilot: { failureRecoveryModel: 'gpt-4.1-mini' },
+      });
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      // After the transient failure, the retry should have the fallback model applied
+      const migratorRetries = capturedInvocations.filter(
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001',
+      );
+      expect(migratorRetries.length).toBeGreaterThanOrEqual(2);
+      // The second attempt should have the fallback model override
+      expect(migratorRetries[1]?.modelOverride).toBe('gpt-4.1-mini');
+    });
+
     it('should process migration tasks from plan', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(tempDir, launcherFn);

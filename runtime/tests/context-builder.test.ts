@@ -158,6 +158,37 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe('/tmp/target');
     });
 
+    it('should set test-writer outputPath to target root, not a subdirectory', async () => {
+      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+        targetFile: 'src/auth.ts',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.outputPath).toBe('/tmp/target');
+      expect(context.outputPath).not.toContain('__tests__');
+    });
+
+    it('should include parityReport in test-writer inputFiles when provided', async () => {
+      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+        targetFile: 'src/auth.ts',
+        parityReport: '/tmp/parity/auth-report.md',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).toContain('src/auth.ts');
+      expect(context.inputFiles).toContain('/tmp/parity/auth-report.md');
+      expect(context.outputPath).toBe('/tmp/target');
+    });
+
+    it('should default test-writer testType to unit when not specified', async () => {
+      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+        targetFile: 'src/auth.ts',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.payload?.testType).toBe('unit');
+    });
+
     it('should route failure-recovery to failure report + source/target', async () => {
       const contextPath = await builder.buildContext('failure-recovery', 4, 'task-001', {
         failureReport: '/tmp/failure.md',

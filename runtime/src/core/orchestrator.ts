@@ -195,7 +195,6 @@ export class MigrationOrchestrator {
     this.costEstimatorInstance = new CostEstimator(overrides);
     this.reportGenerator = new ReportGenerator();
     this.runId = runId;
-    this.gitLimiter = pLimit(1);
   }
 
   // ─── Public API ──────────────────────────────────────────────────────
@@ -1941,7 +1940,8 @@ export class MigrationOrchestrator {
     if (!this.config.options.git?.commitPerTask) return;
 
     const message = `aamf: complete ${task.id} - ${task.name}`;
-    await this.commitIfDirty(message, true);
+    const allowEmpty = this.config.options.git?.allowEmptyTaskCommits ?? true;
+    await this.commitIfDirty(message, allowEmpty);
   }
 
   private async commitIfDirty(message: string, allowEmpty: boolean = false): Promise<void> {
