@@ -16,7 +16,7 @@ export class ProgressWriter {
   private tasks: Map<string, { status: string; details?: TaskDetails }> = new Map();
   private events: string[] = [];
   private totalTasks: number = 0;
-  private tokenUsage: { total: number } = { total: 0 };
+  private tokenUsage: { total: number; byPhase: Record<number, number>; byAgent: Record<string, number> } = { total: 0, byPhase: {}, byAgent: {} };
   private startTime: Date = new Date();
   private agentStatuses: Map<string, string> = new Map();
   private cumulativeDurationMs: number = 0;
@@ -74,8 +74,12 @@ export class ProgressWriter {
       this.tasks.set(failed.taskId, { status: 'failed', details: { error: failed.lastError } });
     }
 
-    // Restore token usage
-    this.tokenUsage.total = state.tokenUsage.total;
+    // Restore token usage (full breakdown)
+    this.tokenUsage = {
+      total: state.tokenUsage.total,
+      byPhase: { ...state.tokenUsage.byPhase },
+      byAgent: { ...state.tokenUsage.byAgent },
+    };
 
     // Set total tasks count from checkpoint data
     this.totalTasks = state.completedTasks.length + state.blockedTasks.length + state.failedTasks.length;
@@ -107,9 +111,9 @@ export class ProgressWriter {
     await this.writeCurrentState();
   }
 
-  /** Update token usage */
-  setTokenUsage(total: number): void {
-    this.tokenUsage.total = total;
+  /** Update token usage with full breakdown */
+  setTokenUsage(data: { total: number; byPhase: Record<number, number>; byAgent: Record<string, number> }): void {
+    this.tokenUsage = { total: data.total, byPhase: { ...data.byPhase }, byAgent: { ...data.byAgent } };
   }
 
   /** Append a timestamped event */
@@ -161,6 +165,32 @@ export class ProgressWriter {
       md += `**Total Cumulative Duration:** ${this.formatDuration(this.cumulativeDurationMs)}\n`;
     }
     md += `**Token Usage:** ${this.tokenUsage.total.toLocaleString()} tokens\n\n`;
+
+    // Token Usage breakdown
+    const hasPhaseBreakdown = Object.keys(this.tokenUsage.byPhase).length > 0;
+    const hasAgentBreakdown = Object.keys(this.tokenUsage.byAgent).length > 0;
+    if (hasPhaseBreakdown || hasAgentBreakdown) {
+      md += `## Token Usage\n\n`;
+      md += `**Total:** ${this.tokenUsage.total.toLocaleString()} tokens\n\n`;
+      if (hasPhaseBreakdown) {
+        md += `### By Phase\n\n`;
+        md += `| Phase | Tokens |\n`;
+        md += `|-------|--------|\n`;
+        for (const [phase, tokens] of Object.entries(this.tokenUsage.byPhase)) {
+          md += `| ${phase} | ${Number(tokens).toLocaleString()} |\n`;
+        }
+        md += '\n';
+      }
+      if (hasAgentBreakdown) {
+        md += `### By Agent\n\n`;
+        md += `| Agent | Tokens |\n`;
+        md += `|-------|--------|\n`;
+        for (const [agent, tokens] of Object.entries(this.tokenUsage.byAgent)) {
+          md += `| ${agent} | ${Number(tokens).toLocaleString()} |\n`;
+        }
+        md += '\n';
+      }
+    }
 
     // Phase table
     md += `## Phases\n\n`;

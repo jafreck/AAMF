@@ -165,6 +165,8 @@ export class CheckpointManager {
     state.currentTask = null;
     // Remove from failed if it was there
     state.failedTasks = state.failedTasks.filter(f => f.taskId !== taskId);
+    // Remove from blocked if it was there
+    state.blockedTasks = state.blockedTasks.filter(id => id !== taskId);
     await this.save(state);
   }
 
