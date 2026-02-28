@@ -3257,6 +3257,95 @@ describe('MigrationOrchestrator', () => {
     });
   });
 
+  // ─── Invariant: completed tasks excluded from failed/blocked ────────
+
+  describe('Completed-task invariant filtering', () => {
+    it('should exclude completed tasks from failedTasks and blockedTasks in the result', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      // Pre-populate checkpoint so task-001 is completed but also stale in blocked/failed
+      const state = checkpoint.getState();
+      state.completedTasks.push('task-001');
+      state.blockedTasks.push('task-001');
+      state.failedTasks.push({
+        taskId: 'task-001',
+        attempts: 2,
+        lastError: 'stale error',
+        recoveryAttempted: false,
+      });
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      expect(result.failedTasks).not.toContain('task-001');
+      expect(result.blockedTasks).not.toContain('task-001');
+      // task-001 should still be completed
+      expect(checkpoint.getState().completedTasks).toContain('task-001');
+    });
+
+    it('should exclude completed task from failedTasks only when not in blockedTasks', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      const state = checkpoint.getState();
+      state.completedTasks.push('task-001');
+      state.failedTasks.push({
+        taskId: 'task-001',
+        attempts: 1,
+        lastError: 'stale',
+        recoveryAttempted: false,
+      });
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      expect(result.failedTasks).not.toContain('task-001');
+      expect(result.blockedTasks).not.toContain('task-001');
+    });
+
+    it('should exclude completed task from blockedTasks only when not in failedTasks', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      const state = checkpoint.getState();
+      state.completedTasks.push('task-001');
+      state.blockedTasks.push('task-001');
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      expect(result.blockedTasks).not.toContain('task-001');
+      expect(result.failedTasks).not.toContain('task-001');
+    });
+
+    it('should preserve non-completed tasks in failedTasks and blockedTasks', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      // Use task IDs outside the migration plan so the orchestrator doesn't complete them
+      const state = checkpoint.getState();
+      state.completedTasks.push('task-001');
+      state.blockedTasks.push('task-001', 'orphan-blocked');
+      state.failedTasks.push(
+        { taskId: 'task-001', attempts: 2, lastError: 'stale', recoveryAttempted: false },
+        { taskId: 'orphan-failed', attempts: 1, lastError: 'real error', recoveryAttempted: false },
+      );
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      expect(result.failedTasks).not.toContain('task-001');
+      expect(result.blockedTasks).not.toContain('task-001');
+      expect(result.blockedTasks).toContain('orphan-blocked');
+      expect(result.failedTasks).toContain('orphan-failed');
+    });
+  });
+
   // ─── Git Automation ───────────────────────────────────────────────────
 
   describe('Git Automation', () => {

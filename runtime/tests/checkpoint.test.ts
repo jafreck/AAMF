@@ -215,6 +215,49 @@ describe('CheckpointManager', () => {
     expect(data).toBeDefined();
   });
 
+  it('should remove task from blocked when completed', async () => {
+    await manager.load('test-project');
+    await manager.blockTask('task-001');
+    await manager.completeTask('task-001');
+
+    const state = manager.getState();
+    expect(state.blockedTasks).not.toContain('task-001');
+    expect(state.completedTasks).toContain('task-001');
+  });
+
+  it('should remove task from both failed and blocked when completed', async () => {
+    await manager.load('test-project');
+    await manager.failTask('task-001', 'some error', 1, false);
+    await manager.blockTask('task-001');
+    await manager.completeTask('task-001');
+
+    const state = manager.getState();
+    expect(state.failedTasks).toHaveLength(0);
+    expect(state.blockedTasks).not.toContain('task-001');
+    expect(state.completedTasks).toContain('task-001');
+  });
+
+  it('should not affect other blocked tasks when completing one', async () => {
+    await manager.load('test-project');
+    await manager.blockTask('task-001');
+    await manager.blockTask('task-002');
+    await manager.completeTask('task-001');
+
+    const state = manager.getState();
+    expect(state.blockedTasks).not.toContain('task-001');
+    expect(state.blockedTasks).toContain('task-002');
+    expect(state.completedTasks).toContain('task-001');
+  });
+
+  it('should handle completing a task that was never blocked', async () => {
+    await manager.load('test-project');
+    await manager.completeTask('task-001');
+
+    const state = manager.getState();
+    expect(state.blockedTasks).toHaveLength(0);
+    expect(state.completedTasks).toContain('task-001');
+  });
+
   // ─── metricsCount ─────────────────────────────────────────────────
 
   it('should initialize metricsCount to 0 on fresh state', async () => {
