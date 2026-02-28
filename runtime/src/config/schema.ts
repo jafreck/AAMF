@@ -150,6 +150,8 @@ export const MigrationConfigSchema = z.object({
       commitByAgent: z.boolean().default(true),
       /** Commit after each successfully completed Phase 4 task. */
       commitPerTask: z.boolean().default(true),
+      /** Allow empty git commits for task-level markers when no files changed. */
+      allowEmptyTaskCommits: z.boolean().default(true),
       /** Local git author name used when repository identity is not configured. */
       authorName: z.string().default('AAMF Migration Bot'),
       /** Local git author email used when repository identity is not configured. */
@@ -174,6 +176,7 @@ export const MigrationConfigSchema = z.object({
       autoInit: true,
       commitByAgent: true,
       commitPerTask: true,
+      allowEmptyTaskCommits: true,
       authorName: 'AAMF Migration Bot',
       authorEmail: 'aamf@local.invalid',
     },
