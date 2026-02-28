@@ -503,12 +503,14 @@ export class MigrationOrchestrator {
       }
     }
 
-    const builder = new IndexBuilder(this.kbDbPath, { rootDir: sourceRoot }, this.embedder);
+    const walkerConfig = { rootDir: sourceRoot };
+    const builder = new IndexBuilder(this.kbDbPath, walkerConfig, this.embedder);
 
     // ── Fingerprint guard: skip re-indexing if the KB already matches ──
+    // Pass the same walkerConfig used by IndexBuilder so the fingerprints match.
     const currentFingerprint = computeSourceFingerprint(
       sourceRoot,
-      {},
+      walkerConfig as { includeGlobs?: string[]; excludeGlobs?: string[] },
       this.embedder?.modelName,
     );
     if (await fileExists(this.kbDbPath)) {
