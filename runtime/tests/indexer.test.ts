@@ -94,24 +94,32 @@ describe('IndexBuilder', () => {
     }
   });
 
-  it('build() is idempotent — running twice does not duplicate rows', async () => {
+  it('build() is idempotent — running twice does not duplicate rows in any table', async () => {
     const builder = new IndexBuilder(dbPath, { rootDir: FIXTURE_DIR });
     await builder.build();
 
+    const tables = ['files', 'symbols', 'symbols_fts', 'file_imports', 'symbol_refs', 'external_deps'] as const;
+
     const db = openDb(dbPath);
-    const countAfterFirst = (
-      db.prepare('SELECT COUNT(*) as c FROM symbols').get() as { c: number }
-    ).c;
+    const countsBefore: Record<string, number> = {};
+    for (const t of tables) {
+      countsBefore[t] = (
+        db.prepare(`SELECT COUNT(*) as c FROM ${t}`).get() as { c: number }
+      ).c;
+    }
     db.close();
 
+    // Second build should not throw and should not duplicate rows
     await builder.build();
 
     const db2 = openDb(dbPath);
     try {
-      const countAfterSecond = (
-        db2.prepare('SELECT COUNT(*) as c FROM symbols').get() as { c: number }
-      ).c;
-      expect(countAfterSecond).toBe(countAfterFirst);
+      for (const t of tables) {
+        const countAfter = (
+          db2.prepare(`SELECT COUNT(*) as c FROM ${t}`).get() as { c: number }
+        ).c;
+        expect(countAfter, `row count for ${t} should be unchanged`).toBe(countsBefore[t]);
+      }
     } finally {
       db2.close();
     }
@@ -434,6 +442,40 @@ describe('IndexBuilder', () => {
           db2.prepare('SELECT COUNT(*) as c FROM symbols_fts').get() as { c: number }
         ).c;
         expect(ftsAfter).toBe(ftsBefore);
+      } finally {
+        db2.close();
+      }
+    });
+
+    it('build() recovers from a simulated crash — orphan file row does not cause errors', async () => {
+      const srcDir = join(tempDir, 'crash-src');
+      await import('node:fs/promises').then(({ mkdir: mk }) => mk(srcDir, { recursive: true }));
+      await writeFile(join(srcDir, 'lib.py'), 'def hello():\n    pass\n');
+
+      const crashDbPath = join(tempDir, 'crash-kb.db');
+
+      // Simulate a crash by manually inserting a file row without symbols
+      const db = openDb(crashDbPath);
+      db.prepare(
+        `INSERT INTO files (path, language, size_bytes, last_hash) VALUES (?, ?, ?, ?)`,
+      ).run(join(srcDir, 'lib.py'), 'python', 0, 'stale-hash');
+      db.close();
+
+      // build() should overwrite the orphan row and succeed
+      const builder = new IndexBuilder(crashDbPath, { rootDir: srcDir });
+      await expect(builder.build()).resolves.toBeUndefined();
+
+      const db2 = openDb(crashDbPath);
+      try {
+        const fileCount = (
+          db2.prepare('SELECT COUNT(*) as c FROM files').get() as { c: number }
+        ).c;
+        expect(fileCount).toBe(1);
+
+        const symCount = (
+          db2.prepare('SELECT COUNT(*) as c FROM symbols').get() as { c: number }
+        ).c;
+        expect(symCount).toBeGreaterThan(0);
       } finally {
         db2.close();
       }
