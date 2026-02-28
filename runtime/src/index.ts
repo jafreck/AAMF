@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { MigrationRuntime } from './core/runtime.js';
-import { IndexBuilder } from './indexer/index.js';
+import { IndexBuilder } from '@aamf/lore';
 import { KbServerProcess } from './core/kb-server-process.js';
 
 const program = new Command()

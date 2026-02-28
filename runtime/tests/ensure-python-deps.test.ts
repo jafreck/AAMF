@@ -22,7 +22,7 @@ describe('ensurePythonDeps', () => {
     });
 
     // Re-import to pick up mock
-    const { ensurePythonDeps } = await import('../src/indexer/ensure-python-deps.js');
+    const { ensurePythonDeps } = await import('@aamf/lore');
     await expect(ensurePythonDeps('python3')).resolves.toBeUndefined();
   });
 });

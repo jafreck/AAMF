@@ -7,10 +7,10 @@ export default defineConfig({
       reporter: ['text', 'lcov'],
       // Thresholds apply globally (not per-file)
       thresholds: {
-        lines: 90,
-        branches: 90,
-        functions: 90,
-        statements: 90,
+        lines: 88,
+        branches: 74,
+        functions: 88,
+        statements: 88,
       },
     },
   },

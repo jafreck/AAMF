@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ImportResolver } from '../../src/indexer/resolver.js';
+import { ImportResolver } from '@aamf/lore';
 
 // Helper to create a temporary directory with files for fs-based resolution tests
 function makeTmpDir(): string {

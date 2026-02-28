@@ -9,6 +9,15 @@ export { ParserPool } from './indexer/parser.js';
 export { ensurePythonDeps } from './indexer/ensure-python-deps.js';
 export { SentenceTransformersProvider, Qwen3EmbeddingProvider } from './indexer/embedder.js';
 export type { EmbeddingProvider } from './indexer/embedder.js';
+export { CExtractor } from './indexer/extractors/c.js';
+export { CppExtractor } from './indexer/extractors/cpp.js';
+export { CSharpExtractor } from './indexer/extractors/csharp.js';
+export { GoExtractor } from './indexer/extractors/go.js';
+export { JavaExtractor } from './indexer/extractors/java.js';
+export { JavaScriptExtractor } from './indexer/extractors/javascript.js';
+export { PythonExtractor } from './indexer/extractors/python.js';
+export { RustExtractor } from './indexer/extractors/rust.js';
+export { TypeScriptExtractor } from './indexer/extractors/typescript.js';
 export type {
   ExtractionResult,
   RawCallRef,
@@ -16,3 +25,4 @@ export type {
   RawSymbol,
   SymbolExtractor,
 } from './indexer/extractors/types.js';
+export { walk, findFirst, nodeSignature, emptyResult } from './indexer/extractors/types.js';

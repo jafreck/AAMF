@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ParserPool } from '../../../src/indexer/parser.js';
-import { RustExtractor } from '../../../src/indexer/extractors/rust.js';
+import { ParserPool, RustExtractor } from '@aamf/lore';
 
 function parse(source: string) {
   const pool = new ParserPool();

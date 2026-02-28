@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ParserPool } from '../../src/indexer/parser.js';
+import { ParserPool } from '@aamf/lore';
 
 describe('ParserPool', () => {
   let pool: ParserPool;

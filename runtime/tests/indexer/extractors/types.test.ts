@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { ParserPool } from '../../../src/indexer/parser.js';
+import { ParserPool } from '@aamf/lore';
 import {
   walk,
   findFirst,
   nodeSignature,
   emptyResult,
-} from '../../../src/indexer/extractors/types.js';
+} from '@aamf/lore';
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 

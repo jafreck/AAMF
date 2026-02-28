@@ -10,8 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join, resolve } from 'node:path';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { IndexBuilder } from '../src/indexer/index.js';
-import { openDb, getKbFingerprint, computeSourceFingerprint } from '../src/indexer/db.js';
+import { IndexBuilder, openDb, getKbFingerprint, computeSourceFingerprint } from '@aamf/lore';
 
 const FIXTURE_DIR = resolve(
   import.meta.dirname ?? new URL('.', import.meta.url).pathname,

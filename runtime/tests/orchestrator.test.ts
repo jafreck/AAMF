@@ -203,6 +203,42 @@ describe('MigrationOrchestrator', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  describe('phase routing and KB pre-start behavior', () => {
+    it('executePhase should throw for unknown phase id', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      await expect((orchestrator as any).executePhase({ id: 999 } as any)).rejects.toThrow('Unknown phase: 999');
+    });
+
+    it('should warn when KB is enabled for a later single phase but kb.db is missing', async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn');
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator } = await setupOrchestrator(
+          tempDir,
+          launcherFn,
+          {
+            options: {
+              kbIndex: { enabled: true, embeddings: { enabled: false } },
+            },
+          },
+          1,
+        );
+
+        const result = await orchestrator.run();
+
+        expect(result.phases.some(p => p.phase === 1)).toBe(true);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('KB indexing is enabled, but'),
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+  });
+
   // ─── Phase 0: KB Indexing ──────────────────────────────────────────
 
   describe('Phase 0: KB Indexing', () => {
@@ -329,7 +365,7 @@ describe('MigrationOrchestrator', () => {
 
     it('executePhase0 should return success: false when timeout is exceeded', async () => {
       // Mock IndexBuilder to simulate a slow build that exceeds the timeout
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockImplementation(
         () => new Promise<void>(() => { /* never resolves */ }),
       );
@@ -370,15 +406,15 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should pass embedder to IndexBuilder when embeddings.enabled is true', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
       // Mock ensurePythonDeps to avoid actually running pip
-      const depsMod = await import('../src/indexer/ensure-python-deps.js');
+      const depsMod = await import('@aamf/lore');
       const depsSpy = vi.spyOn(depsMod, 'ensurePythonDeps').mockResolvedValue(undefined);
 
       // Mock embedder init() to avoid spawning a real Python process
-      const { SentenceTransformersProvider } = await import('../src/indexer/embedder.js');
+      const { SentenceTransformersProvider } = await import('@aamf/lore');
       const initSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'init').mockResolvedValue(undefined);
       const disposeSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'dispose').mockResolvedValue(undefined);
 
@@ -419,16 +455,16 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should skip embeddings gracefully when ensurePythonDeps fails', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const depsMod = await import('../src/indexer/ensure-python-deps.js');
+      const depsMod = await import('@aamf/lore');
       const depsSpy = vi.spyOn(depsMod, 'ensurePythonDeps').mockRejectedValue(
         new Error('python3 not found'),
       );
 
       // Mock init to simulate failure (Python not available)
-      const { SentenceTransformersProvider } = await import('../src/indexer/embedder.js');
+      const { SentenceTransformersProvider } = await import('@aamf/lore');
       const initSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'init').mockRejectedValue(
         new Error('Embedding subprocess exited with code 1 before handshake'),
       );
@@ -469,10 +505,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should skip build when KB fingerprint matches', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('abc123');
       const mockDb = { close: vi.fn() };
       const openDbSpy = vi.spyOn(dbMod, 'openDb').mockReturnValue(mockDb as any);
@@ -510,10 +546,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should rebuild when KB fingerprint does not match', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('new-fp');
       const mockDb = { close: vi.fn() };
       const openDbSpy = vi.spyOn(dbMod, 'openDb').mockReturnValue(mockDb as any);
@@ -550,10 +586,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should rebuild when no KB database exists', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('some-fp');
 
       try {
@@ -575,10 +611,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should rebuild when existing KB is corrupt/unreadable', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('some-fp');
       const openDbSpy = vi.spyOn(dbMod, 'openDb').mockImplementation(() => {
         throw new Error('database disk image is malformed');
@@ -611,10 +647,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should log skip message when fingerprint matches', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('match-fp');
       const mockDb = { close: vi.fn() };
       const openDbSpy = vi.spyOn(dbMod, 'openDb').mockReturnValue(mockDb as any);
@@ -649,10 +685,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should log rebuild message when fingerprint does not match', async () => {
-      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const { IndexBuilder } = await import('@aamf/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('../src/indexer/db.js');
+      const dbMod = await import('@aamf/lore');
       const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('new-fp');
 
       try {
@@ -3873,6 +3909,178 @@ describe('MigrationOrchestrator', () => {
         const docIdx = invocationOrder.indexOf('documentation-writer');
         expect(e2eIdx).toBeLessThan(docIdx);
       }
+    });
+
+    it('ensureGitRepositoryReady should initialize git and configure author when repo is missing', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            outputPath: join(tempDir, 'git-init-output'),
+          },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'not a repo', exitCode: 128 })
+        .mockResolvedValueOnce({ success: true, stdout: 'initialized', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).ensureGitRepositoryReady();
+
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['rev-parse', '--is-inside-work-tree']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(2, ['init']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(3, ['config', 'user.name', 'Test Bot']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(4, ['config', 'user.email', 'test@local']);
+    });
+
+    it('ensureGitRepositoryReady should warn and return when git init fails', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            outputPath: join(tempDir, 'git-init-fail-output'),
+          },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn');
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'not a repo', exitCode: 128 })
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'init failed', exitCode: 1 });
+
+      try {
+        await (orchestrator as any).ensureGitRepositoryReady();
+        expect(runGitSpy).toHaveBeenCalledTimes(2);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to initialize git repository'));
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('commitIfDirty should warn and return when git status command fails', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn');
+      const ensureSpy = vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'status failed', exitCode: 1 });
+
+      try {
+        await (orchestrator as any).commitIfDirty('test commit');
+        expect(ensureSpy).toHaveBeenCalledTimes(1);
+        expect(runGitSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Unable to inspect git status before commit'));
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('commitIfDirty should create an allow-empty commit when requested', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).commitIfDirty('allow-empty message', true);
+
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['status', '--porcelain']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(2, ['diff', '--cached', '--name-only']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(3, ['commit', '--allow-empty', '-m', 'allow-empty message']);
+    });
+
+    it('commitIfDirty should stage changes and create a normal commit', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: true, stdout: ' M src/file.ts\n', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: 'src/file.ts\n', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '[main] commit', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).commitIfDirty('normal message', false);
+
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['status', '--porcelain']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(2, ['add', '-A']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(3, ['diff', '--cached', '--name-only']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(4, ['commit', '-m', 'normal message']);
     });
   });
 });
