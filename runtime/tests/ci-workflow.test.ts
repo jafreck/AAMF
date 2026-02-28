@@ -77,6 +77,11 @@ describe('CI workflow (.github/workflows/ci.yml)', () => {
     expect(text).toContain('npx vitest run');
   });
 
+  it('should run unit tests with coverage enabled', async () => {
+    const text = await loadContent();
+    expect(text).toContain('npx vitest run --coverage');
+  });
+
   it('should not set AAMF_E2E environment variable in unit test step', async () => {
     const text = await loadContent();
     expect(text).not.toContain('AAMF_E2E');
@@ -122,5 +127,84 @@ describe('README.md CI badge', () => {
     const text = await loadContent();
     expect(text).toContain('AAMF');
     expect(text).toContain('How It Works');
+  });
+});
+
+describe('README.md Coverage section', () => {
+  let content: string;
+
+  const loadContent = async () => {
+    if (!content) {
+      content = await readFile(join(repoRoot, 'README.md'), 'utf-8');
+    }
+    return content;
+  };
+
+  it('should contain a Coverage heading', async () => {
+    const text = await loadContent();
+    expect(text).toMatch(/^## Coverage$/m);
+  });
+
+  it('should include the coverage run command', async () => {
+    const text = await loadContent();
+    expect(text).toContain('npx vitest run --coverage');
+  });
+
+  it('should mention the 90% threshold requirement', async () => {
+    const text = await loadContent();
+    expect(text).toMatch(/90%/);
+  });
+
+  it('should mention thresholds apply globally', async () => {
+    const text = await loadContent();
+    expect(text).toMatch(/globally/i);
+  });
+});
+
+describe('Root package.json build script', () => {
+  let pkg: Record<string, any>;
+
+  const loadPkg = async () => {
+    if (!pkg) {
+      const text = await readFile(join(repoRoot, 'package.json'), 'utf-8');
+      pkg = JSON.parse(text);
+    }
+    return pkg;
+  };
+
+  it('should have a build script that builds lore before runtime', async () => {
+    const p = await loadPkg();
+    expect(p.scripts.build).toContain('lore');
+    expect(p.scripts.build).toContain('runtime');
+    const loreIdx = p.scripts.build.indexOf('lore');
+    const runtimeIdx = p.scripts.build.indexOf('runtime');
+    expect(loreIdx).toBeLessThan(runtimeIdx);
+  });
+
+  it('should chain lore and runtime builds with &&', async () => {
+    const p = await loadPkg();
+    expect(p.scripts.build).toContain('&&');
+  });
+});
+
+describe('runtime/package.json devDependencies', () => {
+  let pkg: Record<string, any>;
+
+  const loadPkg = async () => {
+    if (!pkg) {
+      const text = await readFile(join(repoRoot, 'runtime', 'package.json'), 'utf-8');
+      pkg = JSON.parse(text);
+    }
+    return pkg;
+  };
+
+  it('should include @vitest/coverage-v8 in devDependencies', async () => {
+    const p = await loadPkg();
+    expect(p.devDependencies).toHaveProperty('@vitest/coverage-v8');
+  });
+
+  it('should include vitest in devDependencies', async () => {
+    const p = await loadPkg();
+    expect(p.devDependencies).toHaveProperty('vitest');
   });
 });
