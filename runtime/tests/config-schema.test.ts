@@ -27,6 +27,7 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.git?.autoInit).toBe(true);
     expect(result.options.git?.commitByAgent).toBe(true);
     expect(result.options.git?.commitPerTask).toBe(true);
+    expect(result.options.git?.allowEmptyTaskCommits).toBe(true);
     expect(result.copilot.cliCommand).toBe('copilot');
     expect(result.copilot.timeout).toBe(300000);
     expect(result.copilot.failureRecoveryModel).toBeUndefined();
@@ -53,6 +54,29 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.git?.commitPerTask).toBe(true);
     expect(result.options.git?.authorName).toBe('Custom Bot');
     expect(result.options.git?.authorEmail).toBe('custom@example.com');
+  });
+
+  it('should default allowEmptyTaskCommits to true', () => {
+    const result = MigrationConfigSchema.parse(validConfig);
+    expect(result.options.git?.allowEmptyTaskCommits).toBe(true);
+  });
+
+  it('should accept allowEmptyTaskCommits set to false', () => {
+    const result = MigrationConfigSchema.parse({
+      ...validConfig,
+      options: {
+        git: {
+          allowEmptyTaskCommits: false,
+        },
+      },
+    });
+    expect(result.options.git?.allowEmptyTaskCommits).toBe(false);
+  });
+
+  it('should default git authorName and authorEmail', () => {
+    const result = MigrationConfigSchema.parse(validConfig);
+    expect(result.options.git?.authorName).toBe('AAMF Migration Bot');
+    expect(result.options.git?.authorEmail).toBe('aamf@local.invalid');
   });
 
   it('should reject invalid project name', () => {

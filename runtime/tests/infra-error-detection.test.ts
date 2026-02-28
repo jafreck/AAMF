@@ -53,6 +53,13 @@ describe('classifyError', () => {
     expect(classifyError('registry https://registry.npmjs.org unavailable')).toBe('network');
   });
 
+  it('should detect model/API transport failures as network errors', () => {
+    expect(classifyError('HTTP/2 GOAWAY received from upstream')).toBe('network');
+    expect(classifyError('stream error: connection_error')).toBe('network');
+    expect(classifyError('Error 503: service temporarily unavailable')).toBe('network');
+    expect(classifyError('Service Unavailable')).toBe('network');
+  });
+
   // ─── Timeout ─────────────────────────────────────────────────────
 
   it('should detect timeouts', () => {
