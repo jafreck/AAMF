@@ -29,6 +29,8 @@ export interface CheckpointState {
   completedPhase3Groups?: string[];
   /** Number of JSONL metric records written; used to skip on resume. */
   metricsCount: number;
+  /** Source fingerprint from last successful Phase 0 build; used to skip re-indexing on resume. */
+  phase0Fingerprint?: string;
 }
 
 export interface CheckpointFailedTask {
@@ -65,6 +67,7 @@ export class CheckpointManager {
         this.state.phase3aComplete ??= false;
         this.state.completedPhase3Groups ??= [];
         this.state.metricsCount ??= 0;
+        this.state.phase0Fingerprint ??= undefined;
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
         await this.save(this.state);
         return this.state;
@@ -80,6 +83,7 @@ export class CheckpointManager {
             this.state.phase3aComplete ??= false;
             this.state.completedPhase3Groups ??= [];
             this.state.metricsCount ??= 0;
+            this.state.phase0Fingerprint ??= undefined;
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
             await this.save(this.state);
             return this.state;

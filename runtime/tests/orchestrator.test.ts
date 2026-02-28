@@ -467,6 +467,211 @@ describe('MigrationOrchestrator', () => {
         disposeSpy.mockRestore();
       }
     });
+
+    it('executePhase0 should skip build when KB fingerprint matches', async () => {
+      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
+
+      const dbMod = await import('../src/indexer/db.js');
+      const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('abc123');
+      const mockDb = { close: vi.fn() };
+      const openDbSpy = vi.spyOn(dbMod, 'openDb').mockReturnValue(mockDb as any);
+      const getKbFpSpy = vi.spyOn(dbMod, 'getKbFingerprint').mockReturnValue('abc123');
+
+      const { stat } = await import('node:fs/promises');
+      const fsMod = await import('../src/util/fs.js');
+      const realFileExists = async (p: string) => { try { await stat(p); return true; } catch { return false; } };
+      const fileExistsSpy = vi.spyOn(fsMod, 'fileExists').mockImplementation(async (p: string) => {
+        if (p.endsWith('kb.db')) return true;
+        return realFileExists(p);
+      });
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, checkpoint } = await setupOrchestrator(tempDir, launcherFn);
+
+        const result = await orchestrator.executePhase0(Date.now());
+
+        expect(result.phase).toBe(0);
+        expect(result.success).toBe(true);
+        expect(result.name).toBe('KB Indexing');
+        // Build should NOT have been called because fingerprint matched
+        expect(buildSpy).not.toHaveBeenCalled();
+        expect(mockDb.close).toHaveBeenCalled();
+        // Checkpoint should have the fingerprint stored
+        expect(checkpoint.getState().phase0Fingerprint).toBe('abc123');
+      } finally {
+        buildSpy.mockRestore();
+        fingerprintSpy.mockRestore();
+        openDbSpy.mockRestore();
+        getKbFpSpy.mockRestore();
+        fileExistsSpy.mockRestore();
+      }
+    });
+
+    it('executePhase0 should rebuild when KB fingerprint does not match', async () => {
+      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
+
+      const dbMod = await import('../src/indexer/db.js');
+      const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('new-fp');
+      const mockDb = { close: vi.fn() };
+      const openDbSpy = vi.spyOn(dbMod, 'openDb').mockReturnValue(mockDb as any);
+      const getKbFpSpy = vi.spyOn(dbMod, 'getKbFingerprint').mockReturnValue('old-fp');
+
+      const { stat } = await import('node:fs/promises');
+      const fsMod = await import('../src/util/fs.js');
+      const realFileExists = async (p: string) => { try { await stat(p); return true; } catch { return false; } };
+      const fileExistsSpy = vi.spyOn(fsMod, 'fileExists').mockImplementation(async (p: string) => {
+        if (p.endsWith('kb.db')) return true;
+        return realFileExists(p);
+      });
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, checkpoint } = await setupOrchestrator(tempDir, launcherFn);
+
+        const result = await orchestrator.executePhase0(Date.now());
+
+        expect(result.phase).toBe(0);
+        expect(result.success).toBe(true);
+        // Build SHOULD have been called because fingerprints differ
+        expect(buildSpy).toHaveBeenCalled();
+        expect(mockDb.close).toHaveBeenCalled();
+        // Checkpoint should have the new fingerprint
+        expect(checkpoint.getState().phase0Fingerprint).toBe('new-fp');
+      } finally {
+        buildSpy.mockRestore();
+        fingerprintSpy.mockRestore();
+        openDbSpy.mockRestore();
+        getKbFpSpy.mockRestore();
+        fileExistsSpy.mockRestore();
+      }
+    });
+
+    it('executePhase0 should rebuild when no KB database exists', async () => {
+      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
+
+      const dbMod = await import('../src/indexer/db.js');
+      const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('some-fp');
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, checkpoint } = await setupOrchestrator(tempDir, launcherFn);
+
+        // kb.db does not exist on disk → fileExists returns false naturally
+        const result = await orchestrator.executePhase0(Date.now());
+
+        expect(result.phase).toBe(0);
+        expect(result.success).toBe(true);
+        // Build SHOULD have been called because no DB exists
+        expect(buildSpy).toHaveBeenCalled();
+        expect(checkpoint.getState().phase0Fingerprint).toBe('some-fp');
+      } finally {
+        buildSpy.mockRestore();
+        fingerprintSpy.mockRestore();
+      }
+    });
+
+    it('executePhase0 should rebuild when existing KB is corrupt/unreadable', async () => {
+      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
+
+      const dbMod = await import('../src/indexer/db.js');
+      const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('some-fp');
+      const openDbSpy = vi.spyOn(dbMod, 'openDb').mockImplementation(() => {
+        throw new Error('database disk image is malformed');
+      });
+
+      const { stat } = await import('node:fs/promises');
+      const fsMod = await import('../src/util/fs.js');
+      const realFileExists = async (p: string) => { try { await stat(p); return true; } catch { return false; } };
+      const fileExistsSpy = vi.spyOn(fsMod, 'fileExists').mockImplementation(async (p: string) => {
+        if (p.endsWith('kb.db')) return true;
+        return realFileExists(p);
+      });
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+        const result = await orchestrator.executePhase0(Date.now());
+
+        expect(result.phase).toBe(0);
+        expect(result.success).toBe(true);
+        // Build should run because DB was unreadable
+        expect(buildSpy).toHaveBeenCalled();
+      } finally {
+        buildSpy.mockRestore();
+        fingerprintSpy.mockRestore();
+        openDbSpy.mockRestore();
+        fileExistsSpy.mockRestore();
+      }
+    });
+
+    it('executePhase0 should log skip message when fingerprint matches', async () => {
+      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
+
+      const dbMod = await import('../src/indexer/db.js');
+      const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('match-fp');
+      const mockDb = { close: vi.fn() };
+      const openDbSpy = vi.spyOn(dbMod, 'openDb').mockReturnValue(mockDb as any);
+      const getKbFpSpy = vi.spyOn(dbMod, 'getKbFingerprint').mockReturnValue('match-fp');
+
+      const { stat } = await import('node:fs/promises');
+      const fsMod = await import('../src/util/fs.js');
+      const realFileExists = async (p: string) => { try { await stat(p); return true; } catch { return false; } };
+      const fileExistsSpy = vi.spyOn(fsMod, 'fileExists').mockImplementation(async (p: string) => {
+        if (p.endsWith('kb.db')) return true;
+        return realFileExists(p);
+      });
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+        const infoSpy = vi.spyOn(logger, 'info');
+
+        await orchestrator.executePhase0(Date.now());
+
+        const skipMsg = infoSpy.mock.calls.find(
+          (args) => typeof args[0] === 'string' && args[0].includes('reused/skipped'),
+        );
+        expect(skipMsg).toBeDefined();
+      } finally {
+        buildSpy.mockRestore();
+        fingerprintSpy.mockRestore();
+        openDbSpy.mockRestore();
+        getKbFpSpy.mockRestore();
+        fileExistsSpy.mockRestore();
+      }
+    });
+
+    it('executePhase0 should log rebuild message when fingerprint does not match', async () => {
+      const { IndexBuilder } = await import('../src/indexer/index.js');
+      const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
+
+      const dbMod = await import('../src/indexer/db.js');
+      const fingerprintSpy = vi.spyOn(dbMod, 'computeSourceFingerprint').mockReturnValue('new-fp');
+
+      try {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+        const infoSpy = vi.spyOn(logger, 'info');
+
+        // No kb.db exists → triggers rebuild path
+        await orchestrator.executePhase0(Date.now());
+
+        const rebuildMsg = infoSpy.mock.calls.find(
+          (args) => typeof args[0] === 'string' && args[0].includes('rebuilt'),
+        );
+        expect(rebuildMsg).toBeDefined();
+      } finally {
+        buildSpy.mockRestore();
+        fingerprintSpy.mockRestore();
+      }
+    });
   });
 
   // ─── Phase Sequencing ──────────────────────────────────────────────

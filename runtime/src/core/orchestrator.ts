@@ -29,6 +29,7 @@ import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite, readJson, ensureDir } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
 import { IndexBuilder } from '../indexer/index.js';
+import { openDb, computeSourceFingerprint, getKbFingerprint } from '../indexer/db.js';
 import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
 import { ensurePythonDeps } from '../indexer/ensure-python-deps.js';
 import { KbServerProcess } from './kb-server-process.js';
@@ -516,7 +517,43 @@ export class MigrationOrchestrator {
       }
     }
 
-    const builder = new IndexBuilder(this.kbDbPath, { rootDir: sourceRoot }, this.embedder);
+    const walkerConfig = { rootDir: sourceRoot };
+    const builder = new IndexBuilder(this.kbDbPath, walkerConfig, this.embedder);
+
+    // ── Fingerprint guard: skip re-indexing if the KB already matches ──
+    // Pass the same walkerConfig used by IndexBuilder so the fingerprints match.
+    const currentFingerprint = computeSourceFingerprint(
+      sourceRoot,
+      walkerConfig as { includeGlobs?: string[]; excludeGlobs?: string[] },
+      this.embedder?.modelName,
+    );
+    if (await fileExists(this.kbDbPath)) {
+      try {
+        const db = openDb(this.kbDbPath);
+        try {
+          const storedFingerprint = getKbFingerprint(db);
+          if (storedFingerprint && storedFingerprint === currentFingerprint) {
+            this.logger.info('Phase 0 reused/skipped — KB fingerprint matches current config');
+            const checkpointState = this.checkpoint.getState();
+            checkpointState.phase0Fingerprint = currentFingerprint;
+            await this.checkpoint.save(checkpointState);
+            return {
+              phase: 0,
+              name: 'KB Indexing',
+              success: true,
+              outputPath: this.kbDbPath,
+              duration: Date.now() - start,
+            };
+          }
+        } finally {
+          db.close();
+        }
+      } catch {
+        // DB exists but unreadable/corrupt — fall through to rebuild
+      }
+    }
+
+    this.logger.info('Phase 0 rebuilt — source fingerprint changed or no existing KB');
 
     const maxAttempts = this.config.options.maxRetriesPerTask;
     const timeout =
@@ -533,6 +570,9 @@ export class MigrationOrchestrator {
             setTimeout(() => reject(new Error('KB index timeout')), timeout),
           ),
         ]);
+        const checkpointState = this.checkpoint.getState();
+        checkpointState.phase0Fingerprint = currentFingerprint;
+        await this.checkpoint.save(checkpointState);
         return {
           phase: 0,
           name: 'KB Indexing',

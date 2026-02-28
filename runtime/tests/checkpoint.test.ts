@@ -350,4 +350,49 @@ describe('CheckpointManager', () => {
     expect(data.byPhase[1]).toBe(1000);
     expect(data.byPhase[2]).toBe(2500);
   });
+
+  // ─── phase0Fingerprint ───────────────────────────────────────────
+
+  it('should initialize phase0Fingerprint to undefined on fresh state', async () => {
+    const state = await manager.load('test-project');
+    expect(state.phase0Fingerprint).toBeUndefined();
+  });
+
+  it('should preserve phase0Fingerprint on reload', async () => {
+    const state = await manager.load('test-project');
+    state.phase0Fingerprint = 'abc123';
+    await manager.save(state);
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.phase0Fingerprint).toBe('abc123');
+  });
+
+  it('should default phase0Fingerprint to undefined when field is absent in stored checkpoint (backward compat)', async () => {
+    const { writeJson } = await import('../src/util/fs.js');
+    const oldState = {
+      projectName: 'old-project',
+      version: 1,
+      currentPhase: 2,
+      currentTask: null,
+      completedPhases: [1],
+      completedTasks: ['task-001'],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 1,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      metricsCount: 0,
+      // phase0Fingerprint intentionally omitted
+    };
+    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const loaded = await manager3.load('old-project');
+    expect(loaded.phase0Fingerprint).toBeUndefined();
+  });
 });
