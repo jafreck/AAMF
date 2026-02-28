@@ -6,6 +6,7 @@ import { MigrationRuntime, validateSourceAvailability } from '../src/core/runtim
 import type { MigrationResult } from '../src/agents/types.js';
 import { Logger } from '../src/logging/logger.js';
 import { PHASES } from '../src/core/phase-registry.js';
+import { MigrationOrchestrator } from '../src/core/orchestrator.js';
 
 /** Build a minimal MigrationResult for printSummary tests. */
 function makeResult(overrides: Partial<MigrationResult> = {}): MigrationResult {
@@ -176,6 +177,19 @@ describe('MigrationRuntime', () => {
       expect(output).toContain('Project: test-project');
       expect(output).toContain('Token Usage: 1,000');
     });
+
+    it('should print failed and blocked task lists when present', () => {
+      (runtime as any).printSummary(
+        makeResult({
+          failedTasks: ['task-a'],
+          blockedTasks: ['task-b'],
+        }),
+      );
+
+      const output = consoleSpy.mock.calls.flat().join('\n');
+      expect(output).toContain('Failed Tasks: task-a');
+      expect(output).toContain('Blocked Tasks: task-b');
+    });
   });
 
   describe('run', () => {
@@ -237,6 +251,61 @@ describe('MigrationRuntime', () => {
 
       expect(runtime.progress.initialize).not.toHaveBeenCalled();
       expect(runtime.progress.reconstructFromCheckpoint).toHaveBeenCalledWith(state);
+    });
+
+    it('runs orchestrator path on non-dry run, flushes logger, and returns result', async () => {
+      const runtime = new MigrationRuntime() as any;
+      const orchestratorResult = makeResult({
+        phases: [{ phase: 1, name: 'Test Phase', success: true, duration: 10, outputPath: '/tmp/out' }],
+      });
+
+      const runSpy = vi.spyOn(MigrationOrchestrator.prototype, 'run').mockResolvedValue(orchestratorResult);
+      const printSummarySpy = vi.spyOn(runtime, 'printSummary').mockImplementation(() => {});
+
+      runtime.config = {
+        projectName: 'test-project',
+        options: {
+          resume: false,
+          dryRun: false,
+          maxParallelAgents: 1,
+          maxRetriesPerTask: 1,
+          maxLinesPerTask: 200,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 1,
+          avgTokensPerTask: 1000,
+        },
+        copilot: {
+          model: 'claude-sonnet-4',
+          costOverrides: undefined,
+        },
+      };
+      runtime.checkpoint = {
+        load: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.progress = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        reconstructFromCheckpoint: vi.fn(),
+      };
+      runtime.launcher = {};
+      runtime.logger = {
+        flush: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.projectRoot = '/tmp/project';
+      runtime.runId = 'run-123';
+
+      const result = await runtime.run();
+
+      expect(result).toEqual(orchestratorResult);
+      expect(runtime.progress.initialize).toHaveBeenCalledTimes(1);
+      expect(runtime.logger.flush).toHaveBeenCalledTimes(1);
+      expect(runSpy).toHaveBeenCalledTimes(1);
+      expect(printSummarySpy).toHaveBeenCalledWith(orchestratorResult);
+
+      runSpy.mockRestore();
+      printSummarySpy.mockRestore();
     });
   });
 
@@ -362,6 +431,46 @@ describe('MigrationRuntime', () => {
 
       await expect(runtime.validateAgentFiles()).rejects.toThrow('Missing agent file(s)');
       await rm(root, { recursive: true, force: true });
+    });
+
+    it('setupShutdownHandlers registers SIGINT/SIGTERM handlers that flush and save state', async () => {
+      const runtime = new MigrationRuntime() as any;
+      const onSpy = vi.spyOn(process, 'on').mockReturnValue(process);
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+      runtime.logger = {
+        warn: vi.fn(),
+        flush: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.checkpoint = {
+        save: vi.fn().mockResolvedValue(undefined),
+        getState: vi.fn().mockReturnValue({ currentPhase: 1 }),
+      };
+      runtime.progress = {
+        appendEvent: vi.fn().mockResolvedValue(undefined),
+      };
+
+      runtime.setupShutdownHandlers();
+
+      const sigintHandler = onSpy.mock.calls.find(([signal]) => signal === 'SIGINT')?.[1] as (() => void) | undefined;
+      const sigtermHandler = onSpy.mock.calls.find(([signal]) => signal === 'SIGTERM')?.[1] as (() => void) | undefined;
+
+      expect(sigintHandler).toBeDefined();
+      expect(sigtermHandler).toBeDefined();
+
+      sigintHandler!();
+      sigtermHandler!();
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(runtime.logger.flush).toHaveBeenCalledTimes(2);
+      expect(runtime.checkpoint.save).toHaveBeenCalledTimes(2);
+      expect(runtime.progress.appendEvent).toHaveBeenCalledWith('Migration interrupted by SIGINT');
+      expect(runtime.progress.appendEvent).toHaveBeenCalledWith('Migration interrupted by SIGTERM');
+      expect(exitSpy).toHaveBeenCalledWith(130);
+      expect(exitSpy).toHaveBeenCalledWith(143);
+
+      onSpy.mockRestore();
+      exitSpy.mockRestore();
     });
   });
 });

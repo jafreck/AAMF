@@ -3910,5 +3910,177 @@ describe('MigrationOrchestrator', () => {
         expect(e2eIdx).toBeLessThan(docIdx);
       }
     });
+
+    it('ensureGitRepositoryReady should initialize git and configure author when repo is missing', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            outputPath: join(tempDir, 'git-init-output'),
+          },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'not a repo', exitCode: 128 })
+        .mockResolvedValueOnce({ success: true, stdout: 'initialized', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).ensureGitRepositoryReady();
+
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['rev-parse', '--is-inside-work-tree']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(2, ['init']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(3, ['config', 'user.name', 'Test Bot']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(4, ['config', 'user.email', 'test@local']);
+    });
+
+    it('ensureGitRepositoryReady should warn and return when git init fails', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            outputPath: join(tempDir, 'git-init-fail-output'),
+          },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn');
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'not a repo', exitCode: 128 })
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'init failed', exitCode: 1 });
+
+      try {
+        await (orchestrator as any).ensureGitRepositoryReady();
+        expect(runGitSpy).toHaveBeenCalledTimes(2);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to initialize git repository'));
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('commitIfDirty should warn and return when git status command fails', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn');
+      const ensureSpy = vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'status failed', exitCode: 1 });
+
+      try {
+        await (orchestrator as any).commitIfDirty('test commit');
+        expect(ensureSpy).toHaveBeenCalledTimes(1);
+        expect(runGitSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Unable to inspect git status before commit'));
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('commitIfDirty should create an allow-empty commit when requested', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).commitIfDirty('allow-empty message', true);
+
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['status', '--porcelain']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(2, ['diff', '--cached', '--name-only']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(3, ['commit', '--allow-empty', '-m', 'allow-empty message']);
+    });
+
+    it('commitIfDirty should stage changes and create a normal commit', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: true, stdout: ' M src/file.ts\n', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: 'src/file.ts\n', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '[main] commit', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).commitIfDirty('normal message', false);
+
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['status', '--porcelain']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(2, ['add', '-A']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(3, ['diff', '--cached', '--name-only']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(4, ['commit', '-m', 'normal message']);
+    });
   });
 });

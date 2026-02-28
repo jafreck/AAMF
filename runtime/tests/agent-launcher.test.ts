@@ -831,6 +831,21 @@ describe('AgentLauncher', () => {
       const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
       expect(logContent).toContain('PATH_VALUE:/tmp/aamf-extra-bin:');
     });
+
+    it('should initialize runner only once when init is called repeatedly', async () => {
+      const launcher = makeLauncher('echo');
+      const runnerInit = vi.fn().mockResolvedValue(undefined);
+      (launcher as any).runner = {
+        init: runnerInit,
+        run: vi.fn(),
+        getResolvedPath: vi.fn().mockReturnValue(undefined),
+      };
+
+      await launcher.init();
+      await launcher.init();
+
+      expect(runnerInit).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('spawnToFirstOutput tracking', () => {
@@ -936,6 +951,89 @@ describe('AgentLauncher', () => {
 
       const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
       expect(logContent).not.toContain('--additional-mcp-config');
+    });
+
+    it('should use Claude runtime and pass --mcp-config when agentRuntime is claude-code', async () => {
+      const script = await createScript('echo-claude-mcp.sh', 'echo "ARGS:$@"\nexit 0');
+      const cfg = createMockConfig({
+        agentRuntime: 'claude-code',
+        claudeCode: {
+          cliCommand: script,
+          agentDir: '.claude/agents',
+          timeout: 300_000,
+          model: 'claude-sonnet-4',
+        },
+        copilot: {
+          cliCommand: 'copilot',
+          agentDir: '.github/agents',
+          timeout: 300_000,
+        },
+      });
+      config = cfg;
+      const launcher = new AgentLauncher(cfg, projectRoot, logger);
+      const { contextFile, progressDir } = await prepareInvocation('claude-mcp-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'impact-assessor',
+        contextFile,
+        progressDir,
+        phase: 1,
+        taskId: 'claude-mcp-001',
+        mcpConfig: { url: 'http://localhost:4545/mcp' },
+      });
+
+      expect(result.success).toBe(true);
+
+      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+      const logFiles = await readdir(logDir);
+      const agentLog = logFiles.find(f => f.startsWith('impact-assessor-claude-mcp-001'));
+      expect(agentLog).toBeDefined();
+
+      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      expect(logContent).toContain('--mcp-config');
+      expect(logContent).toContain('aamf-kb');
+      expect(logContent).toContain('localhost:4545');
+      expect(logContent).not.toContain('--additional-mcp-config');
+    });
+  });
+
+  describe('launchAgent delay branch behavior', () => {
+    it('should skip waiting when invocationDelayMs is set but elapsed time already exceeds delay', async () => {
+      const launcher = makeLauncher('echo');
+      const runMock = vi.fn().mockResolvedValue({
+        agent: 'code-migrator',
+        taskId: 'elapsed-no-wait',
+        exitCode: 0,
+        success: true,
+        outputFiles: [],
+        duration: 1,
+        tokenUsage: { prompt: 1, completion: 0, total: 1 },
+        outputParsed: false,
+      });
+      (launcher as any).runner = {
+        init: vi.fn().mockResolvedValue(undefined),
+        run: runMock,
+        getResolvedPath: vi.fn().mockReturnValue(undefined),
+      };
+      (launcher as any).config.options.invocationDelayMs = 100;
+      (launcher as any).lastInvocationTime = Date.now() - 1_000;
+
+      const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+      const { contextFile, progressDir } = await prepareInvocation('elapsed-no-wait');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'elapsed-no-wait',
+      });
+
+      expect(result.success).toBe(true);
+      expect(runMock).toHaveBeenCalledTimes(1);
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+
+      setTimeoutSpy.mockRestore();
     });
   });
 });
