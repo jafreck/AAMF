@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { openDb, setKbMeta, getKbMeta, createVec0Tables } from '../../src/indexer/db.js';
+import { openDb, setKbMeta, getKbMeta, createVec0Tables, computeSourceFingerprint, getKbFingerprint, setKbFingerprint } from '../../src/indexer/db.js';
 
 describe('openDb', () => {
   let tempDir: string;
@@ -159,6 +159,96 @@ describe('setKbMeta / getKbMeta', () => {
     setKbMeta(db, 'key2', 'val2');
     expect(getKbMeta(db, 'key1')).toBe('val1');
     expect(getKbMeta(db, 'key2')).toBe('val2');
+    db.close();
+  });
+});
+
+describe('computeSourceFingerprint', () => {
+  it('should return a 64-character hex string (SHA-256)', () => {
+    const fp = computeSourceFingerprint('/root', { includeGlobs: ['**/*.ts'], excludeGlobs: [] });
+    expect(fp).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('should be deterministic for the same inputs', () => {
+    const a = computeSourceFingerprint('/root', { includeGlobs: ['*.py'], excludeGlobs: ['test_*'] });
+    const b = computeSourceFingerprint('/root', { includeGlobs: ['*.py'], excludeGlobs: ['test_*'] });
+    expect(a).toBe(b);
+  });
+
+  it('should differ when rootDir changes', () => {
+    const a = computeSourceFingerprint('/rootA', {});
+    const b = computeSourceFingerprint('/rootB', {});
+    expect(a).not.toBe(b);
+  });
+
+  it('should differ when includeGlobs change', () => {
+    const a = computeSourceFingerprint('/root', { includeGlobs: ['*.ts'] });
+    const b = computeSourceFingerprint('/root', { includeGlobs: ['*.py'] });
+    expect(a).not.toBe(b);
+  });
+
+  it('should differ when excludeGlobs change', () => {
+    const a = computeSourceFingerprint('/root', { excludeGlobs: ['node_modules'] });
+    const b = computeSourceFingerprint('/root', { excludeGlobs: ['dist'] });
+    expect(a).not.toBe(b);
+  });
+
+  it('should differ when embeddingModel changes', () => {
+    const a = computeSourceFingerprint('/root', {}, 'modelA');
+    const b = computeSourceFingerprint('/root', {}, 'modelB');
+    expect(a).not.toBe(b);
+  });
+
+  it('should treat missing globs as empty arrays', () => {
+    const a = computeSourceFingerprint('/root', {});
+    const b = computeSourceFingerprint('/root', { includeGlobs: [], excludeGlobs: [] });
+    expect(a).toBe(b);
+  });
+
+  it('should treat missing embeddingModel as empty string', () => {
+    const a = computeSourceFingerprint('/root', {});
+    const b = computeSourceFingerprint('/root', {}, undefined);
+    expect(a).toBe(b);
+  });
+});
+
+describe('getKbFingerprint / setKbFingerprint', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'aamf-fp-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('should return undefined when no fingerprint is stored', () => {
+    const db = openDb(join(tempDir, 'fp.db'));
+    expect(getKbFingerprint(db)).toBeUndefined();
+    db.close();
+  });
+
+  it('should store and retrieve a fingerprint', () => {
+    const db = openDb(join(tempDir, 'fp.db'));
+    const fp = computeSourceFingerprint('/root', { includeGlobs: ['**/*.ts'] });
+    setKbFingerprint(db, fp);
+    expect(getKbFingerprint(db)).toBe(fp);
+    db.close();
+  });
+
+  it('should overwrite an existing fingerprint', () => {
+    const db = openDb(join(tempDir, 'fp.db'));
+    setKbFingerprint(db, 'first');
+    setKbFingerprint(db, 'second');
+    expect(getKbFingerprint(db)).toBe('second');
+    db.close();
+  });
+
+  it('should store fingerprint under source_fingerprint key in kb_meta', () => {
+    const db = openDb(join(tempDir, 'fp.db'));
+    setKbFingerprint(db, 'abc123');
+    expect(getKbMeta(db, 'source_fingerprint')).toBe('abc123');
     db.close();
   });
 });

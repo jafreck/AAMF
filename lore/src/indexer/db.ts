@@ -8,6 +8,7 @@
  */
 
 import Database from 'better-sqlite3';
+import * as crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 
 const esmRequire = createRequire(import.meta.url);
@@ -135,6 +136,39 @@ export function getKbMeta(db: Database.Database, key: string): string | undefine
     | { value: string }
     | undefined;
   return row?.value;
+}
+
+// ─── Source fingerprint helpers ───────────────────────────────────────────────
+
+/**
+ * Computes a SHA-256 fingerprint from the source root, walker globs, and
+ * optional embedding model name.  Used to detect whether a KB was built from
+ * the same configuration as the current run.
+ */
+export function computeSourceFingerprint(
+  rootDir: string,
+  walkerConfig: { includeGlobs?: string[]; excludeGlobs?: string[] },
+  embeddingModel?: string,
+): string {
+  const data = JSON.stringify({
+    rootDir,
+    includeGlobs: walkerConfig.includeGlobs ?? [],
+    excludeGlobs: walkerConfig.excludeGlobs ?? [],
+    embeddingModel: embeddingModel ?? '',
+  });
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+const SOURCE_FINGERPRINT_KEY = 'source_fingerprint';
+
+/** Read the stored source fingerprint from `kb_meta`, or `undefined` if absent. */
+export function getKbFingerprint(db: Database.Database): string | undefined {
+  return getKbMeta(db, SOURCE_FINGERPRINT_KEY);
+}
+
+/** Write (or overwrite) the source fingerprint in `kb_meta`. */
+export function setKbFingerprint(db: Database.Database, fingerprint: string): void {
+  setKbMeta(db, SOURCE_FINGERPRINT_KEY, fingerprint);
 }
 
 // ─── Vec0 virtual tables ──────────────────────────────────────────────────────

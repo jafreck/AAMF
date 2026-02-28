@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { IndexBuilder } from '../src/indexer/index.js';
-import { openDb } from '../src/indexer/db.js';
+import { openDb, getKbFingerprint, computeSourceFingerprint } from '../src/indexer/db.js';
 
 const FIXTURE_DIR = resolve(
   import.meta.dirname ?? new URL('.', import.meta.url).pathname,
@@ -307,6 +307,172 @@ describe('IndexBuilder', () => {
         expect(sym.doc_comment === null || typeof sym.doc_comment === 'string').toBe(true);
       } finally {
         db.close();
+      }
+    });
+  });
+
+  // ─── Source fingerprint (Issue #56) ─────────────────────────────────────────
+
+  describe('source fingerprint', () => {
+    it('build() stores a source fingerprint in kb_meta', async () => {
+      const builder = new IndexBuilder(dbPath, { rootDir: FIXTURE_DIR });
+      await builder.build();
+
+      const db = openDb(dbPath);
+      try {
+        const fp = getKbFingerprint(db);
+        expect(fp).toBeDefined();
+        expect(fp).toMatch(/^[0-9a-f]{64}$/);
+      } finally {
+        db.close();
+      }
+    });
+
+    it('build() stores a fingerprint matching computeSourceFingerprint()', async () => {
+      const walkerConfig = { rootDir: FIXTURE_DIR };
+      const builder = new IndexBuilder(dbPath, walkerConfig);
+      await builder.build();
+
+      const expected = computeSourceFingerprint(FIXTURE_DIR, walkerConfig);
+
+      const db = openDb(dbPath);
+      try {
+        expect(getKbFingerprint(db)).toBe(expected);
+      } finally {
+        db.close();
+      }
+    });
+
+    it('build() twice produces the same fingerprint', async () => {
+      const builder = new IndexBuilder(dbPath, { rootDir: FIXTURE_DIR });
+      await builder.build();
+
+      const db1 = openDb(dbPath);
+      const fp1 = getKbFingerprint(db1);
+      db1.close();
+
+      await builder.build();
+
+      const db2 = openDb(dbPath);
+      try {
+        expect(getKbFingerprint(db2)).toBe(fp1);
+      } finally {
+        db2.close();
+      }
+    });
+  });
+
+  // ─── Idempotent processFile (Issue #56) ────────────────────────────────────
+
+  describe('idempotent processFile', () => {
+    it('build() twice does not duplicate file_imports rows', async () => {
+      const builder = new IndexBuilder(dbPath, { rootDir: FIXTURE_DIR });
+      await builder.build();
+
+      const db1 = openDb(dbPath);
+      const importsBefore = (
+        db1.prepare('SELECT COUNT(*) as c FROM file_imports').get() as { c: number }
+      ).c;
+      db1.close();
+
+      await builder.build();
+
+      const db2 = openDb(dbPath);
+      try {
+        const importsAfter = (
+          db2.prepare('SELECT COUNT(*) as c FROM file_imports').get() as { c: number }
+        ).c;
+        expect(importsAfter).toBe(importsBefore);
+      } finally {
+        db2.close();
+      }
+    });
+
+    it('build() twice does not duplicate external_deps rows', async () => {
+      const srcDir = join(tempDir, 'idem-src');
+      await import('node:fs/promises').then(({ mkdir: mk }) => mk(srcDir, { recursive: true }));
+      await writeFile(join(srcDir, 'app.py'), 'import sys\nimport os\n\ndef main():\n    pass\n');
+
+      const idemDbPath = join(tempDir, 'idem-kb.db');
+      const builder = new IndexBuilder(idemDbPath, { rootDir: srcDir });
+      await builder.build();
+
+      const db1 = openDb(idemDbPath);
+      const depsBefore = (
+        db1.prepare('SELECT COUNT(*) as c FROM external_deps').get() as { c: number }
+      ).c;
+      db1.close();
+
+      await builder.build();
+
+      const db2 = openDb(idemDbPath);
+      try {
+        const depsAfter = (
+          db2.prepare('SELECT COUNT(*) as c FROM external_deps').get() as { c: number }
+        ).c;
+        expect(depsAfter).toBe(depsBefore);
+      } finally {
+        db2.close();
+      }
+    });
+
+    it('build() twice does not duplicate symbols_fts rows', async () => {
+      const builder = new IndexBuilder(dbPath, { rootDir: FIXTURE_DIR });
+      await builder.build();
+
+      const db1 = openDb(dbPath);
+      const ftsBefore = (
+        db1.prepare('SELECT COUNT(*) as c FROM symbols_fts').get() as { c: number }
+      ).c;
+      db1.close();
+
+      await builder.build();
+
+      const db2 = openDb(dbPath);
+      try {
+        const ftsAfter = (
+          db2.prepare('SELECT COUNT(*) as c FROM symbols_fts').get() as { c: number }
+        ).c;
+        expect(ftsAfter).toBe(ftsBefore);
+      } finally {
+        db2.close();
+      }
+    });
+
+    it('build() correctly updates rows when source files change', async () => {
+      const srcDir = join(tempDir, 'change-src');
+      await import('node:fs/promises').then(({ mkdir: mk }) => mk(srcDir, { recursive: true }));
+      await writeFile(join(srcDir, 'lib.py'), 'def foo():\n    pass\n');
+
+      const changeDbPath = join(tempDir, 'change-kb.db');
+      const builder = new IndexBuilder(changeDbPath, { rootDir: srcDir });
+      await builder.build();
+
+      const db1 = openDb(changeDbPath);
+      const symsBefore = (
+        db1.prepare('SELECT COUNT(*) as c FROM symbols').get() as { c: number }
+      ).c;
+      db1.close();
+
+      // Add a second function
+      await writeFile(join(srcDir, 'lib.py'), 'def foo():\n    pass\n\ndef bar():\n    pass\n');
+
+      await builder.build();
+
+      const db2 = openDb(changeDbPath);
+      try {
+        const symsAfter = (
+          db2.prepare('SELECT COUNT(*) as c FROM symbols').get() as { c: number }
+        ).c;
+        expect(symsAfter).toBeGreaterThan(symsBefore);
+
+        // Ensure no duplicates — file should appear exactly once
+        const fileCount = (
+          db2.prepare('SELECT COUNT(*) as c FROM files').get() as { c: number }
+        ).c;
+        expect(fileCount).toBe(1);
+      } finally {
+        db2.close();
       }
     });
   });
