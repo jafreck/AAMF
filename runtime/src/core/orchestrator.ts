@@ -376,7 +376,7 @@ export class MigrationOrchestrator {
           }
         }
 
-        this.progress.setTokenUsage(this.tokenTracker.getTotal());
+        this.progress.setTokenUsage(this.tokenTracker.toCheckpointData());
       }
     } finally {
       // Always stop the KB server and dispose the embedder, whether migration succeeded, failed, or was aborted
@@ -2186,6 +2186,9 @@ export class MigrationOrchestrator {
   private recordTokens(result: AgentResult, phase: number): void {
     if (result.tokenUsage) {
       this.tokenTracker.record(result.agent, phase, result.tokenUsage.total, result.tokenUsage.cachedInput);
+      // Sync token snapshot to checkpoint state so the next save() persists accurate data
+      const state = this.checkpoint.getState();
+      state.tokenUsage = this.tokenTracker.toCheckpointData();
     }
   }
 
