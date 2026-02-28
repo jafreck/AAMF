@@ -395,6 +395,20 @@ export class MigrationOrchestrator {
     finalState.cumulativeDurationMs = cumulativeDurationMs;
     await this.checkpoint.save(finalState);
 
+    // Invariant: completed tasks must not appear in failed or blocked lists.
+    // Filter out stale entries that survived prior checkpoint writes.
+    const completedSet = new Set(finalState.completedTasks);
+    const filteredFailed = finalState.failedTasks.filter((f) => !completedSet.has(f.taskId));
+    const filteredBlocked = finalState.blockedTasks.filter((id) => !completedSet.has(id));
+    const staleCount =
+      (finalState.failedTasks.length - filteredFailed.length) +
+      (finalState.blockedTasks.length - filteredBlocked.length);
+    if (staleCount > 0) {
+      this.logger.warn(
+        `Removed ${staleCount} stale entries from failedTasks/blockedTasks that were already in completedTasks`,
+      );
+    }
+
     const migrationResult: MigrationResult = {
       success: !aborted && phaseResults.every((r) => r.success),
       projectName: this.config.projectName,
@@ -402,8 +416,8 @@ export class MigrationOrchestrator {
       totalDuration,
       cumulativeDuration: cumulativeDurationMs,
       tokenUsage: this.tokenTracker.toCheckpointData(),
-      failedTasks: finalState.failedTasks.map((f) => f.taskId),
-      blockedTasks: finalState.blockedTasks,
+      failedTasks: filteredFailed.map((f) => f.taskId),
+      blockedTasks: filteredBlocked,
     };
 
     this.logger.event({
