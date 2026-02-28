@@ -86,4 +86,25 @@ describe('TokenTracker', () => {
     tracker.record('agent-a', 1, 1000, 500);
     expect(tracker.getTotal()).toBe(1000);
   });
+
+  it('should accumulate on top of restored checkpoint data', () => {
+    const tracker = new TokenTracker();
+    tracker.loadFromCheckpoint({
+      total: 5000,
+      byPhase: { 1: 2000, 2: 3000 },
+      byAgent: { 'agent-a': 3000, 'agent-b': 2000 },
+    });
+
+    // Record additional tokens
+    tracker.record('agent-a', 2, 1000);
+    tracker.record('agent-c', 3, 500);
+
+    expect(tracker.getTotal()).toBe(6500);
+    expect(tracker.getByAgent()['agent-a']).toBe(4000);
+    expect(tracker.getByAgent()['agent-b']).toBe(2000);
+    expect(tracker.getByAgent()['agent-c']).toBe(500);
+    expect(tracker.getByPhase()[1]).toBe(2000);
+    expect(tracker.getByPhase()[2]).toBe(4000);
+    expect(tracker.getByPhase()[3]).toBe(500);
+  });
 });

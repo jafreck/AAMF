@@ -204,4 +204,112 @@ describe('ProgressWriter', () => {
       expect(content).toContain('trunc-event-59');
     });
   });
+
+  describe('Token Usage Breakdown', () => {
+    it('should render per-phase and per-agent token breakdowns in progress.md', async () => {
+      await writer.initialize(config);
+      writer.setTokenUsage({
+        total: 15000,
+        byPhase: { 1: 5000, 2: 10000 },
+        byAgent: { 'code-migrator': 12000, 'parity-verifier': 3000 },
+      });
+      await writer.appendEvent('token update');
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('## Token Usage');
+      expect(content).toContain('**Total:** 15,000 tokens');
+      expect(content).toContain('### By Phase');
+      expect(content).toContain('5,000');
+      expect(content).toContain('10,000');
+      expect(content).toContain('### By Agent');
+      expect(content).toContain('code-migrator');
+      expect(content).toContain('12,000');
+      expect(content).toContain('parity-verifier');
+      expect(content).toContain('3,000');
+    });
+
+    it('should not render Token Usage section when no breakdown data exists', async () => {
+      await writer.initialize(config);
+      writer.setTokenUsage({ total: 0, byPhase: {}, byAgent: {} });
+      await writer.appendEvent('no tokens yet');
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).not.toContain('## Token Usage');
+      expect(content).not.toContain('### By Phase');
+      expect(content).not.toContain('### By Agent');
+    });
+  });
+
+  describe('reconstructFromCheckpoint', () => {
+    it('should restore full token breakdown (total, byPhase, byAgent) from checkpoint state', async () => {
+      await writer.initialize(config);
+      const state = {
+        projectName: 'test-project',
+        version: 1,
+        currentPhase: 3,
+        currentTask: null,
+        completedPhases: [1, 2],
+        completedTasks: ['task-001'],
+        failedTasks: [],
+        blockedTasks: [],
+        phaseOutputs: {},
+        tokenUsage: {
+          total: 25000,
+          byPhase: { 1: 10000, 2: 15000 },
+          byAgent: { 'issue-analyst': 10000, 'code-migrator': 15000 },
+        },
+        startedAt: new Date().toISOString(),
+        lastCheckpoint: new Date().toISOString(),
+        resumeCount: 1,
+        cumulativeDurationMs: 0,
+        completedTaskDurationsMs: [],
+        metricsCount: 0,
+      };
+
+      writer.reconstructFromCheckpoint(state);
+      await writer.appendEvent('resumed');
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('## Token Usage');
+      expect(content).toContain('**Total:** 25,000 tokens');
+      expect(content).toContain('### By Phase');
+      expect(content).toContain('10,000');
+      expect(content).toContain('15,000');
+      expect(content).toContain('### By Agent');
+      expect(content).toContain('issue-analyst');
+      expect(content).toContain('code-migrator');
+    });
+
+    it('should mark completed phases and current phase correctly', async () => {
+      await writer.initialize(config);
+      const state = {
+        projectName: 'test-project',
+        version: 1,
+        currentPhase: 3,
+        currentTask: null,
+        completedPhases: [1, 2],
+        completedTasks: [],
+        failedTasks: [],
+        blockedTasks: [],
+        phaseOutputs: {},
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        startedAt: new Date().toISOString(),
+        lastCheckpoint: new Date().toISOString(),
+        resumeCount: 1,
+        cumulativeDurationMs: 0,
+        completedTaskDurationsMs: [],
+        metricsCount: 0,
+      };
+
+      writer.reconstructFromCheckpoint(state);
+      await writer.appendEvent('resumed');
+
+      const content = await readFile(progressFile, 'utf-8');
+      // 2 completed phases
+      const completedCount = (content.match(/✅/g) || []).length;
+      expect(completedCount).toBe(2);
+      // 1 in-progress phase
+      expect(content).toContain('🔄');
+    });
+  });
 });
