@@ -10,7 +10,7 @@
 
 import * as fs from 'node:fs';
 import * as crypto from 'node:crypto';
-import { openDb, setKbMeta, createVec0Tables } from './db.js';
+import { openDb, setKbMeta, createVec0Tables, computeSourceFingerprint, setKbFingerprint } from './db.js';
 import type { Database } from './db.js';
 import { walkFiles } from './walker.js';
 import type { WalkerConfig } from './walker.js';
@@ -97,6 +97,13 @@ export class IndexBuilder {
       if (this.embedder) {
         await this.embedStructural(db);
       }
+      // Store source fingerprint so future runs can detect config matches.
+      const fingerprint = computeSourceFingerprint(
+        this.walkerConfig.rootDir,
+        this.walkerConfig,
+        this.embedder?.modelName,
+      );
+      setKbFingerprint(db, fingerprint);
     } finally {
       db.close();
     }
@@ -224,6 +231,14 @@ export class IndexBuilder {
         )
         .run(filePath, language, sizeBytes, hash) as { lastInsertRowid: number | bigint };
       fileId = Number(info.lastInsertRowid);
+      // Defensive cleanup: remove any stale child rows that may exist from a
+      // crashed prior run (e.g. if the file row was re-created with a new id).
+      db.prepare(
+        `DELETE FROM symbols_fts WHERE rowid IN (SELECT id FROM symbols WHERE file_id = ?)`,
+      ).run(fileId);
+      db.prepare('DELETE FROM symbols WHERE file_id = ?').run(fileId);
+      db.prepare('DELETE FROM file_imports WHERE file_id = ?').run(fileId);
+      db.prepare('DELETE FROM external_deps WHERE file_id = ?').run(fileId);
     }
 
     // Parse the source

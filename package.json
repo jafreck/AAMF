@@ -4,7 +4,7 @@
   "description": "Autonomous Agent Migration Framework",
   "private": true,
   "scripts": {
-    "build": "npm run build --prefix runtime",
+    "build": "npm run build --prefix lore && npm run build --prefix runtime",
     "test": "npm test --prefix runtime",
     "install-runtime": "npm install --prefix runtime"
   },

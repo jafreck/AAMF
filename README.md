@@ -414,6 +414,18 @@ runtime/
 
 ---
 
+## Coverage
+
+Run coverage locally from the `runtime/` directory:
+
+```bash
+npx vitest run --coverage
+```
+
+Coverage thresholds are enforced at **90%** for lines, branches, functions, and statements. These thresholds apply globally (not per-file). The CI workflow runs tests with coverage enabled and will fail if any threshold is not met.
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.

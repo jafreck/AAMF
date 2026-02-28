@@ -50,4 +50,4 @@ jobs:
 
       - name: Unit tests
         working-directory: runtime
-        run: npx vitest run
+        run: npx vitest run --coverage

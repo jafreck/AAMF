@@ -1,5 +1,5 @@
 export { IndexBuilder } from './indexer/index.js';
-export { openDb, setKbMeta, getKbMeta, createVec0Tables } from './indexer/db.js';
+export { openDb, setKbMeta, getKbMeta, createVec0Tables, computeSourceFingerprint, getKbFingerprint, setKbFingerprint } from './indexer/db.js';
 export type { Database } from './indexer/db.js';
 export { buildCallGraph, topoSort, detectCycles } from './indexer/call-graph.js';
 export { walkFiles } from './indexer/walker.js';

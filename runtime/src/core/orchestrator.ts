@@ -29,6 +29,7 @@ import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite, readJson, ensureDir } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
 import { IndexBuilder } from '../indexer/index.js';
+import { openDb, computeSourceFingerprint, getKbFingerprint } from '../indexer/db.js';
 import { SentenceTransformersProvider, type EmbeddingProvider } from '../indexer/embedder.js';
 import { ensurePythonDeps } from '../indexer/ensure-python-deps.js';
 import { KbServerProcess } from './kb-server-process.js';
@@ -375,7 +376,7 @@ export class MigrationOrchestrator {
           }
         }
 
-        this.progress.setTokenUsage(this.tokenTracker.getTotal());
+        this.progress.setTokenUsage(this.tokenTracker.toCheckpointData());
       }
     } finally {
       // Always stop the KB server and dispose the embedder, whether migration succeeded, failed, or was aborted
@@ -394,6 +395,20 @@ export class MigrationOrchestrator {
     finalState.cumulativeDurationMs = cumulativeDurationMs;
     await this.checkpoint.save(finalState);
 
+    // Invariant: completed tasks must not appear in failed or blocked lists.
+    // Filter out stale entries that survived prior checkpoint writes.
+    const completedSet = new Set(finalState.completedTasks);
+    const filteredFailed = finalState.failedTasks.filter((f) => !completedSet.has(f.taskId));
+    const filteredBlocked = finalState.blockedTasks.filter((id) => !completedSet.has(id));
+    const staleCount =
+      (finalState.failedTasks.length - filteredFailed.length) +
+      (finalState.blockedTasks.length - filteredBlocked.length);
+    if (staleCount > 0) {
+      this.logger.warn(
+        `Removed ${staleCount} stale entries from failedTasks/blockedTasks that were already in completedTasks`,
+      );
+    }
+
     const migrationResult: MigrationResult = {
       success: !aborted && phaseResults.every((r) => r.success),
       projectName: this.config.projectName,
@@ -401,8 +416,8 @@ export class MigrationOrchestrator {
       totalDuration,
       cumulativeDuration: cumulativeDurationMs,
       tokenUsage: this.tokenTracker.toCheckpointData(),
-      failedTasks: finalState.failedTasks.map((f) => f.taskId),
-      blockedTasks: finalState.blockedTasks,
+      failedTasks: filteredFailed.map((f) => f.taskId),
+      blockedTasks: filteredBlocked,
     };
 
     this.logger.event({
@@ -501,7 +516,43 @@ export class MigrationOrchestrator {
       }
     }
 
-    const builder = new IndexBuilder(this.kbDbPath, { rootDir: sourceRoot }, this.embedder);
+    const walkerConfig = { rootDir: sourceRoot };
+    const builder = new IndexBuilder(this.kbDbPath, walkerConfig, this.embedder);
+
+    // ── Fingerprint guard: skip re-indexing if the KB already matches ──
+    // Pass the same walkerConfig used by IndexBuilder so the fingerprints match.
+    const currentFingerprint = computeSourceFingerprint(
+      sourceRoot,
+      walkerConfig as { includeGlobs?: string[]; excludeGlobs?: string[] },
+      this.embedder?.modelName,
+    );
+    if (await fileExists(this.kbDbPath)) {
+      try {
+        const db = openDb(this.kbDbPath);
+        try {
+          const storedFingerprint = getKbFingerprint(db);
+          if (storedFingerprint && storedFingerprint === currentFingerprint) {
+            this.logger.info('Phase 0 reused/skipped — KB fingerprint matches current config');
+            const checkpointState = this.checkpoint.getState();
+            checkpointState.phase0Fingerprint = currentFingerprint;
+            await this.checkpoint.save(checkpointState);
+            return {
+              phase: 0,
+              name: 'KB Indexing',
+              success: true,
+              outputPath: this.kbDbPath,
+              duration: Date.now() - start,
+            };
+          }
+        } finally {
+          db.close();
+        }
+      } catch {
+        // DB exists but unreadable/corrupt — fall through to rebuild
+      }
+    }
+
+    this.logger.info('Phase 0 rebuilt — source fingerprint changed or no existing KB');
 
     const maxAttempts = this.config.options.maxRetriesPerTask;
     const timeout =
@@ -518,6 +569,9 @@ export class MigrationOrchestrator {
             setTimeout(() => reject(new Error('KB index timeout')), timeout),
           ),
         ]);
+        const checkpointState = this.checkpoint.getState();
+        checkpointState.phase0Fingerprint = currentFingerprint;
+        await this.checkpoint.save(checkpointState);
         return {
           phase: 0,
           name: 'KB Indexing',
@@ -2186,6 +2240,9 @@ export class MigrationOrchestrator {
   private recordTokens(result: AgentResult, phase: number): void {
     if (result.tokenUsage) {
       this.tokenTracker.record(result.agent, phase, result.tokenUsage.total, result.tokenUsage.cachedInput);
+      // Sync token snapshot to checkpoint state so the next save() persists accurate data
+      const state = this.checkpoint.getState();
+      state.tokenUsage = this.tokenTracker.toCheckpointData();
     }
   }
 
