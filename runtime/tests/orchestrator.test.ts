@@ -2104,6 +2104,99 @@ describe('MigrationOrchestrator', () => {
       expect(result.blockedTasks).not.toContain('task-001');
     });
 
+    it('should terminally exhaust when failure-adjudicator emits no aamf-json during parity recovery', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'failure-adjudicator') {
+          return {
+            exitCode: 1,
+            success: false,
+            error: 'aamf-json parse failed: missing aamf-json block',
+            parseError: 'missing aamf-json block',
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 2,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+          },
+        },
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'results'));
+      await writeFile(
+        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: ['parity-reports/task-001.md'],
+          parity: 'fail',
+          issues: [
+            {
+              severity: 'major',
+              description: 'Behavior diverges in auth checks',
+            },
+          ],
+        }),
+      );
+
+      const result = await orchestrator.run();
+      const phase4 = result.phases.find((p) => p.phase === 4);
+
+      expect(result.success).toBe(false);
+      expect(phase4?.error).toContain('parity-non-minor-exhausted');
+
+      const recoveryInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(recoveryInvocations).toHaveLength(2);
+
+      const remigrateAttempts = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(remigrateAttempts).toHaveLength(1);
+    });
+
     it('should fail fast on command recovery exhaustion and persist terminal metadata', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, progressDir, checkpoint, mockLauncher, logger } = await setupOrchestrator(
