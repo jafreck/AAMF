@@ -489,7 +489,7 @@ export class ResultParser {
       prompt: totalPrompt,
       completion: totalCompletion,
       total: totalPrompt + totalCompletion,
-      ...(hasCached && { cachedInput: totalCached }),
+      ...(hasCached ? { cachedInput: totalCached } : {}),
     };
   }
 
