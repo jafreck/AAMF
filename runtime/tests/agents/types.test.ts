@@ -4,6 +4,7 @@ import type {
   AgentInvocation,
   AgentContext,
   MigrationTask,
+  ModuleGroup,
   MigrationResult,
   PhaseResult,
   FailedTask,
@@ -253,6 +254,15 @@ describe('AgentInvocation', () => {
     expect(inv.timeout).toBe(60_000);
   });
 
+  it('should accept failure-adjudicator as a valid agent name', () => {
+    const inv: AgentInvocation = {
+      agent: 'failure-adjudicator',
+      contextFile: '/tmp/context.json',
+      progressDir: '/tmp/progress',
+    };
+    expect(inv.agent).toBe('failure-adjudicator');
+  });
+
   it('should support optional mcpConfig field', () => {
     const mcpConfig: McpServerConfig = {
       url: 'http://localhost:4321/mcp',
@@ -274,6 +284,28 @@ describe('AgentInvocation', () => {
       progressDir: '/tmp/progress',
     };
     expect(inv.mcpConfig).toBeUndefined();
+  });
+
+  it('should support optional routing, retry, and correlation fields', () => {
+    const inv: AgentInvocation = {
+      agent: 'code-migrator',
+      contextFile: '/tmp/context.json',
+      progressDir: '/tmp/progress',
+      modelOverride: 'gpt-4.1',
+      kbDbPath: '/tmp/progress/kb.sqlite',
+      invocationId: 'inv-123',
+      routingTier: 'critical',
+      routingReason: 'retry escalation at attempt 2',
+      attemptNumber: 2,
+      maxAttempts: 3,
+    };
+    expect(inv.modelOverride).toBe('gpt-4.1');
+    expect(inv.kbDbPath).toBe('/tmp/progress/kb.sqlite');
+    expect(inv.invocationId).toBe('inv-123');
+    expect(inv.routingTier).toBe('critical');
+    expect(inv.routingReason).toContain('escalation');
+    expect(inv.attemptNumber).toBe(2);
+    expect(inv.maxAttempts).toBe(3);
   });
 });
 
@@ -356,6 +388,32 @@ describe('MigrationTask', () => {
       };
       expect(task.complexity).toBe(complexity);
     }
+  });
+});
+
+// ─── ModuleGroup ──────────────────────────────────────────────────────────────
+
+describe('ModuleGroup', () => {
+  it('should construct with required fields', () => {
+    const group: ModuleGroup = {
+      id: 'core',
+      name: 'Core Modules',
+      analysisFiles: ['/tmp/progress/knowledge-base/core.md'],
+    };
+    expect(group.id).toBe('core');
+    expect(group.name).toBe('Core Modules');
+    expect(group.analysisFiles).toEqual(['/tmp/progress/knowledge-base/core.md']);
+    expect(group.description).toBeUndefined();
+  });
+
+  it('should support an optional description field', () => {
+    const group: ModuleGroup = {
+      id: 'api',
+      name: 'API',
+      analysisFiles: ['/tmp/progress/knowledge-base/api.md'],
+      description: 'External API surface modules',
+    };
+    expect(group.description).toBe('External API surface modules');
   });
 });
 

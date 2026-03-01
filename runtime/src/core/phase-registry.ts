@@ -54,7 +54,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 4,
     name: 'Iterative Migration',
     description: 'Execute migration tasks: code migration, parity verification, and test writing in per-task or wave-barrier mode',
-    agents: ['code-migrator', 'parity-verifier', 'test-writer', 'failure-recovery'],
+    agents: ['code-migrator', 'parity-verifier', 'test-writer', 'failure-adjudicator'],
     critical: true,
     parallel: false,  // tasks are serial but sub-tasks (parity+test) can overlap
   },
