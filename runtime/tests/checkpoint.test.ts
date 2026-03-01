@@ -395,4 +395,87 @@ describe('CheckpointManager', () => {
     const loaded = await manager3.load('old-project');
     expect(loaded.phase0Fingerprint).toBeUndefined();
   });
+
+  it('should initialize adjudication waiver and event lists on fresh state', async () => {
+    const state = await manager.load('test-project');
+    expect(state.adjudicationWaivers).toEqual([]);
+    expect(state.adjudicationEvents).toEqual([]);
+  });
+
+  it('should persist adjudication waiver and event records across reload', async () => {
+    await manager.load('test-project');
+    await manager.recordAdjudicationWaiver({
+      issueFingerprint: 'fp-123',
+      decision: 'false_positive',
+      scope: 'task',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      taskId: 'task-001',
+    });
+    await manager.appendAdjudicationEvent({
+      decision: 'false_positive',
+      issueFingerprint: 'fp-123',
+      scope: 'task',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      taskId: 'task-001',
+      rationale: 'Known test harness mismatch',
+      confidence: 'high',
+      evidence: ['parity diff isolated to generated timestamps'],
+    });
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.adjudicationWaivers).toHaveLength(1);
+    expect(reloaded.adjudicationWaivers?.[0]?.issueFingerprint).toBe('fp-123');
+    expect(reloaded.adjudicationWaivers?.[0]?.scope).toBe('task');
+    expect(reloaded.adjudicationWaivers?.[0]?.expiresAt).toBe('2099-01-01T00:00:00.000Z');
+    expect(reloaded.adjudicationEvents).toHaveLength(1);
+    expect(reloaded.adjudicationEvents?.[0]?.decision).toBe('false_positive');
+    expect(reloaded.adjudicationEvents?.[0]?.evidence).toEqual(['parity diff isolated to generated timestamps']);
+  });
+
+  it('should assign createdAt timestamps when adjudication records omit them', async () => {
+    await manager.load('test-project');
+    await manager.recordAdjudicationWaiver({
+      issueFingerprint: 'fp-no-created-at',
+      decision: 'false_positive',
+    });
+    await manager.appendAdjudicationEvent({
+      decision: 'inconclusive',
+    });
+
+    const state = manager.getState();
+    expect(state.adjudicationWaivers?.[0]?.createdAt).toBeDefined();
+    expect(new Date(state.adjudicationWaivers?.[0]?.createdAt ?? '').toString()).not.toBe('Invalid Date');
+    expect(state.adjudicationEvents?.[0]?.createdAt).toBeDefined();
+    expect(new Date(state.adjudicationEvents?.[0]?.createdAt ?? '').toString()).not.toBe('Invalid Date');
+  });
+
+  it('should default adjudication fields for old checkpoints (backward compat)', async () => {
+    const { writeJson } = await import('../src/util/fs.js');
+    const oldState = {
+      projectName: 'old-project',
+      version: 1,
+      currentPhase: 2,
+      currentTask: null,
+      completedPhases: [1],
+      completedTasks: ['task-001'],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 1,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      metricsCount: 0,
+      // adjudicationWaivers/adjudicationEvents intentionally omitted
+    };
+    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const loaded = await manager3.load('old-project');
+    expect(loaded.adjudicationWaivers).toEqual([]);
+    expect(loaded.adjudicationEvents).toEqual([]);
+  });
 });

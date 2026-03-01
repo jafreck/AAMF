@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { atomicWrite, ensureDir } from '../util/fs.js';
 import { MigrationConfig } from '../config/schema.js';
-import { CheckpointState } from './checkpoint.js';
+import type { AdjudicationEventRecord, CheckpointState } from './checkpoint.js';
 
 export interface TaskDetails {
   sourceFiles?: string[];
@@ -24,6 +24,7 @@ export class ProgressWriter {
   private tasks: Map<string, { status: string; details?: TaskDetails }> = new Map();
   private events: string[] = [];
   private waveLifecycle: WaveLifecycleEvent[] = [];
+  private adjudicationEvents: AdjudicationEventRecord[] = [];
   private totalTasks: number = 0;
   private tokenUsage: { total: number; byPhase: Record<number, number>; byAgent: Record<string, number> } = { total: 0, byPhase: {}, byAgent: {} };
   private startTime: Date = new Date();
@@ -95,6 +96,7 @@ export class ProgressWriter {
 
     // Add resume event
     this.events.push(`[${new Date().toISOString()}] Resumed from checkpoint (resume #${state.resumeCount})`);
+    this.adjudicationEvents = [...(state.adjudicationEvents ?? [])];
   }
 
   /** Update current phase status */
@@ -135,6 +137,12 @@ export class ProgressWriter {
   /** Append a structured wave lifecycle event. */
   async appendWaveLifecycle(event: WaveLifecycleEvent): Promise<void> {
     this.waveLifecycle.push(event);
+    await this.writeCurrentState();
+  }
+
+  /** Append an adjudication event for auditability in progress output. */
+  async appendAdjudicationEvent(event: AdjudicationEventRecord): Promise<void> {
+    this.adjudicationEvents.push(event);
     await this.writeCurrentState();
   }
 
@@ -278,6 +286,16 @@ export class ProgressWriter {
         if (ev.converged !== undefined) details.push(`converged=${ev.converged}`);
         if (ev.remainingFailures !== undefined) details.push(`remainingFailures=${ev.remainingFailures}`);
         md += `| ${ev.wave} | ${ev.milestone} | ${details.join(', ')} |\n`;
+      }
+      md += '\n';
+    }
+
+    if (this.adjudicationEvents.length > 0) {
+      md += `## Adjudication Events\n\n`;
+      md += `| Time | Decision | Fingerprint | Scope | Expires | Task |\n`;
+      md += `|------|----------|-------------|-------|---------|------|\n`;
+      for (const ev of this.adjudicationEvents) {
+        md += `| ${ev.createdAt} | ${ev.decision} | ${ev.issueFingerprint ?? ''} | ${ev.scope ?? ''} | ${ev.expiresAt ?? ''} | ${ev.taskId ?? ''} |\n`;
       }
       md += '\n';
     }
