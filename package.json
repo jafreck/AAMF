@@ -7,7 +7,10 @@
     "postinstall": "npm install --prefix lore && npm run install-runtime",
     "build": "npm run build --prefix lore && npm run build --prefix runtime",
     "test": "npm test --prefix runtime",
-    "install-runtime": "npm install --prefix runtime"
+    "install-runtime": "npm install --prefix runtime",
+    "ci:prepush": "npm --prefix lore exec -- tsc -p lore/tsconfig.json && npm --prefix runtime exec -- tsc --noEmit -p runtime/tsconfig.json",
+    "ci:local": "npm --prefix lore exec -- tsc -p lore/tsconfig.json && npm --prefix runtime exec -- tsc --noEmit -p runtime/tsconfig.json && npm --prefix runtime exec -- vitest run --coverage",
+    "hooks:install": "git config core.hooksPath .githooks"
   },
   "engines": {
     "node": ">=20.0.0"
