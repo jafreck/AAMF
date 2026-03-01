@@ -1759,7 +1759,7 @@ describe('MigrationOrchestrator', () => {
       expect(result.success).toBe(true);
 
       const recoveryInvocation = mockLauncher.invocations.find(
-        (i) => i.agent === 'failure-recovery' && i.taskId === 'task-001' && i.phase === 4,
+        (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
       );
       expect(recoveryInvocation).toBeDefined();
       const recoveryContext = JSON.parse(await readFile(recoveryInvocation!.contextFile, 'utf-8'));
@@ -1855,7 +1855,7 @@ describe('MigrationOrchestrator', () => {
       await orchestrator.run();
 
       const recoveryInvocations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'failure-recovery' && i.phase === 4,
+        (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
       );
       expect(recoveryInvocations.length).toBeGreaterThan(0);
 

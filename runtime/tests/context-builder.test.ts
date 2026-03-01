@@ -101,6 +101,15 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toContain('adjudication-result.md');
     });
 
+    it('should default adjudicator decisionType and allow empty competing strategies input', async () => {
+      const contextPath = await builder.buildContext('adjudicator', 3);
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).toEqual([]);
+      expect(context.payload?.decisionType).toBe('migration-strategy');
+      expect(context.outputPath).toContain('adjudication-result.md');
+    });
+
     it('should pass task-decomposer schema path in both inputFiles and payload', async () => {
       const contextPath = await builder.buildContext('task-decomposer', 3, 'core', {
         strategyFile: '/tmp/strategy.md',
@@ -115,6 +124,7 @@ describe('ContextBuilder', () => {
       );
       expect(schemaFile).toBeDefined();
       expect(context.payload?.taskSchemaPath).toBe(schemaFile);
+      expect(context.payload?.maxLinesPerTask).toBe(500);
       expect(context.inputFiles).toContain('/tmp/strategy.md');
       expect(context.inputFiles).toContain('/tmp/kb-core.md');
     });
@@ -231,8 +241,8 @@ describe('ContextBuilder', () => {
       expect(context.payload?.testType).toBe('unit');
     });
 
-    it('should route failure-recovery to failure report + source/target', async () => {
-      const contextPath = await builder.buildContext('failure-recovery', 4, 'task-001', {
+    it('should route failure-adjudicator to failure report + source/target', async () => {
+      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -244,11 +254,11 @@ describe('ContextBuilder', () => {
       expect(context.inputFiles).toContain('/tmp/failure.md');
       expect(context.inputFiles).toContain('src/auth.py');
       expect(context.inputFiles).toContain('src/auth.ts');
-      expect(context.outputPath).toContain('recovery');
+      expect(context.outputPath).toContain('adjudication');
     });
 
-    it('should preserve remediation payload fields in failure-recovery payload', async () => {
-      const contextPath = await builder.buildContext('failure-recovery', 4, 'task-001', {
+    it('should preserve remediation payload fields in failure-adjudicator payload', async () => {
+      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -271,8 +281,8 @@ describe('ContextBuilder', () => {
       expect(remediation?.expectedSuccessCondition).toBe('Test command exits with code 0');
     });
 
-    it('should support legacy remediation alias in failure-recovery payload', async () => {
-      const contextPath = await builder.buildContext('failure-recovery', 4, 'task-001', {
+    it('should support legacy remediation alias in failure-adjudicator payload', async () => {
+      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -292,7 +302,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should omit remediationContext when nested remediation payload is not an object', async () => {
-      const contextPath = await builder.buildContext('failure-recovery', 4, 'task-001', {
+      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',

@@ -180,6 +180,36 @@ describe('ProgressWriter', () => {
     expect(content).toContain('build command failed after retries');
   });
 
+  it('should render adjudication events for auditability', async () => {
+    await writer.initialize(config);
+    await writer.appendAdjudicationEvent({
+      decision: 'false_positive',
+      issueFingerprint: 'fp-123',
+      scope: 'task',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      taskId: 'task-001',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('Adjudication Events');
+    expect(content).toContain('false_positive');
+    expect(content).toContain('fp-123');
+    expect(content).toContain('2099-01-01T00:00:00.000Z');
+  });
+
+  it('should render adjudication events with blank optional metadata', async () => {
+    await writer.initialize(config);
+    await writer.appendAdjudicationEvent({
+      decision: 'inconclusive',
+      createdAt: '2026-01-02T00:00:00.000Z',
+    });
+
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('Adjudication Events');
+    expect(content).toContain('| 2026-01-02T00:00:00.000Z | inconclusive |  |  |  |  |');
+  });
+
   it('should not show cumulative duration line on a fresh run (equal to elapsed)', async () => {
     await writer.initialize(config);
     // cumulativeDurationMs is 0 by default; elapsed is also ~0, so no cumulative line
@@ -399,6 +429,46 @@ describe('ProgressWriter', () => {
       expect(completedCount).toBe(2);
       // 1 in-progress phase
       expect(content).toContain('🔄');
+    });
+
+    it('should restore and render adjudication events from checkpoint state', async () => {
+      await writer.initialize(config);
+      const state = {
+        projectName: 'test-project',
+        version: 1,
+        currentPhase: 3,
+        currentTask: null,
+        completedPhases: [1, 2],
+        completedTasks: [],
+        failedTasks: [],
+        blockedTasks: [],
+        phaseOutputs: {},
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        startedAt: new Date().toISOString(),
+        lastCheckpoint: new Date().toISOString(),
+        resumeCount: 1,
+        cumulativeDurationMs: 0,
+        completedTaskDurationsMs: [],
+        metricsCount: 0,
+        adjudicationEvents: [
+          {
+            decision: 'false_positive',
+            issueFingerprint: 'fp-xyz',
+            scope: 'task',
+            expiresAt: '2099-01-01T00:00:00.000Z',
+            taskId: 'task-007',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      };
+
+      writer.reconstructFromCheckpoint(state);
+      await writer.appendEvent('resumed');
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('Adjudication Events');
+      expect(content).toContain('fp-xyz');
+      expect(content).toContain('task-007');
     });
 
     it('should restore terminal exhaustion metadata from checkpoint state', async () => {

@@ -42,6 +42,10 @@ export interface CheckpointState {
   phase0Fingerprint?: string;
   /** Terminal Phase 4 exhaustion metadata, when execution stopped fail-fast. */
   terminalExhaustion?: TerminalExhaustionState;
+  /** Persisted waiver records for adjudicated false-positive findings. */
+  adjudicationWaivers?: AdjudicationWaiverRecord[];
+  /** Auditable adjudication event history across retries/resume. */
+  adjudicationEvents?: AdjudicationEventRecord[];
 }
 
 export interface CheckpointFailedTask {
@@ -49,6 +53,27 @@ export interface CheckpointFailedTask {
   attempts: number;
   lastError: string;
   recoveryAttempted: boolean;
+}
+
+export interface AdjudicationWaiverRecord {
+  issueFingerprint: string;
+  decision: 'fixed' | 'false_positive' | 'real_gap' | 'inconclusive';
+  scope?: string;
+  expiresAt?: string;
+  taskId?: string;
+  createdAt: string;
+}
+
+export interface AdjudicationEventRecord {
+  decision: 'fixed' | 'false_positive' | 'real_gap' | 'inconclusive';
+  issueFingerprint?: string;
+  scope?: string;
+  expiresAt?: string;
+  taskId?: string;
+  rationale?: string;
+  confidence?: string;
+  evidence?: string[];
+  createdAt: string;
 }
 
 const CHECKPOINT_VERSION = 1;
@@ -80,6 +105,8 @@ export class CheckpointManager {
         this.state.metricsCount ??= 0;
         this.state.phase0Fingerprint ??= undefined;
         this.state.terminalExhaustion ??= undefined;
+        this.state.adjudicationWaivers ??= [];
+        this.state.adjudicationEvents ??= [];
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
         await this.save(this.state);
         return this.state;
@@ -97,6 +124,8 @@ export class CheckpointManager {
             this.state.metricsCount ??= 0;
             this.state.phase0Fingerprint ??= undefined;
             this.state.terminalExhaustion ??= undefined;
+            this.state.adjudicationWaivers ??= [];
+            this.state.adjudicationEvents ??= [];
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
             await this.save(this.state);
             return this.state;
@@ -128,6 +157,8 @@ export class CheckpointManager {
       completedPhase3Groups: [],
       metricsCount: 0,
       terminalExhaustion: undefined,
+      adjudicationWaivers: [],
+      adjudicationEvents: [],
     };
     await this.save(this.state);
     return this.state;
@@ -199,6 +230,28 @@ export class CheckpointManager {
     } else {
       state.failedTasks.push({ taskId, attempts: attempt, lastError: error, recoveryAttempted });
     }
+    await this.save(state);
+  }
+
+  /** Persist an adjudication waiver for future fingerprint reuse checks. */
+  async recordAdjudicationWaiver(waiver: Omit<AdjudicationWaiverRecord, 'createdAt'> & { createdAt?: string }): Promise<void> {
+    const state = this.getState();
+    state.adjudicationWaivers ??= [];
+    state.adjudicationWaivers.push({
+      ...waiver,
+      createdAt: waiver.createdAt ?? new Date().toISOString(),
+    });
+    await this.save(state);
+  }
+
+  /** Append an auditable adjudication event. */
+  async appendAdjudicationEvent(event: Omit<AdjudicationEventRecord, 'createdAt'> & { createdAt?: string }): Promise<void> {
+    const state = this.getState();
+    state.adjudicationEvents ??= [];
+    state.adjudicationEvents.push({
+      ...event,
+      createdAt: event.createdAt ?? new Date().toISOString(),
+    });
     await this.save(state);
   }
 

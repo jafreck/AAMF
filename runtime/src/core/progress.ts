@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { atomicWrite, ensureDir } from '../util/fs.js';
 import { MigrationConfig } from '../config/schema.js';
-import type { CheckpointState, TerminalExhaustionState } from './checkpoint.js';
+import type { AdjudicationEventRecord, CheckpointState, TerminalExhaustionState } from './checkpoint.js';
 
 export interface TaskDetails {
   sourceFiles?: string[];
@@ -36,6 +36,7 @@ export class ProgressWriter {
   private waveLifecycle: WaveLifecycleEvent[] = [];
   private retryTargets: RetryTargetEvent[] = [];
   private terminalExhaustion?: TerminalExhaustionState;
+  private adjudicationEvents: AdjudicationEventRecord[] = [];
   private totalTasks: number = 0;
   private tokenUsage: { total: number; byPhase: Record<number, number>; byAgent: Record<string, number> } = { total: 0, byPhase: {}, byAgent: {} };
   private startTime: Date = new Date();
@@ -49,6 +50,7 @@ export class ProgressWriter {
     this.startTime = new Date();
     this.retryTargets = [];
     this.terminalExhaustion = undefined;
+    this.adjudicationEvents = [];
     this.phases.set(1, { name: 'Impact Assessment', status: 'pending' });
     this.phases.set(2, { name: 'Knowledge Base Construction', status: 'pending' });
     this.phases.set(3, { name: 'Migration Planning', status: 'pending' });
@@ -110,6 +112,7 @@ export class ProgressWriter {
     // Add resume event
     this.events.push(`[${new Date().toISOString()}] Resumed from checkpoint (resume #${state.resumeCount})`);
     this.terminalExhaustion = state.terminalExhaustion;
+    this.adjudicationEvents = [...(state.adjudicationEvents ?? [])];
   }
 
   /** Update current phase status */
@@ -162,6 +165,12 @@ export class ProgressWriter {
   /** Persist terminal fail-fast metadata for progress output. */
   async setTerminalExhaustion(terminalExhaustion: TerminalExhaustionState): Promise<void> {
     this.terminalExhaustion = terminalExhaustion;
+    await this.writeCurrentState();
+  }
+
+  /** Append an adjudication event for auditability in progress output. */
+  async appendAdjudicationEvent(event: AdjudicationEventRecord): Promise<void> {
+    this.adjudicationEvents.push(event);
     await this.writeCurrentState();
   }
 
@@ -333,6 +342,16 @@ export class ProgressWriter {
       }
       if (this.terminalExhaustion.summary) {
         md += `- **summary:** ${this.terminalExhaustion.summary}\n`;
+      }
+      md += '\n';
+    }
+
+    if (this.adjudicationEvents.length > 0) {
+      md += `## Adjudication Events\n\n`;
+      md += `| Time | Decision | Fingerprint | Scope | Expires | Task |\n`;
+      md += `|------|----------|-------------|-------|---------|------|\n`;
+      for (const ev of this.adjudicationEvents) {
+        md += `| ${ev.createdAt} | ${ev.decision} | ${ev.issueFingerprint ?? ''} | ${ev.scope ?? ''} | ${ev.expiresAt ?? ''} | ${ev.taskId ?? ''} |\n`;
       }
       md += '\n';
     }

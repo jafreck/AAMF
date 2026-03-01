@@ -222,7 +222,7 @@ export class ContextBuilder {
           agentPayload: { taskId, testType: payload?.testType ?? 'unit' },
         };
 
-      case 'failure-recovery':
+      case 'failure-adjudicator':
         return {
           inputFiles: [
             ...(payload?.failureReport ? [String(payload.failureReport)] : []),
@@ -230,7 +230,7 @@ export class ContextBuilder {
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
           ],
-          outputPath: join(this.progressDir, 'recovery', `${taskId ?? 'main'}.md`),
+          outputPath: join(this.progressDir, 'adjudication', `${taskId ?? 'main'}.md`),
           agentPayload: {
             taskId,
             attemptNumber: payload?.attemptNumber ?? 1,

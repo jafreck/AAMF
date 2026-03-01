@@ -40,7 +40,7 @@ const agentOutputSchemas: Record<AgentName, z.ZodTypeAny> = {
   'code-migrator': CodeMigratorOutput,
   'parity-verifier': ParityVerifierOutput,
   'test-writer': TestWriterOutput,
-  'failure-recovery': FailureRecoveryOutput,
+  'failure-adjudicator': FailureRecoveryOutput,
   'final-parity-checker': FinalParityCheckerOutput,
   'e2e-test-crafter': E2eTestCrafterOutput,
   'documentation-writer': DocumentationWriterOutput,
