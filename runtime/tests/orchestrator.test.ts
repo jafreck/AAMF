@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
-import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { MigrationOrchestrator, MigrationError } from '../src/core/orchestrator.js';
 import { CheckpointManager } from '../src/core/checkpoint.js';
@@ -1410,6 +1410,85 @@ describe('MigrationOrchestrator', () => {
       expect(log.stdout).toContain('aamf: complete task-001 - User Auth Module');
     });
 
+    it('should initialize and commit in outputPath repo when outputPath is nested in another git repo', async () => {
+      const parentRepo = join(tempDir, 'parent-repo');
+      const outputDir = join(parentRepo, 'nested-output');
+      await ensureDir(outputDir);
+
+      const initParent = await spawnWithTimeout('git', ['init'], { cwd: parentRepo });
+      expect(initParent.exitCode).toBe(0);
+      const parentName = await spawnWithTimeout('git', ['config', 'user.name', 'Parent Repo Bot'], { cwd: parentRepo });
+      const parentEmail = await spawnWithTimeout('git', ['config', 'user.email', 'parent@local.invalid'], { cwd: parentRepo });
+      expect(parentName.exitCode).toBe(0);
+      expect(parentEmail.exitCode).toBe(0);
+
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'code-migrator' && inv.taskId) {
+          const id = inv.taskId.replace('task-', '');
+          const filePath = join(outputDir, 'src', `task-${id}.ts`);
+          await ensureDir(join(outputDir, 'src'));
+          await writeFile(filePath, `export const task${id} = ${Number(id)};\n`);
+        }
+
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 100,
+          tokenUsage: { prompt: 100, completion: 50, total: 150 },
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: outputDir,
+        },
+        options: {
+          maxParallelAgents: 2,
+          maxRetriesPerTask: 3,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          git: {
+            enabled: true,
+            autoInit: true,
+            commitByAgent: true,
+            commitPerTask: true,
+            authorName: 'AAMF Migration Bot',
+            authorEmail: 'aamf@local.invalid',
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const nestedTopLevel = await spawnWithTimeout('git', ['rev-parse', '--show-toplevel'], { cwd: outputDir });
+      const parentTopLevel = await spawnWithTimeout('git', ['rev-parse', '--show-toplevel'], { cwd: parentRepo });
+      expect(nestedTopLevel.exitCode).toBe(0);
+      expect(parentTopLevel.exitCode).toBe(0);
+      expect(await realpath(nestedTopLevel.stdout.trim())).toBe(await realpath(outputDir));
+      expect(await realpath(parentTopLevel.stdout.trim())).toBe(await realpath(parentRepo));
+
+      const nestedLog = await spawnWithTimeout('git', ['log', '--pretty=%s'], { cwd: outputDir });
+      const parentLog = await spawnWithTimeout('git', ['log', '--pretty=%s'], { cwd: parentRepo });
+      expect(nestedLog.exitCode).toBe(0);
+      expect(nestedLog.stdout).toContain('aamf: code-migrator updated output for task task-001');
+      expect(parentLog.exitCode).not.toBe(0);
+    });
+
     it('should not create git repository when git.enabled is false', async () => {
       const outputDir = join(tempDir, 'target-no-git');
       await ensureDir(outputDir);
@@ -2023,6 +2102,99 @@ describe('MigrationOrchestrator', () => {
       expect(result.success).toBe(false);
       expect(phase4?.error).toContain('parity-non-minor-exhausted');
       expect(result.blockedTasks).not.toContain('task-001');
+    });
+
+    it('should terminally exhaust when failure-adjudicator emits no aamf-json during parity recovery', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'failure-adjudicator') {
+          return {
+            exitCode: 1,
+            success: false,
+            error: 'aamf-json parse failed: missing aamf-json block',
+            parseError: 'missing aamf-json block',
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 2,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+          },
+        },
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'results'));
+      await writeFile(
+        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: ['parity-reports/task-001.md'],
+          parity: 'fail',
+          issues: [
+            {
+              severity: 'major',
+              description: 'Behavior diverges in auth checks',
+            },
+          ],
+        }),
+      );
+
+      const result = await orchestrator.run();
+      const phase4 = result.phases.find((p) => p.phase === 4);
+
+      expect(result.success).toBe(false);
+      expect(phase4?.error).toContain('parity-non-minor-exhausted');
+
+      const recoveryInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(recoveryInvocations).toHaveLength(2);
+
+      const remigrateAttempts = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(remigrateAttempts).toHaveLength(1);
     });
 
     it('should fail fast on command recovery exhaustion and persist terminal metadata', async () => {
@@ -4413,7 +4585,43 @@ describe('MigrationOrchestrator', () => {
 
       await (orchestrator as any).ensureGitRepositoryReady();
 
-      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['rev-parse', '--is-inside-work-tree']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['rev-parse', '--show-toplevel']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(2, ['init']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(3, ['config', 'user.name', 'Test Bot']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(4, ['config', 'user.email', 'test@local']);
+    });
+
+    it('ensureGitRepositoryReady should initialize nested outputPath as its own repository', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            outputPath: join(tempDir, 'nested', 'output'),
+          },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: true, stdout: `${join(tempDir, 'nested')}\n`, stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: 'initialized', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).ensureGitRepositoryReady();
+
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['rev-parse', '--show-toplevel']);
       expect(runGitSpy).toHaveBeenNthCalledWith(2, ['init']);
       expect(runGitSpy).toHaveBeenNthCalledWith(3, ['config', 'user.name', 'Test Bot']);
       expect(runGitSpy).toHaveBeenNthCalledWith(4, ['config', 'user.email', 'test@local']);

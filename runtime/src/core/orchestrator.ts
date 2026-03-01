@@ -2487,8 +2487,9 @@ export class MigrationOrchestrator {
 
     await ensureDir(this.config.target.outputPath);
 
-    const probe = await this.runGit(['rev-parse', '--is-inside-work-tree']);
-    if (probe.success && probe.stdout.trim() === 'true') return;
+    const outputPath = resolve(this.config.target.outputPath);
+    const probe = await this.runGit(['rev-parse', '--show-toplevel']);
+    if (probe.success && resolve(probe.stdout.trim()) === outputPath) return;
 
     const init = await this.runGit(['init']);
     if (!init.success) {
