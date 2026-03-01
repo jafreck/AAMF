@@ -83,6 +83,48 @@ export function classifyError(errorOutput: string): string | undefined {
   return undefined;
 }
 
+const DETERMINISTIC_QUALITY_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
+  { pattern: /warnings? (being treated|treated) as errors?/i, label: 'warning-as-error' },
+  { pattern: /-Werror\b|\/WX\b|treat warnings as errors/i, label: 'warning-as-error' },
+  { pattern: /duplicate (target|symbol|definition)|target .* defined more than once/i, label: 'duplicate-target' },
+  { pattern: /(?:^|\s)(?:eslint|tslint|ruff|flake8|pylint|stylelint|shellcheck)\b/i, label: 'lint-failure' },
+  { pattern: /\b(?:lint|checkstyle|format)\b.+(?:failed|error)/i, label: 'lint-failure' },
+  { pattern: /\b(?:test|tests)\b.+(?:failed|failing)|assertionerror|expected .* to .* but received/i, label: 'test-failure' },
+  { pattern: /\b(?:type|compilation) error\b|TS\d{4}/i, label: 'type-error' },
+];
+
+type CommandFailureClassification = {
+  infraError?: string;
+  deterministicClass?: string;
+  snippet?: string;
+};
+
+function pickRepresentativeSnippet(errorOutput: string): string | undefined {
+  const lines = errorOutput
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+  const firstLine = lines[0];
+  if (!firstLine) return undefined;
+  const preferred = lines.find(line => /error|failed|failure|exception|assert|duplicate|warning/i.test(line));
+  const snippet = (preferred ?? firstLine).replace(/\s+/g, ' ');
+  return snippet.slice(0, 240);
+}
+
+function classifyCommandFailure(errorOutput: string): CommandFailureClassification {
+  const infraError = classifyError(errorOutput);
+  if (infraError) return { infraError };
+  for (const { pattern, label } of DETERMINISTIC_QUALITY_PATTERNS) {
+    if (pattern.test(errorOutput)) {
+      return {
+        deterministicClass: label,
+        snippet: pickRepresentativeSnippet(errorOutput),
+      };
+    }
+  }
+  return {};
+}
+
 /** Format a duration in ms as a human-readable string (e.g., "1h 2m 3s", "5m 30s", "45s"). */
 function formatDuration(ms: number): string {
   const totalSecs = Math.round(ms / 1000);
@@ -1222,14 +1264,16 @@ export class MigrationOrchestrator {
       const barrierStart = Date.now();
       let converged = waveCandidates.length > 0;
       let remainingFailures = 0;
+      let repeatedDeterministicReason: string | undefined;
+      let previousDeterministicClass: string | undefined;
 
       if (waveCandidates.length > 0) {
         for (let iteration = 1; iteration <= maxConvergenceIterations; iteration++) {
           if (this.phase4Snapshot) {
             this.phase4Snapshot.waveConvergenceIterations++;
           }
-          const validationOk = await this.runWaveValidation(wave);
-          if (validationOk) {
+          const validation = await this.runWaveValidation(wave);
+          if (validation.success) {
             this.logger.event({
               type: 'wave-convergence-status',
               wave,
@@ -1269,6 +1313,24 @@ export class MigrationOrchestrator {
             remainingFailures,
           });
 
+          if (validation.deterministicClass) {
+            const deterministicClass = `${validation.command ?? 'quality'}:${validation.deterministicClass}`;
+            if (previousDeterministicClass === deterministicClass) {
+              repeatedDeterministicReason = this.formatDeterministicQualityReason(
+                validation.command ?? 'wave-validation',
+                validation.deterministicClass,
+                validation.snippet,
+              );
+              this.logger.warn(
+                `Wave ${wave} validation repeated deterministic class "${deterministicClass}" — short-circuiting convergence retries`,
+              );
+              break;
+            }
+            previousDeterministicClass = deterministicClass;
+          } else {
+            previousDeterministicClass = undefined;
+          }
+
           if (iteration >= maxConvergenceIterations) {
             break;
           }
@@ -1303,7 +1365,11 @@ export class MigrationOrchestrator {
           remainingFailures,
         });
         for (const task of waveCandidates) {
-          await this.blockWaveTask(task, queue, 'wave validation failed to converge');
+          await this.blockWaveTask(
+            task,
+            queue,
+            repeatedDeterministicReason ?? 'wave validation failed to converge',
+          );
         }
       } else {
         for (const task of waveCandidates) {
@@ -1684,7 +1750,12 @@ export class MigrationOrchestrator {
     return { migrated: true, durationMs };
   }
 
-  private async runWaveValidation(wave: number): Promise<boolean> {
+  private async runWaveValidation(wave: number): Promise<{
+    success: boolean;
+    command?: 'build' | 'test';
+    deterministicClass?: string;
+    snippet?: string;
+  }> {
     if (this.phase4Snapshot) {
       this.phase4Snapshot.waveValidationRuns++;
     }
@@ -1692,15 +1763,29 @@ export class MigrationOrchestrator {
 
     if (this.config.target.buildCommand) {
       const build = await this.runCommand('build', this.config.target.buildCommand, waveTaskId);
-      if (!build.success) return false;
+      if (!build.success) {
+        return {
+          success: false,
+          command: 'build',
+          deterministicClass: build.deterministicClass,
+          snippet: build.errorSnippet,
+        };
+      }
     }
 
     if (this.config.target.testCommand) {
       const test = await this.runCommand('test', this.config.target.testCommand, waveTaskId);
-      if (!test.success) return false;
+      if (!test.success) {
+        return {
+          success: false,
+          command: 'test',
+          deterministicClass: test.deterministicClass,
+          snippet: test.errorSnippet,
+        };
+      }
     }
 
-    return true;
+    return { success: true };
   }
 
   private async blockWaveTask(
@@ -1982,7 +2067,13 @@ export class MigrationOrchestrator {
     label: string,
     command: string,
     taskId: string,
-  ): Promise<{ success: boolean; error?: string; infraError?: string }> {
+  ): Promise<{
+    success: boolean;
+    error?: string;
+    infraError?: string;
+    deterministicClass?: string;
+    errorSnippet?: string;
+  }> {
     if (this.phase4Snapshot) {
       if (label === 'build') this.phase4Snapshot.buildCommandRuns++;
       if (label === 'test') this.phase4Snapshot.testCommandRuns++;
@@ -2017,9 +2108,14 @@ export class MigrationOrchestrator {
 
           // Classify the error: infrastructure vs. code quality
           const combinedOutput = `${result.stdout}\n${result.stderr}`;
-          const infraLabel = classifyError(combinedOutput);
-
-          return { success: false, error: errorText, infraError: infraLabel };
+          const classification = classifyCommandFailure(combinedOutput);
+          return {
+            success: false,
+            error: errorText,
+            infraError: classification.infraError,
+            deterministicClass: classification.deterministicClass,
+            errorSnippet: classification.snippet,
+          };
         }
 
         this.logger.info(`${label} command succeeded for task ${taskId}`);
@@ -2027,8 +2123,14 @@ export class MigrationOrchestrator {
       } catch (err) {
         const errorText = `${label} command error: ${err instanceof Error ? err.message : String(err)}`;
         this.logger.error(errorText);
-        const infraLabel = classifyError(errorText);
-        return { success: false, error: errorText, infraError: infraLabel };
+        const classification = classifyCommandFailure(errorText);
+        return {
+          success: false,
+          error: errorText,
+          infraError: classification.infraError,
+          deterministicClass: classification.deterministicClass,
+          errorSnippet: classification.snippet,
+        };
       }
     });
   }
@@ -2055,6 +2157,8 @@ export class MigrationOrchestrator {
   ): Promise<boolean> {
     const maxAttempts = this.config.options.maxRetriesPerTask;
     const maxInfraRetries = this.config.options.maxInfraRetries ?? 3;
+    const deterministicRecoveryLimit = 1;
+    let deterministicRecoveryAttempts = 0;
 
     // Initial attempt
     let cmdResult = await this.runCommand(label, command, task.id);
@@ -2093,12 +2197,22 @@ export class MigrationOrchestrator {
 
     // Code-quality recovery loop — full failure-recovery → code-migrator pipeline
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (cmdResult.deterministicClass && deterministicRecoveryAttempts >= deterministicRecoveryLimit) {
+        this.logger.warn(
+          `${label} for ${task.id} repeated deterministic-quality class "${cmdResult.deterministicClass}" after ` +
+          `${deterministicRecoveryAttempts} recovery attempt(s); short-circuiting retries`,
+        );
+        break;
+      }
       if (this.phase4Snapshot) {
         this.phase4Snapshot.commandRecoveryAttempts++;
       }
       this.logger.warn(
         `${label} failed for ${task.id}, recovery attempt ${attempt}/${maxAttempts}: ${cmdResult.error}`,
       );
+      if (cmdResult.deterministicClass) {
+        deterministicRecoveryAttempts++;
+      }
 
       // 1. Launch failure-recovery with the error output
       const recoveryCtx = await this.contextBuilder.buildContext(
@@ -2163,16 +2277,44 @@ export class MigrationOrchestrator {
     // Exhausted retries — block the task
     queue.markBlocked(task.id);
     await this.checkpoint.blockTask(task.id);
+    const blockReason = this.formatCommandBlockReason(label, cmdResult, maxAttempts);
     await this.progress.updateTask(task.id, 'blocked', {
-      error: cmdResult.error,
+      error: blockReason,
     });
     this.logger.event({
       type: 'task-blocked',
       taskId: task.id,
       name: task.name,
-      reason: cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`,
+      reason: blockReason,
     });
     return false;
+  }
+
+  private formatDeterministicQualityReason(
+    label: string,
+    deterministicClass: string,
+    snippet?: string,
+  ): string {
+    return `deterministic-quality:${label}:${deterministicClass}${snippet ? ` | ${snippet}` : ''}`;
+  }
+
+  private formatCommandBlockReason(
+    label: string,
+    cmdResult: {
+      error?: string;
+      deterministicClass?: string;
+      errorSnippet?: string;
+    },
+    maxAttempts: number,
+  ): string {
+    if (cmdResult.deterministicClass) {
+      return this.formatDeterministicQualityReason(
+        label,
+        cmdResult.deterministicClass,
+        cmdResult.errorSnippet,
+      );
+    }
+    return cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`;
   }
 
   private getPhase4QualityGateMode(): Phase4QualityGateMode {

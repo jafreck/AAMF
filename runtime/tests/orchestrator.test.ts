@@ -2243,6 +2243,89 @@ describe('MigrationOrchestrator', () => {
       expect(migratorRuns.length).toBeGreaterThan(2);
     });
 
+    it('should short-circuit wave convergence retries on repeated deterministic validation failures', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
+      ];
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, progress } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+          buildCommand: 'npm run build',
+        },
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { waveSize: 2, maxConvergenceIterations: 5 },
+          continueOnBlocked: true,
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      let buildAttempts = 0;
+      vi.spyOn(orchestrator as any, 'runCommand').mockImplementation(async (label: string) => {
+        if (label === 'build') {
+          buildAttempts++;
+          return {
+            success: false,
+            error: 'build failed',
+            deterministicClass: 'lint-failure',
+            errorSnippet: 'eslint found 1 error',
+          };
+        }
+        return { success: true };
+      });
+      const updateTaskSpy = vi.spyOn(progress, 'updateTask');
+
+      const result = await orchestrator.run();
+
+      expect(result.blockedTasks).toContain('task-001');
+      expect(result.blockedTasks).toContain('task-002');
+      expect(buildAttempts).toBe(2);
+      const blockedCalls = updateTaskSpy.mock.calls.filter(c => c[1] === 'blocked');
+      expect(blockedCalls).toHaveLength(2);
+      for (const call of blockedCalls) {
+        expect(call[2]?.error).toContain('deterministic-quality:build:lint-failure');
+      }
+    });
+
+    it('should return deterministic metadata from runWaveValidation when build fails', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+          buildCommand: 'npm run build',
+          testCommand: 'npm test',
+        },
+      });
+      const runCommandSpy = vi.spyOn(orchestrator as any, 'runCommand')
+        .mockResolvedValueOnce({
+          success: false,
+          error: 'build failed',
+          deterministicClass: 'type-error',
+          errorSnippet: 'error TS2322: Type mismatch',
+        })
+        .mockResolvedValueOnce({ success: true });
+
+      const validation = await (orchestrator as any).runWaveValidation(7);
+
+      expect(validation).toEqual({
+        success: false,
+        command: 'build',
+        deterministicClass: 'type-error',
+        snippet: 'error TS2322: Type mismatch',
+      });
+      expect(runCommandSpy).toHaveBeenCalledTimes(1);
+      expect(runCommandSpy).toHaveBeenCalledWith('build', 'npm run build', 'wave-7');
+    });
+
     it('should apply blocked policy at wave granularity in wave-barrier mode', async () => {
       const tasks: MigrationTask[] = [
         { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
@@ -2275,6 +2358,28 @@ describe('MigrationOrchestrator', () => {
       expect(result.success).toBe(false);
       expect(result.blockedTasks).toContain('task-001');
       expect(secondTaskRuns).toHaveLength(0);
+    });
+
+    it('should classify deterministic command failures with a representative snippet', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+        },
+      });
+
+      const commandResult = await (orchestrator as any).runCommand(
+        'build',
+        "printf 'Compiling...\\nerror TS1234: Broken type\\n' >&2; exit 1",
+        'task-001',
+      );
+
+      expect(commandResult.success).toBe(false);
+      expect(commandResult.infraError).toBeUndefined();
+      expect(commandResult.deterministicClass).toBe('type-error');
+      expect(commandResult.errorSnippet).toContain('error TS1234: Broken type');
     });
   });
 
