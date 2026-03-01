@@ -13,6 +13,8 @@ import type {
   InvocationMetric,
   ModelTier,
   RoutingDecision,
+  RemediationContext,
+  TerminalReasonCode,
 } from '../../src/agents/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -614,6 +616,44 @@ describe('ModelTier', () => {
   it('should accept all three tier values', () => {
     const tiers: ModelTier[] = ['normal', 'heavy', 'critical'];
     expect(tiers).toEqual(['normal', 'heavy', 'critical']);
+  });
+});
+
+// ─── Remediation Contracts ────────────────────────────────────────────────────
+
+describe('RemediationContext', () => {
+  it('should include failure kind, summary, target context, artifacts, and success condition', () => {
+    const remediation: RemediationContext = {
+      failureKind: 'parity',
+      failureSummary: 'Normalized parity mismatch on auth flow',
+      failureTarget: { wave: 2, taskId: 'task-001', check: 'auth-parity-check' },
+      artifactPaths: ['progress/parity-reports/task-001.md', 'src/auth.py'],
+      expectedSuccessCondition: 'Parity checker returns minor-or-better delta',
+    };
+    expect(remediation.failureKind).toBe('parity');
+    expect(remediation.failureSummary).toContain('Normalized parity mismatch');
+    expect(remediation.failureTarget.wave).toBe(2);
+    expect(remediation.failureTarget.taskId).toBe('task-001');
+    expect(remediation.failureTarget.check).toBe('auth-parity-check');
+    expect(remediation.artifactPaths).toContain('src/auth.py');
+    expect(remediation.expectedSuccessCondition).toContain('Parity checker');
+  });
+});
+
+describe('TerminalReasonCode', () => {
+  it('should cover canonical terminal exhaustion reason codes', () => {
+    const codes: TerminalReasonCode[] = [
+      'wave-convergence-exhausted',
+      'task-retries-exhausted',
+      'parity-non-minor-exhausted',
+      'command-recovery-exhausted',
+    ];
+    expect(codes).toEqual([
+      'wave-convergence-exhausted',
+      'task-retries-exhausted',
+      'parity-non-minor-exhausted',
+      'command-recovery-exhausted',
+    ]);
   });
 });
 

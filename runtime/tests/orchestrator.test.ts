@@ -1652,7 +1652,7 @@ describe('MigrationOrchestrator', () => {
       expect(phase3!.error).toContain('groups.json');
     });
 
-    it('should block tasks that fail after max retries', async () => {
+    it('should fail fast with terminal metadata when task retries are exhausted', async () => {
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
           return { exitCode: 1, success: false, error: 'Migration failed for task-001' };
@@ -1705,8 +1705,76 @@ describe('MigrationOrchestrator', () => {
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       const result = await orchestrator.run();
+      const phase4 = result.phases.find((p) => p.phase === 4);
 
-      expect(result.blockedTasks).toContain('task-001');
+      expect(result.success).toBe(false);
+      expect(phase4?.error).toContain('task-retries-exhausted');
+      expect(result.blockedTasks).not.toContain('task-001');
+    });
+
+    it('should propagate remediation payload for retry-exhaustion remigration', async () => {
+      let migratorCalls = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
+          migratorCalls++;
+          if (migratorCalls === 1) {
+            return { exitCode: 1, success: false, error: 'initial migration failure' };
+          }
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        options: {
+          maxRetriesPerTask: 1,
+        },
+      });
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const recoveryInvocation = mockLauncher.invocations.find(
+        (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(recoveryInvocation).toBeDefined();
+      const recoveryContext = JSON.parse(await readFile(recoveryInvocation!.contextFile, 'utf-8'));
+      expect(recoveryContext.payload?.remediationContext?.failureKind).toBe('task-retry');
+
+      const taskMigratorInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(taskMigratorInvocations.length).toBeGreaterThanOrEqual(2);
+      const retryContext = JSON.parse(
+        await readFile(taskMigratorInvocations[taskMigratorInvocations.length - 1]!.contextFile, 'utf-8'),
+      );
+      expect(retryContext.payload?.remediationContext?.failureKind).toBe('task-retry');
+      expect(retryContext.payload?.remediationContext?.failureTarget?.taskId).toBe('task-001');
+      expect(Array.isArray(retryContext.payload?.remediationContext?.artifactPaths)).toBe(true);
     });
 
     it('should invoke failure-recovery when parity-verifier finds critical issues', async () => {
@@ -1790,6 +1858,24 @@ describe('MigrationOrchestrator', () => {
         (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
       );
       expect(recoveryInvocations.length).toBeGreaterThan(0);
+
+      const parityRecovery = recoveryInvocations[0]!;
+      const recoveryContext = JSON.parse(await readFile(parityRecovery.contextFile, 'utf-8'));
+      expect(recoveryContext.payload?.remediationContext?.failureKind).toBe('parity');
+      expect(recoveryContext.payload?.remediationContext?.failureTarget?.taskId).toBe('task-001');
+
+      const remigrateCandidates = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      let foundParityRemediation = false;
+      for (const inv of remigrateCandidates) {
+        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
+        if (ctx.payload?.remediationContext?.failureKind === 'parity') {
+          foundParityRemediation = true;
+          break;
+        }
+      }
+      expect(foundParityRemediation).toBe(true);
     });
 
     it('should not trigger recovery when parity has only minor issues', async () => {
@@ -1853,7 +1939,7 @@ describe('MigrationOrchestrator', () => {
       expect(result.success).toBe(true);
     });
 
-    it('should allow task completion when only minor issues remain after retries', async () => {
+    it('should fail fast when parity retains non-minor issues after retries', async () => {
       let migratorAttempt = 0;
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'code-migrator') {
@@ -1932,9 +2018,75 @@ describe('MigrationOrchestrator', () => {
       );
 
       const result = await orchestrator.run();
+      const phase4 = result.phases.find((p) => p.phase === 4);
 
-      // Task should be blocked because major issues remain after max retries
-      expect(result.blockedTasks).toContain('task-001');
+      expect(result.success).toBe(false);
+      expect(phase4?.error).toContain('parity-non-minor-exhausted');
+      expect(result.blockedTasks).not.toContain('task-001');
+    });
+
+    it('should fail fast on command recovery exhaustion and persist terminal metadata', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, checkpoint, mockLauncher, logger } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            language: 'typescript',
+            framework: 'express',
+            outputPath: tempDir,
+            buildCommand: 'npm run build',
+          },
+          options: {
+            maxRetriesPerTask: 2,
+          },
+        },
+      );
+      await writeMigrationPlan(progressDir);
+
+      const events: Array<{ type: string; reasonCode?: string; taskId?: string; check?: string }> = [];
+      vi.spyOn(logger, 'event').mockImplementation((ev) => {
+        events.push(ev as any);
+      });
+      vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: false, error: 'build failed' });
+
+      const result = await orchestrator.run();
+      const phase4 = result.phases.find((p) => p.phase === 4);
+
+      expect(result.success).toBe(false);
+      expect(phase4?.error).toContain('command-recovery-exhausted');
+      const terminalEvent = events.find((e) => e.type === 'terminal-exhaustion');
+      expect(terminalEvent?.reasonCode).toBe('command-recovery-exhausted');
+      expect(terminalEvent?.taskId).toBe('task-001');
+      expect(terminalEvent?.check).toBe('build');
+
+      const task2MigratorRuns = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-002',
+      );
+      expect(task2MigratorRuns).toHaveLength(0);
+
+      const commandRemigrations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      let foundCommandRemediation = false;
+      for (const inv of commandRemigrations) {
+        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
+        if (ctx.payload?.remediationContext?.failureKind === 'build') {
+          foundCommandRemediation = true;
+          break;
+        }
+      }
+      expect(foundCommandRemediation).toBe(true);
+
+      const checkpointState = checkpoint.getState();
+      expect(checkpointState.terminalExhaustion?.reasonCode).toBe('command-recovery-exhausted');
+      expect(checkpointState.terminalExhaustion?.check).toBe('build');
+
+      const progressContent = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+      expect(progressContent).toContain('Retry Targets');
+      expect(progressContent).toContain('command-recovery-exhausted');
+      expect(progressContent).toContain('task-001');
+      expect(progressContent).toContain('build');
     });
 
     describe('qualityPolicy phase 4 gating', () => {
@@ -2241,9 +2393,20 @@ describe('MigrationOrchestrator', () => {
       expect(result.success).toBe(true);
       expect(buildAttempts).toBe(2);
       expect(migratorRuns.length).toBeGreaterThan(2);
+
+      let foundWaveRemediation = false;
+      for (const inv of migratorRuns) {
+        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
+        if (ctx.payload?.remediationContext?.failureKind === 'wave-convergence') {
+          foundWaveRemediation = true;
+          expect(ctx.payload?.remediationContext?.failureTarget?.wave).toBe(1);
+          break;
+        }
+      }
+      expect(foundWaveRemediation).toBe(true);
     });
 
-    it('should apply blocked policy at wave granularity in wave-barrier mode', async () => {
+    it('should fail fast on wave convergence exhaustion without scheduling later waves', async () => {
       const tasks: MigrationTask[] = [
         { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
         { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
@@ -2270,10 +2433,12 @@ describe('MigrationOrchestrator', () => {
       vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: false, error: 'build failed' });
 
       const result = await orchestrator.run();
+      const phase4 = result.phases.find((p) => p.phase === 4);
       const secondTaskRuns = mockLauncher.invocations.filter(i => i.agent === 'code-migrator' && i.taskId === 'task-002');
 
       expect(result.success).toBe(false);
-      expect(result.blockedTasks).toContain('task-001');
+      expect(phase4?.error).toContain('wave-convergence-exhausted');
+      expect(result.blockedTasks).not.toContain('task-001');
       expect(secondTaskRuns).toHaveLength(0);
     });
   });

@@ -2,6 +2,15 @@ import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { atomicWrite, ensureDir, fileExists, readJson, writeJson } from '../util/fs.js';
 import { Logger } from '../logging/logger.js';
+import type { TerminalReasonCode } from '../agents/types.js';
+
+export interface TerminalExhaustionState {
+  reasonCode: TerminalReasonCode;
+  wave?: number;
+  taskId?: string;
+  check?: string;
+  summary?: string;
+}
 
 export interface CheckpointState {
   projectName: string;
@@ -31,6 +40,8 @@ export interface CheckpointState {
   metricsCount: number;
   /** Source fingerprint from last successful Phase 0 build; used to skip re-indexing on resume. */
   phase0Fingerprint?: string;
+  /** Terminal Phase 4 exhaustion metadata, when execution stopped fail-fast. */
+  terminalExhaustion?: TerminalExhaustionState;
   /** Persisted waiver records for adjudicated false-positive findings. */
   adjudicationWaivers?: AdjudicationWaiverRecord[];
   /** Auditable adjudication event history across retries/resume. */
@@ -93,6 +104,7 @@ export class CheckpointManager {
         this.state.completedPhase3Groups ??= [];
         this.state.metricsCount ??= 0;
         this.state.phase0Fingerprint ??= undefined;
+        this.state.terminalExhaustion ??= undefined;
         this.state.adjudicationWaivers ??= [];
         this.state.adjudicationEvents ??= [];
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
@@ -111,6 +123,7 @@ export class CheckpointManager {
             this.state.completedPhase3Groups ??= [];
             this.state.metricsCount ??= 0;
             this.state.phase0Fingerprint ??= undefined;
+            this.state.terminalExhaustion ??= undefined;
             this.state.adjudicationWaivers ??= [];
             this.state.adjudicationEvents ??= [];
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
@@ -143,6 +156,7 @@ export class CheckpointManager {
       phase3aComplete: false,
       completedPhase3Groups: [],
       metricsCount: 0,
+      terminalExhaustion: undefined,
       adjudicationWaivers: [],
       adjudicationEvents: [],
     };
@@ -254,6 +268,13 @@ export class CheckpointManager {
   async setCurrentTask(taskId: string): Promise<void> {
     const state = this.getState();
     state.currentTask = taskId;
+    await this.save(state);
+  }
+
+  /** Persist terminal exhaustion metadata for fail-fast Phase 4 exits. */
+  async setTerminalExhaustion(terminalExhaustion: TerminalExhaustionState): Promise<void> {
+    const state = this.getState();
+    state.terminalExhaustion = terminalExhaustion;
     await this.save(state);
   }
 

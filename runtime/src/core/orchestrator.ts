@@ -16,6 +16,8 @@ import {
   PhaseResult,
   RoutingDecision,
   ModelTier,
+  RemediationContext,
+  TerminalReasonCode,
 } from '../agents/types.js';
 import { ContextBuilder } from '../agents/context-builder.js';
 import { ResultParser } from '../agents/result-parser.js';
@@ -95,6 +97,37 @@ function formatDuration(ms: number): string {
 }
 
 type Phase4QualityGateMode = 'enforce' | 'advisory' | 'skip';
+
+interface RetryTargetDetails {
+  scope: 'task' | 'parity' | 'command' | 'wave';
+  attempt: number;
+  maxAttempts: number;
+  taskId?: string;
+  wave?: number;
+  check?: string;
+  summary: string;
+}
+
+interface TerminalExhaustionDetails {
+  reasonCode: TerminalReasonCode;
+  taskId?: string;
+  wave?: number;
+  check?: string;
+  summary: string;
+}
+
+class TerminalExhaustionError extends Error {
+  constructor(public readonly details: TerminalExhaustionDetails) {
+    const locationParts = [
+      details.taskId ? `task=${details.taskId}` : undefined,
+      details.wave !== undefined ? `wave=${details.wave}` : undefined,
+      details.check ? `check=${details.check}` : undefined,
+    ].filter((part): part is string => !!part);
+    const location = locationParts.length > 0 ? ` (${locationParts.join(', ')})` : '';
+    super(`Phase 4 terminal exhaustion: ${details.reasonCode}${location} - ${details.summary}`);
+    this.name = 'TerminalExhaustionError';
+  }
+}
 
 /** Error thrown when a critical phase fails. */
 export class MigrationError extends Error {
@@ -1065,16 +1098,23 @@ export class MigrationOrchestrator {
     };
 
     if (executionMode === 'wave-barrier') {
-      return this.executePhase4WaveBarrier(
-        start,
-        queue,
-        retryExec,
-        completedDurationsMs,
-        continueOnBlocked,
-        maxBlockedTasks,
-        Math.max(1, Math.min(waveControl.waveSize, phase4Parallelism)),
-        waveControl.maxConvergenceIterations,
-      );
+      try {
+        return await this.executePhase4WaveBarrier(
+          start,
+          queue,
+          retryExec,
+          completedDurationsMs,
+          continueOnBlocked,
+          maxBlockedTasks,
+          Math.max(1, Math.min(waveControl.waveSize, phase4Parallelism)),
+          waveControl.maxConvergenceIterations,
+        );
+      } catch (error) {
+        if (error instanceof TerminalExhaustionError) {
+          return this.buildPhase4TerminalResult(start, queue, error);
+        }
+        throw error;
+      }
     }
 
     while (!queue.isComplete()) {
@@ -1102,7 +1142,14 @@ export class MigrationOrchestrator {
 
       // Execute batch concurrently
       const batchPromises = batch.map(task => this.executeTask(task, retryExec, queue, completedDurationsMs));
-      await Promise.allSettled(batchPromises);
+      const batchResults = await Promise.allSettled(batchPromises);
+      const terminalExhaustion = batchResults.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === 'rejected' && result.reason instanceof TerminalExhaustionError,
+      );
+      if (terminalExhaustion) {
+        return this.buildPhase4TerminalResult(start, queue, terminalExhaustion.reason);
+      }
 
       // Check blocked-task policy
       const progress = queue.getProgress();
@@ -1158,6 +1205,96 @@ export class MigrationOrchestrator {
 
   // ─── Phase 4 Helpers ─────────────────────────────────────────────────
 
+  private normalizeFailureSummary(summary: string): string {
+    return summary.replace(/\s+/g, ' ').trim().slice(0, 240);
+  }
+
+  private buildRemediationContext(input: {
+    failureKind: string;
+    failureSummary: string;
+    taskId?: string;
+    wave?: number;
+    check?: string;
+    artifactPaths: string[];
+    expectedSuccessCondition: string;
+  }): RemediationContext {
+    return {
+      failureKind: input.failureKind,
+      failureSummary: this.normalizeFailureSummary(input.failureSummary),
+      failureTarget: {
+        taskId: input.taskId,
+        wave: input.wave,
+        check: input.check,
+      },
+      artifactPaths: Array.from(new Set(input.artifactPaths.filter(Boolean))),
+      expectedSuccessCondition: input.expectedSuccessCondition,
+    };
+  }
+
+  private formatFailureTarget(details: Pick<RetryTargetDetails, 'taskId' | 'wave' | 'check'>): string {
+    const parts = [
+      details.taskId ? `task=${details.taskId}` : undefined,
+      details.wave !== undefined ? `wave=${details.wave}` : undefined,
+      details.check ? `check=${details.check}` : undefined,
+    ].filter((part): part is string => !!part);
+    return parts.length > 0 ? parts.join(', ') : 'unscoped';
+  }
+
+  private async recordRetryTarget(details: RetryTargetDetails): Promise<void> {
+    const normalizedSummary = this.normalizeFailureSummary(details.summary);
+    const target = this.formatFailureTarget(details);
+    this.logger.warn(
+      `Recovery retry ${details.attempt}/${details.maxAttempts} targeting ${details.scope} (${target}): ${normalizedSummary}`,
+    );
+    await this.progress.appendRetryTarget({
+      ...details,
+      summary: normalizedSummary,
+    });
+  }
+
+  private async raiseTerminalExhaustion(details: TerminalExhaustionDetails): Promise<never> {
+    const normalizedSummary = this.normalizeFailureSummary(details.summary);
+    const normalized: TerminalExhaustionDetails = {
+      ...details,
+      summary: normalizedSummary,
+    };
+    this.logger.event({
+      type: 'terminal-exhaustion',
+      reasonCode: normalized.reasonCode,
+      wave: normalized.wave,
+      taskId: normalized.taskId,
+      check: normalized.check,
+    });
+    await this.checkpoint.setTerminalExhaustion(normalized);
+    await this.progress.setTerminalExhaustion(normalized);
+    await this.progress.appendEvent(
+      `Terminal exhaustion (${normalized.reasonCode}): ${normalizedSummary}`,
+    );
+    throw new TerminalExhaustionError(normalized);
+  }
+
+  private buildPhase4TerminalResult(
+    start: number,
+    queue: TaskQueue,
+    error: TerminalExhaustionError,
+  ): PhaseResult {
+    const finalProgress = queue.getProgress();
+    if (this.phase4Snapshot) {
+      this.phase4Snapshot.phase4DurationMs = Date.now() - start;
+      this.phase4Snapshot.completedTaskCount = finalProgress.completed;
+      this.metricsCollector.setPhase4Snapshot(this.phase4Snapshot);
+      this.phase4Snapshot = undefined;
+    }
+    return {
+      phase: 4,
+      name: 'Iterative Migration',
+      success: false,
+      outputPath: this.config.target.outputPath,
+      duration: Date.now() - start,
+      error: error.message,
+    };
+  }
+
   private async executePhase4WaveBarrier(
     start: number,
     queue: TaskQueue,
@@ -1199,15 +1336,23 @@ export class MigrationOrchestrator {
       this.logger.event({ type: 'wave-started', wave, taskIds });
       await this.progress.appendWaveLifecycle({ wave, milestone: 'started' });
 
-      const migrationResults = await Promise.all(
-        waveTasks.map(async task => {
-          if (!taskStartTimes.has(task.id)) {
-            taskStartTimes.set(task.id, Date.now());
-          }
-          const result = await this.executeTask(task, retryExec, queue, completedDurationsMs, 'wave-migration');
-          return { task, result };
-        }),
-      );
+      let migrationResults: Array<{ task: MigrationTask; result: { migrated: boolean; durationMs?: number } }>;
+      try {
+        migrationResults = await Promise.all(
+          waveTasks.map(async task => {
+            if (!taskStartTimes.has(task.id)) {
+              taskStartTimes.set(task.id, Date.now());
+            }
+            const result = await this.executeTask(task, retryExec, queue, completedDurationsMs, 'wave-migration');
+            return { task, result };
+          }),
+        );
+      } catch (error) {
+        if (error instanceof TerminalExhaustionError) {
+          return this.buildPhase4TerminalResult(start, queue, error);
+        }
+        throw error;
+      }
 
       this.logger.event({ type: 'wave-completed', wave, taskIds, duration: Date.now() - waveStart });
       await this.progress.appendWaveLifecycle({ wave, milestone: 'completed' });
@@ -1277,9 +1422,47 @@ export class MigrationOrchestrator {
             `Wave ${wave} validation failed, running fix wave iteration ${iteration}/${maxConvergenceIterations}`,
           );
 
-          const fixResults = await Promise.all(
-            waveCandidates.map(task => this.executeTask(task, retryExec, queue, completedDurationsMs, 'wave-migration')),
-          );
+          for (const task of waveCandidates) {
+            await this.recordRetryTarget({
+              scope: 'wave',
+              attempt: iteration,
+              maxAttempts: maxConvergenceIterations,
+              taskId: task.id,
+              wave,
+              check: 'wave-validation',
+              summary: `Wave ${wave} validation failed`,
+            });
+          }
+
+          let fixResults: Array<{ migrated: boolean; durationMs?: number }>;
+          try {
+            fixResults = await Promise.all(
+              waveCandidates.map(task => {
+                const remediation = this.buildRemediationContext({
+                  failureKind: 'wave-convergence',
+                  failureSummary: `Wave ${wave} validation failed (iteration ${iteration})`,
+                  taskId: task.id,
+                  wave,
+                  check: 'wave-validation',
+                  artifactPaths: [...task.sourceFiles, ...task.targetFiles],
+                  expectedSuccessCondition: `Wave ${wave} validation passes`,
+                });
+                return this.executeTask(
+                  task,
+                  retryExec,
+                  queue,
+                  completedDurationsMs,
+                  'wave-migration',
+                  remediation,
+                );
+              }),
+            );
+          } catch (error) {
+            if (error instanceof TerminalExhaustionError) {
+              return this.buildPhase4TerminalResult(start, queue, error);
+            }
+            throw error;
+          }
           waveCandidates = waveCandidates.filter((task, index) => {
             const fix = fixResults[index];
             return !!fix?.migrated && !queue.isTaskBlocked(task.id);
@@ -1302,9 +1485,12 @@ export class MigrationOrchestrator {
           maxIterations: maxConvergenceIterations,
           remainingFailures,
         });
-        for (const task of waveCandidates) {
-          await this.blockWaveTask(task, queue, 'wave validation failed to converge');
-        }
+        await this.raiseTerminalExhaustion({
+          reasonCode: 'wave-convergence-exhausted',
+          wave,
+          check: 'wave-validation',
+          summary: `Wave ${wave} failed to converge after ${maxConvergenceIterations} iteration(s)`,
+        });
       } else {
         for (const task of waveCandidates) {
           if (queue.isTaskCompleted(task.id) || queue.isTaskBlocked(task.id)) continue;
@@ -1367,6 +1553,7 @@ export class MigrationOrchestrator {
     queue: TaskQueue,
     completedDurationsMs: number[],
     mode: 'per-task' | 'wave-migration' = 'per-task',
+    remediationContext?: RemediationContext,
   ): Promise<{ migrated: boolean; durationMs?: number }> {
     this.logger.event({ type: 'task-started', taskId: task.id, name: task.name });
     await this.checkpoint.setCurrentTask(task.id);
@@ -1383,6 +1570,7 @@ export class MigrationOrchestrator {
         sourceFiles: task.sourceFiles,
         targetFiles: task.targetFiles,
         kbEntry: task.knowledgeBaseRef,
+        ...(remediationContext ? { remediationContext } : {}),
       },
     );
     const migratorInv = this.buildInvocation('code-migrator', migratorCtx, 4, task.id, task);
@@ -1396,7 +1584,15 @@ export class MigrationOrchestrator {
     const migratorResult = await retryExec.executeWithRetry(migratorInv, {
       maxAttempts: this.config.options.maxRetriesPerTask,
       onRetry: async (attempt, error) => {
-        this.logger.warn(`Retry ${attempt} for ${task.id}: ${error}`);
+        await this.recordRetryTarget({
+          scope: remediationContext?.failureKind === 'wave-convergence' ? 'wave' : 'task',
+          attempt,
+          maxAttempts: this.config.options.maxRetriesPerTask,
+          taskId: task.id,
+          wave: remediationContext?.failureTarget.wave,
+          check: remediationContext?.failureTarget.check ?? 'code-migrator',
+          summary: error,
+        });
         // Existing transient-failure fallback runs first
         if (fallbackModel && this.isTransientModelFailure(error) && migratorInv.modelOverride !== fallbackModel) {
           migratorInv.modelOverride = fallbackModel;
@@ -1456,6 +1652,29 @@ export class MigrationOrchestrator {
         await this.checkpoint.failTask(task.id, error, attempt, false);
       },
       onExhausted: async (taskId, lastError) => {
+        const retryExhaustionRemediation = this.buildRemediationContext({
+          failureKind: remediationContext?.failureKind ?? 'task-retry',
+          failureSummary: lastError,
+          taskId,
+          wave: remediationContext?.failureTarget.wave,
+          check: remediationContext?.failureTarget.check ?? 'code-migrator',
+          artifactPaths: [...task.sourceFiles, ...task.targetFiles],
+          expectedSuccessCondition: `code-migrator succeeds for ${taskId}`,
+        });
+
+        const retryContext = await this.contextBuilder.buildContext(
+          'code-migrator',
+          4,
+          task.id,
+          {
+            sourceFiles: task.sourceFiles,
+            targetFiles: task.targetFiles,
+            kbEntry: task.knowledgeBaseRef,
+            remediationContext: retryExhaustionRemediation,
+          },
+        );
+        migratorInv.contextFile = retryContext;
+
         // Escalate to failure-recovery agent
         const recoveryCtx = await this.contextBuilder.buildContext(
           'failure-adjudicator',
@@ -1467,6 +1686,7 @@ export class MigrationOrchestrator {
             targetFile: task.targetFiles[0],
             kbEntry: task.knowledgeBaseRef,
             attemptNumber: this.config.options.maxRetriesPerTask,
+            remediationContext: retryExhaustionRemediation,
           },
         );
         return this.buildInvocation('failure-adjudicator', recoveryCtx, 4, taskId);
@@ -1476,18 +1696,13 @@ export class MigrationOrchestrator {
     this.recordTokens(migratorResult, 4);
 
     if (!migratorResult.success) {
-      queue.markBlocked(task.id);
-      await this.checkpoint.blockTask(task.id);
-      await this.progress.updateTask(task.id, 'blocked', {
-        error: migratorResult.error,
-      });
-      this.logger.event({
-        type: 'task-blocked',
+      await this.raiseTerminalExhaustion({
+        reasonCode: 'task-retries-exhausted',
         taskId: task.id,
-        name: task.name,
-        reason: migratorResult.error ?? 'max retries exceeded',
+        check: remediationContext?.failureTarget.check ?? 'code-migrator',
+        wave: remediationContext?.failureTarget.wave,
+        summary: migratorResult.error ?? `code-migrator failed after ${this.config.options.maxRetriesPerTask} retries`,
       });
-      return { migrated: false };
     }
 
     await this.commitForAgent('code-migrator', 4, task.id, task.name);
@@ -1538,16 +1753,30 @@ export class MigrationOrchestrator {
 
       if (!parityPassed && gateMode === 'enforce') {
         for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
-          this.logger.warn(
-            `Parity check failed for ${task.id}, recovery attempt ${attempt}/${maxParityRetries}`,
-          );
-
           // Launch failure-recovery with parity report
           const parityReportPath = join(
             this.progressDir,
             'parity-reports',
             `${task.id}.md`,
           );
+          const parityRemediation = this.buildRemediationContext({
+            failureKind: 'parity',
+            failureSummary: `Parity verification failed for ${task.id}`,
+            taskId: task.id,
+            check: 'parity-verifier',
+            artifactPaths: [parityReportPath, ...task.sourceFiles, ...task.targetFiles],
+            expectedSuccessCondition: `Parity checks pass (or only minor issues) for ${task.id}`,
+          });
+
+          await this.recordRetryTarget({
+            scope: 'parity',
+            attempt,
+            maxAttempts: maxParityRetries,
+            taskId: task.id,
+            check: 'parity-verifier',
+            summary: `Parity verification failed for ${task.id}`,
+          });
+
           const recoveryCtx = await this.contextBuilder.buildContext(
             'failure-adjudicator',
             4,
@@ -1558,6 +1787,7 @@ export class MigrationOrchestrator {
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: attempt,
+              remediationContext: parityRemediation,
             },
           );
           const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
@@ -1574,12 +1804,13 @@ export class MigrationOrchestrator {
             'code-migrator',
             4,
             task.id,
-            {
-              sourceFiles: task.sourceFiles,
-              targetFiles: task.targetFiles,
-              kbEntry: task.knowledgeBaseRef,
-            },
-          );
+              {
+                sourceFiles: task.sourceFiles,
+                targetFiles: task.targetFiles,
+                kbEntry: task.knowledgeBaseRef,
+                remediationContext: parityRemediation,
+              },
+            );
           const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
           const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
           this.recordTokens(reMigrateResult, 4);
@@ -1616,18 +1847,12 @@ export class MigrationOrchestrator {
         if (!parityPassed) {
           const hasBlockingIssues = await this.hasNonMinorParityIssues(task.id);
           if (hasBlockingIssues) {
-            queue.markBlocked(task.id);
-            await this.checkpoint.blockTask(task.id);
-            await this.progress.updateTask(task.id, 'blocked', {
-              error: 'parity check failed with critical/major issues after max retries',
-            });
-            this.logger.event({
-              type: 'task-blocked',
+            await this.raiseTerminalExhaustion({
+              reasonCode: 'parity-non-minor-exhausted',
               taskId: task.id,
-              name: task.name,
-              reason: 'parity verification failed with non-minor issues',
+              check: 'parity-verifier',
+              summary: `Parity verification still has non-minor issues after ${maxParityRetries} attempt(s)`,
             });
-            return { migrated: false };
           }
           this.logger.info(
             `Parity for ${task.id} has only minor issues after retries, proceeding`,
@@ -2043,9 +2268,9 @@ export class MigrationOrchestrator {
    * Genuine code-quality failures go through the full recovery pipeline:
    * `failure-recovery` → `code-migrator` → re-run command.
    *
-   * After exhausting all retry budgets the task is marked blocked.
+   * After exhausting all retry budgets Phase 4 fails fast with a terminal reason.
    *
-   * Returns `true` if the command eventually passes, `false` if blocked.
+   * Returns `true` if the command eventually passes.
    */
   private async runCommandWithRecovery(
     label: string,
@@ -2096,9 +2321,23 @@ export class MigrationOrchestrator {
       if (this.phase4Snapshot) {
         this.phase4Snapshot.commandRecoveryAttempts++;
       }
-      this.logger.warn(
-        `${label} failed for ${task.id}, recovery attempt ${attempt}/${maxAttempts}: ${cmdResult.error}`,
-      );
+      await this.recordRetryTarget({
+        scope: 'command',
+        attempt,
+        maxAttempts,
+        taskId: task.id,
+        check: label,
+        summary: cmdResult.error ?? `${label} command failed`,
+      });
+
+      const remediationContext = this.buildRemediationContext({
+        failureKind: label,
+        failureSummary: cmdResult.error ?? `${label} command failed`,
+        taskId: task.id,
+        check: label,
+        artifactPaths: [...task.sourceFiles, ...task.targetFiles],
+        expectedSuccessCondition: `${label} command succeeds for ${task.id}`,
+      });
 
       // 1. Launch failure-recovery with the error output
       const recoveryCtx = await this.contextBuilder.buildContext(
@@ -2112,6 +2351,7 @@ export class MigrationOrchestrator {
           targetFile: task.targetFiles[0],
           kbEntry: task.knowledgeBaseRef,
           attemptNumber: attempt,
+          remediationContext,
         },
       );
       const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
@@ -2132,6 +2372,7 @@ export class MigrationOrchestrator {
           sourceFiles: task.sourceFiles,
           targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef,
+          remediationContext,
         },
       );
       const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
@@ -2160,17 +2401,11 @@ export class MigrationOrchestrator {
       this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
     }
 
-    // Exhausted retries — block the task
-    queue.markBlocked(task.id);
-    await this.checkpoint.blockTask(task.id);
-    await this.progress.updateTask(task.id, 'blocked', {
-      error: cmdResult.error,
-    });
-    this.logger.event({
-      type: 'task-blocked',
+    await this.raiseTerminalExhaustion({
+      reasonCode: 'command-recovery-exhausted',
       taskId: task.id,
-      name: task.name,
-      reason: cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`,
+      check: label,
+      summary: cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`,
     });
     return false;
   }

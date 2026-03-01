@@ -113,6 +113,25 @@ describe('CheckpointManager', () => {
     expect(resume.taskId).toBe('task-005');
   });
 
+  it('should persist terminal exhaustion metadata', async () => {
+    await manager.load('test-project');
+    await manager.setTerminalExhaustion({
+      reasonCode: 'task-retries-exhausted',
+      taskId: 'task-001',
+      check: 'code-migrator',
+      summary: 'code-migrator failed after max retries',
+    });
+
+    const state = manager.getState();
+    expect(state.terminalExhaustion?.reasonCode).toBe('task-retries-exhausted');
+    expect(state.terminalExhaustion?.taskId).toBe('task-001');
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.terminalExhaustion?.reasonCode).toBe('task-retries-exhausted');
+    expect(reloaded.terminalExhaustion?.check).toBe('code-migrator');
+  });
+
   it('should default cumulativeDurationMs to 0 when field is absent in stored checkpoint (backward compat)', async () => {
     // Write a checkpoint without cumulativeDurationMs (simulating an old checkpoint)
     const { writeJson } = await import('../src/util/fs.js');
@@ -137,6 +156,7 @@ describe('CheckpointManager', () => {
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');
     expect(loaded.cumulativeDurationMs).toBe(0);
+    expect(loaded.terminalExhaustion).toBeUndefined();
   });
 
   it('should initialize cumulativeDurationMs to 0 on fresh state and preserve on reload', async () => {

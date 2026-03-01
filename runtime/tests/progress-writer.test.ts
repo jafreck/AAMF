@@ -155,6 +155,31 @@ describe('ProgressWriter', () => {
     expect(content).toContain('remainingFailures=1');
   });
 
+  it('should render retry-target and terminal exhaustion metadata', async () => {
+    await writer.initialize(config);
+    await writer.appendRetryTarget({
+      scope: 'command',
+      attempt: 2,
+      maxAttempts: 3,
+      taskId: 'task-001',
+      check: 'build',
+      summary: 'build command failed',
+    });
+    await writer.setTerminalExhaustion({
+      reasonCode: 'command-recovery-exhausted',
+      taskId: 'task-001',
+      check: 'build',
+      summary: 'build command failed after retries',
+    });
+
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('Retry Targets');
+    expect(content).toContain('| command | 2/3 | task-001 |');
+    expect(content).toContain('Terminal Exhaustion');
+    expect(content).toContain('command-recovery-exhausted');
+    expect(content).toContain('build command failed after retries');
+  });
+
   it('should render adjudication events for auditability', async () => {
     await writer.initialize(config);
     await writer.appendAdjudicationEvent({
@@ -221,6 +246,31 @@ describe('ProgressWriter', () => {
       expect(content).not.toContain('✅');
     });
 
+    it('should clear retry and terminal metadata on re-initialization', async () => {
+      await writer.initialize(config);
+      await writer.appendRetryTarget({
+        scope: 'task',
+        attempt: 1,
+        maxAttempts: 2,
+        taskId: 'task-001',
+        check: 'code-migrator',
+        summary: 'id=retry-before-reset',
+      });
+      await writer.setTerminalExhaustion({
+        reasonCode: 'task-retries-exhausted',
+        taskId: 'task-001',
+        check: 'code-migrator',
+        summary: 'terminal-before-reset',
+      });
+      await writer.initialize(config);
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).not.toContain('Retry Targets');
+      expect(content).not.toContain('id=retry-before-reset');
+      expect(content).not.toContain('Terminal Exhaustion');
+      expect(content).not.toContain('terminal-before-reset');
+    });
+
     it('should handle concurrent appendEvent calls', async () => {
       await writer.initialize(config);
 
@@ -250,6 +300,27 @@ describe('ProgressWriter', () => {
       // Events 10-59 should remain
       expect(content).toContain('trunc-event-10');
       expect(content).toContain('trunc-event-59');
+    });
+
+    it('should truncate retry targets to the last 100 entries', async () => {
+      await writer.initialize(config);
+
+      for (let i = 0; i < 105; i++) {
+        await writer.appendRetryTarget({
+          scope: 'command',
+          attempt: i + 1,
+          maxAttempts: 105,
+          taskId: 'task-001',
+          check: 'build',
+          summary: `id=retry-${i}`,
+        });
+      }
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).not.toContain('| command | 1/105 |');
+      expect(content).not.toContain('| command | 5/105 |');
+      expect(content).toContain('| command | 6/105 |');
+      expect(content).toContain('| command | 105/105 |');
     });
   });
 
@@ -398,6 +469,43 @@ describe('ProgressWriter', () => {
       expect(content).toContain('Adjudication Events');
       expect(content).toContain('fp-xyz');
       expect(content).toContain('task-007');
+    });
+
+    it('should restore terminal exhaustion metadata from checkpoint state', async () => {
+      await writer.initialize(config);
+      const state = {
+        projectName: 'test-project',
+        version: 1,
+        currentPhase: 4,
+        currentTask: null,
+        completedPhases: [1, 2, 3],
+        completedTasks: ['task-001'],
+        failedTasks: [],
+        blockedTasks: [],
+        phaseOutputs: {},
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        startedAt: new Date().toISOString(),
+        lastCheckpoint: new Date().toISOString(),
+        resumeCount: 2,
+        cumulativeDurationMs: 0,
+        completedTaskDurationsMs: [],
+        metricsCount: 0,
+        terminalExhaustion: {
+          reasonCode: 'wave-convergence-exhausted',
+          wave: 3,
+          check: 'wave-validation',
+          summary: 'wave failed to converge',
+        },
+      };
+
+      writer.reconstructFromCheckpoint(state);
+      await writer.appendEvent('resumed');
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('Terminal Exhaustion');
+      expect(content).toContain('wave-convergence-exhausted');
+      expect(content).toContain('**wave:** 3');
+      expect(content).toContain('wave failed to converge');
     });
   });
 });

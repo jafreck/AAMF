@@ -65,6 +65,35 @@ export class ContextBuilder {
     return this.config.options.contextWindowTokens;
   }
 
+  private isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  }
+
+  private getRemediationContext(payload?: Record<string, unknown>): Record<string, unknown> | undefined {
+    const nestedRemediation = payload?.remediationContext ?? payload?.remediation;
+    if (this.isRecord(nestedRemediation)) {
+      return nestedRemediation;
+    }
+
+    if (
+      payload?.failureKind !== undefined ||
+      payload?.failureSummary !== undefined ||
+      payload?.failureTarget !== undefined ||
+      payload?.artifactPaths !== undefined ||
+      payload?.expectedSuccessCondition !== undefined
+    ) {
+      return {
+        failureKind: payload?.failureKind,
+        failureSummary: payload?.failureSummary,
+        failureTarget: payload?.failureTarget,
+        artifactPaths: payload?.artifactPaths,
+        expectedSuccessCondition: payload?.expectedSuccessCondition,
+      };
+    }
+
+    return undefined;
+  }
+
   /**
    * Assemble an {@link AgentContext} object for the given agent and phase.
    * Includes a `contextWindowTokens` key so agents can self-limit their context usage.
@@ -112,6 +141,7 @@ export class ContextBuilder {
     const migrationPlan = join(this.progressDir, 'migration-plan.md');
     const src = this.config.source.path;
     const out = this.config.target.outputPath;
+    const remediationContext = this.getRemediationContext(payload);
 
     switch (agent) {
       case 'impact-assessor':
@@ -166,6 +196,7 @@ export class ContextBuilder {
             taskId,
             sourceFiles: payload?.sourceFiles ?? [],
             targetFiles: payload?.targetFiles ?? [],
+            ...(remediationContext ? { remediationContext } : {}),
           },
         };
 
@@ -200,7 +231,11 @@ export class ContextBuilder {
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
           ],
           outputPath: join(this.progressDir, 'adjudication', `${taskId ?? 'main'}.md`),
-          agentPayload: { taskId, attemptNumber: payload?.attemptNumber ?? 1 },
+          agentPayload: {
+            taskId,
+            attemptNumber: payload?.attemptNumber ?? 1,
+            ...(remediationContext ? { remediationContext } : {}),
+          },
         };
 
       case 'final-parity-checker':

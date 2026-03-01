@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { atomicWrite, ensureDir } from '../util/fs.js';
 import { MigrationConfig } from '../config/schema.js';
-import type { AdjudicationEventRecord, CheckpointState } from './checkpoint.js';
+import type { AdjudicationEventRecord, CheckpointState, TerminalExhaustionState } from './checkpoint.js';
 
 export interface TaskDetails {
   sourceFiles?: string[];
@@ -19,11 +19,23 @@ export interface WaveLifecycleEvent {
   remainingFailures?: number;
 }
 
+export interface RetryTargetEvent {
+  scope: 'task' | 'parity' | 'command' | 'wave';
+  attempt: number;
+  maxAttempts: number;
+  taskId?: string;
+  wave?: number;
+  check?: string;
+  summary: string;
+}
+
 export class ProgressWriter {
   private phases: Map<number, { name: string; status: string; notes?: string; exitCode?: number; stderr?: string }> = new Map();
   private tasks: Map<string, { status: string; details?: TaskDetails }> = new Map();
   private events: string[] = [];
   private waveLifecycle: WaveLifecycleEvent[] = [];
+  private retryTargets: RetryTargetEvent[] = [];
+  private terminalExhaustion?: TerminalExhaustionState;
   private adjudicationEvents: AdjudicationEventRecord[] = [];
   private totalTasks: number = 0;
   private tokenUsage: { total: number; byPhase: Record<number, number>; byAgent: Record<string, number> } = { total: 0, byPhase: {}, byAgent: {} };
@@ -36,6 +48,9 @@ export class ProgressWriter {
   /** Initialize fresh progress.md */
   async initialize(config: MigrationConfig): Promise<void> {
     this.startTime = new Date();
+    this.retryTargets = [];
+    this.terminalExhaustion = undefined;
+    this.adjudicationEvents = [];
     this.phases.set(1, { name: 'Impact Assessment', status: 'pending' });
     this.phases.set(2, { name: 'Knowledge Base Construction', status: 'pending' });
     this.phases.set(3, { name: 'Migration Planning', status: 'pending' });
@@ -96,6 +111,7 @@ export class ProgressWriter {
 
     // Add resume event
     this.events.push(`[${new Date().toISOString()}] Resumed from checkpoint (resume #${state.resumeCount})`);
+    this.terminalExhaustion = state.terminalExhaustion;
     this.adjudicationEvents = [...(state.adjudicationEvents ?? [])];
   }
 
@@ -137,6 +153,18 @@ export class ProgressWriter {
   /** Append a structured wave lifecycle event. */
   async appendWaveLifecycle(event: WaveLifecycleEvent): Promise<void> {
     this.waveLifecycle.push(event);
+    await this.writeCurrentState();
+  }
+
+  /** Append retry-target observability for recovery attempts. */
+  async appendRetryTarget(event: RetryTargetEvent): Promise<void> {
+    this.retryTargets.push(event);
+    await this.writeCurrentState();
+  }
+
+  /** Persist terminal fail-fast metadata for progress output. */
+  async setTerminalExhaustion(terminalExhaustion: TerminalExhaustionState): Promise<void> {
+    this.terminalExhaustion = terminalExhaustion;
     await this.writeCurrentState();
   }
 
@@ -286,6 +314,34 @@ export class ProgressWriter {
         if (ev.converged !== undefined) details.push(`converged=${ev.converged}`);
         if (ev.remainingFailures !== undefined) details.push(`remainingFailures=${ev.remainingFailures}`);
         md += `| ${ev.wave} | ${ev.milestone} | ${details.join(', ')} |\n`;
+      }
+      md += '\n';
+    }
+
+    if (this.retryTargets.length > 0) {
+      md += `## Retry Targets\n\n`;
+      md += `| Scope | Attempt | Task | Wave | Check | Summary |\n`;
+      md += `|-------|---------|------|------|-------|---------|\n`;
+      for (const retry of this.retryTargets.slice(-100)) {
+        md += `| ${retry.scope} | ${retry.attempt}/${retry.maxAttempts} | ${retry.taskId ?? ''} | ${retry.wave ?? ''} | ${retry.check ?? ''} | ${retry.summary} |\n`;
+      }
+      md += '\n';
+    }
+
+    if (this.terminalExhaustion) {
+      md += `## Terminal Exhaustion\n\n`;
+      md += `- **reasonCode:** ${this.terminalExhaustion.reasonCode}\n`;
+      if (this.terminalExhaustion.taskId) {
+        md += `- **taskId:** ${this.terminalExhaustion.taskId}\n`;
+      }
+      if (this.terminalExhaustion.wave !== undefined) {
+        md += `- **wave:** ${this.terminalExhaustion.wave}\n`;
+      }
+      if (this.terminalExhaustion.check) {
+        md += `- **check:** ${this.terminalExhaustion.check}\n`;
+      }
+      if (this.terminalExhaustion.summary) {
+        md += `- **summary:** ${this.terminalExhaustion.summary}\n`;
       }
       md += '\n';
     }
