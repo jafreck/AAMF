@@ -1074,6 +1074,10 @@ export class MigrationOrchestrator {
       commandRecoveryAttempts: 0,
       commandInfraRetries: 0,
       recoveryLoopTimeMs: 0,
+      parityRetryContinuedCount: 0,
+      parityEarlyStopCount: 0,
+      parityTargetedRecoveryCount: 0,
+      parityRetryReductions: 0,
     };
 
     if (executionMode === 'wave-barrier') {
@@ -1290,6 +1294,14 @@ export class MigrationOrchestrator {
             const failureImprovement = previousRemainingFailures - remainingFailures;
             const summary = `validation failures ${previousRemainingFailures}->${remainingFailures}`;
             const meaningfulImprovement = failureImprovement >= this.getParityGuardrailThresholds().minIssueCountImprovement;
+            if (this.phase4Snapshot) {
+              if (meaningfulImprovement) {
+                this.phase4Snapshot.parityRetryContinuedCount++;
+              } else {
+                this.phase4Snapshot.parityEarlyStopCount++;
+                this.phase4Snapshot.parityRetryReductions += Math.max(0, maxConvergenceIterations - iteration);
+              }
+            }
             this.logger.event({
               type: meaningfulImprovement ? 'parity-retry-continued' : 'parity-early-stop',
               scope: 'wave-barrier',
@@ -1656,6 +1668,14 @@ export class MigrationOrchestrator {
           }
           lastParityDeltaSummary = this.formatParityDeltaSummary(parityDelta);
           const meaningfulImprovement = this.hasMeaningfulParityImprovement(parityDelta);
+          if (this.phase4Snapshot) {
+            if (meaningfulImprovement) {
+              this.phase4Snapshot.parityRetryContinuedCount++;
+            } else {
+              this.phase4Snapshot.parityEarlyStopCount++;
+              this.phase4Snapshot.parityRetryReductions += Math.max(0, maxParityRetries - attempt);
+            }
+          }
           this.logger.event({
             type: meaningfulImprovement ? 'parity-retry-continued' : 'parity-early-stop',
             scope: 'per-task',
@@ -1670,6 +1690,9 @@ export class MigrationOrchestrator {
           if (attempt < maxParityRetries) {
             const targetedIssues = this.getTargetedRecoveryIssues(previousParityResult, latestParityResult);
             const targetedReportPath = await this.writeTargetedParityReport(task.id, targetedIssues);
+            if (this.phase4Snapshot) {
+              this.phase4Snapshot.parityTargetedRecoveryCount++;
+            }
             this.logger.event({
               type: 'parity-targeted-recovery',
               scope: 'per-task',

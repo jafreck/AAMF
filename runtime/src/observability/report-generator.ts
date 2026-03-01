@@ -50,6 +50,7 @@ export class ReportGenerator {
     sections.push(this.buildCostTokenTable(aggregates));
     sections.push(this.buildRetrySummary(metrics));
     sections.push(this.buildWaveEfficiencySummary(aggregates));
+    sections.push(this.buildParityGuardrailSummary(aggregates));
 
     return sections.join('\n');
   }
@@ -209,6 +210,21 @@ export class ReportGenerator {
       `| Recovery-loop time (ms) | ${aggregates.recoveryLoopTimeMs} |`,
       `| Build/test invocations per completed task | ${aggregates.buildTestInvocationsPerCompletedTask.toFixed(2)} |`,
       `| Retry volume per completed task | ${aggregates.retryVolumePerCompletedTask.toFixed(2)} |`,
+      '',
+    ];
+
+    return lines.join('\n');
+  }
+
+  private buildParityGuardrailSummary(aggregates: MetricsAggregate): string {
+    const lines: string[] = [
+      '## Parity Guardrail Decisions\n',
+      '| Signal | Value |',
+      '|---|---|',
+      `| Retry-continued decisions | ${aggregates.parityRetryContinuedCount} |`,
+      `| Early-stop decisions | ${aggregates.parityEarlyStopCount} |`,
+      `| Targeted recoveries | ${aggregates.parityTargetedRecoveryCount} |`,
+      `| Retry reductions | ${aggregates.parityRetryReductions} |`,
       '',
     ];
 

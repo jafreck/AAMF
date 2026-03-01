@@ -66,6 +66,10 @@ function makeAggregates(overrides?: Partial<MetricsAggregate>): MetricsAggregate
     recoveryLoopTimeMs: 0,
     buildTestInvocationsPerCompletedTask: 1,
     retryVolumePerCompletedTask: 0,
+    parityRetryContinuedCount: 0,
+    parityEarlyStopCount: 0,
+    parityTargetedRecoveryCount: 0,
+    parityRetryReductions: 0,
     ...overrides,
   };
 }
@@ -181,15 +185,38 @@ describe('ReportGenerator', () => {
       expect(content).toContain('| Retry volume per completed task | 0.50 |');
     });
 
+    it('should include parity guardrail decision summary in markdown', async () => {
+      const metrics = [makeMetric()];
+      const aggregates = makeAggregates({
+        parityRetryContinuedCount: 2,
+        parityEarlyStopCount: 1,
+        parityTargetedRecoveryCount: 1,
+        parityRetryReductions: 3,
+      });
+      await generator.generate(metricsDir, reportDir, metrics, aggregates);
+      const content = await readFile(join(reportDir, 'index.md'), 'utf-8');
+      expect(content).toContain('Parity Guardrail Decisions');
+      expect(content).toContain('| Retry-continued decisions | 2 |');
+      expect(content).toContain('| Early-stop decisions | 1 |');
+      expect(content).toContain('| Targeted recoveries | 1 |');
+      expect(content).toContain('| Retry reductions | 3 |');
+    });
+
     it('should include wave fields in metrics.json aggregates', async () => {
       const metrics = [makeMetric()];
-      const aggregates = makeAggregates({ phase4ExecutionMode: 'per-task' });
+      const aggregates = makeAggregates({
+        phase4ExecutionMode: 'per-task',
+        parityEarlyStopCount: 1,
+        parityRetryReductions: 2,
+      });
       await generator.generate(metricsDir, reportDir, metrics, aggregates);
       const raw = await readFile(join(reportDir, 'metrics.json'), 'utf-8');
       const parsed = JSON.parse(raw);
       expect(parsed.aggregates).toHaveProperty('phase4ExecutionMode', 'per-task');
       expect(parsed.aggregates).toHaveProperty('waveCount');
       expect(parsed.aggregates).toHaveProperty('buildTestInvocationsPerCompletedTask');
+      expect(parsed.aggregates).toHaveProperty('parityEarlyStopCount', 1);
+      expect(parsed.aggregates).toHaveProperty('parityRetryReductions', 2);
     });
 
     it('should show "No retries recorded" when there are no retries', async () => {

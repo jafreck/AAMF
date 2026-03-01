@@ -1866,6 +1866,8 @@ describe('MigrationOrchestrator', () => {
 
       const eventSpy = vi.spyOn(logger, 'event');
       const result = await orchestrator.run();
+      const summaryRaw = await readFile(join(progressDir, 'metrics', 'summary.json'), 'utf-8');
+      const summary = JSON.parse(summaryRaw);
 
       expect(result.success).toBe(true);
       expect(mockLauncher.invocations.filter(i => i.agent === 'failure-recovery' && i.phase === 4).length).toBeGreaterThan(1);
@@ -1874,6 +1876,7 @@ describe('MigrationOrchestrator', () => {
         scope: 'per-task',
         taskId: 'task-001',
       }));
+      expect(summary.parityRetryContinuedCount).toBeGreaterThanOrEqual(1);
     });
 
     it('should early-stop non-improving parity retries and annotate blocked reason with parity delta summary', async () => {
@@ -1942,6 +1945,8 @@ describe('MigrationOrchestrator', () => {
       const eventSpy = vi.spyOn(logger, 'event');
       const result = await orchestrator.run();
       const progressContent = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+      const summaryRaw = await readFile(join(progressDir, 'metrics', 'summary.json'), 'utf-8');
+      const summary = JSON.parse(summaryRaw);
 
       expect(result.blockedTasks).toContain('task-001');
       expect(mockLauncher.invocations.filter(i => i.agent === 'failure-recovery' && i.phase === 4).length).toBeLessThanOrEqual(2);
@@ -1956,6 +1961,9 @@ describe('MigrationOrchestrator', () => {
         taskId: 'task-001',
       }));
       expect(progressContent).toContain('issues 2->2, critical 1->1, major 1->1, minor 0->0');
+      expect(summary.parityEarlyStopCount).toBeGreaterThanOrEqual(1);
+      expect(summary.parityTargetedRecoveryCount).toBeGreaterThanOrEqual(1);
+      expect(summary.parityRetryReductions).toBeGreaterThanOrEqual(1);
     });
 
     it('should not trigger recovery when parity has only minor issues', async () => {
@@ -2472,12 +2480,16 @@ describe('MigrationOrchestrator', () => {
       vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: false, error: 'build failed' });
       const eventSpy = vi.spyOn(logger, 'event');
       const result = await orchestrator.run();
+      const summaryRaw = await readFile(join(progressDir, 'metrics', 'summary.json'), 'utf-8');
+      const summary = JSON.parse(summaryRaw);
 
       expect(result.blockedTasks).toContain('task-001');
       expect(eventSpy).toHaveBeenCalledWith(expect.objectContaining({
         type: 'parity-early-stop',
         scope: 'wave-barrier',
       }));
+      expect(summary.parityEarlyStopCount).toBeGreaterThanOrEqual(1);
+      expect(summary.parityRetryReductions).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -3313,6 +3325,10 @@ describe('MigrationOrchestrator', () => {
       expect(summary).toHaveProperty('recoveryLoopTimeMs');
       expect(summary).toHaveProperty('buildTestInvocationsPerCompletedTask');
       expect(summary).toHaveProperty('retryVolumePerCompletedTask');
+      expect(summary).toHaveProperty('parityRetryContinuedCount');
+      expect(summary).toHaveProperty('parityEarlyStopCount');
+      expect(summary).toHaveProperty('parityTargetedRecoveryCount');
+      expect(summary).toHaveProperty('parityRetryReductions');
     });
 
     it('should persist per-task phase 4 wave snapshot metrics in summary', async () => {
@@ -3333,6 +3349,10 @@ describe('MigrationOrchestrator', () => {
       expect(summary.testCommandRuns).toBe(0);
       expect(summary.buildTestInvocationsPerCompletedTask).toBe(0);
       expect(summary.retryVolumePerCompletedTask).toBe(0);
+      expect(summary.parityRetryContinuedCount).toBe(0);
+      expect(summary.parityEarlyStopCount).toBe(0);
+      expect(summary.parityTargetedRecoveryCount).toBe(0);
+      expect(summary.parityRetryReductions).toBe(0);
     });
 
     it('should persist wave-barrier convergence metrics in summary', async () => {

@@ -26,6 +26,10 @@ export interface Phase4MetricsSnapshot {
   commandRecoveryAttempts: number;
   commandInfraRetries: number;
   recoveryLoopTimeMs: number;
+  parityRetryContinuedCount: number;
+  parityEarlyStopCount: number;
+  parityTargetedRecoveryCount: number;
+  parityRetryReductions: number;
 }
 
 export interface MetricsAggregate {
@@ -78,6 +82,14 @@ export interface MetricsAggregate {
   buildTestInvocationsPerCompletedTask: number;
   /** Retry invocations per completed phase 4 task. */
   retryVolumePerCompletedTask: number;
+  /** Number of parity guardrail decisions that continued retry attempts. */
+  parityRetryContinuedCount: number;
+  /** Number of parity guardrail decisions that stopped retries early. */
+  parityEarlyStopCount: number;
+  /** Number of targeted parity recovery actions launched. */
+  parityTargetedRecoveryCount: number;
+  /** Total retries/iterations avoided due to parity guardrail early-stop decisions. */
+  parityRetryReductions: number;
 }
 
 export interface ParallelismBucket {
@@ -257,6 +269,10 @@ export class MetricsCollector {
       recoveryLoopTimeMs: this.phase4Snapshot?.recoveryLoopTimeMs ?? 0,
       buildTestInvocationsPerCompletedTask,
       retryVolumePerCompletedTask,
+      parityRetryContinuedCount: this.phase4Snapshot?.parityRetryContinuedCount ?? 0,
+      parityEarlyStopCount: this.phase4Snapshot?.parityEarlyStopCount ?? 0,
+      parityTargetedRecoveryCount: this.phase4Snapshot?.parityTargetedRecoveryCount ?? 0,
+      parityRetryReductions: this.phase4Snapshot?.parityRetryReductions ?? 0,
     };
   }
 

@@ -147,6 +147,10 @@ describe('MetricsCollector', () => {
       expect(summary).toHaveProperty('recoveryLoopTimeMs');
       expect(summary).toHaveProperty('buildTestInvocationsPerCompletedTask');
       expect(summary).toHaveProperty('retryVolumePerCompletedTask');
+      expect(summary).toHaveProperty('parityRetryContinuedCount');
+      expect(summary).toHaveProperty('parityEarlyStopCount');
+      expect(summary).toHaveProperty('parityTargetedRecoveryCount');
+      expect(summary).toHaveProperty('parityRetryReductions');
     });
   });
 
@@ -214,6 +218,10 @@ describe('MetricsCollector', () => {
       expect(agg.waveCount).toBe(0);
       expect(agg.buildCommandRuns).toBe(0);
       expect(agg.buildTestInvocationsPerCompletedTask).toBe(0);
+      expect(agg.parityRetryContinuedCount).toBe(0);
+      expect(agg.parityEarlyStopCount).toBe(0);
+      expect(agg.parityTargetedRecoveryCount).toBe(0);
+      expect(agg.parityRetryReductions).toBe(0);
     });
 
     it('should count invocations by agent', () => {
@@ -372,6 +380,10 @@ describe('MetricsCollector', () => {
         commandRecoveryAttempts: 1,
         commandInfraRetries: 1,
         recoveryLoopTimeMs: 1200,
+        parityRetryContinuedCount: 3,
+        parityEarlyStopCount: 2,
+        parityTargetedRecoveryCount: 1,
+        parityRetryReductions: 4,
       });
 
       const agg = collector.getAggregates();
@@ -389,6 +401,10 @@ describe('MetricsCollector', () => {
       expect(agg.recoveryLoopTimeMs).toBe(1200);
       expect(agg.buildTestInvocationsPerCompletedTask).toBeCloseTo(1.5, 6);
       expect(agg.retryVolumePerCompletedTask).toBeCloseTo(0.5, 6);
+      expect(agg.parityRetryContinuedCount).toBe(3);
+      expect(agg.parityEarlyStopCount).toBe(2);
+      expect(agg.parityTargetedRecoveryCount).toBe(1);
+      expect(agg.parityRetryReductions).toBe(4);
     });
 
     it('should derive phase 4 completion metrics from non-wave task IDs when no snapshot is set', () => {
