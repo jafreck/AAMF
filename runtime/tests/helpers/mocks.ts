@@ -95,6 +95,7 @@ export function createMockConfig(overrides?: any): MigrationConfig {
       buildConcurrency: 1,
       continueOnBlocked: true,
       maxBlockedTasks: 0,
+      qualityPolicy: 'strict',
       maxInfraRetries: 3,
       avgTokensPerTask: 5000,
       contextWindowStrategy: 'per-invocation',

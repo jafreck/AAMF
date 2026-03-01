@@ -98,6 +98,8 @@ function formatDuration(ms: number): string {
   return `${secs}s`;
 }
 
+type Phase4QualityGateMode = 'enforce' | 'advisory' | 'skip';
+
 /** Error thrown when a critical phase fails. */
 export class MigrationError extends Error {
   constructor(
@@ -1096,10 +1098,15 @@ export class MigrationOrchestrator {
 
     const finalProgress = queue.getProgress();
     const deadlocked = finalProgress.remaining > 0;
+    let waveEndGateError: string | undefined;
+    const gateMode = this.getPhase4QualityGateMode();
+    if (!deadlocked && finalProgress.blocked === 0 && gateMode !== 'enforce') {
+      waveEndGateError = await this.runWaveEndQualityGates();
+    }
     return {
       phase: 4,
       name: 'Iterative Migration',
-      success: finalProgress.blocked === 0 && !deadlocked,
+      success: finalProgress.blocked === 0 && !deadlocked && !waveEndGateError,
       outputPath: this.config.target.outputPath,
       duration: Date.now() - start,
       error:
@@ -1107,6 +1114,8 @@ export class MigrationOrchestrator {
           ? `${finalProgress.remaining} task(s) deadlocked — unresolvable dependencies`
           : finalProgress.blocked > 0
             ? `${finalProgress.blocked} task(s) blocked after max retries`
+            : waveEndGateError
+              ? waveEndGateError
             : undefined,
     };
   }
@@ -1322,123 +1331,149 @@ export class MigrationOrchestrator {
       await this.commitForAgent('test-writer', 4, task.id, task.name);
     }
 
+    const gateMode = this.getPhase4QualityGateMode();
+
     // b2. Check parity result and retry if non-minor issues found
-    const maxParityRetries = this.config.options.maxRetriesPerTask;
-    let parityPassed = await this.checkParityResult(task.id);
+    if (gateMode !== 'skip') {
+      const maxParityRetries = this.config.options.maxRetriesPerTask;
+      let parityPassed = await this.checkParityResult(task.id);
 
-    if (!parityPassed) {
-      for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
+      if (!parityPassed && gateMode === 'enforce') {
+        for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
+          this.logger.warn(
+            `Parity check failed for ${task.id}, recovery attempt ${attempt}/${maxParityRetries}`,
+          );
+
+          // Launch failure-recovery with parity report
+          const parityReportPath = join(
+            this.progressDir,
+            'parity-reports',
+            `${task.id}.md`,
+          );
+          const recoveryCtx = await this.contextBuilder.buildContext(
+            'failure-recovery',
+            4,
+            task.id,
+            {
+              failureReport: parityReportPath,
+              sourceFile: task.sourceFiles[0],
+              targetFile: task.targetFiles[0],
+              kbEntry: task.knowledgeBaseRef,
+              attemptNumber: attempt,
+            },
+          );
+          const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
+          const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
+          this.recordTokens(recoveryResult, 4);
+
+          if (!recoveryResult.success) {
+            this.logger.warn(`Failure-recovery failed for ${task.id} on attempt ${attempt}`);
+            continue;
+          }
+
+          // Re-run code-migrator with the recovery context
+          const reMigrateCtx = await this.contextBuilder.buildContext(
+            'code-migrator',
+            4,
+            task.id,
+            {
+              sourceFiles: task.sourceFiles,
+              targetFiles: task.targetFiles,
+              kbEntry: task.knowledgeBaseRef,
+            },
+          );
+          const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
+          const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
+          this.recordTokens(reMigrateResult, 4);
+
+          if (!reMigrateResult.success) {
+            this.logger.warn(`Re-migration failed for ${task.id} on attempt ${attempt}`);
+            continue;
+          }
+
+          await this.commitForAgent('code-migrator', 4, task.id, task.name);
+
+          // Re-run parity-verifier
+          const reParityCtx = await this.contextBuilder.buildContext(
+            'parity-verifier',
+            4,
+            task.id,
+            {
+              sourceFile: task.sourceFiles[0],
+              targetFile: task.targetFiles[0],
+            },
+          );
+          const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
+          const reParityResult = await this.launchAgentWithEvents(reParityInv);
+          this.recordTokens(reParityResult, 4);
+
+          parityPassed = await this.checkParityResult(task.id);
+          if (parityPassed) {
+            this.logger.info(`Parity recovered for ${task.id} on attempt ${attempt}`);
+            break;
+          }
+        }
+
+        // After exhausting retries, check if only minor issues remain
+        if (!parityPassed) {
+          const hasBlockingIssues = await this.hasNonMinorParityIssues(task.id);
+          if (hasBlockingIssues) {
+            queue.markBlocked(task.id);
+            await this.checkpoint.blockTask(task.id);
+            await this.progress.updateTask(task.id, 'blocked', {
+              error: 'parity check failed with critical/major issues after max retries',
+            });
+            this.logger.event({
+              type: 'task-blocked',
+              taskId: task.id,
+              name: task.name,
+              reason: 'parity verification failed with non-minor issues',
+            });
+            return;
+          }
+          this.logger.info(
+            `Parity for ${task.id} has only minor issues after retries, proceeding`,
+          );
+        }
+      } else if (!parityPassed) {
         this.logger.warn(
-          `Parity check failed for ${task.id}, recovery attempt ${attempt}/${maxParityRetries}`,
-        );
-
-        // Launch failure-recovery with parity report
-        const parityReportPath = join(
-          this.progressDir,
-          'parity-reports',
-          `${task.id}.md`,
-        );
-        const recoveryCtx = await this.contextBuilder.buildContext(
-          'failure-recovery',
-          4,
-          task.id,
-          {
-            failureReport: parityReportPath,
-            sourceFile: task.sourceFiles[0],
-            targetFile: task.targetFiles[0],
-            kbEntry: task.knowledgeBaseRef,
-            attemptNumber: attempt,
-          },
-        );
-        const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
-        const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
-        this.recordTokens(recoveryResult, 4);
-
-        if (!recoveryResult.success) {
-          this.logger.warn(`Failure-recovery failed for ${task.id} on attempt ${attempt}`);
-          continue;
-        }
-
-        // Re-run code-migrator with the recovery context
-        const reMigrateCtx = await this.contextBuilder.buildContext(
-          'code-migrator',
-          4,
-          task.id,
-          {
-            sourceFiles: task.sourceFiles,
-            targetFiles: task.targetFiles,
-            kbEntry: task.knowledgeBaseRef,
-          },
-        );
-        const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
-        const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
-        this.recordTokens(reMigrateResult, 4);
-
-        if (!reMigrateResult.success) {
-          this.logger.warn(`Re-migration failed for ${task.id} on attempt ${attempt}`);
-          continue;
-        }
-
-        await this.commitForAgent('code-migrator', 4, task.id, task.name);
-
-        // Re-run parity-verifier
-        const reParityCtx = await this.contextBuilder.buildContext(
-          'parity-verifier',
-          4,
-          task.id,
-          {
-            sourceFile: task.sourceFiles[0],
-            targetFile: task.targetFiles[0],
-          },
-        );
-        const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
-        const reParityResult = await this.launchAgentWithEvents(reParityInv);
-        this.recordTokens(reParityResult, 4);
-
-        parityPassed = await this.checkParityResult(task.id);
-        if (parityPassed) {
-          this.logger.info(`Parity recovered for ${task.id} on attempt ${attempt}`);
-          break;
-        }
-      }
-
-      // After exhausting retries, check if only minor issues remain
-      if (!parityPassed) {
-        const hasBlockingIssues = await this.hasNonMinorParityIssues(task.id);
-        if (hasBlockingIssues) {
-          queue.markBlocked(task.id);
-          await this.checkpoint.blockTask(task.id);
-          await this.progress.updateTask(task.id, 'blocked', {
-            error: 'parity check failed with critical/major issues after max retries',
-          });
-          this.logger.event({
-            type: 'task-blocked',
-            taskId: task.id,
-            name: task.name,
-            reason: 'parity verification failed with non-minor issues',
-          });
-          return;
-        }
-        this.logger.info(
-          `Parity for ${task.id} has only minor issues after retries, proceeding`,
+          `Parity check failed for ${task.id}, deferring strict enforcement to wave-end/final gates (qualityPolicy=${this.config.options.qualityPolicy})`,
         );
       }
     }
 
     // c2. Run build command if configured
     if (this.config.target.buildCommand) {
-      const buildOk = await this.runCommandWithRecovery(
-        'build', this.config.target.buildCommand, task, queue,
-      );
-      if (!buildOk) return;
+      if (gateMode === 'enforce') {
+        const buildOk = await this.runCommandWithRecovery(
+          'build', this.config.target.buildCommand, task, queue,
+        );
+        if (!buildOk) return;
+      } else if (gateMode === 'advisory') {
+        const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
+        if (!buildResult.success) {
+          this.logger.warn(
+            `Build check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${buildResult.error ?? 'unknown error'}`,
+          );
+        }
+      }
     }
 
     // c3. Run test command if configured
     if (this.config.target.testCommand) {
-      const testOk = await this.runCommandWithRecovery(
-        'test', this.config.target.testCommand, task, queue,
-      );
-      if (!testOk) return;
+      if (gateMode === 'enforce') {
+        const testOk = await this.runCommandWithRecovery(
+          'test', this.config.target.testCommand, task, queue,
+        );
+        if (!testOk) return;
+      } else if (gateMode === 'advisory') {
+        const testResult = await this.runCommand('test', this.config.target.testCommand, task.id);
+        if (!testResult.success) {
+          this.logger.warn(
+            `Test check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${testResult.error ?? 'unknown error'}`,
+          );
+        }
+      }
     }
 
     // d. Complete task
@@ -1867,6 +1902,36 @@ export class MigrationOrchestrator {
       reason: cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`,
     });
     return false;
+  }
+
+  private getPhase4QualityGateMode(): Phase4QualityGateMode {
+    const policy = this.config.options.qualityPolicy;
+    if (policy === 'strict') return 'enforce';
+    if (policy === 'balanced') return 'advisory';
+    return 'skip';
+  }
+
+  private async runWaveEndQualityGates(): Promise<string | undefined> {
+    const policy = this.config.options.qualityPolicy;
+    this.logger.info(
+      `Running wave-end strict quality gates (qualityPolicy=${policy})`,
+    );
+
+    if (this.config.target.buildCommand) {
+      const buildResult = await this.runCommand('build', this.config.target.buildCommand, 'wave-end');
+      if (!buildResult.success) {
+        return `wave-end build gate failed (${policy}): ${buildResult.error ?? 'unknown error'}`;
+      }
+    }
+
+    if (this.config.target.testCommand) {
+      const testResult = await this.runCommand('test', this.config.target.testCommand, 'wave-end');
+      if (!testResult.success) {
+        return `wave-end test gate failed (${policy}): ${testResult.error ?? 'unknown error'}`;
+      }
+    }
+
+    return undefined;
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────

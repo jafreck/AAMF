@@ -29,6 +29,7 @@ describe('Config Loader', () => {
     expect(config.projectName).toBe('test-project');
     expect(config.source.language).toBe('python');
     expect(config.target.language).toBe('typescript');
+    expect(config.options.qualityPolicy).toBe('strict');
     expect(typeof config.source.path).toBe('string');
     expect(typeof config.target.outputPath).toBe('string');
   });
@@ -122,7 +123,19 @@ describe('Config Loader', () => {
     const config = await loadConfig(configPath);
     expect(config.options.maxParallelAgents).toBe(3);
     expect(config.options.maxRetriesPerTask).toBe(3);
+    expect(config.options.qualityPolicy).toBe('strict');
     expect(config.copilot.timeout).toBe(300_000);
     expect(config.copilot.cliCommand).toBe('copilot');
+  });
+
+  it('should parse an explicit qualityPolicy value', async () => {
+    const configPath = join(tempDir, 'migration.config.json');
+    await writeFile(configPath, JSON.stringify({
+      ...validConfig,
+      options: { qualityPolicy: 'balanced' },
+    }));
+
+    const config = await loadConfig(configPath);
+    expect(config.options.qualityPolicy).toBe('balanced');
   });
 });

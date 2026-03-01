@@ -21,6 +21,7 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.buildConcurrency).toBe(1);
     expect(result.options.continueOnBlocked).toBe(true);
     expect(result.options.maxBlockedTasks).toBe(0);
+    expect(result.options.qualityPolicy).toBe('strict');
     expect(result.options.maxInfraRetries).toBe(3);
     expect(result.options.avgTokensPerTask).toBe(5000);
     expect(result.options.git?.enabled).toBe(true);
@@ -238,6 +239,24 @@ describe('MigrationConfigSchema', () => {
         options: { maxBlockedTasks: 5 },
       });
       expect(result.options.maxBlockedTasks).toBe(5);
+    });
+
+    it('should accept valid qualityPolicy values', () => {
+      for (const qualityPolicy of ['strict', 'balanced', 'deferred-strict'] as const) {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { qualityPolicy },
+        });
+        expect(result.options.qualityPolicy).toBe(qualityPolicy);
+      }
+    });
+
+    it('should reject invalid qualityPolicy values', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { qualityPolicy: 'lenient' },
+      });
+      expect(result.success).toBe(false);
     });
 
     it('should reject maxInfraRetries above 10', () => {
