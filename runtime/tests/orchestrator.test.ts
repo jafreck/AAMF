@@ -868,7 +868,7 @@ describe('MigrationOrchestrator', () => {
         if (inv.agent === 'code-migrator') {
           return { exitCode: 1, success: false, error: 'Code migration failed' };
         }
-        if (inv.agent === 'failure-recovery') {
+        if (inv.agent === 'failure-adjudicator') {
           return { exitCode: 1, success: false, error: 'Recovery failed' };
         }
         return {};
@@ -1657,7 +1657,7 @@ describe('MigrationOrchestrator', () => {
         if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
           return { exitCode: 1, success: false, error: 'Migration failed for task-001' };
         }
-        if (inv.agent === 'failure-recovery') {
+        if (inv.agent === 'failure-adjudicator') {
           return { exitCode: 1, success: false, error: 'Recovery failed' };
         }
         return {};
@@ -1777,7 +1777,7 @@ describe('MigrationOrchestrator', () => {
       expect(Array.isArray(retryContext.payload?.remediationContext?.artifactPaths)).toBe(true);
     });
 
-    it('should invoke failure-recovery when parity-verifier finds critical issues', async () => {
+    it('should invoke failure-adjudicator when parity-verifier finds critical issues', async () => {
       let parityCallCount = 0;
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'parity-verifier') {
@@ -1931,9 +1931,9 @@ describe('MigrationOrchestrator', () => {
 
       const result = await orchestrator.run();
 
-      // No failure-recovery should be invoked for parity
+      // No failure-adjudicator should be invoked for parity
       const recoveryForParity = mockLauncher.invocations.filter(
-        (i) => i.agent === 'failure-recovery' && i.phase === 4,
+        (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
       );
       expect(recoveryForParity).toHaveLength(0);
       expect(result.success).toBe(true);
@@ -3551,7 +3551,7 @@ describe('MigrationOrchestrator', () => {
       await writeMigrationPlan(progressDir);
       await orchestrator.run();
 
-      // No code-migrator invocation should have a modelOverride (except failure-recovery)
+      // No code-migrator invocation should have a modelOverride (except failure-adjudicator)
       const migratorInvocations = mockLauncher.invocations.filter(
         (inv: AgentInvocation) => inv.agent === 'code-migrator',
       );
