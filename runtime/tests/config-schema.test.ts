@@ -119,6 +119,59 @@ describe('MigrationConfigSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('should accept supported target.barrierTemplates entries', () => {
+    const result = MigrationConfigSchema.parse({
+      ...validConfig,
+      target: {
+        ...validConfig.target,
+        buildCommand: 'npm run build',
+        testCommand: 'npm run test',
+        barrierTemplates: {
+          'intra-wave-sanity': { buildCommand: 'npm run lint', testCommand: 'npm run test:fast' },
+          'wave-end': { buildCommand: 'npm run build:ci' },
+          'parity-gate': { testCommand: 'npm run parity' },
+        },
+      },
+    });
+
+    expect(result.target.buildCommand).toBe('npm run build');
+    expect(result.target.testCommand).toBe('npm run test');
+    expect(result.target.barrierTemplates?.['intra-wave-sanity']).toEqual({
+      buildCommand: 'npm run lint',
+      testCommand: 'npm run test:fast',
+    });
+    expect(result.target.barrierTemplates?.['wave-end']).toEqual({ buildCommand: 'npm run build:ci' });
+    expect(result.target.barrierTemplates?.['parity-gate']).toEqual({ testCommand: 'npm run parity' });
+  });
+
+  it('should reject unknown barrierTemplates keys', () => {
+    const result = MigrationConfigSchema.safeParse({
+      ...validConfig,
+      target: {
+        ...validConfig.target,
+        barrierTemplates: {
+          'unknown-barrier': { buildCommand: 'npm run build' },
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('should allow target build and test commands without barrierTemplates', () => {
+    const result = MigrationConfigSchema.parse({
+      ...validConfig,
+      target: {
+        ...validConfig.target,
+        buildCommand: 'npm run build',
+        testCommand: 'npm run test',
+      },
+    });
+
+    expect(result.target.buildCommand).toBe('npm run build');
+    expect(result.target.testCommand).toBe('npm run test');
+    expect(result.target.barrierTemplates).toBeUndefined();
+  });
+
   describe('Additional Validation', () => {
     it('should accept copilot.failureRecoveryModel override', () => {
       const result = MigrationConfigSchema.parse({

@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+const BarrierTemplateSchema = z.object({
+  buildCommand: z.string().optional(),
+  testCommand: z.string().optional(),
+});
+
+const BarrierTemplatesSchema = z.object({
+  'intra-wave-sanity': BarrierTemplateSchema.optional(),
+  'wave-end': BarrierTemplateSchema.optional(),
+  'parity-gate': BarrierTemplateSchema.optional(),
+}).strict();
+
 export const MigrationConfigSchema = z.object({
   projectName: z.string().min(1).regex(/^[a-z0-9-]+$/),
   agentRuntime: z.enum(['copilot', 'claude-code']).default('copilot'),
@@ -18,6 +29,7 @@ export const MigrationConfigSchema = z.object({
     testFramework: z.string().optional(),
     buildCommand: z.string().optional(),
     testCommand: z.string().optional(),
+    barrierTemplates: BarrierTemplatesSchema.optional(),
   }),
   options: z.object({
     maxParallelAgents: z.number().int().min(1).max(10).default(3),

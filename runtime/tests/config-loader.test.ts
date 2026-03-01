@@ -158,4 +158,44 @@ describe('Config Loader', () => {
     const config = await loadConfig(configPath);
     expect(config.options.qualityPolicy).toBe('balanced');
   });
+
+  it('should load supported target.barrierTemplates values', async () => {
+    const configPath = join(tempDir, 'migration.config.json');
+    await writeFile(configPath, JSON.stringify({
+      ...validConfig,
+      target: {
+        ...validConfig.target,
+        barrierTemplates: {
+          'intra-wave-sanity': { buildCommand: 'npm run lint', testCommand: 'npm run test:fast' },
+          'wave-end': { buildCommand: 'npm run build:ci' },
+          'parity-gate': { testCommand: 'npm run parity' },
+        },
+      },
+    }));
+
+    const config = await loadConfig(configPath);
+    expect(config.target.barrierTemplates?.['intra-wave-sanity']).toEqual({
+      buildCommand: 'npm run lint',
+      testCommand: 'npm run test:fast',
+    });
+    expect(config.target.barrierTemplates?.['wave-end']).toEqual({ buildCommand: 'npm run build:ci' });
+    expect(config.target.barrierTemplates?.['parity-gate']).toEqual({ testCommand: 'npm run parity' });
+  });
+
+  it('should load target build and test commands without barrierTemplates', async () => {
+    const configPath = join(tempDir, 'migration.config.json');
+    await writeFile(configPath, JSON.stringify({
+      ...validConfig,
+      target: {
+        ...validConfig.target,
+        buildCommand: 'npm run build',
+        testCommand: 'npm run test',
+      },
+    }));
+
+    const config = await loadConfig(configPath);
+    expect(config.target.buildCommand).toBe('npm run build');
+    expect(config.target.testCommand).toBe('npm run test');
+    expect(config.target.barrierTemplates).toBeUndefined();
+  });
 });
