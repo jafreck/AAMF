@@ -35,7 +35,19 @@ Create a `migration.config.json` file in your project root. Below is a full refe
     "outputPath": "./migrated",
     "testFramework": "vitest",
     "buildCommand": "npm run build",
-    "testCommand": "npm test"
+    "testCommand": "npm test",
+    "barrierTemplates": {
+      "intra-wave-sanity": {
+        "buildCommand": "npm run build:quick"
+      },
+      "wave-end": {
+        "buildCommand": "npm run build",
+        "testCommand": "npm test"
+      },
+      "parity-gate": {
+        "testCommand": "npm run test:parity"
+      }
+    }
   },
   "options": {
     "maxParallelAgents": 3,
@@ -75,6 +87,7 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | | `testFramework` | Test framework to generate tests for (e.g. `vitest`, `jest`). |
 | | `buildCommand` | Command the runtime executes to verify the build succeeds. |
 | | `testCommand` | Command the runtime executes to run tests. |
+| | `barrierTemplates` | Optional barrier-specific build/test overrides for `intra-wave-sanity`, `wave-end`, and `parity-gate`. Missing commands fall back to `buildCommand`/`testCommand`. |
 | **options** | `maxParallelAgents` | Maximum number of agent processes to run concurrently. Default: `3`. |
 | | `maxRetriesPerTask` | How many times to retry a failed agent task before marking it failed. Default: `3`. |
 | | `executionMode` | Phase 4 scheduler mode: `per-task` (default fallback behavior) or `wave-barrier` (migration/validation waves). Default: `per-task`. |
@@ -155,6 +168,32 @@ In `wave-barrier` mode, each cycle is:
 
 Blocked-task policy (`continueOnBlocked`, `maxBlockedTasks`) is still enforced in wave mode, but evaluated after each wave.
 Wave lifecycle and convergence are observable in `.aamf/migration/{projectName}/progress.md` (**Wave Lifecycle** table) and in observability outputs under `metrics/summary.json` and `reports/observability/report.md`.
+
+#### Barrier Template Mapping (`target.barrierTemplates`)
+
+`wave-barrier` mode resolves validation commands deterministically by barrier type:
+
+- `intra-wave-sanity` → in-wave sanity barrier checks.
+- `wave-end` → strict wave-end build/test gate.
+- `parity-gate` → deferred-strict parity gate checks.
+
+Example:
+
+```json
+{
+  "target": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "barrierTemplates": {
+      "intra-wave-sanity": { "buildCommand": "npm run build:quick" },
+      "wave-end": { "buildCommand": "npm run build", "testCommand": "npm test" },
+      "parity-gate": { "testCommand": "npm run test:parity" }
+    }
+  }
+}
+```
+
+If `barrierTemplates` is omitted, or a selected barrier template omits `buildCommand`/`testCommand`, the runtime falls back to the corresponding global `target.buildCommand` or `target.testCommand`.
 
 ## Project Structure
 

@@ -182,6 +182,8 @@ In both modes, the runtime:
 5. In `wave-barrier`, enforces a quiescent barrier before validation:
     - Runs build/test once per wave
     - If validation fails, runs targeted fix waves and retries until convergence or `waveControl.maxConvergenceIterations`
+    - Barrier mapping is deterministic: `intra-wave-sanity` for in-wave checks, `wave-end` for strict end-of-wave gates, and `parity-gate` for deferred-strict parity checks
+    - If a barrier template command is missing (or `barrierTemplates` is not configured), the runtime falls back to `target.buildCommand` / `target.testCommand` for that barrier command
 6. Tasks that fail all retries/recovery or exceed convergence policy are marked **blocked** (with `continueOnBlocked`/`maxBlockedTasks` policy enforcement)
 7. Emits wave lifecycle and convergence telemetry in `progress.md` and observability reports
 
@@ -326,7 +328,19 @@ Create a `migration.config.json` in your project root:
     "outputPath": "./migrated",
     "testFramework": "vitest",
     "buildCommand": "npm run build",
-    "testCommand": "npm test"
+    "testCommand": "npm test",
+    "barrierTemplates": {
+      "intra-wave-sanity": {
+        "buildCommand": "npm run build:quick"
+      },
+      "wave-end": {
+        "buildCommand": "npm run build",
+        "testCommand": "npm test"
+      },
+      "parity-gate": {
+        "testCommand": "npm run test:parity"
+      }
+    }
   },
   "options": {
     "maxParallelAgents": 3,
