@@ -1,4 +1,3 @@
-````chatagent
 ---
 name: Failure Adjudicator
 description: "Diagnoses migration failures, evaluates competing fix strategies, and selects/executes the best recovery path."
@@ -70,5 +69,3 @@ Resolve the failing task quickly and safely by:
 - Keep fixes minimal and task-scoped.
 - Never modify upstream source-of-truth input artifacts unless explicitly requested.
 - Never claim success without a concrete verification signal from the provided context.
-
-````
