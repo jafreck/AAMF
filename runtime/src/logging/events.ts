@@ -33,6 +33,12 @@ export type RuntimeEvent =
   | { type: 'task-completed'; taskId: string; name: string; duration: number }
   | { type: 'task-failed'; taskId: string; name: string; error: string; attempt: number }
   | { type: 'task-blocked'; taskId: string; name: string; reason: string }
+  | { type: 'wave-started'; wave: number; taskIds: string[] }
+  | { type: 'wave-completed'; wave: number; taskIds: string[]; duration: number }
+  | { type: 'wave-barrier-entered'; wave: number }
+  | { type: 'wave-barrier-released'; wave: number; duration: number }
+  | { type: 'wave-convergence-status'; wave: number; iteration: number; converged: boolean; remainingFailures: number }
+  | { type: 'wave-convergence-limit-reached'; wave: number; maxIterations: number; remainingFailures: number }
   | { type: 'checkpoint-saved'; phase: number; taskId?: string }
   | { type: 'budget-warning'; usage: number; budget: number; percentage: number }
   | { type: 'budget-exceeded'; usage: number; budget: number }

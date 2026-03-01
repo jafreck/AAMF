@@ -137,6 +137,24 @@ describe('ProgressWriter', () => {
     expect(content).toContain('completed successfully');
   });
 
+  it('should render wave lifecycle milestones', async () => {
+    await writer.initialize(config);
+    await writer.appendWaveLifecycle({ wave: 1, milestone: 'started' });
+    await writer.appendWaveLifecycle({
+      wave: 1,
+      milestone: 'convergence',
+      iteration: 2,
+      converged: false,
+      remainingFailures: 1,
+    });
+
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('Wave Lifecycle');
+    expect(content).toContain('| 1 | started |  |');
+    expect(content).toContain('iteration=2');
+    expect(content).toContain('remainingFailures=1');
+  });
+
   it('should not show cumulative duration line on a fresh run (equal to elapsed)', async () => {
     await writer.initialize(config);
     // cumulativeDurationMs is 0 by default; elapsed is also ~0, so no cumulative line

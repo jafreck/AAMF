@@ -423,6 +423,33 @@ describe('RuntimeEvent — existing agent events with correlation fields', () =>
   });
 });
 
+describe('RuntimeEvent — wave lifecycle variants', () => {
+  it('should construct wave-started and wave-completed events', () => {
+    const started: RuntimeEvent = { type: 'wave-started', wave: 1, taskIds: ['task-001', 'task-002'] };
+    const completed: RuntimeEvent = { type: 'wave-completed', wave: 1, taskIds: ['task-001', 'task-002'], duration: 3200 };
+    expect(started.wave).toBe(1);
+    expect(started.taskIds).toEqual(['task-001', 'task-002']);
+    expect(completed.duration).toBe(3200);
+  });
+
+  it('should construct barrier and convergence events', () => {
+    const entered: RuntimeEvent = { type: 'wave-barrier-entered', wave: 2 };
+    const released: RuntimeEvent = { type: 'wave-barrier-released', wave: 2, duration: 900 };
+    const status: RuntimeEvent = {
+      type: 'wave-convergence-status',
+      wave: 2,
+      iteration: 1,
+      converged: false,
+      remainingFailures: 3,
+    };
+    const limit: RuntimeEvent = { type: 'wave-convergence-limit-reached', wave: 2, maxIterations: 3, remainingFailures: 1 };
+    expect(entered.wave).toBe(2);
+    expect(released.duration).toBe(900);
+    expect(status.converged).toBe(false);
+    expect(limit.maxIterations).toBe(3);
+  });
+});
+
 // ─── metric-recorded and report-generated ────────────────────────────────────
 
 describe('RuntimeEvent — metric-recorded', () => {

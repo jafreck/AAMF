@@ -108,4 +108,8 @@ describe('classifyError', () => {
   it('should return undefined for empty string', () => {
     expect(classifyError('')).toBeUndefined();
   });
+
+  it('should return undefined for wave validation convergence errors', () => {
+    expect(classifyError('wave validation failed to converge')).toBeUndefined();
+  });
 });

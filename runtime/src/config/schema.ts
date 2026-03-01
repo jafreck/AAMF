@@ -38,6 +38,23 @@ export const MigrationConfigSchema = z.object({
      */
     buildConcurrency: z.number().int().min(0).max(10).default(1),
     /**
+     * Phase 4 execution strategy.
+     * - `per-task`: existing behavior (migrate + validate task-by-task).
+     * - `wave-barrier`: migrate in waves, then validate between waves.
+     */
+    executionMode: z.enum(['per-task', 'wave-barrier']).default('per-task'),
+    /**
+     * Controls for Phase 4 wave/barrier execution mode.
+     * These values are ignored in `per-task` mode.
+     */
+    waveControl: z.object({
+      waveSize: z.number().int().min(1).default(3),
+      maxConvergenceIterations: z.number().int().min(1).default(3),
+    }).default({
+      waveSize: 3,
+      maxConvergenceIterations: 3,
+    }),
+    /**
      * Whether to continue executing independent tasks when one is blocked.
      * When `true` (default), the orchestrator skips blocked tasks and their
      * dependents, continuing with any remaining ready tasks.
@@ -166,6 +183,11 @@ export const MigrationConfigSchema = z.object({
     resume: false,
     invocationDelayMs: 0,
     buildConcurrency: 1,
+    executionMode: 'per-task',
+    waveControl: {
+      waveSize: 3,
+      maxConvergenceIterations: 3,
+    },
     continueOnBlocked: true,
     maxBlockedTasks: 0,
     maxInfraRetries: 3,
