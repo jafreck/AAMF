@@ -120,7 +120,7 @@ This agent inevitably needs to scan a large codebase. Manage context aggressivel
 
 - This is a **read-only** agent. Do not fix any issues — only report them.
 - Be thorough but systematic — use automated scanning (grep, find, compiler) before manual inspection.
-- The orchestrator will route any failures back through `code-migrator` + `failure-recovery` for fixes.
+- The orchestrator will route any failures back through `code-migrator` + `failure-adjudicator` for fixes.
 - Prioritize issues by severity: missing functionality > stubs > pattern inconsistency.
 
 ## Output Format
@@ -155,7 +155,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
   "buildPassed": true,
   "testsPassed": 147,
   "testsFailed": 3,
-  "notes": "Two stub implementations found in utils/legacy-compat.ts. Three test failures related to timezone handling — routed to failure-recovery."
+  "notes": "Two stub implementations found in utils/legacy-compat.ts. Three test failures related to timezone handling — routed to failure-adjudicator."
 }
 ```
 

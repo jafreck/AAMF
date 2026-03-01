@@ -19,7 +19,7 @@ A framework of 14 single-purpose Copilot agents designed for migrating extremely
 | 11 | Final Parity Checker | `final-parity-checker.prompt.md` | Post-migration completeness audit | ✅ |
 | 12 | E2E Test Crafter | `e2e-test-crafter.agent.md` | Plans E2E test suites, delegates writing to test-writer | — |
 | 13 | Documentation Writer | `documentation-writer.prompt.md` | Documents the migrated codebase | ✅ |
-| 14 | Failure Recovery | `failure-recovery.prompt.md` | Diagnoses failures, plans fixes, reduces scope | — |
+| 14 | Failure Adjudicator | `failure-adjudicator.agent.md` | Diagnoses failures, plans fixes, reduces scope | — |
 
 ## Agent Hierarchy
 
@@ -34,7 +34,7 @@ migration-runner
     ├── code-migrator
     │   ├── parity-verifier ◆
     │   ├── test-writer ◆
-    │   └── failure-recovery
+    │   └── failure-adjudicator
     │       ├── adjudicator ◆
     │       └── migration-planner (re-plan)
     ├── final-parity-checker ◆
@@ -51,7 +51,7 @@ migration-runner
 Phase 1: Impact Assessment ──→ impact-assessor
 Phase 2: Knowledge Base    ──→ knowledge-builder + large-file-analyzer
 Phase 3: Planning          ──→ migration-planner + adjudicator
-Phase 4: Code Migration    ──→ code-migrator ↔ parity-verifier ↔ test-writer ↔ failure-recovery (loop)
+Phase 4: Code Migration    ──→ code-migrator ↔ parity-verifier ↔ test-writer ↔ failure-adjudicator (loop)
 Phase 5: Final Parity      ──→ final-parity-checker (may loop back to Phase 4)
 Phase 6: E2E Tests         ──→ e2e-test-crafter
 Phase 7: Documentation     ──→ documentation-writer
@@ -96,4 +96,4 @@ All progress is tracked in `.aamf/migration/{projectName}/`:
 4. **Parallelizable Read-Only Agents**: Impact assessor, knowledge builder, large file analyzer, parity verifier, and final parity checker can run concurrently.
 5. **Serial Code Writing**: Code migrator and test writer run serially to avoid conflicts.
 6. **Adjudicated Decisions**: Key decisions go through the adjudicator, which evaluates competing proposals.
-7. **Failure Recovery Loop**: Failures trigger diagnosis → competing fix strategies → adjudication → fix attempt → re-verify, with scope reduction as a valid strategy.
+7. **Failure Adjudication Loop**: Failures trigger diagnosis → competing fix strategies → adjudication → fix attempt → re-verify, with scope reduction as a valid strategy.

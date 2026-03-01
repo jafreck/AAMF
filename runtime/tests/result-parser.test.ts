@@ -15,7 +15,7 @@ import {
   CodeMigratorOutput,
   ParityVerifierOutput,
   TestWriterOutput,
-  FailureRecoveryOutput,
+  FailureAdjudicatorOutput,
   FinalParityCheckerOutput,
   E2eTestCrafterOutput,
   DocumentationWriterOutput,
@@ -349,8 +349,8 @@ Here are the tasks:
       expect(() => TestWriterOutput.parse({ status: 'completed', agent: 'test-writer' })).not.toThrow();
     });
 
-    it('should validate FailureRecoveryOutput', () => {
-      expect(() => FailureRecoveryOutput.parse({ status: 'completed', agent: 'failure-recovery' })).not.toThrow();
+    it('should validate FailureAdjudicatorOutput', () => {
+      expect(() => FailureAdjudicatorOutput.parse({ status: 'completed', agent: 'failure-adjudicator' })).not.toThrow();
     });
 
     it('should validate FinalParityCheckerOutput', () => {

@@ -47,7 +47,7 @@ When KB index tooling is available, treat it as the authoritative source of stru
 ### 4. Aggregate Results
 - After all `test-writer` invocations complete, collect their results
 - Run the full E2E test suite to verify tests work together (no conflicts, shared state issues)
-- Report any application-level failures as migration issues for `failure-recovery`
+- Report any application-level failures as migration issues for `failure-adjudicator`
 
 ## Test Scenario Categories
 
@@ -140,7 +140,7 @@ copilot --agent test-writer \
 ## Constraints
 
 - Tests must be runnable against the migrated codebase — no tests against the source.
-- Do not fix application bugs found during E2E testing — report them for `failure-recovery`.
+- Do not fix application bugs found during E2E testing — report them for `failure-adjudicator`.
 - Write practical, maintainable test plans — not exhaustive coverage of every possible input combination.
 - Each suite should be scoped so a single `test-writer` can handle it without context saturation (aim for <10 scenarios per suite).
 - The full E2E suite should run in a reasonable time (<5 minutes if possible).
@@ -189,7 +189,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
   "scenariosTotal": 32,
   "scenariosPassing": 30,
   "scenariosFailing": 2,
-  "notes": "Two failing scenarios in the concurrent-access suite routed to failure-recovery."
+  "notes": "Two failing scenarios in the concurrent-access suite routed to failure-adjudicator."
 }
 ```
 

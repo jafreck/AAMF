@@ -48,7 +48,7 @@ const loadKbServerProcess = () => import('./kb-server-process.js');
  * infrastructure failure rather than a code-quality problem.
  *
  * These errors should be retried with simple backoff — they don't benefit
- * from the expensive failure-recovery agent pipeline.
+ * from the expensive failure-adjudicator agent pipeline.
  */
 const INFRASTRUCTURE_ERROR_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
   // File lock contention (Cargo, NuGet, Gradle, pip, npm, generic)
@@ -1675,7 +1675,7 @@ export class MigrationOrchestrator {
         );
         migratorInv.contextFile = retryContext;
 
-        // Escalate to failure-recovery agent
+        // Escalate to failure-adjudicator agent
         const recoveryCtx = await this.contextBuilder.buildContext(
           'failure-adjudicator',
           4,
@@ -1753,7 +1753,7 @@ export class MigrationOrchestrator {
 
       if (!parityPassed && gateMode === 'enforce') {
         for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
-          // Launch failure-recovery with parity report
+          // Launch failure-adjudicator with parity report
           const parityReportPath = join(
             this.progressDir,
             'parity-reports',
@@ -1795,7 +1795,7 @@ export class MigrationOrchestrator {
           this.recordTokens(recoveryResult, 4);
 
           if (!recoveryResult.success) {
-            this.logger.warn(`Failure-recovery failed for ${task.id} on attempt ${attempt}`);
+            this.logger.warn(`Failure-adjudicator failed for ${task.id} on attempt ${attempt}`);
             continue;
           }
 
@@ -2263,10 +2263,10 @@ export class MigrationOrchestrator {
    *
    * Infrastructure errors (file locks, OOM, network, etc.) are retried with
    * simple exponential backoff and do **not** consume the `maxRetriesPerTask`
-   * budget or invoke the expensive failure-recovery agent.
+   * budget or invoke the expensive failure-adjudicator agent.
    *
    * Genuine code-quality failures go through the full recovery pipeline:
-   * `failure-recovery` → `code-migrator` → re-run command.
+   * `failure-adjudicator` → `code-migrator` → re-run command.
    *
    * After exhausting all retry budgets Phase 4 fails fast with a terminal reason.
    *
@@ -2316,7 +2316,7 @@ export class MigrationOrchestrator {
     // fall through to the code-quality recovery loop (it may still help).
     if (cmdResult.success) return true;
 
-    // Code-quality recovery loop — full failure-recovery → code-migrator pipeline
+    // Code-quality recovery loop — full failure-adjudicator → code-migrator pipeline
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (this.phase4Snapshot) {
         this.phase4Snapshot.commandRecoveryAttempts++;
@@ -2339,7 +2339,7 @@ export class MigrationOrchestrator {
         expectedSuccessCondition: `${label} command succeeds for ${task.id}`,
       });
 
-      // 1. Launch failure-recovery with the error output
+      // 1. Launch failure-adjudicator with the error output
       const recoveryCtx = await this.contextBuilder.buildContext(
         'failure-adjudicator',
         4,
@@ -2359,7 +2359,7 @@ export class MigrationOrchestrator {
       this.recordTokens(recoveryResult, 4);
 
       if (!recoveryResult.success) {
-        this.logger.warn(`Failure-recovery agent failed for ${task.id} on attempt ${attempt}`);
+        this.logger.warn(`Failure-adjudicator agent failed for ${task.id} on attempt ${attempt}`);
         continue;
       }
 
@@ -2740,7 +2740,7 @@ export class MigrationOrchestrator {
       ? this.kbDbPath
       : undefined;
 
-    // Failure-recovery model override takes precedence over routing
+    // Failure-adjudicator model override takes precedence over routing
     const failureRecoveryOverride = agent === 'failure-adjudicator'
       ? this.getFailureRecoveryModel()
       : undefined;
@@ -2749,7 +2749,7 @@ export class MigrationOrchestrator {
     let routingTier: ModelTier | undefined;
     let routingReason: string | undefined;
 
-    // Apply model routing when enabled and no failure-recovery override
+    // Apply model routing when enabled and no failure-adjudicator override
     if (!failureRecoveryOverride && this.config.options.modelRouting?.enabled) {
       const decision = this.applyRoutingCaps(
         this.selectModelForInvocation(task, agent),
