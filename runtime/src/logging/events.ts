@@ -32,11 +32,18 @@ export type RuntimeEvent =
   | { type: 'task-started'; taskId: string; name: string }
   | { type: 'task-completed'; taskId: string; name: string; duration: number }
   | { type: 'task-failed'; taskId: string; name: string; error: string; attempt: number }
-  | { type: 'task-blocked'; taskId: string; name: string; reason: string }
+  | {
+      type: 'task-blocked';
+      taskId: string;
+      name: string;
+      reason: string;
+      barrierType?: 'intra-wave-sanity' | 'wave-end' | 'parity-gate';
+      commandScope?: 'barrier-template' | 'global-fallback';
+    }
   | { type: 'wave-started'; wave: number; taskIds: string[] }
   | { type: 'wave-completed'; wave: number; taskIds: string[]; duration: number }
-  | { type: 'wave-barrier-entered'; wave: number }
-  | { type: 'wave-barrier-released'; wave: number; duration: number }
+  | { type: 'wave-barrier-entered'; wave: number; barrierType?: 'intra-wave-sanity' | 'wave-end' | 'parity-gate' }
+  | { type: 'wave-barrier-released'; wave: number; duration: number; barrierType?: 'intra-wave-sanity' | 'wave-end' | 'parity-gate' }
   | { type: 'wave-convergence-status'; wave: number; iteration: number; converged: boolean; remainingFailures: number }
   | { type: 'wave-convergence-limit-reached'; wave: number; maxIterations: number; remainingFailures: number }
   | { type: 'checkpoint-saved'; phase: number; taskId?: string }

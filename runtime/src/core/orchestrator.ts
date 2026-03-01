@@ -95,6 +95,17 @@ function formatDuration(ms: number): string {
 }
 
 type Phase4QualityGateMode = 'enforce' | 'advisory' | 'skip';
+type BarrierType = 'intra-wave-sanity' | 'wave-end' | 'parity-gate';
+type BarrierCommandScope = 'barrier-template' | 'global-fallback';
+
+interface CommandExecutionContext {
+  barrierType: BarrierType;
+  commandScope: BarrierCommandScope;
+}
+
+interface ResolvedBarrierCommand extends CommandExecutionContext {
+  command?: string;
+}
 
 /** Error thrown when a critical phase fails. */
 export class MigrationError extends Error {
@@ -1211,8 +1222,8 @@ export class MigrationOrchestrator {
 
       this.logger.event({ type: 'wave-completed', wave, taskIds, duration: Date.now() - waveStart });
       await this.progress.appendWaveLifecycle({ wave, milestone: 'completed' });
-      this.logger.event({ type: 'wave-barrier-entered', wave });
-      await this.progress.appendWaveLifecycle({ wave, milestone: 'barrier-entered' });
+      this.logger.event({ type: 'wave-barrier-entered', wave, barrierType: 'intra-wave-sanity' });
+      await this.progress.appendWaveLifecycle({ wave, milestone: 'barrier-entered', barrierType: 'intra-wave-sanity' });
 
       let waveCandidates = migrationResults
         .filter(r => r.result.migrated)
@@ -1222,14 +1233,15 @@ export class MigrationOrchestrator {
       const barrierStart = Date.now();
       let converged = waveCandidates.length > 0;
       let remainingFailures = 0;
+      let lastValidationError: string | undefined;
 
       if (waveCandidates.length > 0) {
         for (let iteration = 1; iteration <= maxConvergenceIterations; iteration++) {
           if (this.phase4Snapshot) {
             this.phase4Snapshot.waveConvergenceIterations++;
           }
-          const validationOk = await this.runWaveValidation(wave);
-          if (validationOk) {
+          const validationResult = await this.runWaveValidation(wave);
+          if (validationResult.success) {
             this.logger.event({
               type: 'wave-convergence-status',
               wave,
@@ -1248,6 +1260,7 @@ export class MigrationOrchestrator {
             remainingFailures = 0;
             break;
           }
+          lastValidationError = validationResult.error;
 
           converged = false;
           remainingFailures = waveCandidates.length;
@@ -1303,7 +1316,7 @@ export class MigrationOrchestrator {
           remainingFailures,
         });
         for (const task of waveCandidates) {
-          await this.blockWaveTask(task, queue, 'wave validation failed to converge');
+          await this.blockWaveTask(task, queue, lastValidationError ?? 'wave validation failed to converge');
         }
       } else {
         for (const task of waveCandidates) {
@@ -1314,8 +1327,8 @@ export class MigrationOrchestrator {
         }
       }
 
-      this.logger.event({ type: 'wave-barrier-released', wave, duration: Date.now() - barrierStart });
-      await this.progress.appendWaveLifecycle({ wave, milestone: 'barrier-released' });
+      this.logger.event({ type: 'wave-barrier-released', wave, duration: Date.now() - barrierStart, barrierType: 'intra-wave-sanity' });
+      await this.progress.appendWaveLifecycle({ wave, milestone: 'barrier-released', barrierType: 'intra-wave-sanity' });
 
       const progress = queue.getProgress();
       const blockedThisWave = progress.blocked - blockedAtWaveStart;
@@ -1645,34 +1658,36 @@ export class MigrationOrchestrator {
     }
 
     // c2. Run build command if configured
-    if (this.config.target.buildCommand) {
+    const parityBuild = this.resolveBarrierCommand('parity-gate', 'build');
+    if (parityBuild.command) {
       if (gateMode === 'enforce') {
         const buildOk = await this.runCommandWithRecovery(
-          'build', this.config.target.buildCommand, task, queue,
+          'build', parityBuild.command, task, queue, parityBuild,
         );
         if (!buildOk) return { migrated: false };
       } else if (gateMode === 'advisory') {
-        const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
+        const buildResult = await this.runCommand('build', parityBuild.command, task.id, parityBuild);
         if (!buildResult.success) {
           this.logger.warn(
-            `Build check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${buildResult.error ?? 'unknown error'}`,
+            `Build check failed for ${task.id} [barrier=parity-gate, scope=${parityBuild.commandScope}], deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${buildResult.error ?? 'unknown error'}`,
           );
         }
       }
     }
 
     // c3. Run test command if configured
-    if (this.config.target.testCommand) {
+    const parityTest = this.resolveBarrierCommand('parity-gate', 'test');
+    if (parityTest.command) {
       if (gateMode === 'enforce') {
         const testOk = await this.runCommandWithRecovery(
-          'test', this.config.target.testCommand, task, queue,
+          'test', parityTest.command, task, queue, parityTest,
         );
         if (!testOk) return { migrated: false };
       } else if (gateMode === 'advisory') {
-        const testResult = await this.runCommand('test', this.config.target.testCommand, task.id);
+        const testResult = await this.runCommand('test', parityTest.command, task.id, parityTest);
         if (!testResult.success) {
           this.logger.warn(
-            `Test check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${testResult.error ?? 'unknown error'}`,
+            `Test check failed for ${task.id} [barrier=parity-gate, scope=${parityTest.commandScope}], deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${testResult.error ?? 'unknown error'}`,
           );
         }
       }
@@ -1684,23 +1699,35 @@ export class MigrationOrchestrator {
     return { migrated: true, durationMs };
   }
 
-  private async runWaveValidation(wave: number): Promise<boolean> {
+  private async runWaveValidation(wave: number): Promise<{ success: boolean; error?: string }> {
     if (this.phase4Snapshot) {
       this.phase4Snapshot.waveValidationRuns++;
     }
     const waveTaskId = `wave-${wave}`;
 
-    if (this.config.target.buildCommand) {
-      const build = await this.runCommand('build', this.config.target.buildCommand, waveTaskId);
-      if (!build.success) return false;
+    const waveBuild = this.resolveBarrierCommand('intra-wave-sanity', 'build');
+    if (waveBuild.command) {
+      const build = await this.runCommand('build', waveBuild.command, waveTaskId, waveBuild);
+      if (!build.success) {
+        return {
+          success: false,
+          error: build.error ?? `build command failed${this.describeBarrierContext(waveBuild)}`,
+        };
+      }
     }
 
-    if (this.config.target.testCommand) {
-      const test = await this.runCommand('test', this.config.target.testCommand, waveTaskId);
-      if (!test.success) return false;
+    const waveTest = this.resolveBarrierCommand('intra-wave-sanity', 'test');
+    if (waveTest.command) {
+      const test = await this.runCommand('test', waveTest.command, waveTaskId, waveTest);
+      if (!test.success) {
+        return {
+          success: false,
+          error: test.error ?? `test command failed${this.describeBarrierContext(waveTest)}`,
+        };
+      }
     }
 
-    return true;
+    return { success: true };
   }
 
   private async blockWaveTask(
@@ -1982,6 +2009,7 @@ export class MigrationOrchestrator {
     label: string,
     command: string,
     taskId: string,
+    context?: CommandExecutionContext,
   ): Promise<{ success: boolean; error?: string; infraError?: string }> {
     if (this.phase4Snapshot) {
       if (label === 'build') this.phase4Snapshot.buildCommandRuns++;
@@ -1989,7 +2017,8 @@ export class MigrationOrchestrator {
     }
     return this.buildLimiter(async () => {
       const timeout = this.config.copilot.timeout;
-      this.logger.info(`Running ${label} command for task ${taskId}: ${command}`);
+      const barrierContext = context ? ` [barrier=${context.barrierType}, scope=${context.commandScope}]` : '';
+      this.logger.info(`Running ${label} command for task ${taskId}${barrierContext}: ${command}`);
 
       try {
         // Use shell mode to handle complex commands
@@ -2011,8 +2040,8 @@ export class MigrationOrchestrator {
 
         if (result.exitCode !== 0 || result.killed) {
           const errorText = result.killed
-            ? `${label} command timed out after ${timeout}ms`
-            : `${label} command failed (exit code ${result.exitCode}): ${result.stderr.slice(0, 500)}`;
+            ? `${label} command timed out after ${timeout}ms${barrierContext}`
+            : `${label} command failed (exit code ${result.exitCode})${barrierContext}: ${result.stderr.slice(0, 500)}`;
           this.logger.error(errorText);
 
           // Classify the error: infrastructure vs. code quality
@@ -2022,10 +2051,11 @@ export class MigrationOrchestrator {
           return { success: false, error: errorText, infraError: infraLabel };
         }
 
-        this.logger.info(`${label} command succeeded for task ${taskId}`);
+        this.logger.info(`${label} command succeeded for task ${taskId}${barrierContext}`);
         return { success: true };
       } catch (err) {
-        const errorText = `${label} command error: ${err instanceof Error ? err.message : String(err)}`;
+        const barrierContext = context ? ` [barrier=${context.barrierType}, scope=${context.commandScope}]` : '';
+        const errorText = `${label} command error${barrierContext}: ${err instanceof Error ? err.message : String(err)}`;
         this.logger.error(errorText);
         const infraLabel = classifyError(errorText);
         return { success: false, error: errorText, infraError: infraLabel };
@@ -2052,12 +2082,13 @@ export class MigrationOrchestrator {
     command: string,
     task: MigrationTask,
     queue: TaskQueue,
+    context: CommandExecutionContext,
   ): Promise<boolean> {
     const maxAttempts = this.config.options.maxRetriesPerTask;
     const maxInfraRetries = this.config.options.maxInfraRetries ?? 3;
 
     // Initial attempt
-    let cmdResult = await this.runCommand(label, command, task.id);
+    let cmdResult = await this.runCommand(label, command, task.id, context);
     if (cmdResult.success) return true;
     const recoveryLoopStartedAt = Date.now();
 
@@ -2070,18 +2101,18 @@ export class MigrationOrchestrator {
       }
       const backoffMs = Math.min(1000 * Math.pow(2, infraAttempt - 1), 30_000);
       this.logger.warn(
-        `${label} failed for ${task.id} with infrastructure error "${cmdResult.infraError}", ` +
-        `infra retry ${infraAttempt}/${maxInfraRetries} (backoff ${backoffMs}ms)`,
+          `${label} failed for ${task.id} [barrier=${context.barrierType}, scope=${context.commandScope}] with infrastructure error "${cmdResult.infraError}", ` +
+          `infra retry ${infraAttempt}/${maxInfraRetries} (backoff ${backoffMs}ms)`,
       );
       await new Promise(resolve => setTimeout(resolve, backoffMs));
 
-      cmdResult = await this.runCommand(label, command, task.id);
+      cmdResult = await this.runCommand(label, command, task.id, context);
       if (cmdResult.success) {
         if (this.phase4Snapshot) {
           this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
         }
         this.logger.info(
-          `${label} recovered for ${task.id} after infra retry ${infraAttempt}`,
+            `${label} recovered for ${task.id} [barrier=${context.barrierType}, scope=${context.commandScope}] after infra retry ${infraAttempt}`,
         );
         return true;
       }
@@ -2097,7 +2128,7 @@ export class MigrationOrchestrator {
         this.phase4Snapshot.commandRecoveryAttempts++;
       }
       this.logger.warn(
-        `${label} failed for ${task.id}, recovery attempt ${attempt}/${maxAttempts}: ${cmdResult.error}`,
+        `${label} failed for ${task.id} [barrier=${context.barrierType}, scope=${context.commandScope}], recovery attempt ${attempt}/${maxAttempts}: ${cmdResult.error}`,
       );
 
       // 1. Launch failure-recovery with the error output
@@ -2146,12 +2177,12 @@ export class MigrationOrchestrator {
       await this.commitForAgent('code-migrator', 4, task.id, task.name);
 
       // 3. Re-run the command
-      cmdResult = await this.runCommand(label, command, task.id);
+      cmdResult = await this.runCommand(label, command, task.id, context);
       if (cmdResult.success) {
         if (this.phase4Snapshot) {
           this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
         }
-        this.logger.info(`${label} recovered for ${task.id} on attempt ${attempt}`);
+        this.logger.info(`${label} recovered for ${task.id} [barrier=${context.barrierType}, scope=${context.commandScope}] on attempt ${attempt}`);
         return true;
       }
     }
@@ -2164,13 +2195,15 @@ export class MigrationOrchestrator {
     queue.markBlocked(task.id);
     await this.checkpoint.blockTask(task.id);
     await this.progress.updateTask(task.id, 'blocked', {
-      error: cmdResult.error,
+      error: `${cmdResult.error ?? `${label} command failed`}${this.describeBarrierContext(context)}`,
     });
     this.logger.event({
       type: 'task-blocked',
       taskId: task.id,
       name: task.name,
-      reason: cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`,
+      reason: `${cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`}${this.describeBarrierContext(context)}`,
+      barrierType: context.barrierType,
+      commandScope: context.commandScope,
     });
     return false;
   }
@@ -2188,21 +2221,44 @@ export class MigrationOrchestrator {
       `Running wave-end strict quality gates (qualityPolicy=${policy})`,
     );
 
-    if (this.config.target.buildCommand) {
-      const buildResult = await this.runCommand('build', this.config.target.buildCommand, 'wave-end');
+    const waveEndBuild = this.resolveBarrierCommand('wave-end', 'build');
+    if (waveEndBuild.command) {
+      const buildResult = await this.runCommand('build', waveEndBuild.command, 'wave-end', waveEndBuild);
       if (!buildResult.success) {
-        return `wave-end build gate failed (${policy}): ${buildResult.error ?? 'unknown error'}`;
+        return `wave-end build gate failed (${policy}) [scope=${waveEndBuild.commandScope}]: ${buildResult.error ?? 'unknown error'}`;
       }
     }
 
-    if (this.config.target.testCommand) {
-      const testResult = await this.runCommand('test', this.config.target.testCommand, 'wave-end');
+    const waveEndTest = this.resolveBarrierCommand('wave-end', 'test');
+    if (waveEndTest.command) {
+      const testResult = await this.runCommand('test', waveEndTest.command, 'wave-end', waveEndTest);
       if (!testResult.success) {
-        return `wave-end test gate failed (${policy}): ${testResult.error ?? 'unknown error'}`;
+        return `wave-end test gate failed (${policy}) [scope=${waveEndTest.commandScope}]: ${testResult.error ?? 'unknown error'}`;
       }
     }
 
     return undefined;
+  }
+
+  private resolveBarrierCommand(
+    barrierType: BarrierType,
+    label: 'build' | 'test',
+  ): ResolvedBarrierCommand {
+    const barrierTemplate = this.config.target.barrierTemplates?.[barrierType];
+    const barrierCommand = label === 'build'
+      ? barrierTemplate?.buildCommand
+      : barrierTemplate?.testCommand;
+    if (barrierCommand) {
+      return { command: barrierCommand, barrierType, commandScope: 'barrier-template' };
+    }
+    const fallbackCommand = label === 'build'
+      ? this.config.target.buildCommand
+      : this.config.target.testCommand;
+    return { command: fallbackCommand, barrierType, commandScope: 'global-fallback' };
+  }
+
+  private describeBarrierContext(context: CommandExecutionContext): string {
+    return ` [barrier=${context.barrierType}, scope=${context.commandScope}]`;
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────

@@ -448,6 +448,28 @@ describe('RuntimeEvent — wave lifecycle variants', () => {
     expect(status.converged).toBe(false);
     expect(limit.maxIterations).toBe(3);
   });
+
+  it('should carry barrierType on wave barrier events when provided', () => {
+    const entered: RuntimeEvent = { type: 'wave-barrier-entered', wave: 2, barrierType: 'intra-wave-sanity' };
+    const released: RuntimeEvent = { type: 'wave-barrier-released', wave: 2, duration: 900, barrierType: 'wave-end' };
+    expect(entered.barrierType).toBe('intra-wave-sanity');
+    expect(released.barrierType).toBe('wave-end');
+  });
+});
+
+describe('RuntimeEvent — task-blocked', () => {
+  it('should support barrierType and commandScope on task-blocked events', () => {
+    const event: RuntimeEvent = {
+      type: 'task-blocked',
+      taskId: 'task-001',
+      name: 'Migrate auth module',
+      reason: 'build command failed',
+      barrierType: 'parity-gate',
+      commandScope: 'barrier-template',
+    };
+    expect(event.barrierType).toBe('parity-gate');
+    expect(event.commandScope).toBe('barrier-template');
+  });
 });
 
 // ─── metric-recorded and report-generated ────────────────────────────────────

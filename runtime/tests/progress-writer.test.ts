@@ -155,6 +155,20 @@ describe('ProgressWriter', () => {
     expect(content).toContain('remainingFailures=1');
   });
 
+  it('should render barrier context details in wave lifecycle milestones', async () => {
+    await writer.initialize(config);
+    await writer.appendWaveLifecycle({
+      wave: 1,
+      milestone: 'barrier-entered',
+      barrierType: 'intra-wave-sanity',
+      commandScope: 'barrier-template',
+    });
+
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('barrierType=intra-wave-sanity');
+    expect(content).toContain('commandScope=barrier-template');
+  });
+
   it('should not show cumulative duration line on a fresh run (equal to elapsed)', async () => {
     await writer.initialize(config);
     // cumulativeDurationMs is 0 by default; elapsed is also ~0, so no cumulative line

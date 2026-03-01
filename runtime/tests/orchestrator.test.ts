@@ -1961,9 +1961,14 @@ describe('MigrationOrchestrator', () => {
 
         const waveEndError = await (orchestrator as any).runWaveEndQualityGates();
 
-        expect(waveEndError).toBe('wave-end build gate failed (balanced): build failed');
+        expect(waveEndError).toBe('wave-end build gate failed (balanced) [scope=global-fallback]: build failed');
         expect(runCommandSpy).toHaveBeenCalledTimes(1);
-        expect(runCommandSpy).toHaveBeenCalledWith('build', 'npm run build', 'wave-end');
+        expect(runCommandSpy).toHaveBeenCalledWith(
+          'build',
+          'npm run build',
+          'wave-end',
+          { barrierType: 'wave-end', commandScope: 'global-fallback', command: 'npm run build' },
+        );
       });
 
       it('should run build and test wave-end gates and return undefined when both pass', async () => {
@@ -1980,8 +1985,55 @@ describe('MigrationOrchestrator', () => {
 
         expect(waveEndError).toBeUndefined();
         expect(runCommandSpy).toHaveBeenCalledTimes(2);
-        expect(runCommandSpy).toHaveBeenNthCalledWith(1, 'build', 'npm run build', 'wave-end');
-        expect(runCommandSpy).toHaveBeenNthCalledWith(2, 'test', 'npm test', 'wave-end');
+        expect(runCommandSpy).toHaveBeenNthCalledWith(
+          1,
+          'build',
+          'npm run build',
+          'wave-end',
+          { barrierType: 'wave-end', commandScope: 'global-fallback', command: 'npm run build' },
+        );
+        expect(runCommandSpy).toHaveBeenNthCalledWith(
+          2,
+          'test',
+          'npm test',
+          'wave-end',
+          { barrierType: 'wave-end', commandScope: 'global-fallback', command: 'npm test' },
+        );
+      });
+
+      it('should use wave-end barrier templates with global fallback when partially configured', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+          options: { qualityPolicy: 'balanced' },
+          target: {
+            buildCommand: 'npm run build',
+            testCommand: 'npm test',
+            barrierTemplates: {
+              'wave-end': { buildCommand: 'pnpm -w build' },
+            },
+          },
+        });
+        const runCommandSpy = vi.spyOn(orchestrator as any, 'runCommand')
+          .mockResolvedValueOnce({ success: true })
+          .mockResolvedValueOnce({ success: true });
+
+        const waveEndError = await (orchestrator as any).runWaveEndQualityGates();
+
+        expect(waveEndError).toBeUndefined();
+        expect(runCommandSpy).toHaveBeenNthCalledWith(
+          1,
+          'build',
+          'pnpm -w build',
+          'wave-end',
+          { barrierType: 'wave-end', commandScope: 'barrier-template', command: 'pnpm -w build' },
+        );
+        expect(runCommandSpy).toHaveBeenNthCalledWith(
+          2,
+          'test',
+          'npm test',
+          'wave-end',
+          { barrierType: 'wave-end', commandScope: 'global-fallback', command: 'npm test' },
+        );
       });
 
       it('should fail phase 4 at wave-end in balanced mode when strict gate command fails', async () => {
@@ -2198,7 +2250,107 @@ describe('MigrationOrchestrator', () => {
       expect(result.success).toBe(true);
       expect(runCommandSpy.mock.calls.filter(c => c[0] === 'build')).toHaveLength(1);
       expect(runCommandSpy.mock.calls.filter(c => c[0] === 'test')).toHaveLength(1);
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        'build',
+        'npm run build',
+        'wave-1',
+        { barrierType: 'intra-wave-sanity', commandScope: 'global-fallback', command: 'npm run build' },
+      );
+      expect(runCommandSpy).toHaveBeenCalledWith(
+        'test',
+        'npm test',
+        'wave-1',
+        { barrierType: 'intra-wave-sanity', commandScope: 'global-fallback', command: 'npm test' },
+      );
       expect(Math.min(...validationStartedAt)).toBeGreaterThanOrEqual(Math.max(...migratorFinishedAt));
+    });
+
+    it('should select parity-gate commands via barrier templates with fallback', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          outputPath: tempDir,
+          buildCommand: 'npm run build',
+          testCommand: 'npm test',
+          barrierTemplates: {
+            'parity-gate': { buildCommand: 'pnpm build:parity' },
+          },
+        },
+        options: {
+          qualityPolicy: 'strict',
+        },
+      });
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const runCommandWithRecoverySpy = vi
+        .spyOn(orchestrator as any, 'runCommandWithRecovery')
+        .mockResolvedValue(true);
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+      expect(runCommandWithRecoverySpy).toHaveBeenCalledWith(
+        'build',
+        'pnpm build:parity',
+        expect.objectContaining({ id: 'task-001' }),
+        expect.anything(),
+        { barrierType: 'parity-gate', commandScope: 'barrier-template', command: 'pnpm build:parity' },
+      );
+      expect(runCommandWithRecoverySpy).toHaveBeenCalledWith(
+        'test',
+        'npm test',
+        expect.objectContaining({ id: 'task-001' }),
+        expect.anything(),
+        { barrierType: 'parity-gate', commandScope: 'global-fallback', command: 'npm test' },
+      );
+    });
+
+    it('should include barrier context when blocking on parity-gate command failures', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, logger, progress } = await setupOrchestrator(tempDir, launcherFn);
+      const queue = { markBlocked: vi.fn() };
+
+      vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({
+        success: false,
+        error: 'build command failed (exit code 1)',
+      });
+      vi.spyOn(orchestrator as any, 'launchAgentWithEvents').mockResolvedValue({
+        agent: 'failure-recovery',
+        taskId: 'task-001',
+        exitCode: 1,
+        success: false,
+        outputFiles: [],
+        duration: 1,
+        outputParsed: false,
+        error: 'recovery failed',
+      });
+      const progressSpy = vi.spyOn(progress, 'updateTask');
+      const eventSpy = vi.spyOn(logger, 'event');
+
+      const ok = await (orchestrator as any).runCommandWithRecovery(
+        'build',
+        'pnpm build:parity',
+        SINGLE_AUTH_TASK,
+        queue as any,
+        { barrierType: 'parity-gate', commandScope: 'barrier-template' },
+      );
+
+      expect(ok).toBe(false);
+      expect(progressSpy).toHaveBeenCalledWith(
+        'task-001',
+        'blocked',
+        expect.objectContaining({
+          error: expect.stringContaining('[barrier=parity-gate, scope=barrier-template]'),
+        }),
+      );
+      expect(eventSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'task-blocked',
+          barrierType: 'parity-gate',
+          commandScope: 'barrier-template',
+        }),
+      );
     });
 
     it('should retry failed wave validation with fix waves until convergence', async () => {

@@ -14,6 +14,8 @@ export interface TaskDetails {
 export interface WaveLifecycleEvent {
   wave: number;
   milestone: 'started' | 'completed' | 'barrier-entered' | 'barrier-released' | 'convergence';
+  barrierType?: 'intra-wave-sanity' | 'wave-end' | 'parity-gate';
+  commandScope?: 'barrier-template' | 'global-fallback';
   iteration?: number;
   converged?: boolean;
   remainingFailures?: number;
@@ -274,6 +276,8 @@ export class ProgressWriter {
       md += `|------|-----------|---------|\n`;
       for (const ev of this.waveLifecycle) {
         const details: string[] = [];
+        if (ev.barrierType !== undefined) details.push(`barrierType=${ev.barrierType}`);
+        if (ev.commandScope !== undefined) details.push(`commandScope=${ev.commandScope}`);
         if (ev.iteration !== undefined) details.push(`iteration=${ev.iteration}`);
         if (ev.converged !== undefined) details.push(`converged=${ev.converged}`);
         if (ev.remainingFailures !== undefined) details.push(`remainingFailures=${ev.remainingFailures}`);
