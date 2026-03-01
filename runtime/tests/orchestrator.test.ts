@@ -2111,6 +2111,171 @@ describe('MigrationOrchestrator', () => {
         expect(log![0]).toContain('6,000');
       }
     });
+
+    it('should keep per-task validation behavior when executionMode is per-task', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['src/b.ts'] },
+      ];
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+          buildCommand: 'npm run build',
+        },
+        options: {
+          executionMode: 'per-task',
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      const runCommandSpy = vi
+        .spyOn(orchestrator as any, 'runCommand')
+        .mockResolvedValue({ success: true });
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+      const buildCalls = runCommandSpy.mock.calls.filter(c => c[0] === 'build');
+      expect(buildCalls).toHaveLength(2);
+    });
+
+    it('should run build/test only after migration wave completion in wave-barrier mode', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
+      ];
+
+      const migratorFinishedAt: number[] = [];
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'code-migrator') {
+          await new Promise(resolve => setTimeout(resolve, 20));
+          migratorFinishedAt.push(Date.now());
+        }
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 20,
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+          buildCommand: 'npm run build',
+          testCommand: 'npm test',
+        },
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { waveSize: 2, maxConvergenceIterations: 2 },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      const validationStartedAt: number[] = [];
+      const runCommandSpy = vi
+        .spyOn(orchestrator as any, 'runCommand')
+        .mockImplementation(async () => {
+          validationStartedAt.push(Date.now());
+          return { success: true };
+        });
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+      expect(runCommandSpy.mock.calls.filter(c => c[0] === 'build')).toHaveLength(1);
+      expect(runCommandSpy.mock.calls.filter(c => c[0] === 'test')).toHaveLength(1);
+      expect(Math.min(...validationStartedAt)).toBeGreaterThanOrEqual(Math.max(...migratorFinishedAt));
+    });
+
+    it('should retry failed wave validation with fix waves until convergence', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
+      ];
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+          buildCommand: 'npm run build',
+        },
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { waveSize: 2, maxConvergenceIterations: 3 },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      let buildAttempts = 0;
+      vi.spyOn(orchestrator as any, 'runCommand').mockImplementation(async (label: string) => {
+        if (label === 'build') {
+          buildAttempts++;
+          return buildAttempts < 2
+            ? { success: false, error: 'build failed' }
+            : { success: true };
+        }
+        return { success: true };
+      });
+
+      const result = await orchestrator.run();
+      const migratorRuns = mockLauncher.invocations.filter(i => i.agent === 'code-migrator' && i.phase === 4);
+
+      expect(result.success).toBe(true);
+      expect(buildAttempts).toBe(2);
+      expect(migratorRuns.length).toBeGreaterThan(2);
+    });
+
+    it('should apply blocked policy at wave granularity in wave-barrier mode', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
+      ];
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+          buildCommand: 'npm run build',
+        },
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { waveSize: 1, maxConvergenceIterations: 1 },
+          continueOnBlocked: false,
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: false, error: 'build failed' });
+
+      const result = await orchestrator.run();
+      const secondTaskRuns = mockLauncher.invocations.filter(i => i.agent === 'code-migrator' && i.taskId === 'task-002');
+
+      expect(result.success).toBe(false);
+      expect(result.blockedTasks).toContain('task-001');
+      expect(secondTaskRuns).toHaveLength(0);
+    });
   });
 
   // ─── ETA Logging ───────────────────────────────────────────────────
@@ -2872,6 +3037,62 @@ describe('MigrationOrchestrator', () => {
       expect(summary).toHaveProperty('totalTokens');
       expect(summary).toHaveProperty('totalCost');
       expect(summary).toHaveProperty('peakParallelInvocations');
+      expect(summary).toHaveProperty('phase4ExecutionMode');
+      expect(summary).toHaveProperty('waveCount');
+      expect(summary).toHaveProperty('buildCommandRuns');
+      expect(summary).toHaveProperty('testCommandRuns');
+      expect(summary).toHaveProperty('recoveryLoopTimeMs');
+      expect(summary).toHaveProperty('buildTestInvocationsPerCompletedTask');
+      expect(summary).toHaveProperty('retryVolumePerCompletedTask');
+    });
+
+    it('should persist per-task phase 4 wave snapshot metrics in summary', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      await orchestrator.run();
+
+      const summaryPath = join(progressDir, 'metrics', 'summary.json');
+      const raw = await readFile(summaryPath, 'utf-8');
+      const summary = JSON.parse(raw);
+      expect(summary.phase4ExecutionMode).toBe('per-task');
+      expect(summary.completedPhase4Tasks).toBe(2);
+      expect(summary.waveCount).toBe(0);
+      expect(summary.waveValidationRuns).toBe(0);
+      expect(summary.buildCommandRuns).toBe(0);
+      expect(summary.testCommandRuns).toBe(0);
+      expect(summary.buildTestInvocationsPerCompletedTask).toBe(0);
+      expect(summary.retryVolumePerCompletedTask).toBe(0);
+    });
+
+    it('should persist wave-barrier convergence metrics in summary', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['src/b.ts'] },
+      ];
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { waveSize: 2, maxConvergenceIterations: 2 },
+        },
+      });
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      await orchestrator.run();
+
+      const summaryPath = join(progressDir, 'metrics', 'summary.json');
+      const raw = await readFile(summaryPath, 'utf-8');
+      const summary = JSON.parse(raw);
+      expect(summary.phase4ExecutionMode).toBe('wave-barrier');
+      expect(summary.completedPhase4Tasks).toBe(2);
+      expect(summary.waveCount).toBeGreaterThanOrEqual(1);
+      expect(summary.waveValidationRuns).toBeGreaterThanOrEqual(1);
+      expect(summary.waveConvergenceIterations).toBeGreaterThanOrEqual(1);
+      expect(summary.waveConvergenceFailures).toBe(0);
+      expect(summary.waveConvergenceLimitHits).toBe(0);
     });
 
     it('should generate observability report at end of run', async () => {

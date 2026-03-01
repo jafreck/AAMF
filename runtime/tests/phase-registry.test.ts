@@ -35,6 +35,7 @@ describe('Phase Registry', () => {
     expect(phase).toBeDefined();
     expect(phase?.id).toBe(4);
     expect(phase?.name).toBe('Iterative Migration');
+    expect(phase?.description).toContain('per-task or wave-barrier mode');
   });
 
   it('should return undefined for invalid phase ID', () => {

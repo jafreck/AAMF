@@ -19,6 +19,9 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.maxRetriesPerTask).toBe(3);
     expect(result.options.dryRun).toBe(false);
     expect(result.options.buildConcurrency).toBe(1);
+    expect(result.options.executionMode).toBe('per-task');
+    expect(result.options.waveControl?.waveSize).toBe(3);
+    expect(result.options.waveControl?.maxConvergenceIterations).toBe(3);
     expect(result.options.continueOnBlocked).toBe(true);
     expect(result.options.maxBlockedTasks).toBe(0);
     expect(result.options.qualityPolicy).toBe('strict');
@@ -391,6 +394,39 @@ describe('MigrationConfigSchema', () => {
       const result = MigrationConfigSchema.safeParse({
         ...validConfig,
         options: { contextWindowStrategy: 'global' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept executionMode of wave-barrier', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { executionMode: 'wave-barrier' },
+      });
+      expect(result.options.executionMode).toBe('wave-barrier');
+      expect(result.options.waveControl).toEqual({ waveSize: 3, maxConvergenceIterations: 3 });
+    });
+
+    it('should reject invalid executionMode', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { executionMode: 'serial-wave' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject waveControl.waveSize less than 1', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { waveControl: { waveSize: 0 } },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject waveControl.maxConvergenceIterations less than 1', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { waveControl: { maxConvergenceIterations: 0 } },
       });
       expect(result.success).toBe(false);
     });

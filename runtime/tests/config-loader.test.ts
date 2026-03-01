@@ -123,9 +123,29 @@ describe('Config Loader', () => {
     const config = await loadConfig(configPath);
     expect(config.options.maxParallelAgents).toBe(3);
     expect(config.options.maxRetriesPerTask).toBe(3);
+    expect(config.options.waveControl).toEqual({ waveSize: 3, maxConvergenceIterations: 3 });
     expect(config.options.qualityPolicy).toBe('strict');
     expect(config.copilot.timeout).toBe(300_000);
     expect(config.copilot.cliCommand).toBe('copilot');
+  });
+
+  it('should preserve wave execution options while resolving paths', async () => {
+    const configPath = join(tempDir, 'migration.config.json');
+    await writeFile(configPath, JSON.stringify({
+      ...validConfig,
+      source: { path: './relative-src', language: 'python' },
+      target: { language: 'typescript', outputPath: './relative-out' },
+      options: {
+        executionMode: 'wave-barrier',
+        waveControl: { waveSize: 4, maxConvergenceIterations: 6 },
+      },
+    }));
+
+    const config = await loadConfig(configPath);
+    expect(config.source.path).toBe(join(tempDir, 'relative-src'));
+    expect(config.target.outputPath).toBe(join(tempDir, 'relative-out'));
+    expect(config.options.executionMode).toBe('wave-barrier');
+    expect(config.options.waveControl).toEqual({ waveSize: 4, maxConvergenceIterations: 6 });
   });
 
   it('should parse an explicit qualityPolicy value', async () => {

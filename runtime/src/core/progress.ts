@@ -11,10 +11,19 @@ export interface TaskDetails {
   error?: string;
 }
 
+export interface WaveLifecycleEvent {
+  wave: number;
+  milestone: 'started' | 'completed' | 'barrier-entered' | 'barrier-released' | 'convergence';
+  iteration?: number;
+  converged?: boolean;
+  remainingFailures?: number;
+}
+
 export class ProgressWriter {
   private phases: Map<number, { name: string; status: string; notes?: string; exitCode?: number; stderr?: string }> = new Map();
   private tasks: Map<string, { status: string; details?: TaskDetails }> = new Map();
   private events: string[] = [];
+  private waveLifecycle: WaveLifecycleEvent[] = [];
   private totalTasks: number = 0;
   private tokenUsage: { total: number; byPhase: Record<number, number>; byAgent: Record<string, number> } = { total: 0, byPhase: {}, byAgent: {} };
   private startTime: Date = new Date();
@@ -120,6 +129,12 @@ export class ProgressWriter {
   async appendEvent(event: string): Promise<void> {
     const timestamp = new Date().toISOString();
     this.events.push(`[${timestamp}] ${event}`);
+    await this.writeCurrentState();
+  }
+
+  /** Append a structured wave lifecycle event. */
+  async appendWaveLifecycle(event: WaveLifecycleEvent): Promise<void> {
+    this.waveLifecycle.push(event);
     await this.writeCurrentState();
   }
 
@@ -249,6 +264,20 @@ export class ProgressWriter {
       md += `## Event Log\n\n`;
       for (const ev of this.events.slice(-50)) { // last 50 events
         md += `- ${ev}\n`;
+      }
+      md += '\n';
+    }
+
+    if (this.waveLifecycle.length > 0) {
+      md += `## Wave Lifecycle\n\n`;
+      md += `| Wave | Milestone | Details |\n`;
+      md += `|------|-----------|---------|\n`;
+      for (const ev of this.waveLifecycle) {
+        const details: string[] = [];
+        if (ev.iteration !== undefined) details.push(`iteration=${ev.iteration}`);
+        if (ev.converged !== undefined) details.push(`converged=${ev.converged}`);
+        if (ev.remainingFailures !== undefined) details.push(`remainingFailures=${ev.remainingFailures}`);
+        md += `| ${ev.wave} | ${ev.milestone} | ${details.join(', ')} |\n`;
       }
       md += '\n';
     }

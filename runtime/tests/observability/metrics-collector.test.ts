@@ -140,6 +140,13 @@ describe('MetricsCollector', () => {
       expect(summary).toHaveProperty('costByAgent');
       expect(summary).toHaveProperty('peakParallelInvocations');
       expect(summary).toHaveProperty('parallelismOverTime');
+      expect(summary).toHaveProperty('phase4ExecutionMode');
+      expect(summary).toHaveProperty('waveCount');
+      expect(summary).toHaveProperty('buildCommandRuns');
+      expect(summary).toHaveProperty('testCommandRuns');
+      expect(summary).toHaveProperty('recoveryLoopTimeMs');
+      expect(summary).toHaveProperty('buildTestInvocationsPerCompletedTask');
+      expect(summary).toHaveProperty('retryVolumePerCompletedTask');
     });
   });
 
@@ -204,6 +211,9 @@ describe('MetricsCollector', () => {
       expect(agg.totalCost).toBe(0);
       expect(agg.peakParallelInvocations).toBe(0);
       expect(agg.parallelismOverTime).toEqual([]);
+      expect(agg.waveCount).toBe(0);
+      expect(agg.buildCommandRuns).toBe(0);
+      expect(agg.buildTestInvocationsPerCompletedTask).toBe(0);
     });
 
     it('should count invocations by agent', () => {
@@ -343,6 +353,58 @@ describe('MetricsCollector', () => {
       expect(agg.escalationsByTier).toEqual({ heavy: 2, critical: 2 });
       expect(agg.totalEscalationCostUsd).toBeCloseTo(0.14, 6);
       expect(agg.retriesAvoidedByRouting).toBe(2);
+    });
+
+    it('should incorporate orchestrator-provided phase 4 wave snapshot fields', () => {
+      collector.record(makeMetric({ phase: 4, taskId: 'task-001', wasRetry: true }));
+      collector.record(makeMetric({ phase: 4, taskId: 'task-002', wasRetry: false }));
+      collector.setPhase4Snapshot({
+        executionMode: 'wave-barrier',
+        phase4DurationMs: 9000,
+        completedTaskCount: 2,
+        waveCount: 1,
+        waveValidationRuns: 2,
+        waveConvergenceIterations: 2,
+        waveConvergenceFailures: 1,
+        waveConvergenceLimitHits: 0,
+        buildCommandRuns: 2,
+        testCommandRuns: 1,
+        commandRecoveryAttempts: 1,
+        commandInfraRetries: 1,
+        recoveryLoopTimeMs: 1200,
+      });
+
+      const agg = collector.getAggregates();
+      expect(agg.phase4ExecutionMode).toBe('wave-barrier');
+      expect(agg.phase4DurationMs).toBe(9000);
+      expect(agg.completedPhase4Tasks).toBe(2);
+      expect(agg.waveCount).toBe(1);
+      expect(agg.waveValidationRuns).toBe(2);
+      expect(agg.waveConvergenceIterations).toBe(2);
+      expect(agg.waveConvergenceFailures).toBe(1);
+      expect(agg.buildCommandRuns).toBe(2);
+      expect(agg.testCommandRuns).toBe(1);
+      expect(agg.commandRecoveryAttempts).toBe(1);
+      expect(agg.commandInfraRetries).toBe(1);
+      expect(agg.recoveryLoopTimeMs).toBe(1200);
+      expect(agg.buildTestInvocationsPerCompletedTask).toBeCloseTo(1.5, 6);
+      expect(agg.retryVolumePerCompletedTask).toBeCloseTo(0.5, 6);
+    });
+
+    it('should derive phase 4 completion metrics from non-wave task IDs when no snapshot is set', () => {
+      collector.record(makeMetric({ phase: 4, taskId: 'task-001', wasRetry: false }));
+      collector.record(makeMetric({ phase: 4, taskId: 'task-001', wasRetry: true }));
+      collector.record(makeMetric({ phase: 4, taskId: 'task-002', wasRetry: false }));
+      collector.record(makeMetric({ phase: 4, taskId: 'wave-1', wasRetry: false }));
+      collector.record(makeMetric({ phase: 4, taskId: '   ', wasRetry: false }));
+
+      const agg = collector.getAggregates();
+      expect(agg.phase4ExecutionMode).toBe('unknown');
+      expect(agg.completedPhase4Tasks).toBe(2);
+      expect(agg.buildCommandRuns).toBe(0);
+      expect(agg.testCommandRuns).toBe(0);
+      expect(agg.buildTestInvocationsPerCompletedTask).toBe(0);
+      expect(agg.retryVolumePerCompletedTask).toBeCloseTo(0.5, 6);
     });
 
     it('should count zero escalations when all metrics have normal tier', () => {

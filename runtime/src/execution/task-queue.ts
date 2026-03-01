@@ -41,6 +41,16 @@ export class TaskQueue {
     this.completed.add(taskId);
   }
 
+  /** Check whether a task is completed. */
+  isTaskCompleted(taskId: string): boolean {
+    return this.completed.has(taskId);
+  }
+
+  /** Check whether a task is blocked. */
+  isTaskBlocked(taskId: string): boolean {
+    return this.blocked.has(taskId);
+  }
+
   /** Get tasks that are ready to execute (all dependencies satisfied). */
   getReady(): MigrationTask[] {
     const ready: MigrationTask[] = [];
@@ -94,6 +104,43 @@ export class TaskQueue {
 
     for (const task of tasks) visit(task.id);
     return result;
+  }
+
+  /**
+   * Select a non-overlapping batch from ready tasks.
+   *
+   * Tasks are considered overlapping when they share either a target file or
+   * a target directory.
+   */
+  static selectNonOverlappingBatch(
+    readyTasks: MigrationTask[],
+    maxBatchSize: number,
+  ): MigrationTask[] {
+    const batch: MigrationTask[] = [];
+    const claimedFiles = new Set<string>();
+    const claimedDirs = new Set<string>();
+
+    for (const task of readyTasks) {
+      if (batch.length >= maxBatchSize) break;
+
+      const hasFileOverlap = task.targetFiles.some(f => claimedFiles.has(f));
+      if (hasFileOverlap) continue;
+
+      const taskDirs = new Set(
+        task.targetFiles.map(f => {
+          const lastSlash = f.lastIndexOf('/');
+          return lastSlash >= 0 ? f.substring(0, lastSlash) : '.';
+        }),
+      );
+      const hasDirOverlap = [...taskDirs].some(d => claimedDirs.has(d));
+      if (hasDirOverlap) continue;
+
+      batch.push(task);
+      for (const f of task.targetFiles) claimedFiles.add(f);
+      for (const d of taskDirs) claimedDirs.add(d);
+    }
+
+    return batch;
   }
 
   /** Get all task IDs. */

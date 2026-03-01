@@ -28,20 +28,16 @@ import { CostEstimator } from '../budget/cost-estimator.js';
 import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite, readJson, ensureDir } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
-import {
-  IndexBuilder,
-  openDb,
-  computeSourceFingerprint,
-  getKbFingerprint,
-  SentenceTransformersProvider,
-  type EmbeddingProvider,
-  ensurePythonDeps,
-} from '@aamf/lore';
-import { KbServerProcess } from './kb-server-process.js';
+import type { EmbeddingProvider } from '@aamf/lore';
+import type { KbServerProcess } from './kb-server-process.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
+import type { Phase4MetricsSnapshot } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
 import type { InvocationMetric } from '../agents/types.js';
 import { z } from 'zod';
+
+const loadLore = () => import('@aamf/lore');
+const loadKbServerProcess = () => import('./kb-server-process.js');
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
 
@@ -173,6 +169,8 @@ export class MigrationOrchestrator {
   private readonly _routedTaskIds = new Set<string>();
   /** Cumulative projected escalation cost (USD) for this run. */
   private _escalationCostUsd = 0;
+  /** Phase 4 observability counters (set while Phase 4 is active). */
+  private phase4Snapshot?: Phase4MetricsSnapshot;
 
   constructor(
     private readonly config: MigrationConfig,
@@ -492,6 +490,7 @@ export class MigrationOrchestrator {
   async executePhase0(start: number = Date.now()): Promise<PhaseResult> {
     const sourceRoot = resolve(this.projectRoot, this.config.source.path);
     this.logger.info(`Building KB index at ${this.kbDbPath} (source: ${sourceRoot})`);
+    const lore = await loadLore();
 
     // Optionally set up the embedding provider for semantic search.
     const embCfg = this.config.options.kbIndex?.embeddings;
@@ -500,7 +499,7 @@ export class MigrationOrchestrator {
       const model = embCfg.model ?? 'Qwen/Qwen3-Embedding-0.6B';
       this.logger.info(`Embeddings enabled — ensuring Python deps (python: ${pythonBin}, model: ${model})`);
       try {
-        await ensurePythonDeps(pythonBin);
+        await lore.ensurePythonDeps(pythonBin);
       } catch (err) {
         this.logger.warn(
           `Failed to install Python embedding deps — embeddings will be skipped: ${
@@ -508,7 +507,7 @@ export class MigrationOrchestrator {
           }`,
         );
       }
-      this.embedder = new SentenceTransformersProvider(model, pythonBin);
+      this.embedder = new lore.SentenceTransformersProvider(model, pythonBin);
       try {
         await this.embedder.init();
         this.logger.info(`Embedding model loaded — dims: ${this.embedder.dims}`);
@@ -524,20 +523,20 @@ export class MigrationOrchestrator {
     }
 
     const walkerConfig = { rootDir: sourceRoot };
-    const builder = new IndexBuilder(this.kbDbPath, walkerConfig, this.embedder);
+    const builder = new lore.IndexBuilder(this.kbDbPath, walkerConfig, this.embedder);
 
     // ── Fingerprint guard: skip re-indexing if the KB already matches ──
     // Pass the same walkerConfig used by IndexBuilder so the fingerprints match.
-    const currentFingerprint = computeSourceFingerprint(
+    const currentFingerprint = lore.computeSourceFingerprint(
       sourceRoot,
       walkerConfig as { includeGlobs?: string[]; excludeGlobs?: string[] },
       this.embedder?.modelName,
     );
     if (await fileExists(this.kbDbPath)) {
       try {
-        const db = openDb(this.kbDbPath);
+        const db = lore.openDb(this.kbDbPath);
         try {
-          const storedFingerprint = getKbFingerprint(db);
+          const storedFingerprint = lore.getKbFingerprint(db);
           if (storedFingerprint && storedFingerprint === currentFingerprint) {
             this.logger.info('Phase 0 reused/skipped — KB fingerprint matches current config');
             const checkpointState = this.checkpoint.getState();
@@ -608,6 +607,7 @@ export class MigrationOrchestrator {
 
   /** Start the KB MCP server (HTTP transport). */
   private async startKbServer(): Promise<void> {
+    const { KbServerProcess } = await loadKbServerProcess();
     this.kbServer = new KbServerProcess(this.kbDbPath, this.embedder);
     try {
       await this.kbServer.start();
@@ -1043,6 +1043,39 @@ export class MigrationOrchestrator {
 
     const continueOnBlocked = this.config.options.continueOnBlocked ?? true;
     const maxBlockedTasks = this.config.options.maxBlockedTasks ?? 0; // 0 = unlimited
+    const executionMode = this.config.options.executionMode ?? 'per-task';
+    const waveControl = this.config.options.waveControl ?? { waveSize: 3, maxConvergenceIterations: 3 };
+    const phase4Parallelism = this.isGitAutomationEnabled()
+      ? 1
+      : this.config.options.maxParallelAgents;
+    this.phase4Snapshot = {
+      executionMode,
+      phase4DurationMs: 0,
+      completedTaskCount: 0,
+      waveCount: 0,
+      waveValidationRuns: 0,
+      waveConvergenceIterations: 0,
+      waveConvergenceFailures: 0,
+      waveConvergenceLimitHits: 0,
+      buildCommandRuns: 0,
+      testCommandRuns: 0,
+      commandRecoveryAttempts: 0,
+      commandInfraRetries: 0,
+      recoveryLoopTimeMs: 0,
+    };
+
+    if (executionMode === 'wave-barrier') {
+      return this.executePhase4WaveBarrier(
+        start,
+        queue,
+        retryExec,
+        completedDurationsMs,
+        continueOnBlocked,
+        maxBlockedTasks,
+        Math.max(1, Math.min(waveControl.waveSize, phase4Parallelism)),
+        waveControl.maxConvergenceIterations,
+      );
+    }
 
     while (!queue.isComplete()) {
       const readyTasks = queue.getReady();
@@ -1060,11 +1093,7 @@ export class MigrationOrchestrator {
       }
 
       // Select non-overlapping batch for parallel execution
-      const phase4Parallelism = this.isGitAutomationEnabled()
-        ? 1
-        : this.config.options.maxParallelAgents;
-
-      const batch = MigrationOrchestrator.selectNonOverlappingBatch(
+      const batch = TaskQueue.selectNonOverlappingBatch(
         readyTasks,
         phase4Parallelism,
       );
@@ -1098,6 +1127,13 @@ export class MigrationOrchestrator {
 
     const finalProgress = queue.getProgress();
     const deadlocked = finalProgress.remaining > 0;
+    if (this.phase4Snapshot) {
+      this.phase4Snapshot.phase4DurationMs = Date.now() - start;
+      this.phase4Snapshot.completedTaskCount = finalProgress.completed;
+      this.metricsCollector.setPhase4Snapshot(this.phase4Snapshot);
+      this.phase4Snapshot = undefined;
+    }
+
     let waveEndGateError: string | undefined;
     const gateMode = this.getPhase4QualityGateMode();
     if (!deadlocked && finalProgress.blocked === 0 && gateMode !== 'enforce') {
@@ -1122,46 +1158,207 @@ export class MigrationOrchestrator {
 
   // ─── Phase 4 Helpers ─────────────────────────────────────────────────
 
-  /**
-   * Select a batch of tasks from the ready list that don't share target files
-   * or target directories.
-   *
-   * Tasks sharing target files must run sequentially to avoid write conflicts.
-   * Tasks sharing a common output directory are also considered overlapping
-   * because build systems (Cargo, MSBuild, Go, Gradle, etc.) typically hold
-   * directory-level locks on artifact/build-cache paths.
-   */
-  private static selectNonOverlappingBatch(
-    readyTasks: MigrationTask[],
-    maxBatchSize: number,
-  ): MigrationTask[] {
-    const batch: MigrationTask[] = [];
-    const claimedFiles = new Set<string>();
-    const claimedDirs = new Set<string>();
+  private async executePhase4WaveBarrier(
+    start: number,
+    queue: TaskQueue,
+    retryExec: RetryExecutor,
+    completedDurationsMs: number[],
+    continueOnBlocked: boolean,
+    maxBlockedTasks: number,
+    waveSize: number,
+    maxConvergenceIterations: number,
+  ): Promise<PhaseResult> {
+    let wave = 0;
+    const taskStartTimes = new Map<string, number>();
 
-    for (const task of readyTasks) {
-      if (batch.length >= maxBatchSize) break;
+    while (!queue.isComplete()) {
+      const readyTasks = queue.getReady();
+      if (readyTasks.length === 0) {
+        const progress = queue.getProgress();
+        if (progress.blocked > 0 && progress.remaining > 0) {
+          this.logger.error(
+            `Deadlock: ${progress.remaining} task(s) remain but none are ready ` +
+            `(${progress.blocked} blocked — their dependents cannot proceed)`,
+          );
+        } else if (progress.remaining > 0) {
+          this.logger.error('Deadlock: no tasks are ready but queue is not complete');
+        }
+        break;
+      }
 
-      // Check file-level overlap
-      const hasFileOverlap = task.targetFiles.some(f => claimedFiles.has(f));
-      if (hasFileOverlap) continue;
+      const blockedAtWaveStart = queue.getProgress().blocked;
+      const waveTasks = TaskQueue.selectNonOverlappingBatch(readyTasks, waveSize);
+      wave++;
+      if (this.phase4Snapshot) {
+        this.phase4Snapshot.waveCount++;
+      }
+      const waveStart = Date.now();
 
-      // Check directory-level overlap: extract parent dir from each target file
-      const taskDirs = new Set(
-        task.targetFiles.map(f => {
-          const lastSlash = f.lastIndexOf('/');
-          return lastSlash >= 0 ? f.substring(0, lastSlash) : '.';
+      const taskIds = waveTasks.map(t => t.id);
+      this.logger.info(`Wave ${wave}: migrating ${waveTasks.length} task(s) (${readyTasks.length} ready)`);
+      this.logger.event({ type: 'wave-started', wave, taskIds });
+      await this.progress.appendWaveLifecycle({ wave, milestone: 'started' });
+
+      const migrationResults = await Promise.all(
+        waveTasks.map(async task => {
+          if (!taskStartTimes.has(task.id)) {
+            taskStartTimes.set(task.id, Date.now());
+          }
+          const result = await this.executeTask(task, retryExec, queue, completedDurationsMs, 'wave-migration');
+          return { task, result };
         }),
       );
-      const hasDirOverlap = [...taskDirs].some(d => claimedDirs.has(d));
-      if (hasDirOverlap) continue;
 
-      batch.push(task);
-      for (const f of task.targetFiles) claimedFiles.add(f);
-      for (const d of taskDirs) claimedDirs.add(d);
+      this.logger.event({ type: 'wave-completed', wave, taskIds, duration: Date.now() - waveStart });
+      await this.progress.appendWaveLifecycle({ wave, milestone: 'completed' });
+      this.logger.event({ type: 'wave-barrier-entered', wave });
+      await this.progress.appendWaveLifecycle({ wave, milestone: 'barrier-entered' });
+
+      let waveCandidates = migrationResults
+        .filter(r => r.result.migrated)
+        .map(r => r.task)
+        .filter(t => !queue.isTaskBlocked(t.id));
+
+      const barrierStart = Date.now();
+      let converged = waveCandidates.length > 0;
+      let remainingFailures = 0;
+
+      if (waveCandidates.length > 0) {
+        for (let iteration = 1; iteration <= maxConvergenceIterations; iteration++) {
+          if (this.phase4Snapshot) {
+            this.phase4Snapshot.waveConvergenceIterations++;
+          }
+          const validationOk = await this.runWaveValidation(wave);
+          if (validationOk) {
+            this.logger.event({
+              type: 'wave-convergence-status',
+              wave,
+              iteration,
+              converged: true,
+              remainingFailures: 0,
+            });
+            await this.progress.appendWaveLifecycle({
+              wave,
+              milestone: 'convergence',
+              iteration,
+              converged: true,
+              remainingFailures: 0,
+            });
+            converged = true;
+            remainingFailures = 0;
+            break;
+          }
+
+          converged = false;
+          remainingFailures = waveCandidates.length;
+          if (this.phase4Snapshot) {
+            this.phase4Snapshot.waveConvergenceFailures++;
+          }
+          this.logger.event({
+            type: 'wave-convergence-status',
+            wave,
+            iteration,
+            converged: false,
+            remainingFailures,
+          });
+          await this.progress.appendWaveLifecycle({
+            wave,
+            milestone: 'convergence',
+            iteration,
+            converged: false,
+            remainingFailures,
+          });
+
+          if (iteration >= maxConvergenceIterations) {
+            break;
+          }
+
+          this.logger.warn(
+            `Wave ${wave} validation failed, running fix wave iteration ${iteration}/${maxConvergenceIterations}`,
+          );
+
+          const fixResults = await Promise.all(
+            waveCandidates.map(task => this.executeTask(task, retryExec, queue, completedDurationsMs, 'wave-migration')),
+          );
+          waveCandidates = waveCandidates.filter((task, index) => {
+            const fix = fixResults[index];
+            return !!fix?.migrated && !queue.isTaskBlocked(task.id);
+          });
+
+          if (waveCandidates.length === 0) {
+            remainingFailures = 0;
+            break;
+          }
+        }
+      }
+
+      if (!converged && waveCandidates.length > 0) {
+        if (this.phase4Snapshot) {
+          this.phase4Snapshot.waveConvergenceLimitHits++;
+        }
+        this.logger.event({
+          type: 'wave-convergence-limit-reached',
+          wave,
+          maxIterations: maxConvergenceIterations,
+          remainingFailures,
+        });
+        for (const task of waveCandidates) {
+          await this.blockWaveTask(task, queue, 'wave validation failed to converge');
+        }
+      } else {
+        for (const task of waveCandidates) {
+          if (queue.isTaskCompleted(task.id) || queue.isTaskBlocked(task.id)) continue;
+          const startedAt = taskStartTimes.get(task.id) ?? waveStart;
+          const durationMs = Date.now() - startedAt;
+          await this.completePhase4Task(task, queue, completedDurationsMs, durationMs);
+        }
+      }
+
+      this.logger.event({ type: 'wave-barrier-released', wave, duration: Date.now() - barrierStart });
+      await this.progress.appendWaveLifecycle({ wave, milestone: 'barrier-released' });
+
+      const progress = queue.getProgress();
+      const blockedThisWave = progress.blocked - blockedAtWaveStart;
+      if (blockedThisWave > 0) {
+        if (!continueOnBlocked) {
+          this.logger.error(
+            `${progress.blocked} task(s) blocked after wave ${wave} — halting Phase 4 (continueOnBlocked=false)`,
+          );
+          break;
+        }
+        if (maxBlockedTasks > 0 && progress.blocked >= maxBlockedTasks) {
+          this.logger.error(
+            `${progress.blocked} task(s) blocked — reached maxBlockedTasks (${maxBlockedTasks}), halting Phase 4`,
+          );
+          break;
+        }
+        this.logger.warn(
+          `${progress.blocked} task(s) blocked after wave ${wave}, continuing with remaining ready tasks`,
+        );
+      }
     }
 
-    return batch;
+    const finalProgress = queue.getProgress();
+    const deadlocked = finalProgress.remaining > 0;
+    if (this.phase4Snapshot) {
+      this.phase4Snapshot.phase4DurationMs = Date.now() - start;
+      this.phase4Snapshot.completedTaskCount = finalProgress.completed;
+      this.metricsCollector.setPhase4Snapshot(this.phase4Snapshot);
+      this.phase4Snapshot = undefined;
+    }
+    return {
+      phase: 4,
+      name: 'Iterative Migration',
+      success: finalProgress.blocked === 0 && !deadlocked,
+      outputPath: this.config.target.outputPath,
+      duration: Date.now() - start,
+      error:
+        deadlocked
+          ? `${finalProgress.remaining} task(s) deadlocked — unresolvable dependencies`
+          : finalProgress.blocked > 0
+            ? `${finalProgress.blocked} task(s) blocked after max retries`
+            : undefined,
+    };
   }
 
   private async executeTask(
@@ -1169,7 +1366,8 @@ export class MigrationOrchestrator {
     retryExec: RetryExecutor,
     queue: TaskQueue,
     completedDurationsMs: number[],
-  ): Promise<void> {
+    mode: 'per-task' | 'wave-migration' = 'per-task',
+  ): Promise<{ migrated: boolean; durationMs?: number }> {
     this.logger.event({ type: 'task-started', taskId: task.id, name: task.name });
     await this.checkpoint.setCurrentTask(task.id);
     await this.progress.updateTask(task.id, 'in-progress');
@@ -1289,7 +1487,7 @@ export class MigrationOrchestrator {
         name: task.name,
         reason: migratorResult.error ?? 'max retries exceeded',
       });
-      return;
+      return { migrated: false };
     }
 
     await this.commitForAgent('code-migrator', 4, task.id, task.name);
@@ -1429,7 +1627,7 @@ export class MigrationOrchestrator {
               name: task.name,
               reason: 'parity verification failed with non-minor issues',
             });
-            return;
+            return { migrated: false };
           }
           this.logger.info(
             `Parity for ${task.id} has only minor issues after retries, proceeding`,
@@ -1442,13 +1640,17 @@ export class MigrationOrchestrator {
       }
     }
 
+    if (mode === 'wave-migration') {
+      return { migrated: true, durationMs: Date.now() - taskStartMs };
+    }
+
     // c2. Run build command if configured
     if (this.config.target.buildCommand) {
       if (gateMode === 'enforce') {
         const buildOk = await this.runCommandWithRecovery(
           'build', this.config.target.buildCommand, task, queue,
         );
-        if (!buildOk) return;
+        if (!buildOk) return { migrated: false };
       } else if (gateMode === 'advisory') {
         const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
         if (!buildResult.success) {
@@ -1465,7 +1667,7 @@ export class MigrationOrchestrator {
         const testOk = await this.runCommandWithRecovery(
           'test', this.config.target.testCommand, task, queue,
         );
-        if (!testOk) return;
+        if (!testOk) return { migrated: false };
       } else if (gateMode === 'advisory') {
         const testResult = await this.runCommand('test', this.config.target.testCommand, task.id);
         if (!testResult.success) {
@@ -1478,6 +1680,53 @@ export class MigrationOrchestrator {
 
     // d. Complete task
     const durationMs = Date.now() - taskStartMs;
+    await this.completePhase4Task(task, queue, completedDurationsMs, durationMs, migratorResult.duration);
+    return { migrated: true, durationMs };
+  }
+
+  private async runWaveValidation(wave: number): Promise<boolean> {
+    if (this.phase4Snapshot) {
+      this.phase4Snapshot.waveValidationRuns++;
+    }
+    const waveTaskId = `wave-${wave}`;
+
+    if (this.config.target.buildCommand) {
+      const build = await this.runCommand('build', this.config.target.buildCommand, waveTaskId);
+      if (!build.success) return false;
+    }
+
+    if (this.config.target.testCommand) {
+      const test = await this.runCommand('test', this.config.target.testCommand, waveTaskId);
+      if (!test.success) return false;
+    }
+
+    return true;
+  }
+
+  private async blockWaveTask(
+    task: MigrationTask,
+    queue: TaskQueue,
+    reason: string,
+  ): Promise<void> {
+    if (queue.isTaskBlocked(task.id) || queue.isTaskCompleted(task.id)) return;
+    queue.markBlocked(task.id);
+    await this.checkpoint.blockTask(task.id);
+    await this.progress.updateTask(task.id, 'blocked', { error: reason });
+    this.logger.event({
+      type: 'task-blocked',
+      taskId: task.id,
+      name: task.name,
+      reason,
+    });
+  }
+
+  private async completePhase4Task(
+    task: MigrationTask,
+    queue: TaskQueue,
+    completedDurationsMs: number[],
+    durationMs: number,
+    eventDurationMs: number = durationMs,
+  ): Promise<void> {
     queue.complete(task.id);
     await this.checkpoint.completeTask(task.id, durationMs);
     completedDurationsMs.push(durationMs);
@@ -1491,8 +1740,9 @@ export class MigrationOrchestrator {
       type: 'task-completed',
       taskId: task.id,
       name: task.name,
-      duration: migratorResult.duration,
+      duration: eventDurationMs,
     });
+
     let progressMsg = `Task progress: ${progress.completed}/${progress.total} (${progress.blocked} blocked)`;
     if (completedDurationsMs.length >= 2) {
       const avgMs = completedDurationsMs.reduce((a, b) => a + b, 0) / completedDurationsMs.length;
@@ -1733,6 +1983,10 @@ export class MigrationOrchestrator {
     command: string,
     taskId: string,
   ): Promise<{ success: boolean; error?: string; infraError?: string }> {
+    if (this.phase4Snapshot) {
+      if (label === 'build') this.phase4Snapshot.buildCommandRuns++;
+      if (label === 'test') this.phase4Snapshot.testCommandRuns++;
+    }
     return this.buildLimiter(async () => {
       const timeout = this.config.copilot.timeout;
       this.logger.info(`Running ${label} command for task ${taskId}: ${command}`);
@@ -1805,11 +2059,15 @@ export class MigrationOrchestrator {
     // Initial attempt
     let cmdResult = await this.runCommand(label, command, task.id);
     if (cmdResult.success) return true;
+    const recoveryLoopStartedAt = Date.now();
 
     // Infrastructure retry loop — simple backoff, no recovery agent
     let infraAttempt = 0;
     while (cmdResult.infraError && infraAttempt < maxInfraRetries) {
       infraAttempt++;
+      if (this.phase4Snapshot) {
+        this.phase4Snapshot.commandInfraRetries++;
+      }
       const backoffMs = Math.min(1000 * Math.pow(2, infraAttempt - 1), 30_000);
       this.logger.warn(
         `${label} failed for ${task.id} with infrastructure error "${cmdResult.infraError}", ` +
@@ -1819,6 +2077,9 @@ export class MigrationOrchestrator {
 
       cmdResult = await this.runCommand(label, command, task.id);
       if (cmdResult.success) {
+        if (this.phase4Snapshot) {
+          this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
+        }
         this.logger.info(
           `${label} recovered for ${task.id} after infra retry ${infraAttempt}`,
         );
@@ -1832,6 +2093,9 @@ export class MigrationOrchestrator {
 
     // Code-quality recovery loop — full failure-recovery → code-migrator pipeline
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (this.phase4Snapshot) {
+        this.phase4Snapshot.commandRecoveryAttempts++;
+      }
       this.logger.warn(
         `${label} failed for ${task.id}, recovery attempt ${attempt}/${maxAttempts}: ${cmdResult.error}`,
       );
@@ -1884,9 +2148,16 @@ export class MigrationOrchestrator {
       // 3. Re-run the command
       cmdResult = await this.runCommand(label, command, task.id);
       if (cmdResult.success) {
+        if (this.phase4Snapshot) {
+          this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
+        }
         this.logger.info(`${label} recovered for ${task.id} on attempt ${attempt}`);
         return true;
       }
+    }
+
+    if (this.phase4Snapshot) {
+      this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
     }
 
     // Exhausted retries — block the task

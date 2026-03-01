@@ -47,6 +47,25 @@ function makeAggregates(overrides?: Partial<MetricsAggregate>): MetricsAggregate
       { epochSecond: 1772175600, concurrency: 1 },
       { epochSecond: 1772175601, concurrency: 2 },
     ],
+    escalationCount: 0,
+    escalationsByTier: {},
+    totalEscalationCostUsd: 0,
+    retriesAvoidedByRouting: 0,
+    phase4ExecutionMode: 'wave-barrier',
+    phase4DurationMs: 12000,
+    completedPhase4Tasks: 2,
+    waveCount: 1,
+    waveValidationRuns: 1,
+    waveConvergenceIterations: 1,
+    waveConvergenceFailures: 0,
+    waveConvergenceLimitHits: 0,
+    buildCommandRuns: 1,
+    testCommandRuns: 1,
+    commandRecoveryAttempts: 0,
+    commandInfraRetries: 0,
+    recoveryLoopTimeMs: 0,
+    buildTestInvocationsPerCompletedTask: 1,
+    retryVolumePerCompletedTask: 0,
     ...overrides,
   };
 }
@@ -130,6 +149,47 @@ describe('ReportGenerator', () => {
       await generator.generate(metricsDir, reportDir, metrics, aggregates);
       const content = await readFile(join(reportDir, 'index.md'), 'utf-8');
       expect(content).toContain('Retry Summary');
+    });
+
+    it('should include wave lifecycle and efficiency section', async () => {
+      const metrics = [makeMetric()];
+      const aggregates = makeAggregates({
+        waveCount: 2,
+        waveValidationRuns: 3,
+        waveConvergenceIterations: 4,
+        waveConvergenceFailures: 2,
+        waveConvergenceLimitHits: 1,
+        buildCommandRuns: 3,
+        testCommandRuns: 2,
+        commandRecoveryAttempts: 1,
+        commandInfraRetries: 2,
+        recoveryLoopTimeMs: 2500,
+        buildTestInvocationsPerCompletedTask: 2.5,
+        retryVolumePerCompletedTask: 0.5,
+      });
+      await generator.generate(metricsDir, reportDir, metrics, aggregates);
+      const content = await readFile(join(reportDir, 'index.md'), 'utf-8');
+      expect(content).toContain('Wave Lifecycle & Efficiency');
+      expect(content).toContain('Execution mode');
+      expect(content).toContain('Convergence iterations:** 4');
+      expect(content).toContain('Convergence failures:** 2');
+      expect(content).toContain('Convergence limit hits:** 1');
+      expect(content).toContain('| Build command runs | 3 |');
+      expect(content).toContain('| Test command runs | 2 |');
+      expect(content).toContain('| Recovery-loop time (ms) | 2500 |');
+      expect(content).toContain('| Build/test invocations per completed task | 2.50 |');
+      expect(content).toContain('| Retry volume per completed task | 0.50 |');
+    });
+
+    it('should include wave fields in metrics.json aggregates', async () => {
+      const metrics = [makeMetric()];
+      const aggregates = makeAggregates({ phase4ExecutionMode: 'per-task' });
+      await generator.generate(metricsDir, reportDir, metrics, aggregates);
+      const raw = await readFile(join(reportDir, 'metrics.json'), 'utf-8');
+      const parsed = JSON.parse(raw);
+      expect(parsed.aggregates).toHaveProperty('phase4ExecutionMode', 'per-task');
+      expect(parsed.aggregates).toHaveProperty('waveCount');
+      expect(parsed.aggregates).toHaveProperty('buildTestInvocationsPerCompletedTask');
     });
 
     it('should show "No retries recorded" when there are no retries', async () => {

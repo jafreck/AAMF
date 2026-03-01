@@ -63,6 +63,17 @@ describe('TaskQueue', () => {
     expect(progress.remaining).toBe(1);
   });
 
+  it('should report completion and blocked state for individual tasks', () => {
+    const queue = new TaskQueue([makeTask('a'), makeTask('b')]);
+    queue.complete('a');
+    queue.markBlocked('b');
+
+    expect(queue.isTaskCompleted('a')).toBe(true);
+    expect(queue.isTaskCompleted('b')).toBe(false);
+    expect(queue.isTaskBlocked('b')).toBe(true);
+    expect(queue.isTaskBlocked('a')).toBe(false);
+  });
+
   it('should skip already completed tasks from checkpoint', () => {
     const queue = new TaskQueue([makeTask('a'), makeTask('b'), makeTask('c')]);
     queue.markCompleted(['a', 'b']);
@@ -90,5 +101,29 @@ describe('TaskQueue.topologicalSort', () => {
     const tasks = [makeTask('a'), makeTask('b'), makeTask('c')];
     const sorted = TaskQueue.topologicalSort(tasks);
     expect(sorted).toHaveLength(3);
+  });
+});
+
+describe('TaskQueue.selectNonOverlappingBatch', () => {
+  it('should skip tasks that overlap target files', () => {
+    const tasks = [
+      { ...makeTask('a'), targetFiles: ['src/shared.ts'] },
+      { ...makeTask('b'), targetFiles: ['src/shared.ts'] },
+      { ...makeTask('c'), targetFiles: ['lib/unique.ts'] },
+    ];
+
+    const batch = TaskQueue.selectNonOverlappingBatch(tasks, 3);
+    expect(batch.map(t => t.id)).toEqual(['a', 'c']);
+  });
+
+  it('should skip tasks that overlap target directories', () => {
+    const tasks = [
+      { ...makeTask('a'), targetFiles: ['src/one.ts'] },
+      { ...makeTask('b'), targetFiles: ['src/two.ts'] },
+      { ...makeTask('c'), targetFiles: ['lib/three.ts'] },
+    ];
+
+    const batch = TaskQueue.selectNonOverlappingBatch(tasks, 3);
+    expect(batch.map(t => t.id)).toEqual(['a', 'c']);
   });
 });
