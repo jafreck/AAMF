@@ -166,17 +166,24 @@ Adjudication trigger contract:
 
 ### Phase 4 — Iterative Migration
 
-This is the core phase. The runtime:
+This is the core phase. The runtime supports two scheduler behaviors:
+
+- **`per-task` (default fallback):** migrate a task, then run validation for that task.
+- **`wave-barrier`:** run non-overlapping migration tasks in waves, then validate at a barrier with optional fix-wave convergence loops.
+
+In both modes, the runtime:
 
 1. Parses `migration-plan.md` into structured `MigrationTask` objects
 2. Topologically sorts tasks by dependency
-3. Processes tasks serially through a dependency-aware `TaskQueue`
-4. For each task:
-   - Spawns `code-migrator` with retry (up to `maxRetriesPerTask` attempts)
-   - On exhaustion, escalates to `failure-recovery` for diagnosis and scope reduction
-   - On success, spawns `parity-verifier` and `test-writer` **in parallel**
-   - Updates checkpoint after each task completion
-5. Tasks that fail all retries and recovery are marked **blocked** — the pipeline continues with remaining tasks
+3. Uses a dependency-aware `TaskQueue` to select only ready tasks
+4. Executes migration work:
+    - Spawns `code-migrator` with retry (up to `maxRetriesPerTask` attempts)
+    - On exhaustion, escalates to `failure-recovery` for diagnosis and scope reduction
+5. In `wave-barrier`, enforces a quiescent barrier before validation:
+    - Runs build/test once per wave
+    - If validation fails, runs targeted fix waves and retries until convergence or `waveControl.maxConvergenceIterations`
+6. Tasks that fail all retries/recovery or exceed convergence policy are marked **blocked** (with `continueOnBlocked`/`maxBlockedTasks` policy enforcement)
+7. Emits wave lifecycle and convergence telemetry in `progress.md` and observability reports
 
 ### Phase 5 — Final Parity Verification
 

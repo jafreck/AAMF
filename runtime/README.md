@@ -44,7 +44,12 @@ Create a `migration.config.json` file in your project root. Below is a full refe
     "maxLinesPerTask": 500,
     "tokenBudget": 2000000,
     "dryRun": false,
-    "resume": false
+    "resume": false,
+    "executionMode": "per-task",
+    "waveControl": {
+      "waveSize": 3,
+      "maxConvergenceIterations": 3
+    }
   },
   "copilot": {
     "cliCommand": "copilot",
@@ -72,6 +77,9 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | | `testCommand` | Command the runtime executes to run tests. |
 | **options** | `maxParallelAgents` | Maximum number of agent processes to run concurrently. Default: `3`. |
 | | `maxRetriesPerTask` | How many times to retry a failed agent task before marking it failed. Default: `3`. |
+| | `executionMode` | Phase 4 scheduler mode: `per-task` (default fallback behavior) or `wave-barrier` (migration/validation waves). Default: `per-task`. |
+| | `waveControl.waveSize` | Maximum number of non-overlapping migration tasks to run per wave when `executionMode` is `wave-barrier`. Default: `3`. |
+| | `waveControl.maxConvergenceIterations` | Maximum validation/fix iterations per wave in `wave-barrier` mode before remaining failures are blocked. Default: `3`. |
 | | `largeFileThreshold` | Line count above which a file is considered "large" and split into chunks. Default: `500`. |
 | | `maxLinesPerTask` | Maximum lines per migration task chunk. Default: `500`. |
 | | `tokenBudget` | Total token budget across all LLM calls. Default: `2000000`. |
@@ -119,7 +127,7 @@ The runtime executes migration as a sequence of seven phases, each driven by one
 | 1 | **Impact Assessment** | Scans the source codebase to build a dependency graph, identify file roles, and estimate migration complexity. |
 | 2 | **Knowledge Base Construction** | Extracts patterns, idioms, and domain knowledge from the source code into a structured knowledge base that downstream agents reference. |
 | 3 | **Migration Planning** | Produces an ordered task list — which files to migrate, in what order, with what dependencies — respecting the dependency graph from Phase 1. |
-| 4 | **Iterative Migration** | The main execution loop. Migrates files in dependency order, running build and test commands after each batch, and self-correcting on failures. |
+| 4 | **Iterative Migration** | The main execution loop. Defaults to per-task migration/validation, or runs wave-barrier scheduling with migration waves, barrier-gated validation, and fix-wave convergence when enabled. |
 | 5 | **Final Parity Verification** | Compares the migrated codebase against the source to verify functional equivalence and flag any gaps. |
 | 6 | **E2E Testing & Documentation** | Generates end-to-end tests, updates documentation, and produces a migration report. |
 | 7 | **Completion** | Finalizes artifacts, writes the summary report, and cleans up temporary state. |
@@ -131,6 +139,22 @@ The runtime and agents have a strict separation of concerns:
 - **Runtime** manages process lifecycle, file I/O, checkpointing, token budget enforcement, parallel execution, retry logic, and progress reporting.
 - **Agents** perform all reasoning — code analysis, planning decisions, code generation, and verification. Each agent is an `.agent.md` prompt file that the runtime invokes as a subprocess.
 - **Communication** is file-based IPC only. The runtime writes context files to disk, launches an agent, and reads the agent's output files when it exits. There are no sockets, no shared memory, and no streaming protocols between runtime and agents.
+
+### Phase 4 Execution Modes
+
+Phase 4 supports two scheduler strategies:
+
+- **`per-task` (default fallback):** preserves the legacy behavior where each task is migrated and then validated immediately.
+- **`wave-barrier`:** runs a migration wave of non-overlapping tasks first, then enforces a quiescent barrier before any build/test validation runs.
+
+In `wave-barrier` mode, each cycle is:
+
+1. **Migration wave** — run up to `options.waveControl.waveSize` ready, non-overlapping migration tasks in parallel.
+2. **Validation wave** — after migration settles, run build/test at the barrier (no migration/validation overlap).
+3. **Fix wave (if needed)** — rerun targeted migration tasks for failed validation and repeat validation until convergence or `options.waveControl.maxConvergenceIterations` is reached.
+
+Blocked-task policy (`continueOnBlocked`, `maxBlockedTasks`) is still enforced in wave mode, but evaluated after each wave.
+Wave lifecycle and convergence are observable in `.aamf/migration/{projectName}/progress.md` (**Wave Lifecycle** table) and in observability outputs under `metrics/summary.json` and `reports/observability/report.md`.
 
 ## Project Structure
 

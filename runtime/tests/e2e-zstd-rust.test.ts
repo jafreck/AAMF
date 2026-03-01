@@ -105,6 +105,11 @@ async function writeMigrationConfig(): Promise<void> {
       maxRetriesPerTask: 3,
       maxLinesPerTask: 750,
       tokenBudget: 10_000_000,
+      executionMode: 'wave-barrier',
+      waveControl: {
+        waveSize: 3,
+        maxConvergenceIterations: 3,
+      },
       dryRun: false,
       resume: true,
       keepArtifacts: true,
@@ -336,6 +341,63 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
     expect(progressMd).toContain('Impact Assessment');
     expect(progressMd).toContain('Iterative Migration');
     expect(progressMd).toContain('Completion');
+  });
+
+  it('should enforce wave barrier ordering in progress lifecycle output', async () => {
+    const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+    const section = progressMd.match(/## Wave Lifecycle\s+([\s\S]*?)(?:\n## |\n$)/);
+    expect(section).toBeTruthy();
+
+    const lines = (section?.[1] ?? '')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.startsWith('|') && !line.includes('---') && !line.includes('Wave |'));
+    expect(lines.length).toBeGreaterThan(0);
+
+    const byWave = new Map<number, string[]>();
+    for (const line of lines) {
+      const match = line.match(/^\|\s*(\d+)\s*\|\s*([^|]+)\|/);
+      if (!match) continue;
+      const wave = Number(match[1]);
+      const milestone = match[2]!.trim();
+      const milestones = byWave.get(wave) ?? [];
+      milestones.push(milestone);
+      byWave.set(wave, milestones);
+    }
+
+    expect(byWave.size).toBeGreaterThan(0);
+    for (const milestones of byWave.values()) {
+      const started = milestones.indexOf('started');
+      const completed = milestones.indexOf('completed');
+      const barrierEntered = milestones.indexOf('barrier-entered');
+      const barrierReleased = milestones.lastIndexOf('barrier-released');
+
+      expect(started).toBeGreaterThanOrEqual(0);
+      expect(completed).toBeGreaterThan(started);
+      expect(barrierEntered).toBeGreaterThan(completed);
+      expect(barrierReleased).toBeGreaterThan(barrierEntered);
+
+      for (let i = 0; i < milestones.length; i++) {
+        if (milestones[i] === 'convergence') {
+          expect(i).toBeGreaterThan(barrierEntered);
+          expect(i).toBeLessThan(barrierReleased);
+        }
+      }
+    }
+  });
+
+  it('should record stable wave-mode completion and retry/block signals', async () => {
+    const summaryPath = join(progressDir, 'metrics', 'summary.json');
+    expect(await fileExists(summaryPath)).toBe(true);
+    const summary = JSON.parse(await readFile(summaryPath, 'utf-8'));
+
+    expect(summary.phase4ExecutionMode).toBe('wave-barrier');
+    expect(summary.completedPhase4Tasks).toBeGreaterThan(0);
+    expect(summary.waveCount).toBeGreaterThan(0);
+    expect(summary.waveValidationRuns).toBeGreaterThan(0);
+    expect(summary.waveConvergenceLimitHits).toBe(0);
+    expect(summary.retryVolumePerCompletedTask).toBeGreaterThanOrEqual(0);
+    expect(summary.commandRecoveryAttempts).toBeGreaterThanOrEqual(0);
   });
 
   it('should produce log files', async () => {
