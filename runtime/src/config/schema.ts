@@ -76,6 +76,18 @@ export const MigrationConfigSchema = z.object({
      */
     maxInfraRetries: z.number().int().min(0).max(10).default(3),
     /**
+     * Parity retry guardrail thresholds.
+     * Retries are considered meaningful only when parity issue counts improve
+     * by at least these minimum deltas. Defaults: 1 issue and 1 severity count.
+     */
+    parityGuardrails: z.object({
+      minIssueCountImprovement: z.number().int().min(0).default(1),
+      minSeverityCountImprovement: z.number().int().min(0).default(1),
+    }).default({
+      minIssueCountImprovement: 1,
+      minSeverityCountImprovement: 1,
+    }),
+    /**
      * Estimated average number of tokens consumed per migration task.
      * Used for Phase 4 cost projection. Default: 5000.
      */
@@ -193,6 +205,10 @@ export const MigrationConfigSchema = z.object({
     maxBlockedTasks: 0,
     qualityPolicy: 'strict',
     maxInfraRetries: 3,
+    parityGuardrails: {
+      minIssueCountImprovement: 1,
+      minSeverityCountImprovement: 1,
+    },
     avgTokensPerTask: 5000,
     keepArtifacts: false,
     git: {

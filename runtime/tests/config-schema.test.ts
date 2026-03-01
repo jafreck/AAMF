@@ -26,6 +26,10 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.maxBlockedTasks).toBe(0);
     expect(result.options.qualityPolicy).toBe('strict');
     expect(result.options.maxInfraRetries).toBe(3);
+    expect(result.options.parityGuardrails).toEqual({
+      minIssueCountImprovement: 1,
+      minSeverityCountImprovement: 1,
+    });
     expect(result.options.avgTokensPerTask).toBe(5000);
     expect(result.options.git?.enabled).toBe(true);
     expect(result.options.git?.autoInit).toBe(true);
@@ -266,6 +270,77 @@ describe('MigrationConfigSchema', () => {
       const result = MigrationConfigSchema.safeParse({
         ...validConfig,
         options: { maxInfraRetries: 11 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept parityGuardrails overrides', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: {
+          parityGuardrails: {
+            minIssueCountImprovement: 2,
+            minSeverityCountImprovement: 3,
+          },
+        },
+      });
+      expect(result.options.parityGuardrails).toEqual({
+        minIssueCountImprovement: 2,
+        minSeverityCountImprovement: 3,
+      });
+    });
+
+    it('should accept zero-valued parityGuardrails thresholds', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: {
+          parityGuardrails: {
+            minIssueCountImprovement: 0,
+            minSeverityCountImprovement: 0,
+          },
+        },
+      });
+      expect(result.options.parityGuardrails).toEqual({
+        minIssueCountImprovement: 0,
+        minSeverityCountImprovement: 0,
+      });
+    });
+
+    it('should apply default parityGuardrails fields when partially provided', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: {
+          parityGuardrails: {
+            minIssueCountImprovement: 2,
+          },
+        },
+      });
+      expect(result.options.parityGuardrails).toEqual({
+        minIssueCountImprovement: 2,
+        minSeverityCountImprovement: 1,
+      });
+    });
+
+    it('should reject negative parityGuardrails.minIssueCountImprovement', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: {
+          parityGuardrails: {
+            minIssueCountImprovement: -1,
+          },
+        },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject negative parityGuardrails.minSeverityCountImprovement', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: {
+          parityGuardrails: {
+            minSeverityCountImprovement: -1,
+          },
+        },
       });
       expect(result.success).toBe(false);
     });
