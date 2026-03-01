@@ -40,6 +40,32 @@ export async function spawnWithTimeout(
     const stderrChunks: Buffer[] = [];
     let killed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let closeFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    let exitCode: number | undefined;
+
+    const EXIT_CLOSE_GRACE_MS = 1200;
+
+    const finalize = (code: number): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (closeFallbackTimer) clearTimeout(closeFallbackTimer);
+
+      // Close read ends so inherited FDs in helper processes cannot keep
+      // the parent event loop alive indefinitely.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+
+      const duration = performance.now() - start;
+      resolve({
+        exitCode: code,
+        stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+        duration,
+        killed,
+      });
+    };
 
     child.stdout!.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
     child.stderr!.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
@@ -58,35 +84,28 @@ export async function spawnWithTimeout(
       }, timeout);
     }
 
-    // Listen on 'exit' (not 'close') so we resolve as soon as the direct child
-    // exits, without waiting for its stdio streams to drain.  Electron-based
-    // CLIs (e.g. the copilot CLI) fork GPU/renderer helper processes that
-    // inherit the pipe write-ends; those helpers are reparented to launchd
-    // when the main process exits, and they can hold the write end open
-    // indefinitely — preventing 'close' from ever firing.
-    //
-    // After resolving on 'exit' we immediately destroy our read ends, which:
-    //   1. forces EOF on child.stdout/stderr so their 'data' listeners stop, and
-    //   2. prevents the open FDs from keeping the Node event loop alive.
+    // Prefer 'close' so we capture trailing output flushed right as the child
+    // exits. Some Electron-based CLIs can keep stdio open indefinitely via
+    // helper descendants; when that happens, a short post-exit fallback timer
+    // forces completion.
     child.on('exit', (code) => {
-      if (timer) clearTimeout(timer);
-      // Flush any data that arrived before exit, then close the read ends.
-      // Destroying does not lose already-buffered chunks — those are in
-      // stdoutChunks/stderrChunks which were populated by the 'data' listeners.
-      child.stdout!.destroy();
-      child.stderr!.destroy();
-      const duration = performance.now() - start;
-      resolve({
-        exitCode: code ?? 1,
-        stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
-        stderr: Buffer.concat(stderrChunks).toString('utf-8'),
-        duration,
-        killed,
-      });
+      exitCode = code ?? 1;
+      if (!closeFallbackTimer) {
+        closeFallbackTimer = setTimeout(() => {
+          finalize(exitCode ?? 1);
+        }, EXIT_CLOSE_GRACE_MS);
+      }
+    });
+
+    child.on('close', (code) => {
+      finalize(code ?? exitCode ?? 1);
     });
 
     child.on('error', (err) => {
       if (timer) clearTimeout(timer);
+      if (closeFallbackTimer) clearTimeout(closeFallbackTimer);
+      if (settled) return;
+      settled = true;
       reject(err);
     });
   });

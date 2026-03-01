@@ -742,6 +742,26 @@ Breakdown by AI model:
       expect(usage).toEqual({ prompt: 41300, completion: 2100, total: 43400, cachedInput: 13100 });
     });
 
+    it('should parse latest footer format (in/out/cached)', () => {
+      const output = `Total usage est:        1 Premium request
+API time spent:         12s
+Total session time:     16s
+Total code changes:     +0 -0
+Breakdown by AI model:
+ claude-sonnet-4.6       87.6k in, 486 out, 43.0k cached (Est. 1 Premium request)
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 87600, completion: 486, total: 88086, cachedInput: 43000 });
+    });
+
+    it('should parse latest footer format when cached is absent', () => {
+      const output = `Breakdown by AI model:
+ gpt-5-mini              1.2k in, 210 out (Est. 1 Premium request)
+`;
+      const usage = ResultParser.parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 1200, completion: 210, total: 1410 });
+    });
+
     it('should be case-insensitive for the breakdown header', () => {
       const output = `breakdown by ai model:
   gpt-4o:
@@ -797,6 +817,14 @@ Breakdown by AI model:
       const output = 'prompt_tokens: 999\ncompletion_tokens: 111\nBreakdown by AI model:\n  m:\n    tokens_in: 100, tokens_out: 50, premium_requests_est: 1';
       const usage = ResultParser.parseTokenUsage(output, 'copilot-cli');
       expect(usage).toEqual({ prompt: 100, completion: 50, total: 150 });
+    });
+
+    it('should parse latest footer format via copilot-cli dispatch', () => {
+      const output = `Breakdown by AI model:
+ claude-sonnet-4.6       2.4k in, 100 out, 1.1k cached (Est. 1 Premium request)
+`;
+      const usage = ResultParser.parseTokenUsage(output, 'copilot-cli');
+      expect(usage).toEqual({ prompt: 2400, completion: 100, total: 2500, cachedInput: 1100 });
     });
   });
 

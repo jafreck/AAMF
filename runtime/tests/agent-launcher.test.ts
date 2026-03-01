@@ -767,6 +767,10 @@ describe('AgentLauncher', () => {
         taskId: 'qd-001',
       });
 
+      // Force the second invocation to observe a non-zero required wait,
+      // independent of machine/runtime timing jitter.
+      (launcher as unknown as { lastInvocationTime: number }).lastInvocationTime = Date.now();
+
       // Second invocation — should have queueDelay from invocationDelayMs
       const result2 = await launcher.launchAgent({
         agent: 'code-migrator',
