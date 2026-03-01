@@ -1709,6 +1709,66 @@ describe('MigrationOrchestrator', () => {
       expect(result.blockedTasks).toContain('task-001');
     });
 
+    it('should stop code-migrator retries early when repeated failure signatures exceed threshold', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
+          return { exitCode: 1, success: false, error: 'deterministic migrator failure' };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        options: {
+          maxRetriesPerTask: 5,
+          maxRepeatedFailureSignatures: 1,
+        },
+      });
+
+      await writeFile(join(progressDir, 'migration-plan.md'), '# Migration Plan\n');
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      expect(result.blockedTasks).toContain('task-001');
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(migratorInvocations).toHaveLength(2);
+    });
+
+    it('should continue code-migrator retries for unique failure signatures', async () => {
+      let migratorAttempt = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
+          migratorAttempt++;
+          return {
+            exitCode: 1,
+            success: false,
+            error: `distinct migrator failure ${migratorAttempt}`,
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        options: {
+          maxRetriesPerTask: 3,
+          maxRepeatedFailureSignatures: 1,
+        },
+      });
+
+      await writeFile(join(progressDir, 'migration-plan.md'), '# Migration Plan\n');
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      expect(result.blockedTasks).toContain('task-001');
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(migratorInvocations).toHaveLength(4);
+    });
+
     it('should invoke failure-recovery when parity-verifier finds critical issues', async () => {
       let parityCallCount = 0;
       const launcherFn = createMockLauncher((inv) => {
@@ -1790,6 +1850,110 @@ describe('MigrationOrchestrator', () => {
         (i) => i.agent === 'failure-recovery' && i.phase === 4,
       );
       expect(recoveryInvocations.length).toBeGreaterThan(0);
+    });
+
+    it('should stop parity recovery early when repeated failure signatures exceed threshold', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'failure-recovery' && inv.taskId === 'task-001') {
+          return { exitCode: 1, success: false, error: 'same parity recovery failure' };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 5,
+            maxRepeatedFailureSignatures: 1,
+          },
+        },
+      );
+
+      await writeFile(join(progressDir, 'migration-plan.md'), '# Migration Plan\n');
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'results'));
+      await writeFile(
+        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: ['parity-reports/task-001.md'],
+          parity: 'fail',
+          issues: [
+            {
+              severity: 'critical',
+              description: 'Persistent parity issue',
+            },
+          ],
+        }),
+      );
+
+      const result = await orchestrator.run();
+
+      expect(result.blockedTasks).toContain('task-001');
+      const recoveryInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'failure-recovery' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(recoveryInvocations).toHaveLength(2);
+    });
+
+    it('should continue parity recovery retries for unique failure signatures', async () => {
+      let recoveryAttempt = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'failure-recovery' && inv.taskId === 'task-001') {
+          recoveryAttempt++;
+          return {
+            exitCode: 1,
+            success: false,
+            error: `distinct parity recovery failure ${recoveryAttempt}`,
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            maxRepeatedFailureSignatures: 1,
+          },
+        },
+      );
+
+      await writeFile(join(progressDir, 'migration-plan.md'), '# Migration Plan\n');
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'results'));
+      await writeFile(
+        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: ['parity-reports/task-001.md'],
+          parity: 'fail',
+          issues: [
+            {
+              severity: 'critical',
+              description: 'Persistent parity issue',
+            },
+          ],
+        }),
+      );
+
+      const result = await orchestrator.run();
+
+      expect(result.blockedTasks).toContain('task-001');
+      const recoveryInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'failure-recovery' && i.taskId === 'task-001' && i.phase === 4,
+      );
+      expect(recoveryInvocations).toHaveLength(3);
     });
 
     it('should not trigger recovery when parity has only minor issues', async () => {

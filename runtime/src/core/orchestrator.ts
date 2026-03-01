@@ -1,5 +1,5 @@
 import { join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
@@ -140,6 +140,9 @@ const TaskFileSchema = z.array(
  * checkpoints, and budgets while agents do the actual reasoning.
  */
 export class MigrationOrchestrator {
+  private static readonly FAILURE_SIGNATURE_SNIPPET_LENGTH = 400;
+  private static readonly REPEATED_SIGNATURE_STOP_PREFIX = '__repeated_signature_stop__';
+
   private readonly contextBuilder: ContextBuilder;
   private readonly tokenTracker: TokenTracker;
   private readonly progressDir: string;
@@ -1186,85 +1189,118 @@ export class MigrationOrchestrator {
       ? this.selectModelForInvocation(task, 'code-migrator')
       : undefined;
 
-    const migratorResult = await retryExec.executeWithRetry(migratorInv, {
-      maxAttempts: this.config.options.maxRetriesPerTask,
-      onRetry: async (attempt, error) => {
-        this.logger.warn(`Retry ${attempt} for ${task.id}: ${error}`);
-        // Existing transient-failure fallback runs first
-        if (fallbackModel && this.isTransientModelFailure(error) && migratorInv.modelOverride !== fallbackModel) {
-          migratorInv.modelOverride = fallbackModel;
-          this.logger.warn(
-            `Switching ${task.id} code-migrator retries to fallback model: ${fallbackModel}`,
-          );
-        } else if (initialRoutingDecision) {
-          // Retry-aware model escalation
-          const routing = this.config.options.modelRouting!;
-          const escalateAt = routing.escalateOnRetryAttempt ?? 2;
-          if (attempt >= escalateAt) {
-            // Promote to next-higher tier: normal→heavy, heavy→critical, critical stays critical
-            const targetTier: ModelTier = initialRoutingDecision.tier === 'normal'
-              ? 'heavy'
-              : initialRoutingDecision.tier === 'heavy'
-                ? 'critical'
-                : 'critical';
+    const maxRepeatedSignatures = this.config.options.maxRepeatedFailureSignatures ?? 2;
+    const phase4RetrySignatures = new Map<string, number>();
+    let migratorResult: Awaited<ReturnType<typeof retryExec.executeWithRetry>>;
+    try {
+      migratorResult = await retryExec.executeWithRetry(migratorInv, {
+        maxAttempts: this.config.options.maxRetriesPerTask,
+        onRetry: async (attempt, error) => {
+          this.logger.warn(`Retry ${attempt} for ${task.id}: ${error}`);
+          // Existing transient-failure fallback runs first
+          if (fallbackModel && this.isTransientModelFailure(error) && migratorInv.modelOverride !== fallbackModel) {
+            migratorInv.modelOverride = fallbackModel;
+            this.logger.warn(
+              `Switching ${task.id} code-migrator retries to fallback model: ${fallbackModel}`,
+            );
+          } else if (initialRoutingDecision) {
+            // Retry-aware model escalation
+            const routing = this.config.options.modelRouting!;
+            const escalateAt = routing.escalateOnRetryAttempt ?? 2;
+            if (attempt >= escalateAt) {
+              // Promote to next-higher tier: normal→heavy, heavy→critical, critical stays critical
+              const targetTier: ModelTier = initialRoutingDecision.tier === 'normal'
+                ? 'heavy'
+                : initialRoutingDecision.tier === 'heavy'
+                  ? 'critical'
+                  : 'critical';
 
-            const escalatedModel = targetTier === 'critical'
-              ? (routing.criticalModel ?? routing.heavyModel)
-              : routing.heavyModel;
+              const escalatedModel = targetTier === 'critical'
+                ? (routing.criticalModel ?? routing.heavyModel)
+                : routing.heavyModel;
 
-            if (escalatedModel) {
-              const retryDecision = this.applyRoutingCaps({
-                ...initialRoutingDecision,
-                tier: targetTier,
-                selectedModel: escalatedModel,
-                reason: `${initialRoutingDecision.reason}:retry-escalation`,
-                escalated: true,
-              }, task.id);
+              if (escalatedModel) {
+                const retryDecision = this.applyRoutingCaps({
+                  ...initialRoutingDecision,
+                  tier: targetTier,
+                  selectedModel: escalatedModel,
+                  reason: `${initialRoutingDecision.reason}:retry-escalation`,
+                  escalated: true,
+                }, task.id);
 
-              if (retryDecision.tier !== 'normal') {
-                migratorInv.modelOverride = retryDecision.selectedModel;
-                migratorInv.routingTier = retryDecision.tier;
-                migratorInv.routingReason = retryDecision.reason;
+                if (retryDecision.tier !== 'normal') {
+                  migratorInv.modelOverride = retryDecision.selectedModel;
+                  migratorInv.routingTier = retryDecision.tier;
+                  migratorInv.routingReason = retryDecision.reason;
 
-                if (!this._routedTaskIds.has(task.id)) {
-                  this._routedTaskIds.add(task.id);
+                  if (!this._routedTaskIds.has(task.id)) {
+                    this._routedTaskIds.add(task.id);
+                  }
+                  const defaultModel = this.getDefaultRoutingModel();
+                  const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
+                  const projectedCost = this.costEstimatorInstance.projectCost(retryDecision.selectedModel, avgTokens).total;
+                  const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
+                  this._escalationCostUsd += Math.max(0, projectedCost - baseCost);
+
+                  this.logger.warn(
+                    `Escalating ${task.id} to ${retryDecision.selectedModel} after ${attempt} retries`,
+                  );
+                } else {
+                  this.logger.warn(
+                    `Retry escalation skipped for ${task.id}: ${retryDecision.reason}`,
+                  );
                 }
-                const defaultModel = this.getDefaultRoutingModel();
-                const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
-                const projectedCost = this.costEstimatorInstance.projectCost(retryDecision.selectedModel, avgTokens).total;
-                const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
-                this._escalationCostUsd += Math.max(0, projectedCost - baseCost);
-
-                this.logger.warn(
-                  `Escalating ${task.id} to ${retryDecision.selectedModel} after ${attempt} retries`,
-                );
-              } else {
-                this.logger.warn(
-                  `Retry escalation skipped for ${task.id}: ${retryDecision.reason}`,
-                );
               }
             }
           }
-        }
-        await this.checkpoint.failTask(task.id, error, attempt, false);
-      },
-      onExhausted: async (taskId, lastError) => {
-        // Escalate to failure-recovery agent
-        const recoveryCtx = await this.contextBuilder.buildContext(
-          'failure-recovery',
-          4,
-          taskId,
-          {
-            failureReport: lastError,
-            sourceFile: task.sourceFiles[0],
-            targetFile: task.targetFiles[0],
-            kbEntry: task.knowledgeBaseRef,
-            attemptNumber: this.config.options.maxRetriesPerTask,
-          },
-        );
-        return this.buildInvocation('failure-recovery', recoveryCtx, 4, taskId);
-      },
-    });
+          const repeatedFailure = this.trackFailureSignature(
+            phase4RetrySignatures,
+            `phase4-code-migrator:${task.id}`,
+            error,
+            maxRepeatedSignatures,
+          );
+          await this.checkpoint.failTask(task.id, error, attempt, false);
+          if (repeatedFailure.stopReason) {
+            throw new Error(
+              `${MigrationOrchestrator.REPEATED_SIGNATURE_STOP_PREFIX}:${repeatedFailure.stopReason}`,
+            );
+          }
+        },
+        onExhausted: async (taskId, lastError) => {
+          // Escalate to failure-recovery agent
+          const recoveryCtx = await this.contextBuilder.buildContext(
+            'failure-recovery',
+            4,
+            taskId,
+            {
+              failureReport: lastError,
+              sourceFile: task.sourceFiles[0],
+              targetFile: task.targetFiles[0],
+              kbEntry: task.knowledgeBaseRef,
+              attemptNumber: this.config.options.maxRetriesPerTask,
+            },
+          );
+          return this.buildInvocation('failure-recovery', recoveryCtx, 4, taskId);
+        },
+      });
+    } catch (err) {
+      const stopReason = err instanceof Error && err.message.startsWith(MigrationOrchestrator.REPEATED_SIGNATURE_STOP_PREFIX)
+        ? err.message.slice(MigrationOrchestrator.REPEATED_SIGNATURE_STOP_PREFIX.length + 1)
+        : undefined;
+      if (!stopReason) throw err;
+      queue.markBlocked(task.id);
+      await this.checkpoint.blockTask(task.id);
+      await this.progress.updateTask(task.id, 'blocked', {
+        error: stopReason,
+      });
+      this.logger.event({
+        type: 'task-blocked',
+        taskId: task.id,
+        name: task.name,
+        reason: stopReason,
+      });
+      return;
+    }
 
     this.recordTokens(migratorResult, 4);
 
@@ -1327,6 +1363,8 @@ export class MigrationOrchestrator {
     let parityPassed = await this.checkParityResult(task.id);
 
     if (!parityPassed) {
+      const parityRecoverySignatures = new Map<string, number>();
+      let parityStopReason: string | undefined;
       for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
         this.logger.warn(
           `Parity check failed for ${task.id}, recovery attempt ${attempt}/${maxParityRetries}`,
@@ -1356,6 +1394,16 @@ export class MigrationOrchestrator {
 
         if (!recoveryResult.success) {
           this.logger.warn(`Failure-recovery failed for ${task.id} on attempt ${attempt}`);
+          const repeatedFailure = this.trackFailureSignature(
+            parityRecoverySignatures,
+            `phase4-parity-recovery:${task.id}:failure-recovery`,
+            recoveryResult.error ?? 'failure-recovery failed',
+            maxRepeatedSignatures,
+          );
+          if (repeatedFailure.stopReason) {
+            parityStopReason = repeatedFailure.stopReason;
+            break;
+          }
           continue;
         }
 
@@ -1376,6 +1424,16 @@ export class MigrationOrchestrator {
 
         if (!reMigrateResult.success) {
           this.logger.warn(`Re-migration failed for ${task.id} on attempt ${attempt}`);
+          const repeatedFailure = this.trackFailureSignature(
+            parityRecoverySignatures,
+            `phase4-parity-recovery:${task.id}:code-migrator`,
+            reMigrateResult.error ?? 're-migration failed',
+            maxRepeatedSignatures,
+          );
+          if (repeatedFailure.stopReason) {
+            parityStopReason = repeatedFailure.stopReason;
+            break;
+          }
           continue;
         }
 
@@ -1400,10 +1458,34 @@ export class MigrationOrchestrator {
           this.logger.info(`Parity recovered for ${task.id} on attempt ${attempt}`);
           break;
         }
+        const repeatedFailure = this.trackFailureSignature(
+          parityRecoverySignatures,
+          `phase4-parity-recovery:${task.id}:parity-verifier`,
+          'parity verification failed with non-minor issues',
+          maxRepeatedSignatures,
+        );
+        if (repeatedFailure.stopReason) {
+          parityStopReason = repeatedFailure.stopReason;
+          break;
+        }
       }
 
       // After exhausting retries, check if only minor issues remain
       if (!parityPassed) {
+        if (parityStopReason) {
+          queue.markBlocked(task.id);
+          await this.checkpoint.blockTask(task.id);
+          await this.progress.updateTask(task.id, 'blocked', {
+            error: parityStopReason,
+          });
+          this.logger.event({
+            type: 'task-blocked',
+            taskId: task.id,
+            name: task.name,
+            reason: parityStopReason,
+          });
+          return;
+        }
         const hasBlockingIssues = await this.hasNonMinorParityIssues(task.id);
         if (hasBlockingIssues) {
           queue.markBlocked(task.id);
@@ -2240,6 +2322,46 @@ export class MigrationOrchestrator {
   private isTransientModelFailure(errorText: string): boolean {
     return /\b503\b|HTTP\/2 GOAWAY|connection_error|Failed to get response from the AI model|service unavailable/i
       .test(errorText);
+  }
+
+  private normalizeFailureSnippet(text?: string): string {
+    if (!text) return '';
+    return text
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+      .slice(0, MigrationOrchestrator.FAILURE_SIGNATURE_SNIPPET_LENGTH);
+  }
+
+  private buildFailureSignature(scope: string, failureText: string): string {
+    const payload = JSON.stringify({
+      scope: this.normalizeFailureSnippet(scope),
+      failure: this.normalizeFailureSnippet(failureText),
+    });
+    return createHash('sha256').update(payload).digest('hex');
+  }
+
+  private trackFailureSignature(
+    signatures: Map<string, number>,
+    scope: string,
+    failureText: string,
+    maxRepeatedFailureSignatures: number,
+  ): { signature: string; repeatCount: number; stopReason?: string } {
+    const signature = this.buildFailureSignature(scope, failureText);
+    const repeatCount = (signatures.get(signature) ?? 0) + 1;
+    signatures.set(signature, repeatCount);
+
+    if (repeatCount > maxRepeatedFailureSignatures) {
+      return {
+        signature,
+        repeatCount,
+        stopReason:
+          `Repeated failure signature threshold exceeded for ${scope} ` +
+          `(signature=${signature.slice(0, 12)}, repeats=${repeatCount}, max=${maxRepeatedFailureSignatures})`,
+      };
+    }
+
+    return { signature, repeatCount };
   }
 
   private recordTokens(result: AgentResult, phase: number): void {
