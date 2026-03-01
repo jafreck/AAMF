@@ -98,7 +98,14 @@ describe('ProgressWriter', () => {
     await writer.initialize(config);
     writer.setTotalTasks(5);
     await writer.updateTask('task-001', 'failed', { error: 'something broke' });
-    await writer.updateTask('task-002', 'blocked', { error: 'max retries exceeded' });
+    await writer.updateTask('task-002', 'blocked', {
+      blockedReason: {
+        type: 'deterministic-quality',
+        command: 'build',
+        class: 'lint-failure',
+        snippet: 'eslint found 1 error',
+      },
+    });
 
     const content = await readFile(progressFile, 'utf-8');
     expect(content).toContain('Failed Tasks');
@@ -106,6 +113,7 @@ describe('ProgressWriter', () => {
     expect(content).toContain('something broke');
     expect(content).toContain('Blocked Tasks');
     expect(content).toContain('task-002');
+    expect(content).toContain('deterministic-quality:build:lint-failure | eslint found 1 error');
   });
 
   it('should limit event log to last 50 entries', async () => {
@@ -328,6 +336,45 @@ describe('ProgressWriter', () => {
       expect(completedCount).toBe(2);
       // 1 in-progress phase
       expect(content).toContain('🔄');
+    });
+
+    it('should restore and render blocked task reasons from checkpoint state', async () => {
+      await writer.initialize(config);
+      writer.setTotalTasks(2);
+      const state = {
+        projectName: 'test-project',
+        version: 1,
+        currentPhase: 4,
+        currentTask: null,
+        completedPhases: [1, 2, 3],
+        completedTasks: [],
+        failedTasks: [],
+        blockedTasks: ['task-002'],
+        blockedTaskReasons: {
+          'task-002': {
+            type: 'deterministic-quality' as const,
+            command: 'build',
+            class: 'type-error',
+            snippet: 'error TS2322',
+          },
+        },
+        phaseOutputs: {},
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        startedAt: new Date().toISOString(),
+        lastCheckpoint: new Date().toISOString(),
+        resumeCount: 1,
+        cumulativeDurationMs: 0,
+        completedTaskDurationsMs: [],
+        metricsCount: 0,
+      };
+
+      writer.reconstructFromCheckpoint(state);
+      await writer.appendEvent('resumed');
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('Blocked Tasks');
+      expect(content).toContain('task-002');
+      expect(content).toContain('deterministic-quality:build:type-error | error TS2322');
     });
   });
 });

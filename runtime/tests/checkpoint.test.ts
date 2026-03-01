@@ -27,6 +27,7 @@ describe('CheckpointManager', () => {
     expect(state.currentPhase).toBe(0);
     expect(state.completedPhases).toEqual([]);
     expect(state.completedTasks).toEqual([]);
+    expect(state.blockedTaskReasons).toEqual({});
     expect(state.version).toBe(1);
     expect(state.resumeCount).toBe(0);
   });
@@ -79,6 +80,27 @@ describe('CheckpointManager', () => {
     
     const state = manager.getState();
     expect(state.blockedTasks).toContain('task-001');
+    expect(state.blockedTaskReasons).toEqual({});
+  });
+
+  it('should persist blocked task reasons', async () => {
+    await manager.load('test-project');
+    await manager.blockTask('task-001', 'max retries exceeded');
+    await manager.blockTask('task-002', {
+      type: 'deterministic-quality',
+      command: 'build',
+      class: 'lint-failure',
+      snippet: 'eslint found 1 error',
+    });
+
+    const state = manager.getState();
+    expect(state.blockedTaskReasons?.['task-001']).toBe('max retries exceeded');
+    expect(state.blockedTaskReasons?.['task-002']).toEqual({
+      type: 'deterministic-quality',
+      command: 'build',
+      class: 'lint-failure',
+      snippet: 'eslint found 1 error',
+    });
   });
 
   it('should track token usage', async () => {
@@ -217,11 +239,12 @@ describe('CheckpointManager', () => {
 
   it('should remove task from blocked when completed', async () => {
     await manager.load('test-project');
-    await manager.blockTask('task-001');
+    await manager.blockTask('task-001', 'max retries exceeded');
     await manager.completeTask('task-001');
 
     const state = manager.getState();
     expect(state.blockedTasks).not.toContain('task-001');
+    expect(state.blockedTaskReasons?.['task-001']).toBeUndefined();
     expect(state.completedTasks).toContain('task-001');
   });
 

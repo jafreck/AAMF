@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { atomicWrite, ensureDir, fileExists, readJson, writeJson } from '../util/fs.js';
 import { Logger } from '../logging/logger.js';
+import type { TaskBlockedReason } from '../logging/events.js';
 
 export interface CheckpointState {
   projectName: string;
@@ -12,6 +13,7 @@ export interface CheckpointState {
   completedTasks: string[];
   failedTasks: CheckpointFailedTask[];
   blockedTasks: string[];                   // tasks that hit max retries
+  blockedTaskReasons?: Record<string, TaskBlockedReason>;
   phaseOutputs: Record<number, string>;     // phase → output file path
   tokenUsage: {
     total: number;
@@ -68,6 +70,7 @@ export class CheckpointManager {
         this.state.completedPhase3Groups ??= [];
         this.state.metricsCount ??= 0;
         this.state.phase0Fingerprint ??= undefined;
+        this.state.blockedTaskReasons ??= {};
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
         await this.save(this.state);
         return this.state;
@@ -84,6 +87,7 @@ export class CheckpointManager {
             this.state.completedPhase3Groups ??= [];
             this.state.metricsCount ??= 0;
             this.state.phase0Fingerprint ??= undefined;
+            this.state.blockedTaskReasons ??= {};
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
             await this.save(this.state);
             return this.state;
@@ -104,6 +108,7 @@ export class CheckpointManager {
       completedTasks: [],
       failedTasks: [],
       blockedTasks: [],
+      blockedTaskReasons: {},
       phaseOutputs: {},
       tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
       startedAt: new Date().toISOString(),
@@ -171,6 +176,9 @@ export class CheckpointManager {
     state.failedTasks = state.failedTasks.filter(f => f.taskId !== taskId);
     // Remove from blocked if it was there
     state.blockedTasks = state.blockedTasks.filter(id => id !== taskId);
+    if (state.blockedTaskReasons) {
+      delete state.blockedTaskReasons[taskId];
+    }
     await this.save(state);
   }
 
@@ -189,10 +197,14 @@ export class CheckpointManager {
   }
 
   /** Block a task (max retries exceeded) */
-  async blockTask(taskId: string): Promise<void> {
+  async blockTask(taskId: string, reason?: TaskBlockedReason): Promise<void> {
     const state = this.getState();
     if (!state.blockedTasks.includes(taskId)) {
       state.blockedTasks.push(taskId);
+    }
+    if (reason !== undefined) {
+      state.blockedTaskReasons ??= {};
+      state.blockedTaskReasons[taskId] = reason;
     }
     await this.save(state);
   }

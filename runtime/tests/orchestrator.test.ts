@@ -2250,7 +2250,7 @@ describe('MigrationOrchestrator', () => {
       ];
 
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir, progress } = await setupOrchestrator(tempDir, launcherFn, {
+      const { orchestrator, progressDir, progress, checkpoint } = await setupOrchestrator(tempDir, launcherFn, {
         target: {
           language: 'typescript',
           framework: 'express',
@@ -2291,7 +2291,26 @@ describe('MigrationOrchestrator', () => {
       expect(blockedCalls).toHaveLength(2);
       for (const call of blockedCalls) {
         expect(call[2]?.error).toContain('deterministic-quality:build:lint-failure');
+        expect(call[2]?.blockedReason).toEqual({
+          type: 'deterministic-quality',
+          command: 'build',
+          class: 'lint-failure',
+          snippet: 'eslint found 1 error',
+        });
       }
+      const blockedReasons = checkpoint.getState().blockedTaskReasons;
+      expect(blockedReasons?.['task-001']).toEqual({
+        type: 'deterministic-quality',
+        command: 'build',
+        class: 'lint-failure',
+        snippet: 'eslint found 1 error',
+      });
+      expect(blockedReasons?.['task-002']).toEqual({
+        type: 'deterministic-quality',
+        command: 'build',
+        class: 'lint-failure',
+        snippet: 'eslint found 1 error',
+      });
     });
 
     it('should return deterministic metadata from runWaveValidation when build fails', async () => {

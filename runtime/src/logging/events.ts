@@ -16,6 +16,15 @@ export interface LogEntry {
   data?: Record<string, unknown>;
 }
 
+export type TaskBlockedReason =
+  | string
+  | {
+      type: 'deterministic-quality';
+      class: string;
+      snippet?: string;
+      command?: string;
+    };
+
 export type RuntimeEvent =
   | { type: 'migration-started'; projectName: string }
   | { type: 'migration-completed'; projectName: string; success: boolean; duration: number }
@@ -32,7 +41,7 @@ export type RuntimeEvent =
   | { type: 'task-started'; taskId: string; name: string }
   | { type: 'task-completed'; taskId: string; name: string; duration: number }
   | { type: 'task-failed'; taskId: string; name: string; error: string; attempt: number }
-  | { type: 'task-blocked'; taskId: string; name: string; reason: string }
+  | { type: 'task-blocked'; taskId: string; name: string; reason: TaskBlockedReason }
   | { type: 'wave-started'; wave: number; taskIds: string[] }
   | { type: 'wave-completed'; wave: number; taskIds: string[]; duration: number }
   | { type: 'wave-barrier-entered'; wave: number }

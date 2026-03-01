@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { atomicWrite, ensureDir } from '../util/fs.js';
 import { MigrationConfig } from '../config/schema.js';
 import { CheckpointState } from './checkpoint.js';
+import type { TaskBlockedReason } from '../logging/events.js';
 
 export interface TaskDetails {
   sourceFiles?: string[];
@@ -9,6 +10,7 @@ export interface TaskDetails {
   parityScore?: number;
   testsGenerated?: number;
   error?: string;
+  blockedReason?: TaskBlockedReason;
 }
 
 export interface WaveLifecycleEvent {
@@ -75,7 +77,14 @@ export class ProgressWriter {
 
     // Mark blocked tasks
     for (const taskId of state.blockedTasks) {
-      this.tasks.set(taskId, { status: 'blocked' });
+      const blockedReason = state.blockedTaskReasons?.[taskId];
+      this.tasks.set(taskId, {
+        status: 'blocked',
+        details: {
+          blockedReason,
+          error: this.formatBlockedReason(blockedReason),
+        },
+      });
     }
 
     // Mark failed tasks
@@ -253,7 +262,7 @@ export class ProgressWriter {
       if (blocked.length > 0) {
         md += `### Blocked Tasks\n`;
         for (const [id, t] of blocked) {
-          md += `- **${id}**: ${t.details?.error ?? 'max retries exceeded'}\n`;
+          md += `- **${id}**: ${this.formatBlockedReason(t.details?.blockedReason) ?? t.details?.error ?? 'max retries exceeded'}\n`;
         }
         md += '\n';
       }
@@ -293,5 +302,12 @@ export class ProgressWriter {
     if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
     if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
     return `${seconds}s`;
+  }
+
+  private formatBlockedReason(reason?: TaskBlockedReason): string | undefined {
+    if (!reason) return undefined;
+    if (typeof reason === 'string') return reason;
+    const command = reason.command ? `${reason.command}:` : '';
+    return `deterministic-quality:${command}${reason.class}${reason.snippet ? ` | ${reason.snippet}` : ''}`;
   }
 }

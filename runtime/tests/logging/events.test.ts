@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { RuntimeEvent, LogEntry, LogLevel } from '../../src/logging/events.js';
+import type { RuntimeEvent, LogEntry, LogLevel, TaskBlockedReason } from '../../src/logging/events.js';
 
 // ─── RuntimeEvent ─────────────────────────────────────────────────────────────
 
@@ -138,6 +138,38 @@ describe('RuntimeEvent', () => {
         reason: 'user cancelled',
       };
       expect(event.reason).toBe('user cancelled');
+    });
+
+    it('should construct task-blocked event with a string reason', () => {
+      const reason: TaskBlockedReason = 'max retries exceeded';
+      const event: RuntimeEvent = {
+        type: 'task-blocked',
+        taskId: 'task-001',
+        name: 'Auth Module',
+        reason,
+      };
+      expect(event.reason).toBe('max retries exceeded');
+    });
+
+    it('should construct task-blocked event with deterministic quality metadata', () => {
+      const reason: TaskBlockedReason = {
+        type: 'deterministic-quality',
+        command: 'build',
+        class: 'lint-failure',
+        snippet: 'eslint found 1 error',
+      };
+      const event: RuntimeEvent = {
+        type: 'task-blocked',
+        taskId: 'task-002',
+        name: 'Database Layer',
+        reason,
+      };
+      expect(typeof event.reason).toBe('object');
+      if (typeof event.reason !== 'string') {
+        expect(event.reason.command).toBe('build');
+        expect(event.reason.class).toBe('lint-failure');
+        expect(event.reason.snippet).toBe('eslint found 1 error');
+      }
     });
   });
 });

@@ -26,6 +26,7 @@ import { RetryExecutor } from '../execution/retry.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
 import { Logger } from '../logging/logger.js';
+import type { TaskBlockedReason } from '../logging/events.js';
 import { fileExists, countFileLines, atomicWrite, readJson, ensureDir } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
 import type { EmbeddingProvider } from '@aamf/lore';
@@ -1264,7 +1265,7 @@ export class MigrationOrchestrator {
       const barrierStart = Date.now();
       let converged = waveCandidates.length > 0;
       let remainingFailures = 0;
-      let repeatedDeterministicReason: string | undefined;
+      let repeatedDeterministicReason: TaskBlockedReason | undefined;
       let previousDeterministicClass: string | undefined;
 
       if (waveCandidates.length > 0) {
@@ -1316,7 +1317,7 @@ export class MigrationOrchestrator {
           if (validation.deterministicClass) {
             const deterministicClass = `${validation.command ?? 'quality'}:${validation.deterministicClass}`;
             if (previousDeterministicClass === deterministicClass) {
-              repeatedDeterministicReason = this.formatDeterministicQualityReason(
+              repeatedDeterministicReason = this.createDeterministicQualityReason(
                 validation.command ?? 'wave-validation',
                 validation.deterministicClass,
                 validation.snippet,
@@ -1543,15 +1544,17 @@ export class MigrationOrchestrator {
 
     if (!migratorResult.success) {
       queue.markBlocked(task.id);
-      await this.checkpoint.blockTask(task.id);
+      const blockReason = migratorResult.error ?? 'max retries exceeded';
+      await this.checkpoint.blockTask(task.id, blockReason);
       await this.progress.updateTask(task.id, 'blocked', {
-        error: migratorResult.error,
+        error: blockReason,
+        blockedReason: blockReason,
       });
       this.logger.event({
         type: 'task-blocked',
         taskId: task.id,
         name: task.name,
-        reason: migratorResult.error ?? 'max retries exceeded',
+        reason: blockReason,
       });
       return { migrated: false };
     }
@@ -1683,15 +1686,17 @@ export class MigrationOrchestrator {
           const hasBlockingIssues = await this.hasNonMinorParityIssues(task.id);
           if (hasBlockingIssues) {
             queue.markBlocked(task.id);
-            await this.checkpoint.blockTask(task.id);
+            const blockReason = 'parity verification failed with non-minor issues';
+            await this.checkpoint.blockTask(task.id, blockReason);
             await this.progress.updateTask(task.id, 'blocked', {
-              error: 'parity check failed with critical/major issues after max retries',
+              error: blockReason,
+              blockedReason: blockReason,
             });
             this.logger.event({
               type: 'task-blocked',
               taskId: task.id,
               name: task.name,
-              reason: 'parity verification failed with non-minor issues',
+              reason: blockReason,
             });
             return { migrated: false };
           }
@@ -1791,12 +1796,15 @@ export class MigrationOrchestrator {
   private async blockWaveTask(
     task: MigrationTask,
     queue: TaskQueue,
-    reason: string,
+    reason: TaskBlockedReason,
   ): Promise<void> {
     if (queue.isTaskBlocked(task.id) || queue.isTaskCompleted(task.id)) return;
     queue.markBlocked(task.id);
-    await this.checkpoint.blockTask(task.id);
-    await this.progress.updateTask(task.id, 'blocked', { error: reason });
+    await this.checkpoint.blockTask(task.id, reason);
+    await this.progress.updateTask(task.id, 'blocked', {
+      error: this.formatBlockedReason(reason),
+      blockedReason: reason,
+    });
     this.logger.event({
       type: 'task-blocked',
       taskId: task.id,
@@ -2276,10 +2284,12 @@ export class MigrationOrchestrator {
 
     // Exhausted retries — block the task
     queue.markBlocked(task.id);
-    await this.checkpoint.blockTask(task.id);
     const blockReason = this.formatCommandBlockReason(label, cmdResult, maxAttempts);
+    await this.checkpoint.blockTask(task.id, blockReason);
+    const blockReasonText = this.formatBlockedReason(blockReason);
     await this.progress.updateTask(task.id, 'blocked', {
-      error: blockReason,
+      error: blockReasonText,
+      blockedReason: blockReason,
     });
     this.logger.event({
       type: 'task-blocked',
@@ -2290,12 +2300,17 @@ export class MigrationOrchestrator {
     return false;
   }
 
-  private formatDeterministicQualityReason(
-    label: string,
+  private createDeterministicQualityReason(
+    command: string,
     deterministicClass: string,
     snippet?: string,
-  ): string {
-    return `deterministic-quality:${label}:${deterministicClass}${snippet ? ` | ${snippet}` : ''}`;
+  ): TaskBlockedReason {
+    return {
+      type: 'deterministic-quality',
+      command,
+      class: deterministicClass,
+      snippet,
+    };
   }
 
   private formatCommandBlockReason(
@@ -2306,15 +2321,21 @@ export class MigrationOrchestrator {
       errorSnippet?: string;
     },
     maxAttempts: number,
-  ): string {
+  ): TaskBlockedReason {
     if (cmdResult.deterministicClass) {
-      return this.formatDeterministicQualityReason(
+      return this.createDeterministicQualityReason(
         label,
         cmdResult.deterministicClass,
         cmdResult.errorSnippet,
       );
     }
     return cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`;
+  }
+
+  private formatBlockedReason(reason: TaskBlockedReason): string {
+    if (typeof reason === 'string') return reason;
+    const command = reason.command ? `${reason.command}:` : '';
+    return `deterministic-quality:${command}${reason.class}${reason.snippet ? ` | ${reason.snippet}` : ''}`;
   }
 
   private getPhase4QualityGateMode(): Phase4QualityGateMode {
