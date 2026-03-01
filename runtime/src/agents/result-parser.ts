@@ -435,11 +435,15 @@ export class ResultParser {
   /**
    * Parse token usage from Copilot CLI headless usage summary format.
    *
-   * Extracts per-model `tokens_in`, `tokens_out`, and `tokens_cached` from
-   * the `Breakdown by AI model:` section, sums them across models, and
-   * returns the standard token usage shape. Supports numeric shorthand
-   * suffixes (e.g. `41.3k` → 41300, `2.5m` → 2500000) and both singular
-   * and plural `Premium request(s)` variants.
+    * Extracts per-model usage from the `Breakdown by AI model:` section,
+    * sums values across models, and returns the standard token usage shape.
+    *
+    * Supports both legacy and current footer line formats:
+    * - Legacy: `tokens_in: 5000, tokens_out: 1200, tokens_cached: 800`
+    * - Current: `87.6k in, 486 out, 43.0k cached (Est. 1 Premium request)`
+    *
+    * Also supports numeric shorthand suffixes (e.g. `41.3k` → 41300,
+    * `2.5m` → 2500000).
    *
    * @param output - Raw agent output text (stdout or stderr).
    * @returns Parsed token counts, or `undefined` if no Copilot CLI usage block is found.
@@ -452,7 +456,8 @@ export class ResultParser {
 
     const afterBreakdown = output.slice(breakdownMatch.index! + breakdownMatch[0].length);
 
-    const tokenLineRegex = /tokens_in:\s*([\d.]+[kmKM]?)\s*,\s*tokens_out:\s*([\d.]+[kmKM]?)(?:\s*,\s*tokens_cached:\s*([\d.]+[kmKM]?))?/g;
+    const tokenLineRegexLegacy = /tokens_in:\s*([\d.]+[kmKM]?)\s*,\s*tokens_out:\s*([\d.]+[kmKM]?)(?:\s*,\s*tokens_cached:\s*([\d.]+[kmKM]?))?/g;
+    const tokenLineRegexCurrent = /([\d.]+[kmKM]?)\s+in\s*,\s*([\d.]+[kmKM]?)\s+out(?:\s*,\s*([\d.]+[kmKM]?)\s+cached)?(?:\s*\(Est\.[^)]+\))?/gi;
 
     let totalPrompt = 0;
     let totalCompletion = 0;
@@ -460,15 +465,22 @@ export class ResultParser {
     let hasCached = false;
     let foundAny = false;
 
-    let lineMatch: RegExpExecArray | null;
-    while ((lineMatch = tokenLineRegex.exec(afterBreakdown)) !== null) {
+    const consume = (lineMatch: RegExpExecArray): void => {
       foundAny = true;
       totalPrompt += ResultParser.parseShorthandNumber(lineMatch[1]!);
       totalCompletion += ResultParser.parseShorthandNumber(lineMatch[2]!);
       if (lineMatch[3]) {
-        totalCached += ResultParser.parseShorthandNumber(lineMatch[3]);
+        totalCached += ResultParser.parseShorthandNumber(lineMatch[3]!);
         hasCached = true;
       }
+    };
+
+    let lineMatch: RegExpExecArray | null;
+    while ((lineMatch = tokenLineRegexLegacy.exec(afterBreakdown)) !== null) {
+      consume(lineMatch);
+    }
+    while ((lineMatch = tokenLineRegexCurrent.exec(afterBreakdown)) !== null) {
+      consume(lineMatch);
     }
 
     if (!foundAny) return undefined;
