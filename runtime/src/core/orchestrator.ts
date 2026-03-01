@@ -1,5 +1,5 @@
 import { join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
@@ -40,6 +40,40 @@ import { z } from 'zod';
 
 const loadLore = () => import('@aamf/lore');
 const loadKbServerProcess = () => import('./kb-server-process.js');
+
+type LoreModule = Awaited<ReturnType<typeof loadLore>>;
+
+function computeSourceFingerprintCompat(
+  lore: LoreModule,
+  rootDir: string,
+  walkerConfig: { includeGlobs?: string[]; excludeGlobs?: string[] },
+  embeddingModel?: string,
+): string {
+  const computeSourceFingerprint = (lore as { computeSourceFingerprint?: (...args: any[]) => string }).computeSourceFingerprint;
+  if (typeof computeSourceFingerprint === 'function') {
+    return computeSourceFingerprint(rootDir, walkerConfig, embeddingModel);
+  }
+
+  const data = JSON.stringify({
+    rootDir,
+    includeGlobs: walkerConfig.includeGlobs ?? [],
+    excludeGlobs: walkerConfig.excludeGlobs ?? [],
+    embeddingModel: embeddingModel ?? '',
+  });
+  return createHash('sha256').update(data).digest('hex');
+}
+
+function getKbFingerprintCompat(lore: LoreModule, db: unknown): string | undefined {
+  const getKbFingerprint = (lore as { getKbFingerprint?: (...args: any[]) => string | undefined }).getKbFingerprint;
+  if (typeof getKbFingerprint === 'function') {
+    return getKbFingerprint(db);
+  }
+  const getKbMeta = (lore as { getKbMeta?: (...args: any[]) => string | undefined }).getKbMeta;
+  if (typeof getKbMeta === 'function') {
+    return getKbMeta(db, 'source_fingerprint');
+  }
+  return undefined;
+}
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
 
@@ -560,7 +594,8 @@ export class MigrationOrchestrator {
 
     // ── Fingerprint guard: skip re-indexing if the KB already matches ──
     // Pass the same walkerConfig used by IndexBuilder so the fingerprints match.
-    const currentFingerprint = lore.computeSourceFingerprint(
+    const currentFingerprint = computeSourceFingerprintCompat(
+      lore,
       sourceRoot,
       walkerConfig as { includeGlobs?: string[]; excludeGlobs?: string[] },
       this.embedder?.modelName,
@@ -569,7 +604,7 @@ export class MigrationOrchestrator {
       try {
         const db = lore.openDb(this.kbDbPath);
         try {
-          const storedFingerprint = lore.getKbFingerprint(db);
+          const storedFingerprint = getKbFingerprintCompat(lore, db);
           if (storedFingerprint && storedFingerprint === currentFingerprint) {
             this.logger.info('Phase 0 reused/skipped — KB fingerprint matches current config');
             const checkpointState = this.checkpoint.getState();

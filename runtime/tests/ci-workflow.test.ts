@@ -172,18 +172,15 @@ describe('Root package.json build script', () => {
     return pkg;
   };
 
-  it('should have a build script that builds lore before runtime', async () => {
+  it('should have a build script that builds runtime', async () => {
     const p = await loadPkg();
-    expect(p.scripts.build).toContain('lore');
     expect(p.scripts.build).toContain('runtime');
-    const loreIdx = p.scripts.build.indexOf('lore');
-    const runtimeIdx = p.scripts.build.indexOf('runtime');
-    expect(loreIdx).toBeLessThan(runtimeIdx);
+    expect(p.scripts.build).not.toContain('lore');
   });
 
-  it('should chain lore and runtime builds with &&', async () => {
+  it('should not chain multiple package builds with &&', async () => {
     const p = await loadPkg();
-    expect(p.scripts.build).toContain('&&');
+    expect(p.scripts.build).not.toContain('&&');
   });
 });
 
