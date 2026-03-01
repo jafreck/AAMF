@@ -83,14 +83,16 @@ function stripVSCodeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /** Shared helper: write stdout/stderr to a per-agent log file. */
-async function writeAgentLog(logDir: string, agent: string, taskId: string, stdout: string, stderr: string, invocationId?: string): Promise<void> {
+async function writeAgentLog(logDir: string, agent: string, taskId: string, stdout: string, stderr: string, invocationId?: string): Promise<string> {
   await ensureDir(logDir);
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const filename = invocationId
     ? `${agent}-${taskId}-${invocationId}-${timestamp}.log`
     : `${agent}-${taskId}-${timestamp}.log`;
   const content = `=== STDOUT ===\n${stdout}\n\n=== STDERR ===\n${stderr}\n`;
-  await atomicWrite(join(logDir, filename), content);
+  const logPath = join(logDir, filename);
+  await atomicWrite(logPath, content);
+  return logPath;
 }
 
 /** Shared helper: detect output files created by the agent in the progress directory. */
@@ -140,9 +142,10 @@ function finaliseResult(
   stdout: string,
   prompt: string,
   logger: Logger,
+  sourceArtifactPath?: string,
 ): AgentResult {
   const schema = agentOutputSchemas[agentResult.agent];
-  const parseResult = ResultParser.parseAamfOutput(stdout, schema);
+  const parseResult = ResultParser.parseAamfOutput(stdout, schema, { sourceArtifactPath });
   if (parseResult.parsed) {
     const parsedData = parseResult.data as Record<string, unknown> & {
       tokenUsage?: AgentResult['tokenUsage'];
@@ -338,7 +341,14 @@ export class CopilotRunner implements AgentRunner {
       const duration = Date.now() - startTime;
 
       const taskId = invocation.taskId ?? 'main';
-      await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId);
+      const logPath = await writeAgentLog(
+        this.logDir,
+        invocation.agent,
+        taskId,
+        result.stdout,
+        result.stderr,
+        invocationId,
+      );
 
       const outputFiles = await detectOutputFiles(invocation);
       const tokenUsage = ResultParser.parseTokenUsage(result.stdout + '\n' + result.stderr, 'copilot-cli');
@@ -362,7 +372,7 @@ export class CopilotRunner implements AgentRunner {
         stderr: (result.killed || result.exitCode !== 0) ? result.stderr : undefined,
       };
 
-      return finaliseResult(agentResult, result.stdout, prompt, invLogger);
+      return finaliseResult(agentResult, result.stdout, prompt, invLogger, logPath);
     } catch (err) {
       stopTimers();
       const duration = Date.now() - startTime;
@@ -520,7 +530,14 @@ export class ClaudeCodeRunner implements AgentRunner {
       const duration = Date.now() - startTime;
 
       const taskId = invocation.taskId ?? 'main';
-      await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId);
+      const logPath = await writeAgentLog(
+        this.logDir,
+        invocation.agent,
+        taskId,
+        result.stdout,
+        result.stderr,
+        invocationId,
+      );
 
       const outputFiles = await detectOutputFiles(invocation);
       // Use claude-code runtime to parse Claude's JSON token usage format
@@ -545,7 +562,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         stderr: (result.killed || result.exitCode !== 0) ? result.stderr : undefined,
       };
 
-      return finaliseResult(agentResult, result.stdout, prompt, invLogger);
+      return finaliseResult(agentResult, result.stdout, prompt, invLogger, logPath);
     } catch (err) {
       stopTimers();
       const duration = Date.now() - startTime;

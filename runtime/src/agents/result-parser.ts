@@ -6,6 +6,24 @@ import { fileExists, readJson } from '../util/fs.js';
 
 export const MISSING_BLOCK_ERROR = 'missing aamf-json block';
 
+function getValueAtPath(value: unknown, path: Array<string | number>): unknown {
+  let current = value as Record<string | number, unknown> | undefined;
+  for (const key of path) {
+    if (current == null || typeof current !== 'object') return undefined;
+    current = current[key] as Record<string | number, unknown> | undefined;
+  }
+  return current;
+}
+
+function stringifyValue(value: unknown): string {
+  if (value === undefined) return 'undefined';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 // ─── AamfOutput Schemas ───────────────────────────────────────────────────────
 
 /**
@@ -246,6 +264,7 @@ export class ResultParser {
   static parseAamfOutput<T extends z.ZodTypeAny>(
     stdout: string,
     schema: T,
+    options?: { sourceArtifactPath?: string },
   ): { data: z.infer<T>; parsed: true } | { parsed: false; error: string } {
     // Find all ```aamf-json ... ``` blocks; use the last one.
     const blockRegex = /```aamf-json\r?\n([\s\S]*?)```/g;
@@ -263,15 +282,54 @@ export class ResultParser {
     try {
       raw = JSON.parse(lastMatch[1]!.trim());
     } catch (err) {
-      return { parsed: false, error: `malformed JSON in aamf-json block: ${String(err)}` };
+      const source = options?.sourceArtifactPath ? ` (source artifact: ${options.sourceArtifactPath})` : '';
+      return { parsed: false, error: `malformed JSON in aamf-json block: ${String(err)}${source}` };
     }
 
-    const result = schema.safeParse(raw);
+    const normalized = ResultParser.normalizeAamfPayload(raw);
+    const result = schema.safeParse(normalized);
     if (!result.success) {
-      return { parsed: false, error: `schema validation failed: ${result.error.message}` };
+      const firstIssue = result.error.issues[0];
+      const path = firstIssue?.path?.length ? firstIssue.path.join('.') : '(root)';
+      const offending = firstIssue ? getValueAtPath(normalized, firstIssue.path as Array<string | number>) : normalized;
+      const source = options?.sourceArtifactPath ? ` (source artifact: ${options.sourceArtifactPath})` : '';
+      const detail = firstIssue
+        ? ` at "${path}" with value ${stringifyValue(offending)}`
+        : '';
+      return { parsed: false, error: `schema validation failed${detail}: ${result.error.message}${source}` };
     }
 
     return { data: result.data, parsed: true };
+  }
+
+  private static normalizeAamfPayload(raw: unknown): unknown {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+    const normalized = { ...(raw as Record<string, unknown>) };
+
+    if (typeof normalized['status'] === 'string') {
+      const status = normalized['status'].trim().toLowerCase().replace(/[_\s]+/g, '-');
+      if (status === 'completed' || status === 'failed' || status === 'needs-review') {
+        normalized['status'] = status;
+      }
+    }
+
+    if (typeof normalized['agent'] === 'string') {
+      normalized['agent'] = normalized['agent'].trim().toLowerCase().replace(/[_\s]+/g, '-');
+    }
+
+    const tokenUsage = normalized['tokenUsage'];
+    if (tokenUsage && typeof tokenUsage === 'object' && !Array.isArray(tokenUsage)) {
+      const normalizedUsage = { ...(tokenUsage as Record<string, unknown>) };
+      for (const key of ['prompt', 'completion', 'total'] as const) {
+        const value = normalizedUsage[key];
+        if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+          normalizedUsage[key] = Number.parseInt(value.trim(), 10);
+        }
+      }
+      normalized['tokenUsage'] = normalizedUsage;
+    }
+
+    return normalized;
   }
 
   /**

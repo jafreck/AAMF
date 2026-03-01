@@ -492,6 +492,19 @@ intermediate text
       }
     });
 
+    it('should normalize benign formatting deviations for parity-verifier output', () => {
+      const stdout = `\`\`\`aamf-json
+{"status":" Needs_Review ","agent":" PARITY_VERIFIER ","tokenUsage":{"prompt":"100","completion":"50","total":"150"}}
+\`\`\``;
+      const result = ResultParser.parseAamfOutput(stdout, ParityVerifierOutput);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('needs-review');
+        expect(result.data.agent).toBe('parity-verifier');
+        expect(result.data.tokenUsage).toEqual({ prompt: 100, completion: 50, total: 150 });
+      }
+    });
+
     it('should handle CRLF line endings in the fenced block', () => {
       const stdout = '```aamf-json\r\n{"status":"completed","agent":"adjudicator"}\r\n```';
       const result = ResultParser.parseAamfOutput(stdout, AdjudicatorOutput);
@@ -556,6 +569,20 @@ intermediate text
       expect(result.parsed).toBe(false);
       if (!result.parsed) {
         expect(result.error).toContain('schema validation failed');
+      }
+    });
+
+    it('should include offending path/value and source artifact path for strict schema failures', () => {
+      const stdout = '```aamf-json\n{"status":"done","agent":"parity-verifier"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, ParityVerifierOutput, {
+        sourceArtifactPath: '/tmp/aamf/parity-verifier-task-11.log',
+      });
+      expect(result.parsed).toBe(false);
+      if (!result.parsed) {
+        expect(result.error).toContain('schema validation failed');
+        expect(result.error).toContain('"status"');
+        expect(result.error).toContain('"done"');
+        expect(result.error).toContain('/tmp/aamf/parity-verifier-task-11.log');
       }
     });
   });
