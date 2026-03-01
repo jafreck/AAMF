@@ -1458,7 +1458,7 @@ export class MigrationOrchestrator {
       onExhausted: async (taskId, lastError) => {
         // Escalate to failure-recovery agent
         const recoveryCtx = await this.contextBuilder.buildContext(
-          'failure-recovery',
+          'failure-adjudicator',
           4,
           taskId,
           {
@@ -1469,7 +1469,7 @@ export class MigrationOrchestrator {
             attemptNumber: this.config.options.maxRetriesPerTask,
           },
         );
-        return this.buildInvocation('failure-recovery', recoveryCtx, 4, taskId);
+        return this.buildInvocation('failure-adjudicator', recoveryCtx, 4, taskId);
       },
     });
 
@@ -1549,7 +1549,7 @@ export class MigrationOrchestrator {
             `${task.id}.md`,
           );
           const recoveryCtx = await this.contextBuilder.buildContext(
-            'failure-recovery',
+            'failure-adjudicator',
             4,
             task.id,
             {
@@ -1560,7 +1560,7 @@ export class MigrationOrchestrator {
               attemptNumber: attempt,
             },
           );
-          const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
+          const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
           const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
           this.recordTokens(recoveryResult, 4);
 
@@ -2102,7 +2102,7 @@ export class MigrationOrchestrator {
 
       // 1. Launch failure-recovery with the error output
       const recoveryCtx = await this.contextBuilder.buildContext(
-        'failure-recovery',
+        'failure-adjudicator',
         4,
         task.id,
         {
@@ -2114,7 +2114,7 @@ export class MigrationOrchestrator {
           attemptNumber: attempt,
         },
       );
-      const recoveryInv = this.buildInvocation('failure-recovery', recoveryCtx, 4, task.id);
+      const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
       const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
       this.recordTokens(recoveryResult, 4);
 
@@ -2489,7 +2489,7 @@ export class MigrationOrchestrator {
       'code-migrator',
       'parity-verifier',
       'test-writer',
-      'failure-recovery',
+      'failure-adjudicator',
       'final-parity-checker',
       'e2e-test-crafter',
       'documentation-writer',
@@ -2505,7 +2505,7 @@ export class MigrationOrchestrator {
       : undefined;
 
     // Failure-recovery model override takes precedence over routing
-    const failureRecoveryOverride = agent === 'failure-recovery'
+    const failureRecoveryOverride = agent === 'failure-adjudicator'
       ? this.getFailureRecoveryModel()
       : undefined;
 

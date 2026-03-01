@@ -441,6 +441,28 @@ describe('AgentLauncher', () => {
       expect(result.parseError).toBeUndefined();
     });
 
+    it('should parse aamf-json output for failure-adjudicator invocations', async () => {
+      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'failure-recovery' });
+      const script = await createScript('valid-aamf-failure-adjudicator.sh', [
+        `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('aamf-failure-adjudicator-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'failure-adjudicator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'aamf-failure-adjudicator-001',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputParsed).toBe(true);
+      expect(result.structuredOutput?.agent).toBe('failure-recovery');
+    });
+
     it('should leave success unchanged and set outputParsed: false when no aamf-json block is emitted', async () => {
       const script = await createScript('no-aamf.sh', 'echo "no structured output here"\nexit 0');
       const launcher = makeLauncher(script);

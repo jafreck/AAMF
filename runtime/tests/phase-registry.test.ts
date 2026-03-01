@@ -36,6 +36,8 @@ describe('Phase Registry', () => {
     expect(phase?.id).toBe(4);
     expect(phase?.name).toBe('Iterative Migration');
     expect(phase?.description).toContain('per-task or wave-barrier mode');
+    expect(phase?.agents).toContain('failure-adjudicator');
+    expect(phase?.agents).not.toContain('failure-recovery');
   });
 
   it('should return undefined for invalid phase ID', () => {
