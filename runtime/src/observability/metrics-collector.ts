@@ -12,6 +12,22 @@ import type { InvocationMetric } from '../agents/types.js';
 
 // ─── Aggregate Types ─────────────────────────────────────────────────────────
 
+export interface Phase4MetricsSnapshot {
+  executionMode: 'per-task' | 'wave-barrier';
+  phase4DurationMs: number;
+  completedTaskCount: number;
+  waveCount: number;
+  waveValidationRuns: number;
+  waveConvergenceIterations: number;
+  waveConvergenceFailures: number;
+  waveConvergenceLimitHits: number;
+  buildCommandRuns: number;
+  testCommandRuns: number;
+  commandRecoveryAttempts: number;
+  commandInfraRetries: number;
+  recoveryLoopTimeMs: number;
+}
+
 export interface MetricsAggregate {
   totalInvocations: number;
   invocationsByAgent: Record<string, number>;
@@ -32,6 +48,36 @@ export interface MetricsAggregate {
   totalEscalationCostUsd: number;
   /** Routed invocations (tier != normal) that succeeded on first attempt. */
   retriesAvoidedByRouting: number;
+  /** Phase 4 execution strategy used for this run. */
+  phase4ExecutionMode: 'per-task' | 'wave-barrier' | 'unknown';
+  /** Total duration of phase 4 in milliseconds. */
+  phase4DurationMs: number;
+  /** Number of phase 4 tasks marked completed. */
+  completedPhase4Tasks: number;
+  /** Number of migration waves executed in wave-barrier mode. */
+  waveCount: number;
+  /** Number of build/test validation passes run after waves. */
+  waveValidationRuns: number;
+  /** Total convergence iterations attempted across waves. */
+  waveConvergenceIterations: number;
+  /** Number of failed convergence checks before success/limit. */
+  waveConvergenceFailures: number;
+  /** Number of waves that hit the convergence iteration cap. */
+  waveConvergenceLimitHits: number;
+  /** Number of build command invocations in phase 4. */
+  buildCommandRuns: number;
+  /** Number of test command invocations in phase 4. */
+  testCommandRuns: number;
+  /** Number of recovery-loop attempts for build/test failures. */
+  commandRecoveryAttempts: number;
+  /** Number of infrastructure-only retries for build/test failures. */
+  commandInfraRetries: number;
+  /** Time spent in build/test recovery loops in milliseconds. */
+  recoveryLoopTimeMs: number;
+  /** Build/test command invocations per completed phase 4 task. */
+  buildTestInvocationsPerCompletedTask: number;
+  /** Retry invocations per completed phase 4 task. */
+  retryVolumePerCompletedTask: number;
 }
 
 export interface ParallelismBucket {
@@ -48,6 +94,7 @@ const SUMMARY_FILE = 'summary.json';
 
 export class MetricsCollector {
   private metrics: InvocationMetric[] = [];
+  private phase4Snapshot?: Phase4MetricsSnapshot;
 
   /** Record a single invocation metric into the in-memory store. */
   record(metric: InvocationMetric): void {
@@ -57,6 +104,11 @@ export class MetricsCollector {
   /** Return all recorded metrics. */
   getMetrics(): InvocationMetric[] {
     return this.metrics;
+  }
+
+  /** Store phase-4 scheduler/build metrics captured by the orchestrator. */
+  setPhase4Snapshot(snapshot: Phase4MetricsSnapshot): void {
+    this.phase4Snapshot = snapshot;
   }
 
   /**
@@ -157,6 +209,22 @@ export class MetricsCollector {
       0,
     );
     const peak = Math.max(timeSeriesPeak, peakConcurrency ?? 0);
+    const phase4TaskIds = new Set(
+      this.metrics
+        .filter(
+          (m) => m.phase === 4 && m.taskId.trim().length > 0 && !m.taskId.startsWith('wave-'),
+        )
+        .map((m) => m.taskId),
+    );
+    const completedPhase4Tasks = this.phase4Snapshot?.completedTaskCount ?? phase4TaskIds.size;
+    const buildCommandRuns = this.phase4Snapshot?.buildCommandRuns ?? 0;
+    const testCommandRuns = this.phase4Snapshot?.testCommandRuns ?? 0;
+    const retryVolumePerCompletedTask = completedPhase4Tasks > 0
+      ? totalRetries / completedPhase4Tasks
+      : 0;
+    const buildTestInvocationsPerCompletedTask = completedPhase4Tasks > 0
+      ? (buildCommandRuns + testCommandRuns) / completedPhase4Tasks
+      : 0;
 
     return {
       totalInvocations: this.metrics.length,
@@ -174,6 +242,21 @@ export class MetricsCollector {
       escalationsByTier,
       totalEscalationCostUsd,
       retriesAvoidedByRouting,
+      phase4ExecutionMode: this.phase4Snapshot?.executionMode ?? 'unknown',
+      phase4DurationMs: this.phase4Snapshot?.phase4DurationMs ?? 0,
+      completedPhase4Tasks,
+      waveCount: this.phase4Snapshot?.waveCount ?? 0,
+      waveValidationRuns: this.phase4Snapshot?.waveValidationRuns ?? 0,
+      waveConvergenceIterations: this.phase4Snapshot?.waveConvergenceIterations ?? 0,
+      waveConvergenceFailures: this.phase4Snapshot?.waveConvergenceFailures ?? 0,
+      waveConvergenceLimitHits: this.phase4Snapshot?.waveConvergenceLimitHits ?? 0,
+      buildCommandRuns,
+      testCommandRuns,
+      commandRecoveryAttempts: this.phase4Snapshot?.commandRecoveryAttempts ?? 0,
+      commandInfraRetries: this.phase4Snapshot?.commandInfraRetries ?? 0,
+      recoveryLoopTimeMs: this.phase4Snapshot?.recoveryLoopTimeMs ?? 0,
+      buildTestInvocationsPerCompletedTask,
+      retryVolumePerCompletedTask,
     };
   }
 

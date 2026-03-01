@@ -49,6 +49,7 @@ export class ReportGenerator {
     sections.push(this.buildParallelismSection(aggregates));
     sections.push(this.buildCostTokenTable(aggregates));
     sections.push(this.buildRetrySummary(metrics));
+    sections.push(this.buildWaveEfficiencySummary(aggregates));
 
     return sections.join('\n');
   }
@@ -183,6 +184,34 @@ export class ReportGenerator {
     }
 
     lines.push('');
+    return lines.join('\n');
+  }
+
+  // ─── Wave lifecycle / efficiency summary ───────────────────────────────
+
+  private buildWaveEfficiencySummary(aggregates: MetricsAggregate): string {
+    const lines: string[] = [
+      '## Wave Lifecycle & Efficiency\n',
+      `**Execution mode:** ${aggregates.phase4ExecutionMode}`,
+      `**Phase 4 duration:** ${aggregates.phase4DurationMs}ms`,
+      `**Completed Phase 4 tasks:** ${aggregates.completedPhase4Tasks}`,
+      `**Waves executed:** ${aggregates.waveCount}`,
+      `**Wave validation runs:** ${aggregates.waveValidationRuns}`,
+      `**Convergence iterations:** ${aggregates.waveConvergenceIterations}`,
+      `**Convergence failures:** ${aggregates.waveConvergenceFailures}`,
+      `**Convergence limit hits:** ${aggregates.waveConvergenceLimitHits}\n`,
+      '| Signal | Value |',
+      '|---|---|',
+      `| Build command runs | ${aggregates.buildCommandRuns} |`,
+      `| Test command runs | ${aggregates.testCommandRuns} |`,
+      `| Command recovery attempts | ${aggregates.commandRecoveryAttempts} |`,
+      `| Command infra retries | ${aggregates.commandInfraRetries} |`,
+      `| Recovery-loop time (ms) | ${aggregates.recoveryLoopTimeMs} |`,
+      `| Build/test invocations per completed task | ${aggregates.buildTestInvocationsPerCompletedTask.toFixed(2)} |`,
+      `| Retry volume per completed task | ${aggregates.retryVolumePerCompletedTask.toFixed(2)} |`,
+      '',
+    ];
+
     return lines.join('\n');
   }
 }

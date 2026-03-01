@@ -2951,6 +2951,62 @@ describe('MigrationOrchestrator', () => {
       expect(summary).toHaveProperty('totalTokens');
       expect(summary).toHaveProperty('totalCost');
       expect(summary).toHaveProperty('peakParallelInvocations');
+      expect(summary).toHaveProperty('phase4ExecutionMode');
+      expect(summary).toHaveProperty('waveCount');
+      expect(summary).toHaveProperty('buildCommandRuns');
+      expect(summary).toHaveProperty('testCommandRuns');
+      expect(summary).toHaveProperty('recoveryLoopTimeMs');
+      expect(summary).toHaveProperty('buildTestInvocationsPerCompletedTask');
+      expect(summary).toHaveProperty('retryVolumePerCompletedTask');
+    });
+
+    it('should persist per-task phase 4 wave snapshot metrics in summary', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      await orchestrator.run();
+
+      const summaryPath = join(progressDir, 'metrics', 'summary.json');
+      const raw = await readFile(summaryPath, 'utf-8');
+      const summary = JSON.parse(raw);
+      expect(summary.phase4ExecutionMode).toBe('per-task');
+      expect(summary.completedPhase4Tasks).toBe(2);
+      expect(summary.waveCount).toBe(0);
+      expect(summary.waveValidationRuns).toBe(0);
+      expect(summary.buildCommandRuns).toBe(0);
+      expect(summary.testCommandRuns).toBe(0);
+      expect(summary.buildTestInvocationsPerCompletedTask).toBe(0);
+      expect(summary.retryVolumePerCompletedTask).toBe(0);
+    });
+
+    it('should persist wave-barrier convergence metrics in summary', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['src/b.ts'] },
+      ];
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { waveSize: 2, maxConvergenceIterations: 2 },
+        },
+      });
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      await orchestrator.run();
+
+      const summaryPath = join(progressDir, 'metrics', 'summary.json');
+      const raw = await readFile(summaryPath, 'utf-8');
+      const summary = JSON.parse(raw);
+      expect(summary.phase4ExecutionMode).toBe('wave-barrier');
+      expect(summary.completedPhase4Tasks).toBe(2);
+      expect(summary.waveCount).toBeGreaterThanOrEqual(1);
+      expect(summary.waveValidationRuns).toBeGreaterThanOrEqual(1);
+      expect(summary.waveConvergenceIterations).toBeGreaterThanOrEqual(1);
+      expect(summary.waveConvergenceFailures).toBe(0);
+      expect(summary.waveConvergenceLimitHits).toBe(0);
     });
 
     it('should generate observability report at end of run', async () => {

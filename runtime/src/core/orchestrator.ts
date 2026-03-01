@@ -31,6 +31,7 @@ import { spawnWithTimeout } from '../util/process.js';
 import type { EmbeddingProvider } from '@aamf/lore';
 import type { KbServerProcess } from './kb-server-process.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
+import type { Phase4MetricsSnapshot } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
 import type { InvocationMetric } from '../agents/types.js';
 import { z } from 'zod';
@@ -166,6 +167,8 @@ export class MigrationOrchestrator {
   private readonly _routedTaskIds = new Set<string>();
   /** Cumulative projected escalation cost (USD) for this run. */
   private _escalationCostUsd = 0;
+  /** Phase 4 observability counters (set while Phase 4 is active). */
+  private phase4Snapshot?: Phase4MetricsSnapshot;
 
   constructor(
     private readonly config: MigrationConfig,
@@ -1043,6 +1046,21 @@ export class MigrationOrchestrator {
     const phase4Parallelism = this.isGitAutomationEnabled()
       ? 1
       : this.config.options.maxParallelAgents;
+    this.phase4Snapshot = {
+      executionMode,
+      phase4DurationMs: 0,
+      completedTaskCount: 0,
+      waveCount: 0,
+      waveValidationRuns: 0,
+      waveConvergenceIterations: 0,
+      waveConvergenceFailures: 0,
+      waveConvergenceLimitHits: 0,
+      buildCommandRuns: 0,
+      testCommandRuns: 0,
+      commandRecoveryAttempts: 0,
+      commandInfraRetries: 0,
+      recoveryLoopTimeMs: 0,
+    };
 
     if (executionMode === 'wave-barrier') {
       return this.executePhase4WaveBarrier(
@@ -1107,6 +1125,12 @@ export class MigrationOrchestrator {
 
     const finalProgress = queue.getProgress();
     const deadlocked = finalProgress.remaining > 0;
+    if (this.phase4Snapshot) {
+      this.phase4Snapshot.phase4DurationMs = Date.now() - start;
+      this.phase4Snapshot.completedTaskCount = finalProgress.completed;
+      this.metricsCollector.setPhase4Snapshot(this.phase4Snapshot);
+      this.phase4Snapshot = undefined;
+    }
     return {
       phase: 4,
       name: 'Iterative Migration',
@@ -1155,6 +1179,9 @@ export class MigrationOrchestrator {
       const blockedAtWaveStart = queue.getProgress().blocked;
       const waveTasks = TaskQueue.selectNonOverlappingBatch(readyTasks, waveSize);
       wave++;
+      if (this.phase4Snapshot) {
+        this.phase4Snapshot.waveCount++;
+      }
       const waveStart = Date.now();
 
       const taskIds = waveTasks.map(t => t.id);
@@ -1188,6 +1215,9 @@ export class MigrationOrchestrator {
 
       if (waveCandidates.length > 0) {
         for (let iteration = 1; iteration <= maxConvergenceIterations; iteration++) {
+          if (this.phase4Snapshot) {
+            this.phase4Snapshot.waveConvergenceIterations++;
+          }
           const validationOk = await this.runWaveValidation(wave);
           if (validationOk) {
             this.logger.event({
@@ -1211,6 +1241,9 @@ export class MigrationOrchestrator {
 
           converged = false;
           remainingFailures = waveCandidates.length;
+          if (this.phase4Snapshot) {
+            this.phase4Snapshot.waveConvergenceFailures++;
+          }
           this.logger.event({
             type: 'wave-convergence-status',
             wave,
@@ -1250,6 +1283,9 @@ export class MigrationOrchestrator {
       }
 
       if (!converged && waveCandidates.length > 0) {
+        if (this.phase4Snapshot) {
+          this.phase4Snapshot.waveConvergenceLimitHits++;
+        }
         this.logger.event({
           type: 'wave-convergence-limit-reached',
           wave,
@@ -1294,6 +1330,12 @@ export class MigrationOrchestrator {
 
     const finalProgress = queue.getProgress();
     const deadlocked = finalProgress.remaining > 0;
+    if (this.phase4Snapshot) {
+      this.phase4Snapshot.phase4DurationMs = Date.now() - start;
+      this.phase4Snapshot.completedTaskCount = finalProgress.completed;
+      this.metricsCollector.setPhase4Snapshot(this.phase4Snapshot);
+      this.phase4Snapshot = undefined;
+    }
     return {
       phase: 4,
       name: 'Iterative Migration',
@@ -1607,6 +1649,9 @@ export class MigrationOrchestrator {
   }
 
   private async runWaveValidation(wave: number): Promise<boolean> {
+    if (this.phase4Snapshot) {
+      this.phase4Snapshot.waveValidationRuns++;
+    }
     const waveTaskId = `wave-${wave}`;
 
     if (this.config.target.buildCommand) {
@@ -1902,6 +1947,10 @@ export class MigrationOrchestrator {
     command: string,
     taskId: string,
   ): Promise<{ success: boolean; error?: string; infraError?: string }> {
+    if (this.phase4Snapshot) {
+      if (label === 'build') this.phase4Snapshot.buildCommandRuns++;
+      if (label === 'test') this.phase4Snapshot.testCommandRuns++;
+    }
     return this.buildLimiter(async () => {
       const timeout = this.config.copilot.timeout;
       this.logger.info(`Running ${label} command for task ${taskId}: ${command}`);
@@ -1974,11 +2023,15 @@ export class MigrationOrchestrator {
     // Initial attempt
     let cmdResult = await this.runCommand(label, command, task.id);
     if (cmdResult.success) return true;
+    const recoveryLoopStartedAt = Date.now();
 
     // Infrastructure retry loop — simple backoff, no recovery agent
     let infraAttempt = 0;
     while (cmdResult.infraError && infraAttempt < maxInfraRetries) {
       infraAttempt++;
+      if (this.phase4Snapshot) {
+        this.phase4Snapshot.commandInfraRetries++;
+      }
       const backoffMs = Math.min(1000 * Math.pow(2, infraAttempt - 1), 30_000);
       this.logger.warn(
         `${label} failed for ${task.id} with infrastructure error "${cmdResult.infraError}", ` +
@@ -1988,6 +2041,9 @@ export class MigrationOrchestrator {
 
       cmdResult = await this.runCommand(label, command, task.id);
       if (cmdResult.success) {
+        if (this.phase4Snapshot) {
+          this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
+        }
         this.logger.info(
           `${label} recovered for ${task.id} after infra retry ${infraAttempt}`,
         );
@@ -2001,6 +2057,9 @@ export class MigrationOrchestrator {
 
     // Code-quality recovery loop — full failure-recovery → code-migrator pipeline
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (this.phase4Snapshot) {
+        this.phase4Snapshot.commandRecoveryAttempts++;
+      }
       this.logger.warn(
         `${label} failed for ${task.id}, recovery attempt ${attempt}/${maxAttempts}: ${cmdResult.error}`,
       );
@@ -2053,9 +2112,16 @@ export class MigrationOrchestrator {
       // 3. Re-run the command
       cmdResult = await this.runCommand(label, command, task.id);
       if (cmdResult.success) {
+        if (this.phase4Snapshot) {
+          this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
+        }
         this.logger.info(`${label} recovered for ${task.id} on attempt ${attempt}`);
         return true;
       }
+    }
+
+    if (this.phase4Snapshot) {
+      this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
     }
 
     // Exhausted retries — block the task
