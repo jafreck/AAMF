@@ -127,7 +127,7 @@ The runtime executes migration as a sequence of seven phases, each driven by one
 | 1 | **Impact Assessment** | Scans the source codebase to build a dependency graph, identify file roles, and estimate migration complexity. |
 | 2 | **Knowledge Base Construction** | Extracts patterns, idioms, and domain knowledge from the source code into a structured knowledge base that downstream agents reference. |
 | 3 | **Migration Planning** | Produces an ordered task list — which files to migrate, in what order, with what dependencies — respecting the dependency graph from Phase 1. |
-| 4 | **Iterative Migration** | The main execution loop. Defaults to per-task migration/validation, or runs wave-barrier scheduling with migration waves, barrier-gated validation, and fix-wave convergence when enabled. |
+| 4 | **Iterative Migration** | The main execution loop. Defaults to per-task migration/validation, or runs wave-barrier scheduling with migration waves, barrier-gated validation, fix-wave convergence, and `failure-adjudicator` decisions when retries are exhausted. |
 | 5 | **Final Parity Verification** | Compares the migrated codebase against the source to verify functional equivalence and flag any gaps. |
 | 6 | **E2E Testing & Documentation** | Generates end-to-end tests, updates documentation, and produces a migration report. |
 | 7 | **Completion** | Finalizes artifacts, writes the summary report, and cleans up temporary state. |
@@ -156,6 +156,13 @@ In `wave-barrier` mode, each cycle is:
 Blocked-task policy (`continueOnBlocked`, `maxBlockedTasks`) is still enforced in wave mode, but evaluated after each wave.
 Wave lifecycle and convergence are observable in `.aamf/migration/{projectName}/progress.md` (**Wave Lifecycle** table) and in observability outputs under `metrics/summary.json` and `reports/observability/report.md`.
 
+When migration/parity retries are exhausted, Phase 4 invokes `failure-adjudicator` and applies decision outcomes:
+
+- `fixed`: rerun targeted verifier checks after applying the adjudicated fix path.
+- `false_positive`: persist waiver/fingerprint evidence and unblock without repeating the identical parity failure loop.
+- `real_gap`: force remediation work before a task can complete.
+- `inconclusive`: preserve strict retry/block behavior.
+
 ## Project Structure
 
 ```
@@ -180,7 +187,7 @@ runtime/src/
 │   └── runtime.ts              # Core runtime initialization and shutdown
 ├── execution/
 │   ├── parallel-executor.ts    # Runs tasks concurrently up to maxParallelAgents
-│   ├── retry.ts                # Retry logic with backoff for failed tasks
+│   ├── retry.ts                # Retry logic with backoff and failure-adjudicator escalation
 │   ├── serial-executor.ts      # Runs tasks sequentially for ordered dependencies
 │   └── task-queue.ts           # Priority queue for pending migration tasks
 ├── logging/

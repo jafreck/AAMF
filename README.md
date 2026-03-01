@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/jafreck/AAMF/actions/workflows/ci.yml/badge.svg)](https://github.com/jafreck/AAMF/actions/workflows/ci.yml)
 
-AAMF is a TypeScript runtime that orchestrates AI agents to migrate extremely large legacy codebases from one technology stack to another. It manages the full lifecycle — analysis, planning, code translation, verification, and documentation — by spawning out-of-process Copilot CLI invocations and coordinating them through a seven-phase pipeline with checkpointing, budgeting, and failure recovery.
+AAMF is a TypeScript runtime that orchestrates AI agents to migrate extremely large legacy codebases from one technology stack to another. It manages the full lifecycle — analysis, planning, code translation, verification, and documentation — by spawning out-of-process Copilot CLI invocations and coordinating them through a seven-phase pipeline with checkpointing, budgeting, and failure adjudication.
 
 Typical use cases include porting a 100k+ line Python monolith to TypeScript, a COBOL system to Go, or a Java codebase to Rust.
 
@@ -66,7 +66,7 @@ AAMF treats the migration as a pipeline of **7 sequential phases**, each driven 
 | 1 | **Impact Assessment** | `impact-assessor` | No | Yes |
 | 2 | **Knowledge Base Construction** | `knowledge-builder`, `large-file-analyzer` | Yes | Yes |
 | 3 | **Migration Planning** | `migration-planner`, `adjudicator` | No | Yes |
-| 4 | **Iterative Migration** | `code-migrator`, `parity-verifier`, `test-writer`, `failure-recovery` | Partial | Yes |
+| 4 | **Iterative Migration** | `code-migrator`, `parity-verifier`, `test-writer`, `failure-adjudicator` | Partial | Yes |
 | 5 | **Final Parity Verification** | `final-parity-checker` | No | No |
 | 6 | **E2E Testing & Documentation** | `e2e-test-crafter`, `documentation-writer` | Yes | No |
 | 7 | **Completion** | *(none — summary only)* | — | No |
@@ -136,7 +136,7 @@ AAMF defines 14 specialized agent roles. Each corresponds to a `.agent.md` file 
 | `code-migrator` | 4 | Translates source code to the target language/framework |
 | `parity-verifier` | 4 | Checks behavioral equivalence between source and migrated code |
 | `test-writer` | 4 | Generates unit tests for migrated code |
-| `failure-recovery` | 4 | Diagnoses and fixes migration failures after retries are exhausted |
+| `failure-adjudicator` | 4 | Decides whether exhausted retries are fixed, false positives, real gaps, or inconclusive |
 | `final-parity-checker` | 5 | Full-codebase parity sweep with loop-back fix capability |
 | `e2e-test-crafter` | 6 | Creates end-to-end integration tests |
 | `documentation-writer` | 6 | Produces migration documentation and guides |
@@ -178,11 +178,16 @@ In both modes, the runtime:
 3. Uses a dependency-aware `TaskQueue` to select only ready tasks
 4. Executes migration work:
     - Spawns `code-migrator` with retry (up to `maxRetriesPerTask` attempts)
-    - On exhaustion, escalates to `failure-recovery` for diagnosis and scope reduction
+    - On exhaustion, escalates to `failure-adjudicator` for decision-driven adjudication
+    - Applies adjudication outcomes:
+      - `fixed`: reruns targeted verification after applying the adjudicated fix path
+      - `false_positive`: records a waiver/fingerprint and unblocks without re-running the identical parity failure
+      - `real_gap`: forces remediation work before task completion can continue
+      - `inconclusive`: keeps strict retry/block behavior
 5. In `wave-barrier`, enforces a quiescent barrier before validation:
     - Runs build/test once per wave
     - If validation fails, runs targeted fix waves and retries until convergence or `waveControl.maxConvergenceIterations`
-6. Tasks that fail all retries/recovery or exceed convergence policy are marked **blocked** (with `continueOnBlocked`/`maxBlockedTasks` policy enforcement)
+6. Tasks that fail all retries/adjudication or exceed convergence policy are marked **blocked** (with `continueOnBlocked`/`maxBlockedTasks` policy enforcement)
 7. Emits wave lifecycle and convergence telemetry in `progress.md` and observability reports
 
 ### Phase 5 — Final Parity Verification
@@ -219,15 +224,14 @@ npx aamf migrate -c migration.config.json --resume
 
 The orchestrator skips completed phases and resumes the task queue from where it left off. A backup checkpoint (`checkpoint.backup.json`) is maintained for corruption recovery.
 
-### Retry & Failure Recovery
+### Retry & Failure Adjudication
 
-Failed agent invocations are retried up to `maxRetriesPerTask` times (default: 3). When all retries are exhausted, the `failure-recovery` agent is invoked to:
+Failed agent invocations are retried up to `maxRetriesPerTask` times (default: 3). When all retries are exhausted, the `failure-adjudicator` agent returns a decision and runtime applies it:
 
-1. Diagnose the root cause
-2. Propose a fix or reduced scope
-3. Attempt recovery
-
-If recovery succeeds, the original task is retried once more. If it still fails, the task is marked **blocked** and the pipeline continues.
+1. `fixed` → apply fix path and rerun targeted verifier checks
+2. `false_positive` → persist waiver/fingerprint evidence and unblock the task without repeating the same parity retry loop
+3. `real_gap` → force remediation/replanning before progressing
+4. `inconclusive` → preserve strict retry semantics; task is blocked if it still cannot be validated
 
 ### Graceful Shutdown
 
@@ -395,7 +399,7 @@ runtime/
 │   │   ├── parallel-executor.ts     # p-limit based concurrent agent runner
 │   │   ├── serial-executor.ts       # Sequential agent runner
 │   │   ├── task-queue.ts            # Dependency-aware queue with topo sort
-│   │   └── retry.ts                 # Retry with failure-recovery escalation
+│   │   └── retry.ts                 # Retry with failure-adjudicator escalation
 │   ├── budget/
 │   │   ├── token-tracker.ts         # Per-agent/phase token accounting
 │   │   └── cost-estimator.ts        # USD cost estimation by model
