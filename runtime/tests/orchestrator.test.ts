@@ -1937,6 +1937,92 @@ describe('MigrationOrchestrator', () => {
       expect(result.blockedTasks).toContain('task-001');
     });
 
+    describe('qualityPolicy phase 4 gating', () => {
+      it('should map qualityPolicy values to expected phase 4 gate modes', async () => {
+        const launcherFn = createMockLauncher();
+        const strict = await setupOrchestrator(tempDir, launcherFn, { options: { qualityPolicy: 'strict' } });
+        const balanced = await setupOrchestrator(tempDir, launcherFn, { options: { qualityPolicy: 'balanced' } });
+        const deferred = await setupOrchestrator(tempDir, launcherFn, { options: { qualityPolicy: 'deferred-strict' } });
+
+        expect((strict.orchestrator as any).getPhase4QualityGateMode()).toBe('enforce');
+        expect((balanced.orchestrator as any).getPhase4QualityGateMode()).toBe('advisory');
+        expect((deferred.orchestrator as any).getPhase4QualityGateMode()).toBe('skip');
+      });
+
+      it('should return a wave-end build gate error and skip test gate after build failure', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+          options: { qualityPolicy: 'balanced' },
+          target: { buildCommand: 'npm run build', testCommand: 'npm test' },
+        });
+        const runCommandSpy = vi.spyOn(orchestrator as any, 'runCommand')
+          .mockResolvedValueOnce({ success: false, error: 'build failed' })
+          .mockResolvedValueOnce({ success: true });
+
+        const waveEndError = await (orchestrator as any).runWaveEndQualityGates();
+
+        expect(waveEndError).toBe('wave-end build gate failed (balanced): build failed');
+        expect(runCommandSpy).toHaveBeenCalledTimes(1);
+        expect(runCommandSpy).toHaveBeenCalledWith('build', 'npm run build', 'wave-end');
+      });
+
+      it('should run build and test wave-end gates and return undefined when both pass', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+          options: { qualityPolicy: 'balanced' },
+          target: { buildCommand: 'npm run build', testCommand: 'npm test' },
+        });
+        const runCommandSpy = vi.spyOn(orchestrator as any, 'runCommand')
+          .mockResolvedValueOnce({ success: true })
+          .mockResolvedValueOnce({ success: true });
+
+        const waveEndError = await (orchestrator as any).runWaveEndQualityGates();
+
+        expect(waveEndError).toBeUndefined();
+        expect(runCommandSpy).toHaveBeenCalledTimes(2);
+        expect(runCommandSpy).toHaveBeenNthCalledWith(1, 'build', 'npm run build', 'wave-end');
+        expect(runCommandSpy).toHaveBeenNthCalledWith(2, 'test', 'npm test', 'wave-end');
+      });
+
+      it('should fail phase 4 at wave-end in balanced mode when strict gate command fails', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'balanced-wave-end-output'),
+            testCommand: 'false',
+          },
+          options: { qualityPolicy: 'balanced' },
+        });
+        await writeMigrationPlan(progressDir);
+
+        const result = await orchestrator.run();
+        const phase4 = result.phases.find((p) => p.phase === 4);
+
+        expect(phase4).toBeDefined();
+        expect(phase4?.success).toBe(false);
+        expect(phase4?.error).toContain('wave-end test gate failed (balanced)');
+      });
+
+      it('should defer phase 4 quality gates to wave-end in deferred-strict mode', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'deferred-wave-end-output'),
+            testCommand: 'false',
+          },
+          options: { qualityPolicy: 'deferred-strict' },
+        });
+        await writeMigrationPlan(progressDir);
+
+        const result = await orchestrator.run();
+        const phase4 = result.phases.find((p) => p.phase === 4);
+
+        expect(phase4).toBeDefined();
+        expect(phase4?.success).toBe(false);
+        expect(phase4?.error).toContain('wave-end test gate failed (deferred-strict)');
+      });
+    });
+
     it('should use avgTokensPerTask from config for Phase 4 cost projection', async () => {
       const launcherFn = createMockLauncher();
       const logger = createSilentLogger(tempDir);
