@@ -396,6 +396,12 @@ export interface InvocationMetric {
   routingReason?: string;
   /** Incremental cost (USD) attributed to model escalation. */
   escalationCostUsd?: number;
+  /** Stable hash for the normalized failure signature when dedup logic is involved. */
+  failureSignatureHash?: string;
+  /** Number of times this failure signature has been seen for the retry scope. */
+  failureSignatureRepeatCount?: number;
+  /** Explicit reason when repeated-signature dedup logic stops further retries. */
+  repeatedFailureStopReason?: string;
 }
 
 // ─── Model Routing ───────────────────────────────────────────────────────────

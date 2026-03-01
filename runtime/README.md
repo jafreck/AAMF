@@ -40,6 +40,7 @@ Create a `migration.config.json` file in your project root. Below is a full refe
   "options": {
     "maxParallelAgents": 3,
     "maxRetriesPerTask": 3,
+    "maxRepeatedFailureSignatures": 2,
     "largeFileThreshold": 500,
     "maxLinesPerTask": 500,
     "tokenBudget": 2000000,
@@ -72,6 +73,7 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | | `testCommand` | Command the runtime executes to run tests. |
 | **options** | `maxParallelAgents` | Maximum number of agent processes to run concurrently. Default: `3`. |
 | | `maxRetriesPerTask` | How many times to retry a failed agent task before marking it failed. Default: `3`. |
+| | `maxRepeatedFailureSignatures` | Maximum repeated identical failure signatures allowed in a retry/recovery loop. Default: `2` (the third identical signature triggers early stop). |
 | | `largeFileThreshold` | Line count above which a file is considered "large" and split into chunks. Default: `500`. |
 | | `maxLinesPerTask` | Maximum lines per migration task chunk. Default: `500`. |
 | | `tokenBudget` | Total token budget across all LLM calls. Default: `2000000`. |
@@ -175,6 +177,8 @@ The runtime writes several artifacts to track migration progress:
 - **`checkpoint.json`** — Machine-readable snapshot of migration state, enabling `--resume`. Located alongside `progress.md`.
 - **Per-agent logs** — Each agent invocation writes stdout/stderr to the `logs/` directory with timestamped filenames.
 - **`migration.log`** — Unified log of all runtime events (phase transitions, task completions, errors, timing).
+- **Repeated-failure dedup telemetry** — Early-stopped retry/recovery loops emit `repeated-failure-detected` events with signature hash, repeat count, and dedup stop reason.
+- **Observability reports** — `reports/observability/index.md` and `reports/observability/metrics.json` summarize repeated-signature stop reasons/counts.
 
 ## Artifact Retention
 

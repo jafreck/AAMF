@@ -49,6 +49,7 @@ export class ReportGenerator {
     sections.push(this.buildParallelismSection(aggregates));
     sections.push(this.buildCostTokenTable(aggregates));
     sections.push(this.buildRetrySummary(metrics));
+    sections.push(this.buildRepeatedFailureSummary(aggregates));
 
     return sections.join('\n');
   }
@@ -182,6 +183,27 @@ export class ReportGenerator {
       );
     }
 
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  private buildRepeatedFailureSummary(aggregates: MetricsAggregate): string {
+    const lines: string[] = [
+      '## Repeated Failure Signature Stops\n',
+      `**Total repeated-signature stops:** ${aggregates.totalRepeatedFailureStops}\n`,
+    ];
+
+    if (aggregates.totalRepeatedFailureStops === 0) {
+      lines.push('_No repeated-signature stop events recorded._\n');
+      return lines.join('\n');
+    }
+
+    lines.push('### Stop Reasons');
+    lines.push('| Stop Reason | Count |');
+    lines.push('|---|---|');
+    for (const [reason, count] of Object.entries(aggregates.repeatedFailureStopsByReason)) {
+      lines.push(`| ${reason} | ${count} |`);
+    }
     lines.push('');
     return lines.join('\n');
   }

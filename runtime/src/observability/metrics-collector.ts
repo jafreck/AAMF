@@ -32,6 +32,12 @@ export interface MetricsAggregate {
   totalEscalationCostUsd: number;
   /** Routed invocations (tier != normal) that succeeded on first attempt. */
   retriesAvoidedByRouting: number;
+  /** Count of invocations carrying repeated-signature dedup stop metadata. */
+  totalRepeatedFailureStops: number;
+  /** Repeated-signature stop counts grouped by explicit stop reason. */
+  repeatedFailureStopsByReason: Record<string, number>;
+  /** Number of invocation records that carried each failure signature hash. */
+  repeatedFailureSignaturesByHash: Record<string, number>;
 }
 
 export interface ParallelismBucket {
@@ -124,6 +130,9 @@ export class MetricsCollector {
     let escalationCount = 0;
     let totalEscalationCostUsd = 0;
     let retriesAvoidedByRouting = 0;
+    let totalRepeatedFailureStops = 0;
+    const repeatedFailureStopsByReason: Record<string, number> = {};
+    const repeatedFailureSignaturesByHash: Record<string, number> = {};
 
     for (const m of this.metrics) {
       invocationsByAgent[m.agentType] = (invocationsByAgent[m.agentType] ?? 0) + 1;
@@ -148,6 +157,17 @@ export class MetricsCollector {
 
       if (m.escalationCostUsd != null) {
         totalEscalationCostUsd += m.escalationCostUsd;
+      }
+
+      if (m.failureSignatureHash) {
+        repeatedFailureSignaturesByHash[m.failureSignatureHash] =
+          (repeatedFailureSignaturesByHash[m.failureSignatureHash] ?? 0) + 1;
+      }
+
+      if (m.repeatedFailureStopReason) {
+        totalRepeatedFailureStops++;
+        repeatedFailureStopsByReason[m.repeatedFailureStopReason] =
+          (repeatedFailureStopsByReason[m.repeatedFailureStopReason] ?? 0) + 1;
       }
     }
 
@@ -174,6 +194,9 @@ export class MetricsCollector {
       escalationsByTier,
       totalEscalationCostUsd,
       retriesAvoidedByRouting,
+      totalRepeatedFailureStops,
+      repeatedFailureStopsByReason,
+      repeatedFailureSignaturesByHash,
     };
   }
 

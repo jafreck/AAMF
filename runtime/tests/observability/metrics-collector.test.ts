@@ -405,6 +405,45 @@ describe('MetricsCollector', () => {
       expect(summary).toHaveProperty('totalEscalationCostUsd');
       expect(summary.totalEscalationCostUsd).toBeCloseTo(0.05, 6);
       expect(summary).toHaveProperty('retriesAvoidedByRouting', 1);
+      expect(summary).toHaveProperty('totalRepeatedFailureStops', 0);
+      expect(summary).toHaveProperty('repeatedFailureStopsByReason');
+      expect(summary).toHaveProperty('repeatedFailureSignaturesByHash');
+    });
+
+    it('should aggregate repeated-failure signature stop telemetry', () => {
+      collector.record(
+        makeMetric({
+          invocationId: 'inv-repeat-1',
+          failureSignatureHash: 'abc123',
+          failureSignatureRepeatCount: 3,
+          repeatedFailureStopReason: 'Repeated failure signature threshold exceeded',
+        }),
+      );
+      collector.record(
+        makeMetric({
+          invocationId: 'inv-repeat-2',
+          failureSignatureHash: 'abc123',
+          failureSignatureRepeatCount: 4,
+          repeatedFailureStopReason: 'Repeated failure signature threshold exceeded',
+        }),
+      );
+      collector.record(
+        makeMetric({
+          invocationId: 'inv-repeat-3',
+          failureSignatureHash: 'xyz999',
+          failureSignatureRepeatCount: 2,
+        }),
+      );
+
+      const agg = collector.getAggregates();
+      expect(agg.totalRepeatedFailureStops).toBe(2);
+      expect(agg.repeatedFailureStopsByReason).toEqual({
+        'Repeated failure signature threshold exceeded': 2,
+      });
+      expect(agg.repeatedFailureSignaturesByHash).toEqual({
+        abc123: 2,
+        xyz999: 1,
+      });
     });
 
     it('should compute parallelism of 1 for non-overlapping invocations', () => {

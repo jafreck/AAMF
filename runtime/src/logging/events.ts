@@ -33,6 +33,17 @@ export type RuntimeEvent =
   | { type: 'task-completed'; taskId: string; name: string; duration: number }
   | { type: 'task-failed'; taskId: string; name: string; error: string; attempt: number }
   | { type: 'task-blocked'; taskId: string; name: string; reason: string }
+  | {
+      type: 'repeated-failure-detected';
+      taskId: string;
+      failureSignatureHash: string;
+      repeatCount: number;
+      dedupStopReason?: string;
+      phase?: number;
+      agent?: string;
+      runId?: string;
+      invocationId?: string;
+    }
   | { type: 'checkpoint-saved'; phase: number; taskId?: string }
   | { type: 'budget-warning'; usage: number; budget: number; percentage: number }
   | { type: 'budget-exceeded'; usage: number; budget: number }

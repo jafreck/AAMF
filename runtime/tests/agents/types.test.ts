@@ -542,11 +542,31 @@ describe('InvocationMetric', () => {
     expect(metric.escalationCostUsd).toBe(0.12);
   });
 
+  it('should accept optional failureSignatureHash field', () => {
+    const metric = makeBaseMetric({ failureSignatureHash: 'abc123def456' });
+    expect(metric.failureSignatureHash).toBe('abc123def456');
+  });
+
+  it('should accept optional failureSignatureRepeatCount field', () => {
+    const metric = makeBaseMetric({ failureSignatureRepeatCount: 3 });
+    expect(metric.failureSignatureRepeatCount).toBe(3);
+  });
+
+  it('should accept optional repeatedFailureStopReason field', () => {
+    const metric = makeBaseMetric({
+      repeatedFailureStopReason: 'Repeated failure signature threshold exceeded',
+    });
+    expect(metric.repeatedFailureStopReason).toBe('Repeated failure signature threshold exceeded');
+  });
+
   it('should leave routing fields undefined when not provided', () => {
     const metric = makeBaseMetric();
     expect(metric.routingTier).toBeUndefined();
     expect(metric.routingReason).toBeUndefined();
     expect(metric.escalationCostUsd).toBeUndefined();
+    expect(metric.failureSignatureHash).toBeUndefined();
+    expect(metric.failureSignatureRepeatCount).toBeUndefined();
+    expect(metric.repeatedFailureStopReason).toBeUndefined();
   });
 });
 

@@ -139,6 +139,22 @@ describe('RuntimeEvent', () => {
       };
       expect(event.reason).toBe('user cancelled');
     });
+
+    it('should construct repeated-failure-detected event', () => {
+      const event: RuntimeEvent = {
+        type: 'repeated-failure-detected',
+        taskId: 'task-042',
+        failureSignatureHash: 'f00dbabe1234',
+        repeatCount: 3,
+        dedupStopReason: 'Repeated signature threshold exceeded',
+        phase: 4,
+        agent: 'code-migrator',
+      };
+      expect(event.type).toBe('repeated-failure-detected');
+      expect(event.failureSignatureHash).toBe('f00dbabe1234');
+      expect(event.repeatCount).toBe(3);
+      expect(event.dedupStopReason).toBe('Repeated signature threshold exceeded');
+    });
   });
 });
 

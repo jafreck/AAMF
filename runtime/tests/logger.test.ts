@@ -94,6 +94,33 @@ describe('Logger', () => {
     expect(entry.data.name).toBe('Impact Assessment');
   });
 
+  it('should log repeated-failure events via repeatedFailure()', async () => {
+    const logger = new Logger({ logDir, level: 'info', console: false });
+    logger.repeatedFailure({
+      taskId: 'task-042',
+      failureSignatureHash: 'f00dbabe1234',
+      repeatCount: 3,
+      dedupStopReason: 'Repeated signature threshold exceeded',
+      phase: 4,
+      agent: 'code-migrator',
+      runId: 'run-xyz',
+      invocationId: 'inv-xyz',
+    });
+    await logger.flush();
+
+    const content = await readFile(join(logDir, 'migration.log'), 'utf-8');
+    const entry = JSON.parse(content.trim());
+    expect(entry.message).toBe('repeated-failure-detected');
+    expect(entry.data.taskId).toBe('task-042');
+    expect(entry.data.failureSignatureHash).toBe('f00dbabe1234');
+    expect(entry.data.repeatCount).toBe(3);
+    expect(entry.data.dedupStopReason).toBe('Repeated signature threshold exceeded');
+    expect(entry.data.phase).toBe(4);
+    expect(entry.data.agent).toBe('code-migrator');
+    expect(entry.data.runId).toBe('run-xyz');
+    expect(entry.data.invocationId).toBe('inv-xyz');
+  });
+
   it('should create a child logger that inherits config', async () => {
     const logger = new Logger({ logDir, level: 'info', console: false });
     const child = logger.child('agent-x');

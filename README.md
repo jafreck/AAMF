@@ -222,6 +222,10 @@ Failed agent invocations are retried up to `maxRetriesPerTask` times (default: 3
 
 If recovery succeeds, the original task is retried once more. If it still fails, the task is marked **blocked** and the pipeline continues.
 
+Retry/recovery loops also track normalized failure signatures. `maxRepeatedFailureSignatures` (default: `2`) limits repeated identical failures per loop; when exceeded, the runtime stops that loop early instead of burning retries on equivalent failures.
+
+When repeated-signature early-stop triggers, telemetry includes signature hash, repeat count, and stop reason in `migration.log` (`repeated-failure-detected` events) and in observability artifacts (`reports/observability/index.md`, `reports/observability/metrics.json`).
+
 ### Graceful Shutdown
 
 On `SIGINT` or `SIGTERM`, the runtime saves the current checkpoint and writes an event to the progress file before exiting. The migration can be resumed from this point.
@@ -281,6 +285,7 @@ All migration state is observable in `.aamf/migration/{projectName}/`:
 ```
 
 The `progress.md` file is updated in real-time with a phase table, task-level progress, token usage, and a timestamped event log.
+The observability report also includes a repeated-signature stop summary with per-reason counts.
 
 ---
 
@@ -324,6 +329,7 @@ Create a `migration.config.json` in your project root:
   "options": {
     "maxParallelAgents": 3,
     "maxRetriesPerTask": 3,
+    "maxRepeatedFailureSignatures": 2,
     "largeFileThreshold": 500,
     "maxLinesPerTask": 500,
     "tokenBudget": 2000000

@@ -123,6 +123,12 @@ export class Logger {
     this.log('info', type, rest as Record<string, unknown>);
   }
 
+  repeatedFailure(
+    ev: Omit<Extract<RuntimeEvent, { type: 'repeated-failure-detected' }>, 'type'>,
+  ): void {
+    this.event({ type: 'repeated-failure-detected', ...ev });
+  }
+
   /* ── child logger ────────────────────────────────────────── */
 
   child(source: string): Logger {

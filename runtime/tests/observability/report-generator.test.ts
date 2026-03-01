@@ -47,6 +47,9 @@ function makeAggregates(overrides?: Partial<MetricsAggregate>): MetricsAggregate
       { epochSecond: 1772175600, concurrency: 1 },
       { epochSecond: 1772175601, concurrency: 2 },
     ],
+    totalRepeatedFailureStops: 0,
+    repeatedFailureStopsByReason: {},
+    repeatedFailureSignaturesByHash: {},
     ...overrides,
   };
 }
@@ -254,6 +257,29 @@ describe('ReportGenerator', () => {
       await generator.generate(metricsDir, reportDir, metrics, aggregates);
       const content = await readFile(join(reportDir, 'index.md'), 'utf-8');
       expect(content).toContain('No parallelism data');
+    });
+
+    it('should include repeated-failure stop summary section', async () => {
+      const metrics = [makeMetric()];
+      const aggregates = makeAggregates({
+        totalRepeatedFailureStops: 2,
+        repeatedFailureStopsByReason: {
+          'Repeated failure signature threshold exceeded': 2,
+        },
+      });
+      await generator.generate(metricsDir, reportDir, metrics, aggregates);
+      const content = await readFile(join(reportDir, 'index.md'), 'utf-8');
+      expect(content).toContain('Repeated Failure Signature Stops');
+      expect(content).toContain('Total repeated-signature stops:** 2');
+      expect(content).toContain('| Repeated failure signature threshold exceeded | 2 |');
+    });
+
+    it('should show "No repeated-signature stop events recorded" when none are present', async () => {
+      const metrics = [makeMetric()];
+      const aggregates = makeAggregates({ totalRepeatedFailureStops: 0 });
+      await generator.generate(metricsDir, reportDir, metrics, aggregates);
+      const content = await readFile(join(reportDir, 'index.md'), 'utf-8');
+      expect(content).toContain('No repeated-signature stop events recorded');
     });
   });
 });
