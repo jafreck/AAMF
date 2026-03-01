@@ -5,6 +5,8 @@ import { MigrationTask } from './types.js';
 import { fileExists, readJson } from '../util/fs.js';
 
 export const MISSING_BLOCK_ERROR = 'missing aamf-json block';
+const VALID_AAMF_STATUSES = new Set(['completed', 'failed', 'needs-review']);
+const INTEGER_STRING_RE = /^\d+$/;
 
 function getValueAtPath(value: unknown, path: Array<string | number>): unknown {
   let current = value as Record<string | number, unknown> | undefined;
@@ -302,13 +304,18 @@ export class ResultParser {
     return { data: result.data, parsed: true };
   }
 
+  /**
+   * Canonicalize benign formatting deviations before strict schema validation.
+   * Rules are intentionally narrow: normalize status/agent casing + separators
+   * and coerce integer-like tokenUsage strings to numbers.
+   */
   private static normalizeAamfPayload(raw: unknown): unknown {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
     const normalized = { ...(raw as Record<string, unknown>) };
 
     if (typeof normalized['status'] === 'string') {
       const status = normalized['status'].trim().toLowerCase().replace(/[_\s]+/g, '-');
-      if (status === 'completed' || status === 'failed' || status === 'needs-review') {
+      if (VALID_AAMF_STATUSES.has(status)) {
         normalized['status'] = status;
       }
     }
@@ -322,8 +329,11 @@ export class ResultParser {
       const normalizedUsage = { ...(tokenUsage as Record<string, unknown>) };
       for (const key of ['prompt', 'completion', 'total'] as const) {
         const value = normalizedUsage[key];
-        if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
-          normalizedUsage[key] = Number.parseInt(value.trim(), 10);
+        if (typeof value === 'string') {
+          const trimmed = value.trim();
+          if (INTEGER_STRING_RE.test(trimmed)) {
+            normalizedUsage[key] = Number.parseInt(trimmed, 10);
+          }
         }
       }
       normalized['tokenUsage'] = normalizedUsage;
