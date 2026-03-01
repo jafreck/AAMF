@@ -1627,7 +1627,7 @@ export class MigrationOrchestrator {
               name: task.name,
               reason: 'parity verification failed with non-minor issues',
             });
-            return;
+            return { migrated: false };
           }
           this.logger.info(
             `Parity for ${task.id} has only minor issues after retries, proceeding`,
@@ -1650,7 +1650,7 @@ export class MigrationOrchestrator {
         const buildOk = await this.runCommandWithRecovery(
           'build', this.config.target.buildCommand, task, queue,
         );
-        if (!buildOk) return;
+        if (!buildOk) return { migrated: false };
       } else if (gateMode === 'advisory') {
         const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
         if (!buildResult.success) {
@@ -1667,7 +1667,7 @@ export class MigrationOrchestrator {
         const testOk = await this.runCommandWithRecovery(
           'test', this.config.target.testCommand, task, queue,
         );
-        if (!testOk) return;
+        if (!testOk) return { migrated: false };
       } else if (gateMode === 'advisory') {
         const testResult = await this.runCommand('test', this.config.target.testCommand, task.id);
         if (!testResult.success) {
