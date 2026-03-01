@@ -1787,7 +1787,7 @@ describe('MigrationOrchestrator', () => {
       await orchestrator.run();
 
       const recoveryInvocations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'failure-recovery' && i.phase === 4,
+        (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
       );
       expect(recoveryInvocations.length).toBeGreaterThan(0);
     });
