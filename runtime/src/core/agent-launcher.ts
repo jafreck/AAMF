@@ -168,6 +168,10 @@ function finaliseResult(
   // Fallback: if token usage is still unknown, estimate from prompt length
   if (!agentResult.tokenUsage) {
     const estimatedTotal = TokenTracker.estimateTokens(prompt);
+    logger.warn(
+      `Token usage unavailable for ${agentResult.agent}; falling back to prompt-length estimate`,
+      { estimatedPromptTokens: estimatedTotal },
+    );
     agentResult.tokenUsage = { prompt: estimatedTotal, completion: 0, total: estimatedTotal };
   }
 
@@ -363,6 +367,13 @@ export class CopilotRunner implements AgentRunner {
       stopTimers();
       const duration = Date.now() - startTime;
       const estimatedTotal = TokenTracker.estimateTokens(prompt);
+      invLogger.warn(
+        `Token usage unavailable for ${invocation.agent} due to runner error; falling back to prompt-length estimate`,
+        {
+          estimatedPromptTokens: estimatedTotal,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
       return {
         agent: invocation.agent,
         taskId: invocation.taskId,
@@ -539,6 +550,13 @@ export class ClaudeCodeRunner implements AgentRunner {
       stopTimers();
       const duration = Date.now() - startTime;
       const estimatedTotal = TokenTracker.estimateTokens(prompt);
+      invLogger.warn(
+        `Token usage unavailable for ${invocation.agent} due to runner error; falling back to prompt-length estimate`,
+        {
+          estimatedPromptTokens: estimatedTotal,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
       return {
         agent: invocation.agent,
         taskId: invocation.taskId,
