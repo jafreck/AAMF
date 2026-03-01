@@ -1,5 +1,6 @@
 import { AgentInvocation, AgentResult } from '../agents/types.js';
 import { Logger } from '../logging/logger.js';
+import { createHash } from 'node:crypto';
 
 /** Configuration options for retry behaviour. */
 export interface RetryOptions {
@@ -31,6 +32,10 @@ export type RetryResult = AgentResult & {
   recoveryAttempted: boolean;
   /** Whether this successful result came from a retry (i.e. not the first attempt). */
   wasRetry: boolean;
+  /** Signature hash for the most recent failed attempt. */
+  failureSignature?: string;
+  /** Count of each failure signature observed across attempts. */
+  repeatedFailureSignatures?: Record<string, number>;
 };
 
 /**
@@ -42,6 +47,7 @@ export type RetryResult = AgentResult & {
  */
 export class RetryExecutor {
   constructor(private launcher: AgentLauncherFn, private logger: Logger) {}
+  private static readonly SIGNATURE_SNIPPET_LENGTH = 400;
 
   /** Heuristic classification for transient infrastructure/model transport failures. */
   private isInfrastructureFailure(errorText: string): boolean {
@@ -77,12 +83,39 @@ export class RetryExecutor {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  private normalizeSnippet(text?: string): string {
+    if (!text) return '';
+    return text.replace(/\s+/g, ' ').trim().toLowerCase().slice(0, RetryExecutor.SIGNATURE_SNIPPET_LENGTH);
+  }
+
+  private buildFailureSignature(invocation: AgentInvocation, result: AgentResult): string {
+    const commandContext = this.normalizeSnippet(invocation.additionalArgs?.command)
+      || this.normalizeSnippet(invocation.additionalArgs?.prompt)
+      || `${invocation.agent}:${invocation.phase ?? 'n/a'}:${invocation.taskId ?? 'n/a'}`;
+    const stdoutSnippet = this.normalizeSnippet(
+      typeof result.structuredOutput?.stdout === 'string'
+        ? result.structuredOutput.stdout
+        : undefined,
+    );
+    const stderrSnippet = this.normalizeSnippet(result.stderr);
+    const errorSnippet = this.normalizeSnippet(result.error);
+    const payload = JSON.stringify({
+      commandContext,
+      stdoutSnippet,
+      stderrSnippet,
+      errorSnippet,
+    });
+    return createHash('sha256').update(payload).digest('hex');
+  }
+
   /** Execute with retries and exponential backoff. Returns the result of the last attempt. */
   async executeWithRetry(invocation: AgentInvocation, options: RetryOptions): Promise<RetryResult> {
     const initialDelayMs = options.initialDelayMs ?? 1_000;
     const maxDelayMs = options.maxDelayMs ?? 30_000;
     let lastResult: AgentResult | null = null;
     let recoveryAttempted = false;
+    const failureSignatures = new Map<string, number>();
+    let lastFailureSignature: string | undefined;
 
     for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
       this.logger.info(`Attempt ${attempt}/${options.maxAttempts} for ${invocation.agent}${invocation.taskId ? ` (${invocation.taskId})` : ''}`);
@@ -95,6 +128,8 @@ export class RetryExecutor {
       }
 
       this.logger.warn(`Attempt ${attempt} failed: ${lastResult.error ?? 'unknown error'}`);
+      lastFailureSignature = this.buildFailureSignature(attemptInv, lastResult);
+      failureSignatures.set(lastFailureSignature, (failureSignatures.get(lastFailureSignature) ?? 0) + 1);
 
       if (attempt < options.maxAttempts) {
         if (options.onRetry) {
@@ -123,12 +158,33 @@ export class RetryExecutor {
           // After recovery, retry the original once more
           this.logger.info(`Recovery succeeded, retrying original task ${invocation.taskId}`);
           const retryResult = await this.launcher({ ...invocation, attemptNumber: options.maxAttempts + 1, maxAttempts: options.maxAttempts + 1 });
-          return { ...retryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true, wasRetry: true };
+          return {
+            ...retryResult,
+            attempts: options.maxAttempts + 1,
+            recoveryAttempted: true,
+            wasRetry: true,
+            failureSignature: lastFailureSignature,
+            repeatedFailureSignatures: Object.fromEntries(failureSignatures),
+          };
         }
-        return { ...recoveryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true, wasRetry: true };
+        return {
+          ...recoveryResult,
+          attempts: options.maxAttempts + 1,
+          recoveryAttempted: true,
+          wasRetry: true,
+          failureSignature: lastFailureSignature,
+          repeatedFailureSignatures: Object.fromEntries(failureSignatures),
+        };
       }
     }
 
-    return { ...lastResult!, attempts: options.maxAttempts, recoveryAttempted, wasRetry: options.maxAttempts > 1 };
+    return {
+      ...lastResult!,
+      attempts: options.maxAttempts,
+      recoveryAttempted,
+      wasRetry: options.maxAttempts > 1,
+      failureSignature: lastFailureSignature,
+      repeatedFailureSignatures: Object.fromEntries(failureSignatures),
+    };
   }
 }

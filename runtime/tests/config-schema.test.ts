@@ -17,6 +17,7 @@ describe('MigrationConfigSchema', () => {
     const result = MigrationConfigSchema.parse(validConfig);
     expect(result.options.maxParallelAgents).toBe(3);
     expect(result.options.maxRetriesPerTask).toBe(3);
+    expect(result.options.maxRepeatedFailureSignatures).toBe(2);
     expect(result.options.dryRun).toBe(false);
     expect(result.options.buildConcurrency).toBe(1);
     expect(result.options.continueOnBlocked).toBe(true);
@@ -145,6 +146,22 @@ describe('MigrationConfigSchema', () => {
       const result = MigrationConfigSchema.safeParse({
         ...validConfig,
         options: { maxRetriesPerTask: 0 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject maxRepeatedFailureSignatures above 10', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { maxRepeatedFailureSignatures: 11 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject maxRepeatedFailureSignatures of 0', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { maxRepeatedFailureSignatures: 0 },
       });
       expect(result.success).toBe(false);
     });

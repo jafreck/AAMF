@@ -22,6 +22,7 @@ export const MigrationConfigSchema = z.object({
   options: z.object({
     maxParallelAgents: z.number().int().min(1).max(10).default(3),
     maxRetriesPerTask: z.number().int().min(1).max(5).default(3),
+    maxRepeatedFailureSignatures: z.number().int().min(1).max(10).default(2),
     maxLinesPerTask: z.number().int().default(500),
     tokenBudget: z.number().int().optional(),
     contextWindowStrategy: z.enum(['per-invocation', 'session']).default('per-invocation'),
@@ -160,6 +161,7 @@ export const MigrationConfigSchema = z.object({
   }).default({
     maxParallelAgents: 3,
     maxRetriesPerTask: 3,
+    maxRepeatedFailureSignatures: 2,
     maxLinesPerTask: 500,
     contextWindowStrategy: 'per-invocation',
     dryRun: false,

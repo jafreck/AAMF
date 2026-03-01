@@ -482,4 +482,146 @@ describe('RetryExecutor', () => {
       expect(result.wasRetry).toBe(true);
     });
   });
+
+  describe('failure signatures', () => {
+    it('should generate the same signature for semantically identical failures', async () => {
+      let attempt = 0;
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        attempt++;
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 1,
+          success: false,
+          outputFiles: [],
+          duration: 100,
+          error: attempt === 1 ? '  TRANSIENT   Failure  on command ' : 'transient failure on command',
+          stderr: attempt === 1 ? ' HTTP/2   GOAWAY  connection terminated ' : 'http/2 goaway connection terminated',
+          outputParsed: false,
+        };
+      };
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(
+        makeInvocation({ additionalArgs: { command: 'npm   run   test' } }),
+        {
+          maxAttempts: 2,
+          initialDelayMs: 0,
+        },
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.failureSignature).toBeTruthy();
+      const signatureCounts = result.repeatedFailureSignatures ?? {};
+      expect(Object.keys(signatureCounts)).toHaveLength(1);
+      expect(signatureCounts[result.failureSignature!]).toBe(2);
+    });
+
+    it('should keep retry flow normal for distinct failure signatures', async () => {
+      let attempt = 0;
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        attempt++;
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 1,
+          success: false,
+          outputFiles: [],
+          duration: 100,
+          error: attempt === 1 ? 'first failure' : 'second different failure',
+          stderr: attempt === 1 ? 'stderr one' : 'stderr two',
+          outputParsed: false,
+        };
+      };
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(
+        makeInvocation({ additionalArgs: { command: 'npm run build' } }),
+        {
+          maxAttempts: 2,
+          initialDelayMs: 0,
+        },
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.attempts).toBe(2);
+      const signatureCounts = result.repeatedFailureSignatures ?? {};
+      expect(Object.keys(signatureCounts)).toHaveLength(2);
+      expect(Object.values(signatureCounts)).toEqual([1, 1]);
+    });
+
+    it('should include normalized structured stdout in the failure signature payload', async () => {
+      let attempt = 0;
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        attempt++;
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 1,
+          success: false,
+          outputFiles: [],
+          duration: 100,
+          error: 'command failed',
+          stderr: 'shared stderr',
+          structuredOutput: {
+            stdout: attempt === 1 ? ' Build   failed on line 10 ' : 'build failed on line 10',
+          },
+          outputParsed: false,
+        };
+      };
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(
+        makeInvocation({ additionalArgs: { command: 'npm run build' } }),
+        {
+          maxAttempts: 2,
+          initialDelayMs: 0,
+        },
+      );
+
+      expect(result.success).toBe(false);
+      const signatureCounts = result.repeatedFailureSignatures ?? {};
+      expect(Object.keys(signatureCounts)).toHaveLength(1);
+      expect(signatureCounts[result.failureSignature!]).toBe(2);
+    });
+
+    it('should produce different signatures when stdout snippets differ semantically', async () => {
+      let attempt = 0;
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        attempt++;
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 1,
+          success: false,
+          outputFiles: [],
+          duration: 100,
+          error: 'same error',
+          stderr: 'same stderr',
+          structuredOutput: {
+            stdout: attempt === 1 ? 'build failed on line 10' : 'build failed on line 200',
+          },
+          outputParsed: false,
+        };
+      };
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(
+        makeInvocation({ additionalArgs: { command: 'npm run build' } }),
+        {
+          maxAttempts: 2,
+          initialDelayMs: 0,
+        },
+      );
+
+      expect(result.success).toBe(false);
+      const signatureCounts = result.repeatedFailureSignatures ?? {};
+      expect(Object.keys(signatureCounts)).toHaveLength(2);
+      expect(Object.values(signatureCounts)).toEqual([1, 1]);
+    });
+  });
 });
