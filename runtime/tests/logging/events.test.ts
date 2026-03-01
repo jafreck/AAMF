@@ -166,6 +166,7 @@ describe('RuntimeEvent', () => {
       };
       expect(typeof event.reason).toBe('object');
       if (typeof event.reason !== 'string') {
+        expect(event.reason.type).toBe('deterministic-quality');
         expect(event.reason.command).toBe('build');
         expect(event.reason.class).toBe('lint-failure');
         expect(event.reason.snippet).toBe('eslint found 1 error');

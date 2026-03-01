@@ -103,6 +103,33 @@ describe('CheckpointManager', () => {
     });
   });
 
+  it('should default blockedTaskReasons to {} when field is absent in stored checkpoint (backward compat)', async () => {
+    const { writeJson } = await import('../src/util/fs.js');
+    const oldState = {
+      projectName: 'old-project',
+      version: 1,
+      currentPhase: 2,
+      currentTask: null,
+      completedPhases: [1],
+      completedTasks: [],
+      failedTasks: [],
+      blockedTasks: ['task-001'],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 1,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      metricsCount: 0,
+    };
+    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const loaded = await manager2.load('old-project');
+    expect(loaded.blockedTaskReasons).toEqual({});
+  });
+
   it('should track token usage', async () => {
     await manager.load('test-project');
     await manager.addTokenUsage('code-migrator', 4, 5000);

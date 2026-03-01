@@ -116,6 +116,22 @@ describe('ProgressWriter', () => {
     expect(content).toContain('deterministic-quality:build:lint-failure | eslint found 1 error');
   });
 
+  it('should render deterministic blocked class and snippet when available', async () => {
+    await writer.initialize(config);
+    writer.setTotalTasks(1);
+    await writer.updateTask('task-003', 'blocked', {
+      blockedReason: {
+        type: 'deterministic-quality',
+        class: 'type-error',
+        snippet: 'TS2322: Type string is not assignable',
+      },
+    });
+
+    const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('task-003');
+    expect(content).toContain('deterministic-quality:type-error | TS2322: Type string is not assignable');
+  });
+
   it('should limit event log to last 50 entries', async () => {
     await writer.initialize(config);
 
