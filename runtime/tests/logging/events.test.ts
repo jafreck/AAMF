@@ -450,6 +450,34 @@ describe('RuntimeEvent — wave lifecycle variants', () => {
   });
 });
 
+describe('RuntimeEvent — terminal-exhaustion', () => {
+  it('should include terminal reason code with wave/task/check location context', () => {
+    const event: RuntimeEvent = {
+      type: 'terminal-exhaustion',
+      reasonCode: 'task-retries-exhausted',
+      wave: 3,
+      taskId: 'task-014',
+      check: 'build',
+    };
+    expect(event.type).toBe('terminal-exhaustion');
+    expect(event.reasonCode).toBe('task-retries-exhausted');
+    expect(event.wave).toBe(3);
+    expect(event.taskId).toBe('task-014');
+    expect(event.check).toBe('build');
+  });
+
+  it('should support reason-only payload when location context is unavailable', () => {
+    const event: RuntimeEvent = {
+      type: 'terminal-exhaustion',
+      reasonCode: 'wave-convergence-exhausted',
+    };
+    expect(event.reasonCode).toBe('wave-convergence-exhausted');
+    expect(event.wave).toBeUndefined();
+    expect(event.taskId).toBeUndefined();
+    expect(event.check).toBeUndefined();
+  });
+});
+
 // ─── metric-recorded and report-generated ────────────────────────────────────
 
 describe('RuntimeEvent — metric-recorded', () => {

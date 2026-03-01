@@ -186,6 +186,45 @@ export interface AgentContext {
   payload?: Record<string, unknown>;
 }
 
+// ─── Recovery Remediation Contracts ───────────────────────────────────────────
+
+/**
+ * Location details describing which wave/task/check failed and needs remediation.
+ */
+export interface RemediationTargetContext {
+  /** Phase 4 wave number when the failure occurred. */
+  wave?: number;
+  /** Task identifier associated with the failure. */
+  taskId?: string;
+  /** Parity/build/test check identifier associated with the failure. */
+  check?: string;
+}
+
+/**
+ * Shared remediation payload passed through recovery-triggered re-migration paths.
+ */
+export interface RemediationContext {
+  /** Canonical failure category (e.g. parity, build, test, convergence). */
+  failureKind: string;
+  /** Normalized summary of the failure to target during recovery. */
+  failureSummary: string;
+  /** Wave/task/check location describing the failure target. */
+  failureTarget: RemediationTargetContext;
+  /** File/report/artifact paths relevant to remediation. */
+  artifactPaths: string[];
+  /** Condition that determines whether remediation was successful. */
+  expectedSuccessCondition: string;
+}
+
+// ─── Terminal Exhaustion Contracts ────────────────────────────────────────────
+
+/** Canonical terminal exhaustion reason codes for Phase 4 fail-fast outcomes. */
+export type TerminalReasonCode =
+  | 'wave-convergence-exhausted'
+  | 'task-retries-exhausted'
+  | 'parity-non-minor-exhausted'
+  | 'command-recovery-exhausted';
+
 // ─── Migration Tasks ─────────────────────────────────────────────────────────
 
 /**

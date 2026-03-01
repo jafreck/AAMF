@@ -133,6 +133,48 @@ describe('ContextBuilder', () => {
       expect(context.payload?.targetFiles).toEqual(['src/auth.ts']);
     });
 
+    it('should include remediationContext in code-migrator payload for recovery-triggered remigration', async () => {
+      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
+        remediationContext: {
+          failureKind: 'parity',
+          failureSummary: 'Normalized mismatch in auth handler',
+          failureTarget: { wave: 1, taskId: 'task-001', check: 'auth-parity' },
+          artifactPaths: ['/tmp/parity/task-001.md'],
+          expectedSuccessCondition: 'Parity report returns minor-or-better',
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      const remediation = context.payload?.remediationContext as Record<string, unknown> | undefined;
+
+      expect(context.payload?.taskId).toBe('task-001');
+      expect(context.payload?.sourceFiles).toEqual(['src/auth.py']);
+      expect(context.payload?.targetFiles).toEqual(['src/auth.ts']);
+      expect(remediation?.failureKind).toBe('parity');
+      expect(remediation?.failureSummary).toBe('Normalized mismatch in auth handler');
+    });
+
+    it('should prioritize nested remediationContext payload for code-migrator when both shapes are provided', async () => {
+      const nestedRemediation = {
+        failureKind: 'parity',
+        failureSummary: 'Nested context summary',
+        failureTarget: { wave: 1, taskId: 'task-001', check: 'parity' },
+        artifactPaths: ['/tmp/parity.md'],
+        expectedSuccessCondition: 'Parity delta is minor-or-better',
+      };
+      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
+        remediationContext: nestedRemediation,
+        failureKind: 'command',
+        failureSummary: 'Top-level fallback should be ignored',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.payload?.remediationContext).toEqual(nestedRemediation);
+    });
+
     it('should route parity-verifier to source + target files', async () => {
       const contextPath = await builder.buildContext('parity-verifier', 4, 'task-001', {
         sourceFile: 'src/auth.py',
@@ -203,6 +245,62 @@ describe('ContextBuilder', () => {
       expect(context.inputFiles).toContain('src/auth.py');
       expect(context.inputFiles).toContain('src/auth.ts');
       expect(context.outputPath).toContain('recovery');
+    });
+
+    it('should preserve remediation payload fields in failure-recovery payload', async () => {
+      const contextPath = await builder.buildContext('failure-recovery', 4, 'task-001', {
+        failureReport: '/tmp/failure.md',
+        sourceFile: 'src/auth.py',
+        targetFile: 'src/auth.ts',
+        kbEntry: 'kb/auth.md',
+        attemptNumber: 2,
+        failureKind: 'command',
+        failureSummary: 'Normalized test failure in auth suite',
+        failureTarget: { wave: 2, taskId: 'task-001', check: 'test' },
+        artifactPaths: ['/tmp/failure.md', '/tmp/test.log'],
+        expectedSuccessCondition: 'Test command exits with code 0',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      const remediation = context.payload?.remediationContext as Record<string, unknown> | undefined;
+
+      expect(context.inputFiles).toContain('/tmp/failure.md');
+      expect(context.inputFiles).toContain('src/auth.py');
+      expect(context.inputFiles).toContain('src/auth.ts');
+      expect(context.payload?.attemptNumber).toBe(2);
+      expect(remediation?.failureKind).toBe('command');
+      expect(remediation?.expectedSuccessCondition).toBe('Test command exits with code 0');
+    });
+
+    it('should support legacy remediation alias in failure-recovery payload', async () => {
+      const contextPath = await builder.buildContext('failure-recovery', 4, 'task-001', {
+        failureReport: '/tmp/failure.md',
+        sourceFile: 'src/auth.py',
+        targetFile: 'src/auth.ts',
+        remediation: {
+          failureKind: 'build',
+          failureSummary: 'Build command failed on retry',
+          failureTarget: { wave: 2, taskId: 'task-001', check: 'build' },
+          artifactPaths: ['/tmp/build.log'],
+          expectedSuccessCondition: 'Build command exits with code 0',
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      const remediation = context.payload?.remediationContext as Record<string, unknown> | undefined;
+
+      expect(remediation?.failureKind).toBe('build');
+      expect(remediation?.failureSummary).toBe('Build command failed on retry');
+    });
+
+    it('should omit remediationContext when nested remediation payload is not an object', async () => {
+      const contextPath = await builder.buildContext('failure-recovery', 4, 'task-001', {
+        failureReport: '/tmp/failure.md',
+        sourceFile: 'src/auth.py',
+        targetFile: 'src/auth.ts',
+        remediationContext: 'invalid-remediation-shape',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.payload?.remediationContext).toBeUndefined();
     });
 
     it('should route final-parity-checker to source + output + plan', async () => {
