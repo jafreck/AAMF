@@ -82,3 +82,45 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 ```
 
 > ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.
+
+## Input Schema (Required)
+
+```json
+{
+   "type": "object",
+   "required": ["contextFile", "projectRoot", "progressDir", "phase"],
+   "properties": {
+      "contextFile": { "type": "string", "minLength": 1 },
+      "projectRoot": { "type": "string", "minLength": 1 },
+      "progressDir": { "type": "string", "minLength": 1 },
+      "phase": { "type": "integer", "minimum": 0 }
+   }
+}
+```
+
+## Output Schema (Required)
+
+```json
+{
+   "type": "object",
+   "required": ["agent", "status", "outputFiles"],
+   "properties": {
+      "agent": { "const": "idiomatic-reviewer" },
+      "status": { "enum": ["completed", "failed", "needs-review"] },
+      "outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+      "issues": {
+         "type": "array",
+         "items": {
+            "type": "object",
+            "required": ["file", "issue", "suggestion"],
+            "properties": {
+               "file": { "type": "string", "minLength": 1 },
+               "issue": { "type": "string", "minLength": 1 },
+               "suggestion": { "type": "string", "minLength": 1 }
+            }
+         }
+      },
+      "notes": { "type": "string" }
+   }
+}
+```

@@ -45,11 +45,25 @@ export const CodeMigratorOutput = AamfOutputBase.extend({ agent: z.literal('code
 export const ParityVerifierOutput = AamfOutputBase.extend({ agent: z.literal('parity-verifier') });
 export const TestWriterOutput = AamfOutputBase.extend({ agent: z.literal('test-writer') });
 export const FailureRecoveryOutput = AamfOutputBase.extend({ agent: z.literal('failure-recovery') });
-export const FinalParityCheckerOutput = AamfOutputBase.extend({ agent: z.literal('final-parity-checker') });
+export const FinalParityCheckerOutput = AamfOutputBase.extend({
+  agent: z.literal('final-parity-checker'),
+  fixes: z.array(z.object({
+    description: z.string().min(1),
+    sourceFile: z.string().min(1),
+    targetFile: z.string().min(1),
+  })).optional(),
+});
 export const E2eTestCrafterOutput = AamfOutputBase.extend({ agent: z.literal('e2e-test-crafter') });
 export const DocumentationWriterOutput = AamfOutputBase.extend({ agent: z.literal('documentation-writer') });
 export const MigrationRunnerOutput = AamfOutputBase.extend({ agent: z.literal('migration-runner') });
-export const IdiomaticReviewerOutput = AamfOutputBase.extend({ agent: z.literal('idiomatic-reviewer') });
+export const IdiomaticReviewerOutput = AamfOutputBase.extend({
+  agent: z.literal('idiomatic-reviewer'),
+  issues: z.array(z.object({
+    file: z.string().min(1),
+    issue: z.string().min(1),
+    suggestion: z.string().min(1),
+  })).optional(),
+});
 export const IdiomaticRefactorerOutput = AamfOutputBase.extend({ agent: z.literal('idiomatic-refactorer') });
 export const KbIndexerOutput = AamfOutputBase.extend({
   agent: z.literal('kb-indexer'),

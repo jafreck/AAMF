@@ -190,3 +190,51 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 ```
 
 > ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.
+
+## Input Schema (Required)
+
+```json
+{
+  "type": "object",
+  "required": ["contextFile", "projectRoot", "progressDir", "phase", "taskId"],
+  "properties": {
+    "contextFile": { "type": "string", "minLength": 1 },
+    "projectRoot": { "type": "string", "minLength": 1 },
+    "progressDir": { "type": "string", "minLength": 1 },
+    "phase": { "type": "integer", "minimum": 0 },
+    "taskId": { "type": "string", "minLength": 1 },
+    "sourceFiles": { "type": "array", "items": { "type": "string" } },
+    "targetFiles": { "type": "array", "items": { "type": "string" } }
+  }
+}
+```
+
+## Output Schema (Required)
+
+```json
+{
+  "type": "object",
+  "required": ["agent", "status", "outputFiles", "taskId", "parity", "issues"],
+  "properties": {
+    "agent": { "const": "parity-verifier" },
+    "status": { "enum": ["completed", "failed", "needs-review"] },
+    "outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "taskId": { "type": "string", "minLength": 1 },
+    "parity": { "enum": ["pass", "partial", "fail"] },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "description"],
+        "properties": {
+          "severity": { "enum": ["critical", "major", "minor"] },
+          "description": { "type": "string", "minLength": 1 },
+          "sourceLocation": { "type": "string" },
+          "targetLocation": { "type": "string" }
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}
+```

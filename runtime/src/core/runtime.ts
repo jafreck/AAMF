@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { resolve, join, dirname } from 'node:path';
-import { stat } from 'node:fs/promises';
+import { stat, readdir, readFile } from 'node:fs/promises';
 import { loadConfig, applyOverrides } from '../config/loader.js';
 import { MigrationConfig } from '../config/schema.js';
 import { MigrationOrchestrator } from './orchestrator.js';
@@ -261,6 +261,7 @@ export class MigrationRuntime {
     const agentDir = this.config.copilot.agentDir;
     const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
     const missing: string[] = [];
+    const invalid: string[] = [];
 
     for (const agent of allAgents) {
       const agentPath = join(agentDir, `${agent}.agent.md`);
@@ -274,6 +275,78 @@ export class MigrationRuntime {
         `Missing agent file(s) — migration cannot proceed:\n${missing.map(p => `  - ${p}`).join('\n')}`,
       );
     }
+
+    const entries = await readdir(agentDir, { withFileTypes: true });
+    const agentFiles = entries
+      .filter(e => e.isFile() && e.name.endsWith('.agent.md'))
+      .map(e => join(agentDir, e.name));
+
+    for (const agentPath of agentFiles) {
+      const content = await readFile(agentPath, 'utf-8');
+      const contractError = this.validateSchemaContract(content);
+      if (contractError) {
+        invalid.push(`${agentPath}: ${contractError}`);
+      }
+    }
+
+    if (invalid.length > 0) {
+      throw new Error(
+        `Invalid agent schema contract(s) — each .agent.md must define required input/output schemas:\n${invalid.map(p => `  - ${p}`).join('\n')}`,
+      );
+    }
+  }
+
+  private validateSchemaContract(content: string): string | undefined {
+    const inputError = this.validateSchemaSection(content, 'Input Schema');
+    if (inputError) return `Input Schema ${inputError}`;
+
+    const outputError = this.validateSchemaSection(content, 'Output Schema');
+    if (outputError) return `Output Schema ${outputError}`;
+
+    return undefined;
+  }
+
+  private validateSchemaSection(content: string, sectionTitle: 'Input Schema' | 'Output Schema'): string | undefined {
+    const headingRegex = new RegExp(`^##\\s+${sectionTitle}(?:\\s*\\(Required\\))?\\s*$`, 'im');
+    const headingMatch = headingRegex.exec(content);
+    if (!headingMatch || headingMatch.index === undefined) {
+      return 'section is missing';
+    }
+
+    const afterHeading = content.slice(headingMatch.index + headingMatch[0].length);
+    const nextHeadingIndex = afterHeading.search(/^##\s+/m);
+    const sectionBody = nextHeadingIndex >= 0 ? afterHeading.slice(0, nextHeadingIndex) : afterHeading;
+
+    const jsonBlockMatch = sectionBody.match(/```json\r?\n([\s\S]*?)```/m);
+    if (!jsonBlockMatch) {
+      return 'must include a JSON schema code block (```json ... ```)';
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonBlockMatch[1]!.trim());
+    } catch (err) {
+      return `contains invalid JSON (${err instanceof Error ? err.message : String(err)})`;
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return 'must be a JSON object schema';
+    }
+
+    const schema = parsed as { type?: unknown; required?: unknown };
+    if (schema.type !== 'object') {
+      return 'must declare "type": "object"';
+    }
+
+    if (!Array.isArray(schema.required) || schema.required.length === 0) {
+      return 'must declare a non-empty "required" array';
+    }
+
+    if (!schema.required.every((k) => typeof k === 'string' && k.length > 0)) {
+      return 'must declare "required" as an array of non-empty strings';
+    }
+
+    return undefined;
   }
 
   private setupShutdownHandlers(): void {

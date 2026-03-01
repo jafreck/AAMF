@@ -69,3 +69,40 @@ Resolve the failing task quickly and safely by:
 - Keep fixes minimal and task-scoped.
 - Never modify upstream source-of-truth input artifacts unless explicitly requested.
 - Never claim success without a concrete verification signal from the provided context.
+
+## Input Schema (Required)
+
+```json
+{
+  "type": "object",
+  "required": ["contextFile", "projectRoot", "progressDir", "phase", "taskId", "failureType"],
+  "properties": {
+    "contextFile": { "type": "string", "minLength": 1 },
+    "projectRoot": { "type": "string", "minLength": 1 },
+    "progressDir": { "type": "string", "minLength": 1 },
+    "phase": { "type": "integer", "minimum": 0 },
+    "taskId": { "type": "string", "minLength": 1 },
+    "failureType": { "enum": ["parity", "build", "test", "blocked"] },
+    "failureReport": { "type": "string" }
+  }
+}
+```
+
+## Output Schema (Required)
+
+```json
+{
+  "type": "object",
+  "required": ["agent", "status", "outputFiles", "taskId", "failureType", "attempts", "scopeReduced"],
+  "properties": {
+    "agent": { "const": "failure-recovery" },
+    "status": { "enum": ["completed", "failed", "needs-review"] },
+    "outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "taskId": { "type": "string", "minLength": 1 },
+    "failureType": { "enum": ["parity", "build", "test", "blocked"] },
+    "attempts": { "type": "integer", "minimum": 1 },
+    "scopeReduced": { "type": "boolean" },
+    "notes": { "type": "string" }
+  }
+}
+```

@@ -167,3 +167,35 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 ```
 
 > ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.
+
+## Input Schema (Required)
+
+```json
+{
+   "type": "object",
+   "required": ["contextFile", "projectRoot", "progressDir", "phase"],
+   "properties": {
+      "contextFile": { "type": "string", "minLength": 1 },
+      "projectRoot": { "type": "string", "minLength": 1 },
+      "progressDir": { "type": "string", "minLength": 1 },
+      "phase": { "type": "integer", "minimum": 0 },
+      "moduleGroups": { "type": "array" }
+   }
+}
+```
+
+## Output Schema (Required)
+
+```json
+{
+   "type": "object",
+   "required": ["agent", "status", "outputFiles"],
+   "properties": {
+      "agent": { "const": "knowledge-builder" },
+      "status": { "enum": ["completed", "failed", "needs-review"] },
+      "outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+      "modulesDocumented": { "type": "integer", "minimum": 0 },
+      "notes": { "type": "string" }
+   }
+}
+```
