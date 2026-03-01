@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
-import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { MigrationOrchestrator, MigrationError } from '../src/core/orchestrator.js';
 import { CheckpointManager } from '../src/core/checkpoint.js';
@@ -1408,6 +1408,85 @@ describe('MigrationOrchestrator', () => {
       expect(log.stdout).toContain('aamf: code-migrator updated output for task task-001');
       expect(log.stdout).toContain('aamf: test-writer updated output for task task-001');
       expect(log.stdout).toContain('aamf: complete task-001 - User Auth Module');
+    });
+
+    it('should initialize and commit in outputPath repo when outputPath is nested in another git repo', async () => {
+      const parentRepo = join(tempDir, 'parent-repo');
+      const outputDir = join(parentRepo, 'nested-output');
+      await ensureDir(outputDir);
+
+      const initParent = await spawnWithTimeout('git', ['init'], { cwd: parentRepo });
+      expect(initParent.exitCode).toBe(0);
+      const parentName = await spawnWithTimeout('git', ['config', 'user.name', 'Parent Repo Bot'], { cwd: parentRepo });
+      const parentEmail = await spawnWithTimeout('git', ['config', 'user.email', 'parent@local.invalid'], { cwd: parentRepo });
+      expect(parentName.exitCode).toBe(0);
+      expect(parentEmail.exitCode).toBe(0);
+
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'code-migrator' && inv.taskId) {
+          const id = inv.taskId.replace('task-', '');
+          const filePath = join(outputDir, 'src', `task-${id}.ts`);
+          await ensureDir(join(outputDir, 'src'));
+          await writeFile(filePath, `export const task${id} = ${Number(id)};\n`);
+        }
+
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 100,
+          tokenUsage: { prompt: 100, completion: 50, total: 150 },
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: outputDir,
+        },
+        options: {
+          maxParallelAgents: 2,
+          maxRetriesPerTask: 3,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          git: {
+            enabled: true,
+            autoInit: true,
+            commitByAgent: true,
+            commitPerTask: true,
+            authorName: 'AAMF Migration Bot',
+            authorEmail: 'aamf@local.invalid',
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const nestedTopLevel = await spawnWithTimeout('git', ['rev-parse', '--show-toplevel'], { cwd: outputDir });
+      const parentTopLevel = await spawnWithTimeout('git', ['rev-parse', '--show-toplevel'], { cwd: parentRepo });
+      expect(nestedTopLevel.exitCode).toBe(0);
+      expect(parentTopLevel.exitCode).toBe(0);
+      expect(await realpath(nestedTopLevel.stdout.trim())).toBe(await realpath(outputDir));
+      expect(await realpath(parentTopLevel.stdout.trim())).toBe(await realpath(parentRepo));
+
+      const nestedLog = await spawnWithTimeout('git', ['log', '--pretty=%s'], { cwd: outputDir });
+      const parentLog = await spawnWithTimeout('git', ['log', '--pretty=%s'], { cwd: parentRepo });
+      expect(nestedLog.exitCode).toBe(0);
+      expect(nestedLog.stdout).toContain('aamf: code-migrator updated output for task task-001');
+      expect(parentLog.exitCode).not.toBe(0);
     });
 
     it('should not create git repository when git.enabled is false', async () => {
@@ -4413,7 +4492,43 @@ describe('MigrationOrchestrator', () => {
 
       await (orchestrator as any).ensureGitRepositoryReady();
 
-      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['rev-parse', '--is-inside-work-tree']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['rev-parse', '--show-toplevel']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(2, ['init']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(3, ['config', 'user.name', 'Test Bot']);
+      expect(runGitSpy).toHaveBeenNthCalledWith(4, ['config', 'user.email', 'test@local']);
+    });
+
+    it('ensureGitRepositoryReady should initialize nested outputPath as its own repository', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            outputPath: join(tempDir, 'nested', 'output'),
+          },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      const runGitSpy = vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: true, stdout: `${join(tempDir, 'nested')}\n`, stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: 'initialized', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).ensureGitRepositoryReady();
+
+      expect(runGitSpy).toHaveBeenNthCalledWith(1, ['rev-parse', '--show-toplevel']);
       expect(runGitSpy).toHaveBeenNthCalledWith(2, ['init']);
       expect(runGitSpy).toHaveBeenNthCalledWith(3, ['config', 'user.name', 'Test Bot']);
       expect(runGitSpy).toHaveBeenNthCalledWith(4, ['config', 'user.email', 'test@local']);
