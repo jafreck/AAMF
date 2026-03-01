@@ -49,6 +49,7 @@ export const MigrationConfigSchema = z.object({
      * Only applies when `continueOnBlocked` is `true`. Default: unlimited (0).
      */
     maxBlockedTasks: z.number().int().min(0).default(0),
+    qualityPolicy: z.enum(['strict', 'balanced', 'deferred-strict']).default('strict'),
     /**
      * Maximum infrastructure-error retries before invoking failure-recovery.
      * Infrastructure errors (file locks, timeouts, disk-full, OOM) are
@@ -168,6 +169,7 @@ export const MigrationConfigSchema = z.object({
     buildConcurrency: 1,
     continueOnBlocked: true,
     maxBlockedTasks: 0,
+    qualityPolicy: 'strict',
     maxInfraRetries: 3,
     avgTokensPerTask: 5000,
     keepArtifacts: false,
