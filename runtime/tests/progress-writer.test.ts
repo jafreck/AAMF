@@ -98,7 +98,10 @@ describe('ProgressWriter', () => {
     await writer.initialize(config);
     writer.setTotalTasks(5);
     await writer.updateTask('task-001', 'failed', { error: 'something broke' });
-    await writer.updateTask('task-002', 'blocked', { error: 'max retries exceeded' });
+    await writer.updateTask('task-002', 'blocked', {
+      error: 'max retries exceeded',
+      parityDeltaSummary: 'issues 4->4, critical 1->1, major 2->2, minor 1->1',
+    });
 
     const content = await readFile(progressFile, 'utf-8');
     expect(content).toContain('Failed Tasks');
@@ -106,6 +109,7 @@ describe('ProgressWriter', () => {
     expect(content).toContain('something broke');
     expect(content).toContain('Blocked Tasks');
     expect(content).toContain('task-002');
+    expect(content).toContain('issues 4->4, critical 1->1, major 2->2, minor 1->1');
   });
 
   it('should limit event log to last 50 entries', async () => {

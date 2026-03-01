@@ -39,6 +39,9 @@ export type RuntimeEvent =
   | { type: 'wave-barrier-released'; wave: number; duration: number }
   | { type: 'wave-convergence-status'; wave: number; iteration: number; converged: boolean; remainingFailures: number }
   | { type: 'wave-convergence-limit-reached'; wave: number; maxIterations: number; remainingFailures: number }
+  | { type: 'parity-retry-continued'; scope: 'per-task' | 'wave-barrier' | 'final-gate'; taskId?: string; attempt: number; summary: string }
+  | { type: 'parity-early-stop'; scope: 'per-task' | 'wave-barrier' | 'final-gate'; taskId?: string; attempt: number; summary: string }
+  | { type: 'parity-targeted-recovery'; scope: 'per-task' | 'wave-barrier' | 'final-gate'; taskId?: string; attempt: number; summary: string; targetedIssueCount: number }
   | { type: 'checkpoint-saved'; phase: number; taskId?: string }
   | { type: 'budget-warning'; usage: number; budget: number; percentage: number }
   | { type: 'budget-exceeded'; usage: number; budget: number }

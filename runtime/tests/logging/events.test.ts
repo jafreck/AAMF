@@ -450,6 +450,50 @@ describe('RuntimeEvent — wave lifecycle variants', () => {
   });
 });
 
+describe('RuntimeEvent — parity decision variants', () => {
+  it('should construct retry-continued and early-stop events', () => {
+    const retryContinued: RuntimeEvent = {
+      type: 'parity-retry-continued',
+      scope: 'per-task',
+      taskId: 'task-001',
+      attempt: 1,
+      summary: 'issues 3->2',
+    };
+    const earlyStop: RuntimeEvent = {
+      type: 'parity-early-stop',
+      scope: 'wave-barrier',
+      attempt: 2,
+      summary: 'validation failures 2->2',
+    };
+    expect(retryContinued.scope).toBe('per-task');
+    expect(earlyStop.type).toBe('parity-early-stop');
+  });
+
+  it('should support final-gate parity decisions without taskId', () => {
+    const event: RuntimeEvent = {
+      type: 'parity-retry-continued',
+      scope: 'final-gate',
+      attempt: 1,
+      summary: 'final parity fixes 3->1',
+    };
+    expect(event.scope).toBe('final-gate');
+    expect(event.taskId).toBeUndefined();
+  });
+
+  it('should construct targeted-recovery event with required fields', () => {
+    const event: RuntimeEvent = {
+      type: 'parity-targeted-recovery',
+      scope: 'per-task',
+      taskId: 'task-002',
+      attempt: 2,
+      summary: 'issues 5->5',
+      targetedIssueCount: 3,
+    };
+    expect(event.targetedIssueCount).toBe(3);
+    expect(event.summary).toBe('issues 5->5');
+  });
+});
+
 // ─── metric-recorded and report-generated ────────────────────────────────────
 
 describe('RuntimeEvent — metric-recorded', () => {

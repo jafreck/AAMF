@@ -7,6 +7,7 @@ export interface TaskDetails {
   sourceFiles?: string[];
   targetFiles?: string[];
   parityScore?: number;
+  parityDeltaSummary?: string;
   testsGenerated?: number;
   error?: string;
 }
@@ -253,7 +254,9 @@ export class ProgressWriter {
       if (blocked.length > 0) {
         md += `### Blocked Tasks\n`;
         for (const [id, t] of blocked) {
-          md += `- **${id}**: ${t.details?.error ?? 'max retries exceeded'}\n`;
+          const reason = t.details?.error ?? 'max retries exceeded';
+          const parityDelta = t.details?.parityDeltaSummary;
+          md += `- **${id}**: ${reason}${parityDelta ? ` (${parityDelta})` : ''}\n`;
         }
         md += '\n';
       }

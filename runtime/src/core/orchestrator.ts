@@ -18,7 +18,7 @@ import {
   ModelTier,
 } from '../agents/types.js';
 import { ContextBuilder } from '../agents/context-builder.js';
-import { ResultParser } from '../agents/result-parser.js';
+import { ResultParser, type TaskResult } from '../agents/result-parser.js';
 import { MigrationConfig } from '../config/schema.js';
 import { ParallelExecutor } from '../execution/parallel-executor.js';
 import { TaskQueue } from '../execution/task-queue.js';
@@ -95,6 +95,18 @@ function formatDuration(ms: number): string {
 }
 
 type Phase4QualityGateMode = 'enforce' | 'advisory' | 'skip';
+
+interface ParitySummary {
+  issueCount: number;
+  severityCounts: Record<'critical' | 'major' | 'minor', number>;
+}
+
+interface ParityDeltaSummary {
+  before: ParitySummary;
+  after: ParitySummary;
+  issueCountImprovement: number;
+  severityCountImprovement: number;
+}
 
 /** Error thrown when a critical phase fails. */
 export class MigrationError extends Error {
@@ -1222,6 +1234,7 @@ export class MigrationOrchestrator {
       const barrierStart = Date.now();
       let converged = waveCandidates.length > 0;
       let remainingFailures = 0;
+      let previousRemainingFailures: number | undefined;
 
       if (waveCandidates.length > 0) {
         for (let iteration = 1; iteration <= maxConvergenceIterations; iteration++) {
@@ -1272,6 +1285,27 @@ export class MigrationOrchestrator {
           if (iteration >= maxConvergenceIterations) {
             break;
           }
+
+          if (previousRemainingFailures !== undefined) {
+            const failureImprovement = previousRemainingFailures - remainingFailures;
+            const summary = `validation failures ${previousRemainingFailures}->${remainingFailures}`;
+            const meaningfulImprovement = failureImprovement >= this.getParityGuardrailThresholds().minIssueCountImprovement;
+            this.logger.event({
+              type: meaningfulImprovement ? 'parity-retry-continued' : 'parity-early-stop',
+              scope: 'wave-barrier',
+              attempt: iteration,
+              summary,
+            });
+            if (!meaningfulImprovement) {
+              for (const task of waveCandidates) {
+                await this.blockWaveTask(task, queue, `wave guardrail early-stop (${summary})`);
+              }
+              waveCandidates = [];
+              remainingFailures = 0;
+              break;
+            }
+          }
+          previousRemainingFailures = remainingFailures;
 
           this.logger.warn(
             `Wave ${wave} validation failed, running fix wave iteration ${iteration}/${maxConvergenceIterations}`,
@@ -1534,10 +1568,14 @@ export class MigrationOrchestrator {
     // b2. Check parity result and retry if non-minor issues found
     if (gateMode !== 'skip') {
       const maxParityRetries = this.config.options.maxRetriesPerTask;
-      let parityPassed = await this.checkParityResult(task.id);
+      let latestParityResult = await this.readParityResult(task.id);
+      let parityPassed = this.isParityResultPass(latestParityResult);
+      let lastParityDeltaSummary: string | undefined;
 
       if (!parityPassed && gateMode === 'enforce') {
+        let stoppedEarlyForGuardrail = false;
         for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
+          const previousParityResult = latestParityResult;
           this.logger.warn(
             `Parity check failed for ${task.id}, recovery attempt ${attempt}/${maxParityRetries}`,
           );
@@ -1605,11 +1643,95 @@ export class MigrationOrchestrator {
           const reParityResult = await this.launchAgentWithEvents(reParityInv);
           this.recordTokens(reParityResult, 4);
 
-          parityPassed = await this.checkParityResult(task.id);
+          latestParityResult = await this.readParityResult(task.id);
+          parityPassed = this.isParityResultPass(latestParityResult);
           if (parityPassed) {
             this.logger.info(`Parity recovered for ${task.id} on attempt ${attempt}`);
             break;
           }
+
+          const parityDelta = this.computeParityDeltaSummary(previousParityResult, latestParityResult);
+          if (!parityDelta) {
+            continue;
+          }
+          lastParityDeltaSummary = this.formatParityDeltaSummary(parityDelta);
+          const meaningfulImprovement = this.hasMeaningfulParityImprovement(parityDelta);
+          this.logger.event({
+            type: meaningfulImprovement ? 'parity-retry-continued' : 'parity-early-stop',
+            scope: 'per-task',
+            taskId: task.id,
+            attempt,
+            summary: lastParityDeltaSummary,
+          });
+          if (meaningfulImprovement) {
+            continue;
+          }
+
+          if (attempt < maxParityRetries) {
+            const targetedIssues = this.getTargetedRecoveryIssues(previousParityResult, latestParityResult);
+            const targetedReportPath = await this.writeTargetedParityReport(task.id, targetedIssues);
+            this.logger.event({
+              type: 'parity-targeted-recovery',
+              scope: 'per-task',
+              taskId: task.id,
+              attempt,
+              summary: lastParityDeltaSummary,
+              targetedIssueCount: targetedIssues.length,
+            });
+            this.logger.warn(
+              `Parity guardrail triggered for ${task.id}; running targeted recovery (${targetedIssues.length} issue(s))`,
+            );
+            const targetedRecoveryCtx = await this.contextBuilder.buildContext(
+              'failure-recovery',
+              4,
+              task.id,
+              {
+                failureReport: targetedReportPath,
+                sourceFile: task.sourceFiles[0],
+                targetFile: task.targetFiles[0],
+                kbEntry: task.knowledgeBaseRef,
+                attemptNumber: attempt + 1,
+              },
+            );
+            const targetedRecoveryInv = this.buildInvocation('failure-recovery', targetedRecoveryCtx, 4, task.id);
+            const targetedRecoveryResult = await this.launchAgentWithEvents(targetedRecoveryInv);
+            this.recordTokens(targetedRecoveryResult, 4);
+            if (targetedRecoveryResult.success) {
+              const targetedMigrateCtx = await this.contextBuilder.buildContext(
+                'code-migrator',
+                4,
+                task.id,
+                {
+                  sourceFiles: task.sourceFiles,
+                  targetFiles: task.targetFiles,
+                  kbEntry: task.knowledgeBaseRef,
+                },
+              );
+              const targetedMigrateInv = this.buildInvocation('code-migrator', targetedMigrateCtx, 4, task.id);
+              const targetedMigrateResult = await this.launchAgentWithEvents(targetedMigrateInv);
+              this.recordTokens(targetedMigrateResult, 4);
+              if (targetedMigrateResult.success) {
+                await this.commitForAgent('code-migrator', 4, task.id, task.name);
+                const targetedParityCtx = await this.contextBuilder.buildContext(
+                  'parity-verifier',
+                  4,
+                  task.id,
+                  {
+                    sourceFile: task.sourceFiles[0],
+                    targetFile: task.targetFiles[0],
+                  },
+                );
+                const targetedParityInv = this.buildInvocation('parity-verifier', targetedParityCtx, 4, task.id);
+                const targetedParityResult = await this.launchAgentWithEvents(targetedParityInv);
+                this.recordTokens(targetedParityResult, 4);
+                latestParityResult = await this.readParityResult(task.id);
+                parityPassed = this.isParityResultPass(latestParityResult);
+              }
+            }
+          }
+
+          stoppedEarlyForGuardrail = true;
+          break;
         }
 
         // After exhausting retries, check if only minor issues remain
@@ -1619,13 +1741,18 @@ export class MigrationOrchestrator {
             queue.markBlocked(task.id);
             await this.checkpoint.blockTask(task.id);
             await this.progress.updateTask(task.id, 'blocked', {
-              error: 'parity check failed with critical/major issues after max retries',
+              error: stoppedEarlyForGuardrail
+                ? 'parity check failed with critical/major issues after guardrail early-stop'
+                : 'parity check failed with critical/major issues after max retries',
+              parityDeltaSummary: lastParityDeltaSummary,
             });
             this.logger.event({
               type: 'task-blocked',
               taskId: task.id,
               name: task.name,
-              reason: 'parity verification failed with non-minor issues',
+              reason: `parity verification failed with non-minor issues${
+                lastParityDeltaSummary ? ` (${lastParityDeltaSummary})` : ''
+              }`,
             });
             return { migrated: false };
           }
@@ -1758,6 +1885,7 @@ export class MigrationOrchestrator {
 
   private async executePhase5(start: number): Promise<PhaseResult> {
     const MAX_LOOPBACK = 2;
+    let previousFixCount: number | undefined;
 
     for (let iteration = 0; iteration <= MAX_LOOPBACK; iteration++) {
       const ctx = await this.contextBuilder.buildContext('final-parity-checker', 5);
@@ -1788,6 +1916,23 @@ export class MigrationOrchestrator {
         fixes = await ResultParser.parseFinalParityReport(reportPath);
       }
       if (fixes.length === 0) break;
+
+      if (previousFixCount !== undefined) {
+        const fixImprovement = previousFixCount - fixes.length;
+        const summary = `final parity fixes ${previousFixCount}->${fixes.length}`;
+        const meaningfulImprovement = fixImprovement >= this.getParityGuardrailThresholds().minIssueCountImprovement;
+        this.logger.event({
+          type: meaningfulImprovement ? 'parity-retry-continued' : 'parity-early-stop',
+          scope: 'final-gate',
+          attempt: iteration,
+          summary,
+        });
+        if (!meaningfulImprovement) {
+          this.logger.warn(`Final parity guardrail early-stop: ${summary}`);
+          break;
+        }
+      }
+      previousFixCount = fixes.length;
 
       if (iteration < MAX_LOOPBACK) {
         this.logger.info(
@@ -2207,16 +2352,15 @@ export class MigrationOrchestrator {
 
   // ─── Helpers ─────────────────────────────────────────────────────────
 
-  /**
-   * Check if the parity-verifier sidecar result indicates a pass.
-   * Returns `true` if parity is 'pass', or if no sidecar file exists (assume pass).
-   */
-  private async checkParityResult(taskId: string): Promise<boolean> {
-    const result = await ResultParser.readTaskResultJson(
+  private async readParityResult(taskId: string): Promise<TaskResult | undefined> {
+    return ResultParser.readTaskResultJson(
       this.progressDir,
       'parity-verifier',
       taskId,
     );
+  }
+
+  private isParityResultPass(result: TaskResult | undefined): boolean {
     if (!result) return true; // No sidecar → assume pass
     if (result.parity === 'pass') return true;
     if (result.parity === 'partial') {
@@ -2226,18 +2370,114 @@ export class MigrationOrchestrator {
     return false;
   }
 
+  private summarizeParity(result: TaskResult | undefined): ParitySummary {
+    const summary: ParitySummary = {
+      issueCount: result?.issues.length ?? 0,
+      severityCounts: { critical: 0, major: 0, minor: 0 },
+    };
+    for (const issue of result?.issues ?? []) {
+      summary.severityCounts[issue.severity]++;
+    }
+    return summary;
+  }
+
+  private computeParityDeltaSummary(
+    before: TaskResult | undefined,
+    after: TaskResult | undefined,
+  ): ParityDeltaSummary | undefined {
+    if (!before || !after) return undefined;
+    const beforeSummary = this.summarizeParity(before);
+    const afterSummary = this.summarizeParity(after);
+    return {
+      before: beforeSummary,
+      after: afterSummary,
+      issueCountImprovement: beforeSummary.issueCount - afterSummary.issueCount,
+      severityCountImprovement:
+        (beforeSummary.severityCounts.critical - afterSummary.severityCounts.critical)
+        + (beforeSummary.severityCounts.major - afterSummary.severityCounts.major)
+        + (beforeSummary.severityCounts.minor - afterSummary.severityCounts.minor),
+    };
+  }
+
+  private hasMeaningfulParityImprovement(delta: ParityDeltaSummary): boolean {
+    const thresholds = this.getParityGuardrailThresholds();
+    return delta.issueCountImprovement >= thresholds.minIssueCountImprovement
+      || delta.severityCountImprovement >= thresholds.minSeverityCountImprovement;
+  }
+
+  private formatParityDeltaSummary(delta: ParityDeltaSummary): string {
+    return [
+      `issues ${delta.before.issueCount}->${delta.after.issueCount}`,
+      `critical ${delta.before.severityCounts.critical}->${delta.after.severityCounts.critical}`,
+      `major ${delta.before.severityCounts.major}->${delta.after.severityCounts.major}`,
+      `minor ${delta.before.severityCounts.minor}->${delta.after.severityCounts.minor}`,
+    ].join(', ');
+  }
+
+  private parityIssueIdentity(issue: TaskResult['issues'][number]): string {
+    return [
+      issue.severity.trim().toLowerCase(),
+      issue.description.trim().toLowerCase(),
+      issue.sourceLocation?.trim().toLowerCase() ?? '',
+      issue.targetLocation?.trim().toLowerCase() ?? '',
+    ].join('|');
+  }
+
+  private getTargetedRecoveryIssues(
+    before: TaskResult | undefined,
+    after: TaskResult | undefined,
+  ): TaskResult['issues'] {
+    const currentIssues = after?.issues ?? [];
+    if (currentIssues.length === 0) return [];
+    const previousIssueIds = new Set((before?.issues ?? []).map((issue) => this.parityIssueIdentity(issue)));
+    const targeted = currentIssues.filter((issue) => {
+      const isHighSeverity = issue.severity === 'critical' || issue.severity === 'major';
+      const isChanged = !previousIssueIds.has(this.parityIssueIdentity(issue));
+      return isHighSeverity || isChanged;
+    });
+    return targeted.length > 0 ? targeted : currentIssues;
+  }
+
+  private async writeTargetedParityReport(
+    taskId: string,
+    issues: TaskResult['issues'],
+  ): Promise<string> {
+    const parityReportsDir = join(this.progressDir, 'parity-reports');
+    await ensureDir(parityReportsDir);
+    const reportPath = join(parityReportsDir, `${taskId}-targeted-recovery.md`);
+    let content = `# Targeted parity recovery: ${taskId}\n\n`;
+    if (issues.length === 0) {
+      content += '- No parity issues found.\n';
+    } else {
+      for (const issue of issues) {
+        content += `- [${issue.severity}] ${issue.description}`;
+        if (issue.sourceLocation) content += ` (source: ${issue.sourceLocation})`;
+        if (issue.targetLocation) content += ` (target: ${issue.targetLocation})`;
+        content += '\n';
+      }
+    }
+    await atomicWrite(reportPath, content);
+    return reportPath;
+  }
+
   /**
    * Check if the parity sidecar has any non-minor (critical/major) issues.
    * Returns `false` if no sidecar exists or all issues are minor.
    */
   private async hasNonMinorParityIssues(taskId: string): Promise<boolean> {
-    const result = await ResultParser.readTaskResultJson(
-      this.progressDir,
-      'parity-verifier',
-      taskId,
-    );
+    const result = await this.readParityResult(taskId);
     if (!result) return false;
     return result.issues.some((i) => i.severity !== 'minor');
+  }
+
+  private getParityGuardrailThresholds(): {
+    minIssueCountImprovement: number;
+    minSeverityCountImprovement: number;
+  } {
+    return this.config.options.parityGuardrails ?? {
+      minIssueCountImprovement: 1,
+      minSeverityCountImprovement: 1,
+    };
   }
 
   private isGitAutomationEnabled(): boolean {

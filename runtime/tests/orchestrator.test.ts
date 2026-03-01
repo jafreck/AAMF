@@ -1792,6 +1792,172 @@ describe('MigrationOrchestrator', () => {
       expect(recoveryInvocations.length).toBeGreaterThan(0);
     });
 
+    it('should continue parity retries when deltas show meaningful improvement', async () => {
+      let parityCallCount = 0;
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'parity-verifier' && inv.taskId === 'task-001') {
+          parityCallCount++;
+          const parityPayload = parityCallCount === 1
+            ? {
+              parity: 'fail',
+              issues: [
+                { severity: 'critical', description: 'critical mismatch' },
+                { severity: 'major', description: 'major mismatch' },
+                { severity: 'minor', description: 'minor mismatch' },
+              ],
+            }
+            : parityCallCount === 2
+              ? {
+                parity: 'partial',
+                issues: [
+                  { severity: 'major', description: 'major mismatch' },
+                ],
+              }
+              : { parity: 'pass', issues: [] };
+          await ensureDir(join(tempDir, '.aamf', 'migration', 'test-project', 'results'));
+          await writeFile(
+            join(tempDir, '.aamf', 'migration', 'test-project', 'results', 'parity-verifier-task-001.result.json'),
+            JSON.stringify({
+              taskId: 'task-001',
+              agent: 'parity-verifier',
+              status: 'completed',
+              outputFiles: ['parity-reports/task-001.md'],
+              ...parityPayload,
+            }),
+          );
+        }
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 20,
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir, logger, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        options: { maxRetriesPerTask: 3 },
+      });
+      await writeFile(join(progressDir, 'migration-plan.md'), `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const eventSpy = vi.spyOn(logger, 'event');
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+      expect(mockLauncher.invocations.filter(i => i.agent === 'failure-recovery' && i.phase === 4).length).toBeGreaterThan(1);
+      expect(eventSpy).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'parity-retry-continued',
+        scope: 'per-task',
+        taskId: 'task-001',
+      }));
+    });
+
+    it('should early-stop non-improving parity retries and annotate blocked reason with parity delta summary', async () => {
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'parity-verifier' && inv.taskId === 'task-001') {
+          await ensureDir(join(tempDir, '.aamf', 'migration', 'test-project', 'results'));
+          await writeFile(
+            join(tempDir, '.aamf', 'migration', 'test-project', 'results', 'parity-verifier-task-001.result.json'),
+            JSON.stringify({
+              taskId: 'task-001',
+              agent: 'parity-verifier',
+              status: 'completed',
+              outputFiles: ['parity-reports/task-001.md'],
+              parity: 'fail',
+              issues: [
+                { severity: 'critical', description: 'critical mismatch' },
+                { severity: 'major', description: 'major mismatch' },
+              ],
+            }),
+          );
+        }
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 20,
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir, logger, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        options: {
+          maxRetriesPerTask: 3,
+          parityGuardrails: {
+            minIssueCountImprovement: 1,
+            minSeverityCountImprovement: 1,
+          },
+        },
+      });
+      await writeFile(join(progressDir, 'migration-plan.md'), `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const eventSpy = vi.spyOn(logger, 'event');
+      const result = await orchestrator.run();
+      const progressContent = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+
+      expect(result.blockedTasks).toContain('task-001');
+      expect(mockLauncher.invocations.filter(i => i.agent === 'failure-recovery' && i.phase === 4).length).toBeLessThanOrEqual(2);
+      expect(eventSpy).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'parity-early-stop',
+        scope: 'per-task',
+        taskId: 'task-001',
+      }));
+      expect(eventSpy).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'parity-targeted-recovery',
+        scope: 'per-task',
+        taskId: 'task-001',
+      }));
+      expect(progressContent).toContain('issues 2->2, critical 1->1, major 1->1, minor 0->0');
+    });
+
     it('should not trigger recovery when parity has only minor issues', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
@@ -2276,6 +2442,43 @@ describe('MigrationOrchestrator', () => {
       expect(result.blockedTasks).toContain('task-001');
       expect(secondTaskRuns).toHaveLength(0);
     });
+
+    it('should early-stop wave-barrier retries when convergence does not improve', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+      ];
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+          buildCommand: 'npm run build',
+        },
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { waveSize: 1, maxConvergenceIterations: 3 },
+          parityGuardrails: {
+            minIssueCountImprovement: 1,
+            minSeverityCountImprovement: 1,
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: false, error: 'build failed' });
+      const eventSpy = vi.spyOn(logger, 'event');
+      const result = await orchestrator.run();
+
+      expect(result.blockedTasks).toContain('task-001');
+      expect(eventSpy).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'parity-early-stop',
+        scope: 'wave-barrier',
+      }));
+    });
   });
 
   // ─── ETA Logging ───────────────────────────────────────────────────
@@ -2555,6 +2758,72 @@ describe('MigrationOrchestrator', () => {
 
       // MAX_LOOPBACK = 2 → initial + 2 loop-backs = max 3 parity checks
       expect(parityCheckCount).toBeLessThanOrEqual(3);
+    });
+
+    it('should early-stop final parity loop-back when fix count does not improve', async () => {
+      let parityCheckCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'final-parity-checker') {
+          parityCheckCount++;
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              fixes: [
+                { description: 'Issue A', sourceFile: 'src/a.py', targetFile: 'src/a.ts' },
+                { description: 'Issue B', sourceFile: 'src/b.py', targetFile: 'src/b.ts' },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+      const eventSpy = vi.spyOn(logger, 'event');
+
+      await orchestrator.run();
+
+      expect(parityCheckCount).toBe(2);
+      expect(eventSpy).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'parity-early-stop',
+        scope: 'final-gate',
+      }));
+    });
+
+    it('should continue final parity loop-back when fix count improves', async () => {
+      let parityCheckCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'final-parity-checker') {
+          parityCheckCount++;
+          const fixes = parityCheckCount === 1
+            ? [
+              { description: 'Issue A', sourceFile: 'src/a.py', targetFile: 'src/a.ts' },
+              { description: 'Issue B', sourceFile: 'src/b.py', targetFile: 'src/b.ts' },
+              { description: 'Issue C', sourceFile: 'src/c.py', targetFile: 'src/c.ts' },
+            ]
+            : parityCheckCount === 2
+              ? [{ description: 'Issue A', sourceFile: 'src/a.py', targetFile: 'src/a.ts' }]
+              : [];
+          return {
+            outputParsed: true,
+            structuredOutput: { fixes },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+      const eventSpy = vi.spyOn(logger, 'event');
+
+      await orchestrator.run();
+
+      expect(parityCheckCount).toBe(3);
+      expect(eventSpy).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'parity-retry-continued',
+        scope: 'final-gate',
+      }));
     });
   });
 
