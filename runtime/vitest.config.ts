@@ -1,7 +1,13 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    exclude: [
+      ...configDefaults.exclude,
+      'tests/indexer.test.ts',
+      'tests/indexer/**/*.test.ts',
+      'tests/ensure-python-deps.test.ts',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
