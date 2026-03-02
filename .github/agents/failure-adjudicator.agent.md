@@ -42,7 +42,7 @@ Resolve the failing task quickly and safely by:
 
 ```aamf-json
 {
-  "agent": "failure-recovery",
+  "agent": "failure-adjudicator",
   "status": "completed",
   "outputFiles": [],
   "taskId": "task-000",
@@ -56,7 +56,7 @@ Resolve the failing task quickly and safely by:
 
 ### Field constraints
 
-- `agent` must be exactly `"failure-recovery"`.
+- `agent` must be exactly `"failure-adjudicator"`.
 - `status` must be one of: `"completed"`, `"failed"`, `"needs-review"`.
 - `taskId` must match the provided task.
 - `failureType` should be one of: `"parity"`, `"build"`, `"test"`, `"blocked"`.

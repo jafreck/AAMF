@@ -460,7 +460,7 @@ describe('AgentLauncher', () => {
 
       expect(result.success).toBe(true);
       expect(result.outputParsed).toBe(true);
-      expect(result.structuredOutput?.agent).toBe('failure-recovery');
+      expect(result.structuredOutput?.agent).toBe('failure-adjudicator');
     });
 
     it('should leave success unchanged and set outputParsed: false when no aamf-json block is emitted', async () => {

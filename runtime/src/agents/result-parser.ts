@@ -44,7 +44,10 @@ export const AdjudicatorOutput = AamfOutputBase.extend({ agent: z.literal('adjud
 export const CodeMigratorOutput = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
 export const ParityVerifierOutput = AamfOutputBase.extend({ agent: z.literal('parity-verifier') });
 export const TestWriterOutput = AamfOutputBase.extend({ agent: z.literal('test-writer') });
-export const FailureRecoveryOutput = AamfOutputBase.extend({ agent: z.literal('failure-recovery') });
+export const FailureAdjudicatorOutput = AamfOutputBase.extend({
+  agent: z.enum(['failure-adjudicator', 'failure-recovery']),
+}).transform((data) => ({ ...data, agent: 'failure-adjudicator' as const }));
+export const FailureRecoveryOutput = FailureAdjudicatorOutput;
 export const FinalParityCheckerOutput = AamfOutputBase.extend({
   agent: z.literal('final-parity-checker'),
   fixes: z.array(z.object({

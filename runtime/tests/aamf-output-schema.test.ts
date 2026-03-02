@@ -8,6 +8,7 @@ import {
   CodeMigratorOutput,
   ParityVerifierOutput,
   TestWriterOutput,
+  FailureAdjudicatorOutput,
   FailureRecoveryOutput,
   FinalParityCheckerOutput,
   E2eTestCrafterOutput,
@@ -122,16 +123,31 @@ describe('Per-agent output schemas', () => {
     });
   });
 
-  describe('FailureRecoveryOutput', () => {
-    it('accepts valid output', () => {
+  describe('FailureAdjudicatorOutput', () => {
+    it('accepts canonical failure-adjudicator output', () => {
       expect(() =>
-        FailureRecoveryOutput.parse({ status: VALID_STATUS, agent: 'failure-recovery' }),
+        FailureAdjudicatorOutput.parse({ status: VALID_STATUS, agent: 'failure-adjudicator' }),
       ).not.toThrow();
     });
+
+    it('accepts legacy failure-recovery output for compatibility', () => {
+      expect(() =>
+        FailureAdjudicatorOutput.parse({ status: VALID_STATUS, agent: 'failure-recovery' }),
+      ).not.toThrow();
+    });
+
     it('rejects wrong agent literal', () => {
       expect(() =>
-        FailureRecoveryOutput.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
+        FailureAdjudicatorOutput.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
       ).toThrow();
+    });
+  });
+
+  describe('FailureRecoveryOutput alias', () => {
+    it('accepts canonical failure-adjudicator output', () => {
+      expect(() =>
+        FailureRecoveryOutput.parse({ status: VALID_STATUS, agent: 'failure-adjudicator' }),
+      ).not.toThrow();
     });
   });
 

@@ -15,6 +15,7 @@ import {
   CodeMigratorOutput,
   ParityVerifierOutput,
   TestWriterOutput,
+  FailureAdjudicatorOutput,
   FailureRecoveryOutput,
   FinalParityCheckerOutput,
   E2eTestCrafterOutput,
@@ -349,8 +350,16 @@ Here are the tasks:
       expect(() => TestWriterOutput.parse({ status: 'completed', agent: 'test-writer' })).not.toThrow();
     });
 
-    it('should validate FailureRecoveryOutput', () => {
-      expect(() => FailureRecoveryOutput.parse({ status: 'completed', agent: 'failure-recovery' })).not.toThrow();
+    it('should validate FailureAdjudicatorOutput with canonical id', () => {
+      expect(() => FailureAdjudicatorOutput.parse({ status: 'completed', agent: 'failure-adjudicator' })).not.toThrow();
+    });
+
+    it('should validate FailureAdjudicatorOutput with legacy alias', () => {
+      expect(() => FailureAdjudicatorOutput.parse({ status: 'completed', agent: 'failure-recovery' })).not.toThrow();
+    });
+
+    it('should validate FailureRecoveryOutput alias with canonical id', () => {
+      expect(() => FailureRecoveryOutput.parse({ status: 'completed', agent: 'failure-adjudicator' })).not.toThrow();
     });
 
     it('should validate FinalParityCheckerOutput', () => {
@@ -496,6 +505,24 @@ intermediate text
       const stdout = '```aamf-json\r\n{"status":"completed","agent":"adjudicator"}\r\n```';
       const result = ResultParser.parseAamfOutput(stdout, AdjudicatorOutput);
       expect(result.parsed).toBe(true);
+    });
+
+    it('should parse failure-adjudicator aamf-json with canonical agent id', () => {
+      const stdout = '```aamf-json\n{"status":"completed","agent":"failure-adjudicator"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, FailureAdjudicatorOutput);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.agent).toBe('failure-adjudicator');
+      }
+    });
+
+    it('should parse failure-adjudicator aamf-json with legacy failure-recovery id', () => {
+      const stdout = '```aamf-json\n{"status":"completed","agent":"failure-recovery"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, FailureAdjudicatorOutput);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.agent).toBe('failure-adjudicator');
+      }
     });
 
     it('should work with the base AamfOutputBase schema', () => {
