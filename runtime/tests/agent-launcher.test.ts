@@ -442,7 +442,7 @@ describe('AgentLauncher', () => {
     });
 
     it('should parse aamf-json output for failure-adjudicator invocations', async () => {
-      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'failure-recovery' });
+      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'failure-adjudicator' });
       const script = await createScript('valid-aamf-failure-adjudicator.sh', [
         `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
         'exit 0',

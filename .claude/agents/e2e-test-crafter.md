@@ -60,7 +60,7 @@ The context JSON contains:
 ### 4. Aggregate Results
 - After all `test-writer` invocations complete, collect their results
 - Run the full E2E test suite to verify tests work together
-- Report any application-level failures as migration issues for `failure-recovery`
+- Report any application-level failures as migration issues for `failure-adjudicator`
 
 ## Suite Brief Format
 

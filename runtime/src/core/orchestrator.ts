@@ -1,5 +1,5 @@
 import { join, resolve } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readdir } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
@@ -41,6 +41,40 @@ import { z } from 'zod';
 const loadLore = () => import('@aamf/lore');
 const loadKbServerProcess = () => import('./kb-server-process.js');
 
+type LoreModule = Awaited<ReturnType<typeof loadLore>>;
+
+function computeSourceFingerprintCompat(
+  lore: LoreModule,
+  rootDir: string,
+  walkerConfig: { includeGlobs?: string[]; excludeGlobs?: string[] },
+  embeddingModel?: string,
+): string {
+  const computeSourceFingerprint = (lore as { computeSourceFingerprint?: (...args: any[]) => string }).computeSourceFingerprint;
+  if (typeof computeSourceFingerprint === 'function') {
+    return computeSourceFingerprint(rootDir, walkerConfig, embeddingModel);
+  }
+
+  const data = JSON.stringify({
+    rootDir,
+    includeGlobs: walkerConfig.includeGlobs ?? [],
+    excludeGlobs: walkerConfig.excludeGlobs ?? [],
+    embeddingModel: embeddingModel ?? '',
+  });
+  return createHash('sha256').update(data).digest('hex');
+}
+
+function getKbFingerprintCompat(lore: LoreModule, db: unknown): string | undefined {
+  const getKbFingerprint = (lore as { getKbFingerprint?: (...args: any[]) => string | undefined }).getKbFingerprint;
+  if (typeof getKbFingerprint === 'function') {
+    return getKbFingerprint(db);
+  }
+  const getKbMeta = (lore as { getKbMeta?: (...args: any[]) => string | undefined }).getKbMeta;
+  if (typeof getKbMeta === 'function') {
+    return getKbMeta(db, 'source_fingerprint');
+  }
+  return undefined;
+}
+
 // ─── Infrastructure Error Detection ──────────────────────────────────────────
 
 /**
@@ -48,7 +82,7 @@ const loadKbServerProcess = () => import('./kb-server-process.js');
  * infrastructure failure rather than a code-quality problem.
  *
  * These errors should be retried with simple backoff — they don't benefit
- * from the expensive failure-recovery agent pipeline.
+ * from the expensive failure-adjudicator agent pipeline.
  */
 const INFRASTRUCTURE_ERROR_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
   // File lock contention (Cargo, NuGet, Gradle, pip, npm, generic)
@@ -560,7 +594,8 @@ export class MigrationOrchestrator {
 
     // ── Fingerprint guard: skip re-indexing if the KB already matches ──
     // Pass the same walkerConfig used by IndexBuilder so the fingerprints match.
-    const currentFingerprint = lore.computeSourceFingerprint(
+    const currentFingerprint = computeSourceFingerprintCompat(
+      lore,
       sourceRoot,
       walkerConfig as { includeGlobs?: string[]; excludeGlobs?: string[] },
       this.embedder?.modelName,
@@ -569,7 +604,7 @@ export class MigrationOrchestrator {
       try {
         const db = lore.openDb(this.kbDbPath);
         try {
-          const storedFingerprint = lore.getKbFingerprint(db);
+          const storedFingerprint = getKbFingerprintCompat(lore, db);
           if (storedFingerprint && storedFingerprint === currentFingerprint) {
             this.logger.info('Phase 0 reused/skipped — KB fingerprint matches current config');
             const checkpointState = this.checkpoint.getState();
@@ -1675,7 +1710,7 @@ export class MigrationOrchestrator {
         );
         migratorInv.contextFile = retryContext;
 
-        // Escalate to failure-recovery agent
+        // Escalate to failure-adjudicator agent
         const recoveryCtx = await this.contextBuilder.buildContext(
           'failure-adjudicator',
           4,
@@ -1753,7 +1788,7 @@ export class MigrationOrchestrator {
 
       if (!parityPassed && gateMode === 'enforce') {
         for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
-          // Launch failure-recovery with parity report
+          // Launch failure-adjudicator with parity report
           const parityReportPath = join(
             this.progressDir,
             'parity-reports',
@@ -1795,7 +1830,7 @@ export class MigrationOrchestrator {
           this.recordTokens(recoveryResult, 4);
 
           if (!recoveryResult.success) {
-            this.logger.warn(`Failure-recovery failed for ${task.id} on attempt ${attempt}`);
+            this.logger.warn(`Failure-adjudicator failed for ${task.id} on attempt ${attempt}`);
             continue;
           }
 
@@ -2263,10 +2298,10 @@ export class MigrationOrchestrator {
    *
    * Infrastructure errors (file locks, OOM, network, etc.) are retried with
    * simple exponential backoff and do **not** consume the `maxRetriesPerTask`
-   * budget or invoke the expensive failure-recovery agent.
+   * budget or invoke the expensive failure-adjudicator agent.
    *
    * Genuine code-quality failures go through the full recovery pipeline:
-   * `failure-recovery` → `code-migrator` → re-run command.
+   * `failure-adjudicator` → `code-migrator` → re-run command.
    *
    * After exhausting all retry budgets Phase 4 fails fast with a terminal reason.
    *
@@ -2316,7 +2351,7 @@ export class MigrationOrchestrator {
     // fall through to the code-quality recovery loop (it may still help).
     if (cmdResult.success) return true;
 
-    // Code-quality recovery loop — full failure-recovery → code-migrator pipeline
+    // Code-quality recovery loop — full failure-adjudicator → code-migrator pipeline
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (this.phase4Snapshot) {
         this.phase4Snapshot.commandRecoveryAttempts++;
@@ -2339,7 +2374,7 @@ export class MigrationOrchestrator {
         expectedSuccessCondition: `${label} command succeeds for ${task.id}`,
       });
 
-      // 1. Launch failure-recovery with the error output
+      // 1. Launch failure-adjudicator with the error output
       const recoveryCtx = await this.contextBuilder.buildContext(
         'failure-adjudicator',
         4,
@@ -2359,7 +2394,7 @@ export class MigrationOrchestrator {
       this.recordTokens(recoveryResult, 4);
 
       if (!recoveryResult.success) {
-        this.logger.warn(`Failure-recovery agent failed for ${task.id} on attempt ${attempt}`);
+        this.logger.warn(`Failure-adjudicator agent failed for ${task.id} on attempt ${attempt}`);
         continue;
       }
 
@@ -2740,7 +2775,7 @@ export class MigrationOrchestrator {
       ? this.kbDbPath
       : undefined;
 
-    // Failure-recovery model override takes precedence over routing
+    // Failure-adjudicator model override takes precedence over routing
     const failureRecoveryOverride = agent === 'failure-adjudicator'
       ? this.getFailureRecoveryModel()
       : undefined;
@@ -2749,7 +2784,7 @@ export class MigrationOrchestrator {
     let routingTier: ModelTier | undefined;
     let routingReason: string | undefined;
 
-    // Apply model routing when enabled and no failure-recovery override
+    // Apply model routing when enabled and no failure-adjudicator override
     if (!failureRecoveryOverride && this.config.options.modelRouting?.enabled) {
       const decision = this.applyRoutingCaps(
         this.selectModelForInvocation(task, agent),

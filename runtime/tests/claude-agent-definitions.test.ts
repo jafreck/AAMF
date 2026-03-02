@@ -20,7 +20,7 @@ const EXPECTED_AGENTS = [
   'code-migrator',
   'parity-verifier',
   'test-writer',
-  'failure-recovery',
+  'failure-adjudicator',
   'final-parity-checker',
   'e2e-test-crafter',
   'documentation-writer',
