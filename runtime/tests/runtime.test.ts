@@ -417,12 +417,53 @@ describe('MigrationRuntime', () => {
 
       const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
       await Promise.all(
-        allAgents.map(agent => writeFile(join(root, `${agent}.agent.md`), '# agent\n', 'utf-8')),
+          allAgents.map(agent => writeFile(join(root, `${agent}.agent.md`), VALID_AGENT_CONTRACT, 'utf-8')),
       );
 
       await expect(runtime.validateAgentFiles()).resolves.toBeUndefined();
       await rm(root, { recursive: true, force: true });
     });
+
+      it('validateAgentFiles throws when schema sections are missing', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-invalid-'));
+        const runtime = new MigrationRuntime() as any;
+        runtime.config = { copilot: { agentDir: root } };
+
+        const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
+        await Promise.all(
+          allAgents.map(agent => writeFile(join(root, `${agent}.agent.md`), '# agent\n', 'utf-8')),
+        );
+
+        await expect(runtime.validateAgentFiles()).rejects.toThrow('Invalid agent schema contract(s)');
+        await rm(root, { recursive: true, force: true });
+      });
+
+  const VALID_AGENT_CONTRACT = `# Agent Definition
+
+## Input Schema (Required)
+
+\`\`\`json
+{
+  "type": "object",
+  "required": ["contextFile"],
+  "properties": {
+    "contextFile": { "type": "string" }
+  }
+}
+\`\`\`
+
+## Output Schema (Required)
+
+\`\`\`json
+{
+  "type": "object",
+  "required": ["agent"],
+  "properties": {
+    "agent": { "type": "string" }
+  }
+}
+\`\`\`
+`;
 
     it('validateAgentFiles throws with missing file list', async () => {
       const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-missing-'));

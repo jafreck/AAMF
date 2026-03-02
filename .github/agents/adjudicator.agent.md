@@ -68,4 +68,38 @@ Option B keeps configuration centralized in one place, reducing the risk of inco
 
 ### Risks
 - Misconfigured overrides could silently apply incorrect values; mitigate by adding validation at startup and clear error messages for missing required keys.
+
+## Input Schema (Required)
+
+```json
+{
+	"type": "object",
+	"required": ["contextFile", "projectRoot", "progressDir", "phase"],
+	"properties": {
+		"contextFile": { "type": "string", "minLength": 1 },
+		"projectRoot": { "type": "string", "minLength": 1 },
+		"progressDir": { "type": "string", "minLength": 1 },
+		"phase": { "type": "integer", "minimum": 0 },
+		"taskId": { "type": "string", "minLength": 1 },
+		"options": { "type": "object" }
+	}
+}
+```
+
+## Output Schema (Required)
+
+```json
+{
+	"type": "object",
+	"required": ["agent", "status", "outputFiles"],
+	"properties": {
+		"agent": { "const": "adjudicator" },
+		"status": { "enum": ["completed", "failed", "needs-review"] },
+		"outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+		"taskId": { "type": "string", "minLength": 1 },
+		"decision": { "type": "string", "minLength": 1 },
+		"notes": { "type": "string" }
+	}
+}
+```
 ```

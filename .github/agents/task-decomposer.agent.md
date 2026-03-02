@@ -83,3 +83,37 @@ The file `.aamf/migration/{projectName}/planning/tasks-{groupId}.json` is the si
   "notes": "Decomposed core group into 8 tasks with no dependency cycles."
 }
 ```
+
+## Input Schema (Required)
+
+```json
+{
+  "type": "object",
+  "required": ["contextFile", "projectRoot", "progressDir", "phase", "taskId"],
+  "properties": {
+    "contextFile": { "type": "string", "minLength": 1 },
+    "projectRoot": { "type": "string", "minLength": 1 },
+    "progressDir": { "type": "string", "minLength": 1 },
+    "phase": { "type": "integer", "minimum": 0 },
+    "taskId": { "type": "string", "minLength": 1 },
+    "groupFile": { "type": "string" }
+  }
+}
+```
+
+## Output Schema (Required)
+
+```json
+{
+  "type": "object",
+  "required": ["agent", "status", "taskId", "outputFiles"],
+  "properties": {
+    "agent": { "const": "task-decomposer" },
+    "status": { "enum": ["completed", "failed", "needs-review"] },
+    "taskId": { "type": "string", "minLength": 1 },
+    "outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 },
+    "taskCount": { "type": "integer", "minimum": 0 },
+    "notes": { "type": "string" }
+  }
+}
+```

@@ -71,3 +71,37 @@ Create intermediate directories as needed.
 - Do NOT modify source files — only create or modify files under `tests/`
 - Do NOT introduce new dependencies; use only packages already in `package.json`
 - Run `npx vitest run` and confirm all tests pass before writing your result summary
+
+## Input Schema (Required)
+
+```json
+{
+	"type": "object",
+	"required": ["contextFile", "projectRoot", "progressDir", "phase", "taskId"],
+	"properties": {
+		"contextFile": { "type": "string", "minLength": 1 },
+		"projectRoot": { "type": "string", "minLength": 1 },
+		"progressDir": { "type": "string", "minLength": 1 },
+		"phase": { "type": "integer", "minimum": 0 },
+		"taskId": { "type": "string", "minLength": 1 },
+		"sourceFiles": { "type": "array", "items": { "type": "string" } },
+		"targetFiles": { "type": "array", "items": { "type": "string" } }
+	}
+}
+```
+
+## Output Schema (Required)
+
+```json
+{
+	"type": "object",
+	"required": ["agent", "status", "outputFiles", "taskId"],
+	"properties": {
+		"agent": { "const": "test-writer" },
+		"status": { "enum": ["completed", "failed", "needs-review"] },
+		"outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+		"taskId": { "type": "string", "minLength": 1 },
+		"notes": { "type": "string" }
+	}
+}
+```

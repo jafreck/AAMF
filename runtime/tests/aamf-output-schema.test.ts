@@ -9,6 +9,7 @@ import {
   ParityVerifierOutput,
   TestWriterOutput,
   FailureAdjudicatorOutput,
+  FailureRecoveryOutput,
   FinalParityCheckerOutput,
   E2eTestCrafterOutput,
   DocumentationWriterOutput,
@@ -123,15 +124,30 @@ describe('Per-agent output schemas', () => {
   });
 
   describe('FailureAdjudicatorOutput', () => {
-    it('accepts valid output', () => {
+    it('accepts canonical failure-adjudicator output', () => {
       expect(() =>
         FailureAdjudicatorOutput.parse({ status: VALID_STATUS, agent: 'failure-adjudicator' }),
       ).not.toThrow();
     });
+
+    it('accepts legacy failure-recovery output for compatibility', () => {
+      expect(() =>
+        FailureAdjudicatorOutput.parse({ status: VALID_STATUS, agent: 'failure-recovery' }),
+      ).not.toThrow();
+    });
+
     it('rejects wrong agent literal', () => {
       expect(() =>
         FailureAdjudicatorOutput.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
       ).toThrow();
+    });
+  });
+
+  describe('FailureRecoveryOutput alias', () => {
+    it('accepts canonical failure-adjudicator output', () => {
+      expect(() =>
+        FailureRecoveryOutput.parse({ status: VALID_STATUS, agent: 'failure-adjudicator' }),
+      ).not.toThrow();
     });
   });
 
