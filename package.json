@@ -4,13 +4,13 @@
   "description": "Autonomous Agent Migration Framework",
   "private": true,
   "scripts": {
-    "postinstall": "npm install --prefix lore && npm run install-runtime",
-    "prebuild": "npm install --prefix lore && npm install --prefix runtime",
-    "build": "npm run build --prefix lore && npm run build --prefix runtime",
+    "postinstall": "npm run install-runtime",
+    "prebuild": "npm install --prefix runtime",
+    "build": "npm run build --prefix runtime",
     "test": "npm test --prefix runtime",
     "install-runtime": "npm install --prefix runtime",
-    "ci:prepush": "npm --prefix lore exec -- tsc -p lore/tsconfig.json && npm --prefix runtime exec -- tsc --noEmit -p runtime/tsconfig.json",
-    "ci:local": "npm --prefix lore exec -- tsc -p lore/tsconfig.json && npm --prefix runtime exec -- tsc --noEmit -p runtime/tsconfig.json && npm --prefix runtime exec -- vitest run --coverage",
+    "ci:prepush": "npm --prefix runtime exec -- tsc --noEmit -p runtime/tsconfig.json",
+    "ci:local": "npm --prefix runtime exec -- tsc --noEmit -p runtime/tsconfig.json && npm --prefix runtime exec -- vitest run --coverage",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "engines": {

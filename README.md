@@ -9,7 +9,7 @@ Typical use cases include porting a 100k+ line Python monolith to TypeScript, a 
 ## Repository Layout
 
 - `runtime/` — migration orchestration runtime, agent execution, checkpointing, KB server.
-- `lore/` — extracted knowledge-base indexing project (source walking, parsing, extraction, SQLite index + embeddings).
+- `@jafreck/lore` (npm package) — extracted knowledge-base indexing project (source walking, parsing, extraction, SQLite index + embeddings) consumed by the runtime.
 
 ---
 
