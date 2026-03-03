@@ -131,31 +131,6 @@ function formatDuration(ms: number): string {
   return `${secs}s`;
 }
 
-function summarizeFailureOutput(output: string, maxChars = 4000): string {
-  const normalized = output.replace(/\r\n/g, '\n').trim();
-  if (!normalized) return 'no stderr/stdout captured';
-
-  const lines = normalized.split('\n').map(line => line.trimEnd());
-  const priorityPatterns = [
-    /error\[E\d+\]/i,
-    /main function not found/i,
-    /could not compile/i,
-    /^error:/i,
-    /-->\s+.+:\d+:\d+/,
-    /consider adding/i,
-    /For more information/i,
-    /failed/i,
-  ];
-
-  const prioritized = lines.filter(line =>
-    priorityPatterns.some(pattern => pattern.test(line)),
-  );
-  const picked = (prioritized.length > 0 ? prioritized : lines.filter(Boolean)).slice(0, 60);
-  const summary = picked.join('\n').trim();
-  if (summary.length <= maxChars) return summary;
-  return `${summary.slice(0, maxChars)}...`;
-}
-
 type Phase4QualityGateMode = 'enforce' | 'advisory' | 'skip';
 
 interface RetryTargetDetails {
@@ -2643,10 +2618,9 @@ export class MigrationOrchestrator {
 
         if (result.exitCode !== 0 || result.killed) {
           const combinedOutput = `${result.stdout}\n${result.stderr}`;
-          const diagnosticsSummary = summarizeFailureOutput(combinedOutput);
           const errorText = result.killed
-            ? `${label} command timed out after ${timeout}ms`
-            : `${label} command failed (exit code ${result.exitCode}): ${diagnosticsSummary}`;
+            ? `${label} failed (timed out after ${timeout}ms). See full output: ${logPath}`
+            : `${label} failed (exit code ${result.exitCode}). See full output: ${logPath}`;
           this.logger.error(errorText);
 
           // Classify the error: infrastructure vs. code quality
