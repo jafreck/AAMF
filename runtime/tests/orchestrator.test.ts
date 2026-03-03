@@ -2533,7 +2533,8 @@ describe('MigrationOrchestrator', () => {
       await writePhase3PlanningArtifacts(progressDir, tasks);
 
       let buildAttempts = 0;
-      vi.spyOn(orchestrator as any, 'runCommand').mockImplementation(async (label: string) => {
+      vi.spyOn(orchestrator as any, 'runCommand').mockImplementation(async (...args: unknown[]) => {
+        const label = String(args[0]);
         if (label === 'build') {
           buildAttempts++;
           return buildAttempts < 2
@@ -2557,6 +2558,15 @@ describe('MigrationOrchestrator', () => {
       expect(migratorRuns.length).toBeGreaterThanOrEqual(2);
       expect(waveAdjudicatorRuns.length).toBeGreaterThanOrEqual(1);
       expect(waveRemigratorRuns.length).toBeGreaterThanOrEqual(1);
+
+      const waveRecoveryContext = JSON.parse(await readFile(waveAdjudicatorRuns[0]!.contextFile, 'utf-8'));
+      expect(typeof waveRecoveryContext.payload?.failureReport).toBe('string');
+      if (waveRecoveryContext.payload?.failureReport.includes('/logs/commands/build/wave-1-')) {
+        expect(waveRecoveryContext.inputFiles).toContain(waveRecoveryContext.payload?.failureReport);
+      } else {
+        expect(waveRecoveryContext.payload?.failureReport).toContain('build failed');
+      }
+      expect(waveRecoveryContext.payload?.failureType).toBe('build');
 
       let foundBuildRemediation = false;
       for (const inv of waveRemigratorRuns) {

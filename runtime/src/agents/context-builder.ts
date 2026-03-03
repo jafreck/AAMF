@@ -73,6 +73,15 @@ export class ContextBuilder {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 
+  private isLikelyPathString(value: unknown): value is string {
+    if (typeof value !== 'string') return false;
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    if (trimmed.includes('\n') || trimmed.includes('\r')) return false;
+    if (trimmed.length > 320) return false;
+    return true;
+  }
+
   private getRemediationContext(payload?: Record<string, unknown>): Record<string, unknown> | undefined {
     const nestedRemediation = payload?.remediationContext ?? payload?.remediation;
     if (this.isRecord(nestedRemediation)) {
@@ -227,9 +236,14 @@ export class ContextBuilder {
         };
 
       case 'failure-adjudicator':
+        {
+          const failureReportPath = this.isLikelyPathString(payload?.failureReport)
+            ? String(payload?.failureReport)
+            : undefined;
+
         return {
           inputFiles: [
-            ...(payload?.failureReport ? [String(payload.failureReport)] : []),
+            ...(failureReportPath ? [failureReportPath] : []),
             ...(payload?.sourceFile ? [String(payload.sourceFile)] : []),
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
@@ -237,10 +251,13 @@ export class ContextBuilder {
           outputPath: join(this.progressDir, 'artifacts', 'adjudication', `${taskId ?? 'main'}.md`),
           agentPayload: {
             taskId,
+            failureType: payload?.failureType,
+            failureReport: payload?.failureReport,
             attemptNumber: payload?.attemptNumber ?? 1,
             ...(remediationContext ? { remediationContext } : {}),
           },
         };
+      }
 
       case 'final-parity-checker':
         return {

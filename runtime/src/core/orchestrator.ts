@@ -131,6 +131,31 @@ function formatDuration(ms: number): string {
   return `${secs}s`;
 }
 
+function summarizeFailureOutput(output: string, maxChars = 4000): string {
+  const normalized = output.replace(/\r\n/g, '\n').trim();
+  if (!normalized) return 'no stderr/stdout captured';
+
+  const lines = normalized.split('\n').map(line => line.trimEnd());
+  const priorityPatterns = [
+    /error\[E\d+\]/i,
+    /main function not found/i,
+    /could not compile/i,
+    /^error:/i,
+    /-->\s+.+:\d+:\d+/,
+    /consider adding/i,
+    /For more information/i,
+    /failed/i,
+  ];
+
+  const prioritized = lines.filter(line =>
+    priorityPatterns.some(pattern => pattern.test(line)),
+  );
+  const picked = (prioritized.length > 0 ? prioritized : lines.filter(Boolean)).slice(0, 60);
+  const summary = picked.join('\n').trim();
+  if (summary.length <= maxChars) return summary;
+  return `${summary.slice(0, maxChars)}...`;
+}
+
 type Phase4QualityGateMode = 'enforce' | 'advisory' | 'skip';
 
 interface RetryTargetDetails {
@@ -151,7 +176,13 @@ interface TerminalExhaustionDetails {
   summary: string;
 }
 
-type CommandExecutionResult = { success: boolean; error?: string; infraError?: string };
+type CommandExecutionResult = {
+  success: boolean;
+  error?: string;
+  infraError?: string;
+  rawError?: string;
+  logPath?: string;
+};
 
 interface WaveValidationResult {
   success: boolean;
@@ -2611,16 +2642,23 @@ export class MigrationOrchestrator {
         await atomicWrite(logPath, logContent);
 
         if (result.exitCode !== 0 || result.killed) {
+          const combinedOutput = `${result.stdout}\n${result.stderr}`;
+          const diagnosticsSummary = summarizeFailureOutput(combinedOutput);
           const errorText = result.killed
             ? `${label} command timed out after ${timeout}ms`
-            : `${label} command failed (exit code ${result.exitCode}): ${result.stderr.slice(0, 500)}`;
+            : `${label} command failed (exit code ${result.exitCode}): ${diagnosticsSummary}`;
           this.logger.error(errorText);
 
           // Classify the error: infrastructure vs. code quality
-          const combinedOutput = `${result.stdout}\n${result.stderr}`;
           const infraLabel = classifyError(combinedOutput);
 
-          return { success: false, error: errorText, infraError: infraLabel };
+          return {
+            success: false,
+            error: errorText,
+            infraError: infraLabel,
+            rawError: combinedOutput,
+            logPath,
+          };
         }
 
         this.logger.info(`${label} command succeeded for task ${taskId}`);
@@ -2735,7 +2773,7 @@ export class MigrationOrchestrator {
         4,
         task.id,
         {
-          failureReport: cmdResult.error,
+          failureReport: cmdResult.logPath ?? cmdResult.rawError ?? cmdResult.error,
           failureType: label,
           sourceFile: task.sourceFiles[0],
           targetFile: task.targetFiles[0],
