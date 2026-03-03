@@ -1,0 +1,14 @@
+{
+  "taskId": "task-1",
+  "agent": "code-migrator",
+  "status": "completed",
+  "outputFiles": ["examples/common.rs"],
+  "parity": "pass",
+  "issues": [],
+  "metrics": {
+    "linesOfCode": 213,
+    "tokensUsed": 0,
+    "durationMs": 0
+  },
+  "notes": "Migrated C common.h to Rust common.rs. CHECK macro becomes check! macro using file!/line!. File I/O functions use std::fs/io with matching exit codes. malloc_orDie returns Vec<u8>. mallocAndLoadFile_orDie returns Vec<u8> directly (no out-param needed). fclose_orDie uses sync_all to surface write errors before drop."
+}

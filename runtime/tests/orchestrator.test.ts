@@ -2509,7 +2509,7 @@ describe('MigrationOrchestrator', () => {
       expect(Math.min(...validationStartedAt)).toBeGreaterThanOrEqual(Math.max(...migratorFinishedAt));
     });
 
-    it('should retry failed wave validation with fix waves until convergence', async () => {
+    it('should launch failure-adjudicator for wave validation failures before convergence retry', async () => {
       const tasks: MigrationTask[] = [
         { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
         { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
@@ -2545,23 +2545,35 @@ describe('MigrationOrchestrator', () => {
 
       const result = await orchestrator.run();
       const migratorRuns = mockLauncher.invocations.filter(i => i.agent === 'code-migrator' && i.phase === 4);
+      const waveAdjudicatorRuns = mockLauncher.invocations.filter(
+        (i) => i.agent === 'failure-adjudicator' && i.phase === 4 && i.taskId === 'wave-1',
+      );
+      const waveRemigratorRuns = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4 && i.taskId === 'wave-1',
+      );
 
       expect(result.success).toBe(true);
-      expect(buildAttempts).toBe(2);
+      expect(buildAttempts).toBe(3);
       expect(migratorRuns.length).toBeGreaterThanOrEqual(2);
+      expect(waveAdjudicatorRuns.length).toBeGreaterThanOrEqual(1);
+      expect(waveRemigratorRuns.length).toBeGreaterThanOrEqual(1);
 
-      if (migratorRuns.length > 2) {
-        let foundWaveRemediation = false;
-        for (const inv of migratorRuns) {
-          const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
-          if (ctx.payload?.remediationContext?.failureKind === 'wave-convergence') {
-            foundWaveRemediation = true;
-            expect(ctx.payload?.remediationContext?.failureTarget?.wave).toBe(1);
-            break;
-          }
+      let foundBuildRemediation = false;
+      for (const inv of waveRemigratorRuns) {
+        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
+        if (ctx.payload?.remediationContext?.failureKind === 'build') {
+          foundBuildRemediation = true;
+          expect(ctx.payload?.remediationContext?.failureTarget?.wave).toBe(1);
+          break;
         }
-        expect(foundWaveRemediation).toBe(true);
       }
+      expect(foundBuildRemediation).toBe(true);
+
+      const progressContent = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+      expect(progressContent).toContain('Retry Targets');
+      expect(progressContent).toContain('wave-1');
+      expect(progressContent).toContain('build');
+      expect(progressContent).toContain('convergence');
     });
 
     it('should fail fast on wave convergence exhaustion without scheduling later waves', async () => {
