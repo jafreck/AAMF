@@ -12,6 +12,40 @@ export interface TerminalExhaustionState {
   summary?: string;
 }
 
+export interface Phase4TaskSubstepState {
+  completedSubsteps: string[];
+  lastSuccessfulStep?: string;
+}
+
+export interface Phase4Cursor {
+  tasks: Record<string, Phase4TaskSubstepState>;
+}
+
+export interface Phase5Cursor {
+  iteration: number;
+  fixIndex: number;
+  lastSuccessfulStep?: string;
+}
+
+export interface Phase6Cursor {
+  completedAgents: string[];
+  lastSuccessfulStep?: string;
+}
+
+export interface Phase8Cursor {
+  iteration: number;
+  issueIndex: number;
+  currentFile?: string;
+  lastSuccessfulStep?: string;
+}
+
+export interface PhaseCursorMap {
+  '4'?: Phase4Cursor;
+  '5'?: Phase5Cursor;
+  '6'?: Phase6Cursor;
+  '8'?: Phase8Cursor;
+}
+
 export interface CheckpointState {
   projectName: string;
   version: number;                          // schema version for forward compat (currently 1)
@@ -46,6 +80,8 @@ export interface CheckpointState {
   adjudicationWaivers?: AdjudicationWaiverRecord[];
   /** Auditable adjudication event history across retries/resume. */
   adjudicationEvents?: AdjudicationEventRecord[];
+  /** Per-phase deterministic resume cursors for mid-stage checkpointing. */
+  phaseCursors?: PhaseCursorMap;
 }
 
 export interface CheckpointFailedTask {
@@ -91,22 +127,21 @@ export class CheckpointManager {
   }
 
   /** Read the current checkpoint, or create initial state */
-  async load(projectName: string): Promise<CheckpointState> {
+  async load(projectName: string, options: { fresh?: boolean } = {}): Promise<CheckpointState> {
     await ensureDir(this.progressDir);
+
+    if (options.fresh) {
+      this.logger.info('Fresh start requested (resume=false) — ignoring prior checkpoint state');
+      this.state = this.buildInitialState(projectName);
+      await this.save(this.state);
+      return this.state;
+    }
 
     if (await fileExists(this.checkpointPath)) {
       try {
         this.state = await readJson<CheckpointState>(this.checkpointPath);
+        this.applyBackwardCompatibleDefaults(this.state);
         this.state.resumeCount += 1;
-        this.state.cumulativeDurationMs ??= 0;
-        this.state.completedTaskDurationsMs ??= [];
-        this.state.phase3aComplete ??= false;
-        this.state.completedPhase3Groups ??= [];
-        this.state.metricsCount ??= 0;
-        this.state.phase0Fingerprint ??= undefined;
-        this.state.terminalExhaustion ??= undefined;
-        this.state.adjudicationWaivers ??= [];
-        this.state.adjudicationEvents ??= [];
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
         await this.save(this.state);
         return this.state;
@@ -116,16 +151,8 @@ export class CheckpointManager {
         if (await fileExists(this.backupPath)) {
           try {
             this.state = await readJson<CheckpointState>(this.backupPath);
+            this.applyBackwardCompatibleDefaults(this.state);
             this.state.resumeCount += 1;
-            this.state.cumulativeDurationMs ??= 0;
-            this.state.completedTaskDurationsMs ??= [];
-            this.state.phase3aComplete ??= false;
-            this.state.completedPhase3Groups ??= [];
-            this.state.metricsCount ??= 0;
-            this.state.phase0Fingerprint ??= undefined;
-            this.state.terminalExhaustion ??= undefined;
-            this.state.adjudicationWaivers ??= [];
-            this.state.adjudicationEvents ??= [];
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
             await this.save(this.state);
             return this.state;
@@ -137,29 +164,7 @@ export class CheckpointManager {
     }
 
     // Create initial state
-    this.state = {
-      projectName,
-      version: CHECKPOINT_VERSION,
-      currentPhase: 0,
-      currentTask: null,
-      completedPhases: [],
-      completedTasks: [],
-      failedTasks: [],
-      blockedTasks: [],
-      phaseOutputs: {},
-      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
-      startedAt: new Date().toISOString(),
-      lastCheckpoint: new Date().toISOString(),
-      resumeCount: 0,
-      cumulativeDurationMs: 0,
-      completedTaskDurationsMs: [],
-      phase3aComplete: false,
-      completedPhase3Groups: [],
-      metricsCount: 0,
-      terminalExhaustion: undefined,
-      adjudicationWaivers: [],
-      adjudicationEvents: [],
-    };
+    this.state = this.buildInitialState(projectName);
     await this.save(this.state);
     return this.state;
   }
@@ -216,6 +221,13 @@ export class CheckpointManager {
     state.failedTasks = state.failedTasks.filter(f => f.taskId !== taskId);
     // Remove from blocked if it was there
     state.blockedTasks = state.blockedTasks.filter(id => id !== taskId);
+    state.phaseCursors ??= {};
+    state.phaseCursors['4'] ??= { tasks: {} };
+    state.phaseCursors['4'].tasks[taskId] ??= { completedSubsteps: [] };
+    if (!state.phaseCursors['4'].tasks[taskId].completedSubsteps.includes('completed')) {
+      state.phaseCursors['4'].tasks[taskId].completedSubsteps.push('completed');
+    }
+    state.phaseCursors['4'].tasks[taskId].lastSuccessfulStep = 'completed';
     await this.save(state);
   }
 
@@ -323,5 +335,51 @@ export class CheckpointManager {
   isBudgetExceeded(budget?: number): boolean {
     if (budget === undefined) return false;
     return this.getState().tokenUsage.total > budget;
+  }
+
+  private buildInitialState(projectName: string): CheckpointState {
+    return {
+      projectName,
+      version: CHECKPOINT_VERSION,
+      currentPhase: 0,
+      currentTask: null,
+      completedPhases: [],
+      completedTasks: [],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 0,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      phase3aComplete: false,
+      completedPhase3Groups: [],
+      metricsCount: 0,
+      terminalExhaustion: undefined,
+      adjudicationWaivers: [],
+      adjudicationEvents: [],
+      phaseCursors: {},
+    };
+  }
+
+  private applyBackwardCompatibleDefaults(state: CheckpointState): void {
+    state.cumulativeDurationMs ??= 0;
+    state.completedTaskDurationsMs ??= [];
+    state.phase3aComplete ??= false;
+    state.completedPhase3Groups ??= [];
+    state.metricsCount ??= 0;
+    state.phase0Fingerprint ??= undefined;
+    state.terminalExhaustion ??= undefined;
+    state.adjudicationWaivers ??= [];
+    state.adjudicationEvents ??= [];
+    state.phaseCursors ??= {};
+    state.phaseCursors['4'] ??= { tasks: {} };
+    state.phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };
+    state.phaseCursors['6'] ??= { completedAgents: [] };
+    state.phaseCursors['8'] ??= { iteration: 0, issueIndex: 0 };
+    state.phaseCursors['4'].tasks ??= {};
+    state.phaseCursors['6'].completedAgents ??= [];
   }
 }

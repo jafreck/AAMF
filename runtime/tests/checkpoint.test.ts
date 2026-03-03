@@ -322,6 +322,48 @@ describe('CheckpointManager', () => {
     expect(loaded.metricsCount).toBe(0);
   });
 
+  it('should default phase cursors when loading legacy checkpoint without phaseCursors (backward compat)', async () => {
+    const { writeJson } = await import('../src/util/fs.js');
+    const oldState = {
+      projectName: 'old-project',
+      version: 1,
+      currentPhase: 4,
+      currentTask: 'task-001',
+      completedPhases: [1, 2, 3],
+      completedTasks: [],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 1,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      metricsCount: 0,
+    };
+    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const loaded = await manager3.load('old-project');
+    expect(loaded.phaseCursors?.['4']?.tasks).toEqual({});
+    expect(loaded.phaseCursors?.['5']?.iteration).toBe(0);
+    expect(loaded.phaseCursors?.['6']?.completedAgents).toEqual([]);
+    expect(loaded.phaseCursors?.['8']?.issueIndex).toBe(0);
+  });
+
+  it('should ignore existing checkpoint state on fresh load', async () => {
+    const initial = await manager.load('test-project');
+    initial.currentPhase = 6;
+    initial.completedTasks = ['task-001'];
+    await manager.save(initial);
+
+    const fresh = await manager.load('test-project', { fresh: true });
+    expect(fresh.currentPhase).toBe(0);
+    expect(fresh.completedTasks).toEqual([]);
+    expect(fresh.phaseCursors).toEqual({});
+  });
+
   // ─── token persistence & resume merge ─────────────────────────────
 
   it('should persist token usage data across save and reload', async () => {

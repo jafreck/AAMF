@@ -125,8 +125,8 @@ export class MigrationRuntime {
   }
 
   async run(): Promise<MigrationResult> {
-    // Load or create checkpoint
-    await this.checkpoint.load(this.config.projectName);
+    // Load or create checkpoint. resume=false always forces a fresh start.
+    await this.checkpoint.load(this.config.projectName, { fresh: !this.config.options.resume });
 
     // Initialize progress
     if (!this.config.options.resume) {
