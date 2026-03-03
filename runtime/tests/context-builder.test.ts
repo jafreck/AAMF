@@ -281,6 +281,28 @@ describe('ContextBuilder', () => {
       expect(remediation?.expectedSuccessCondition).toBe('Test command exits with code 0');
     });
 
+    it('should keep inline failure text in payload and exclude it from inputFiles', async () => {
+      const inlineFailure = [
+        'test command failed (exit code 101):',
+        'error[E0601]: `main` function not found in crate `common`',
+        ' --> examples/common.rs:256:2',
+      ].join('\n');
+
+      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'wave-1', {
+        failureReport: inlineFailure,
+        failureType: 'test',
+        sourceFile: 'examples/common.h',
+        targetFile: 'examples/common.rs',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).not.toContain(inlineFailure);
+      expect(context.inputFiles).toContain('examples/common.h');
+      expect(context.inputFiles).toContain('examples/common.rs');
+      expect(context.payload?.failureReport).toBe(inlineFailure);
+      expect(context.payload?.failureType).toBe('test');
+    });
+
     it('should support legacy remediation alias in failure-adjudicator payload', async () => {
       const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
