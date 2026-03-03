@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { MigrationTask } from './types.js';
 import { fileExists, readJson } from '../util/fs.js';
+import { buildLegacyRuntimePaths } from '../core/runtime-paths.js';
 
 export const MISSING_BLOCK_ERROR = 'missing aamf-json block';
 
@@ -242,8 +243,12 @@ export class ResultParser {
     agent: string,
     taskId: string,
   ): Promise<TaskResult | undefined> {
-    const sidecarPath = join(progressDir, 'results', `${agent}-${taskId}.result.json`);
-    if (!(await fileExists(sidecarPath))) return undefined;
+    const normalizedPath = join(progressDir, 'artifacts', 'results', `${agent}-${taskId}.result.json`);
+    const legacyPath = join(buildLegacyRuntimePaths(progressDir).resultsDir, `${agent}-${taskId}.result.json`);
+    const sidecarPath = await fileExists(normalizedPath)
+      ? normalizedPath
+      : (await fileExists(legacyPath) ? legacyPath : undefined);
+    if (!sidecarPath) return undefined;
     try {
       const raw = await readJson<unknown>(sidecarPath);
       return TaskResultSchema.parse(raw);

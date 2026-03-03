@@ -1,8 +1,8 @@
-import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { atomicWrite, ensureDir, fileExists, readJson, writeJson } from '../util/fs.js';
 import { Logger } from '../logging/logger.js';
 import type { TerminalReasonCode } from '../agents/types.js';
+import { buildLegacyRuntimePaths } from './runtime-paths.js';
 
 export interface TerminalExhaustionState {
   reasonCode: TerminalReasonCode;
@@ -113,22 +113,27 @@ export interface AdjudicationEventRecord {
 }
 
 const CHECKPOINT_VERSION = 1;
-const CHECKPOINT_FILE = 'checkpoint.json';
-const CHECKPOINT_BACKUP = 'checkpoint.backup.json';
 
 export class CheckpointManager {
   private state: CheckpointState | null = null;
   private readonly checkpointPath: string;
   private readonly backupPath: string;
+  private readonly legacyCheckpointPath: string;
+  private readonly legacyBackupPath: string;
+  private readonly stateDir: string;
 
   constructor(private readonly progressDir: string, private readonly logger: Logger) {
-    this.checkpointPath = join(progressDir, CHECKPOINT_FILE);
-    this.backupPath = join(progressDir, CHECKPOINT_BACKUP);
+    this.stateDir = `${progressDir}/state`;
+    const legacyPaths = buildLegacyRuntimePaths(progressDir);
+    this.checkpointPath = `${this.stateDir}/checkpoint.json`;
+    this.backupPath = `${this.stateDir}/checkpoint.backup.json`;
+    this.legacyCheckpointPath = legacyPaths.checkpointFile;
+    this.legacyBackupPath = legacyPaths.checkpointBackupFile;
   }
 
   /** Read the current checkpoint, or create initial state */
   async load(projectName: string, options: { fresh?: boolean } = {}): Promise<CheckpointState> {
-    await ensureDir(this.progressDir);
+    await ensureDir(this.stateDir);
 
     if (options.fresh) {
       this.logger.info('Fresh start requested (resume=false) — ignoring prior checkpoint state');
@@ -137,9 +142,12 @@ export class CheckpointManager {
       return this.state;
     }
 
-    if (await fileExists(this.checkpointPath)) {
+    const checkpointToRead = await this.resolveCheckpointReadPath();
+    const backupToRead = await this.resolveBackupReadPath();
+
+    if (checkpointToRead) {
       try {
-        this.state = await readJson<CheckpointState>(this.checkpointPath);
+        this.state = await readJson<CheckpointState>(checkpointToRead);
         this.applyBackwardCompatibleDefaults(this.state);
         this.state.resumeCount += 1;
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
@@ -148,9 +156,9 @@ export class CheckpointManager {
       } catch (err) {
         this.logger.warn(`Failed to read checkpoint, trying backup: ${(err as Error).message}`);
         // Try backup
-        if (await fileExists(this.backupPath)) {
+        if (backupToRead) {
           try {
-            this.state = await readJson<CheckpointState>(this.backupPath);
+            this.state = await readJson<CheckpointState>(backupToRead);
             this.applyBackwardCompatibleDefaults(this.state);
             this.state.resumeCount += 1;
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
@@ -381,5 +389,25 @@ export class CheckpointManager {
     state.phaseCursors['8'] ??= { iteration: 0, issueIndex: 0 };
     state.phaseCursors['4'].tasks ??= {};
     state.phaseCursors['6'].completedAgents ??= [];
+  }
+
+  private async resolveCheckpointReadPath(): Promise<string | undefined> {
+    if (await fileExists(this.checkpointPath)) {
+      return this.checkpointPath;
+    }
+    if (await fileExists(this.legacyCheckpointPath)) {
+      return this.legacyCheckpointPath;
+    }
+    return undefined;
+  }
+
+  private async resolveBackupReadPath(): Promise<string | undefined> {
+    if (await fileExists(this.backupPath)) {
+      return this.backupPath;
+    }
+    if (await fileExists(this.legacyBackupPath)) {
+      return this.legacyBackupPath;
+    }
+    return undefined;
   }
 }

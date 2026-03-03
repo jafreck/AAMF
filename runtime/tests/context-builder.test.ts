@@ -194,7 +194,7 @@ describe('ContextBuilder', () => {
 
       expect(context.inputFiles).toContain('src/auth.py');
       expect(context.inputFiles).toContain('src/auth.ts');
-      expect(context.outputPath).toContain('parity-reports');
+      expect(context.outputPath).toContain('artifacts/parity');
     });
 
     it('should route test-writer to target file + KB entry', async () => {

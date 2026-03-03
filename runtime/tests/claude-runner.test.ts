@@ -75,6 +75,15 @@ describe('ClaudeCodeRunner', () => {
     return { contextFile, progressDir };
   }
 
+  async function readLatestAgentLog(agent: string, taskId: string): Promise<{ fileName: string; content: string }> {
+    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs', 'agents', agent, taskId);
+    const logFiles = await readdir(logDir);
+    const fileName = [...logFiles].sort().at(-1);
+    expect(fileName).toBeDefined();
+    const content = await readFile(join(logDir, fileName!), 'utf-8');
+    return { fileName: fileName!, content };
+  }
+
   /** Helper to create a mock agent definition file */
   async function createAgentFile(agentName: string, content = '---\nname: test\n---\n# Agent') {
     const agentDir = join(projectRoot, '.claude', 'agents');
@@ -111,12 +120,7 @@ describe('ClaudeCodeRunner', () => {
 
     expect(result.success).toBe(true);
 
-    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-    const logFiles = await readdir(logDir);
-    const agentLog = logFiles.find(f => f.startsWith('code-migrator-claude-args'));
-    expect(agentLog).toBeDefined();
-
-    const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+    const { content: logContent } = await readLatestAgentLog('code-migrator', 'claude-args');
     expect(logContent).toContain('--agent');
     expect(logContent).toContain('code-migrator');
     expect(logContent).toContain('-p');
@@ -149,12 +153,7 @@ describe('ClaudeCodeRunner', () => {
 
     expect(result.success).toBe(true);
 
-    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-    const logFiles = await readdir(logDir);
-    const agentLog = logFiles.find(f => f.startsWith('impact-assessor-claude-env'));
-    expect(agentLog).toBeDefined();
-
-    const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+    const { content: logContent } = await readLatestAgentLog('impact-assessor', 'claude-env');
     expect(logContent).toContain(`PROGRESS_DIR:${progressDir}`);
     expect(logContent).toContain(`CONTEXT_FILE:${contextFile}`);
     expect(logContent).toContain('PHASE:2');
@@ -378,12 +377,7 @@ describe('ClaudeCodeRunner', () => {
       taskId: 'claude-log',
     });
 
-    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-    const logFiles = await readdir(logDir);
-    const agentLog = logFiles.find(f => f.startsWith('code-migrator-claude-log-') && f.endsWith('.log'));
-    expect(agentLog).toBeDefined();
-
-    const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+    const { content: logContent } = await readLatestAgentLog('code-migrator', 'claude-log');
     expect(logContent).toContain('stdout');
     expect(logContent).toContain('stderr');
     expect(logContent).toContain('=== STDOUT ===');
@@ -441,14 +435,8 @@ describe('ClaudeCodeRunner', () => {
         taskId: 'claude-inv-log',
       });
 
-      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-      const logFiles = await readdir(logDir);
-      const agentLog = logFiles.find(f =>
-        f.startsWith('code-migrator-claude-inv-log-') &&
-        f.includes(result.invocationId!) &&
-        f.endsWith('.log'),
-      );
-      expect(agentLog).toBeDefined();
+      const { fileName } = await readLatestAgentLog('code-migrator', 'claude-inv-log');
+      expect(fileName).toContain(result.invocationId!);
     });
 
     it('should include invocationId on error/catch path', async () => {

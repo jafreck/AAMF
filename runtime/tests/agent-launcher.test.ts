@@ -53,6 +53,15 @@ describe('AgentLauncher', () => {
     return { contextFile, progressDir };
   }
 
+  async function readLatestAgentLog(agent: string, taskId: string): Promise<{ fileName: string; content: string }> {
+    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs', 'agents', agent, taskId);
+    const logFiles = await readdir(logDir);
+    const fileName = [...logFiles].sort().at(-1);
+    expect(fileName).toBeDefined();
+    const content = await readFile(join(logDir, fileName!), 'utf-8');
+    return { fileName: fileName!, content };
+  }
+
   it('should be importable', () => {
     expect(AgentLauncher).toBeDefined();
   });
@@ -72,12 +81,7 @@ describe('AgentLauncher', () => {
 
     expect(result.success).toBe(true);
 
-    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-    const logFiles = await readdir(logDir);
-    const agentLog = logFiles.find(f => f.startsWith('code-migrator-cli-args'));
-    expect(agentLog).toBeDefined();
-
-    const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+    const { content: logContent } = await readLatestAgentLog('code-migrator', 'cli-args');
     expect(logContent).toContain('--agent');
     expect(logContent).toContain('code-migrator');
     expect(logContent).toContain('-p');
@@ -105,12 +109,7 @@ describe('AgentLauncher', () => {
 
     expect(result.success).toBe(true);
 
-    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-    const logFiles = await readdir(logDir);
-    const agentLog = logFiles.find(f => f.startsWith('code-migrator-model-override'));
-    expect(agentLog).toBeDefined();
-
-    const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+    const { content: logContent } = await readLatestAgentLog('code-migrator', 'model-override');
     expect(logContent).toContain('--model');
     expect(logContent).toContain('fallback-model');
     expect(logContent).not.toContain('primary-model');
@@ -137,12 +136,7 @@ describe('AgentLauncher', () => {
 
     expect(result.success).toBe(true);
 
-    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-    const logFiles = await readdir(logDir);
-    const agentLog = logFiles.find(f => f.startsWith('impact-assessor-env-test'));
-    expect(agentLog).toBeDefined();
-
-    const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+    const { content: logContent } = await readLatestAgentLog('impact-assessor', 'env-test');
     expect(logContent).toContain(`PROGRESS_DIR:${progressDir}`);
     expect(logContent).toContain(`CONTEXT_FILE:${contextFile}`);
     expect(logContent).toContain('PHASE:1');
@@ -177,12 +171,7 @@ describe('AgentLauncher', () => {
 
       expect(result.success).toBe(true);
 
-      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-      const logFiles = await readdir(logDir);
-      const agentLog = logFiles.find(f => f.startsWith('impact-assessor-env-filter'));
-      expect(agentLog).toBeDefined();
-
-      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      const { content: logContent } = await readLatestAgentLog('impact-assessor', 'env-filter');
       expect(logContent).toContain('VSCODE_IPC_HOOK_CLI:');
       expect(logContent).not.toContain('vscode-ipc-token');
       expect(logContent).toContain('TERM_PROGRAM:');
@@ -378,12 +367,7 @@ describe('AgentLauncher', () => {
       taskId: 'log-001',
     });
 
-    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-    const logFiles = await readdir(logDir);
-    const agentLog = logFiles.find(f => f.startsWith('code-migrator-log-001-') && f.endsWith('.log'));
-    expect(agentLog).toBeDefined();
-
-    const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+    const { content: logContent } = await readLatestAgentLog('code-migrator', 'log-001');
     expect(logContent).toContain('stdout output');
     expect(logContent).toContain('stderr output');
     expect(logContent).toContain('=== STDOUT ===');
@@ -404,12 +388,7 @@ describe('AgentLauncher', () => {
       additionalArgs: { foo: 'bar' },
     });
 
-    const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-    const logFiles = await readdir(logDir);
-    const agentLog = logFiles.find(f => f.startsWith('code-migrator-args-001'));
-    expect(agentLog).toBeDefined();
-
-    const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+    const { content: logContent } = await readLatestAgentLog('code-migrator', 'args-001');
     expect(logContent).toContain('--foo');
     expect(logContent).toContain('bar');
   });
@@ -725,14 +704,8 @@ describe('AgentLauncher', () => {
 
       expect(result.invocationId).toBeDefined();
 
-      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-      const logFiles = await readdir(logDir);
-      const agentLog = logFiles.find(f =>
-        f.startsWith('code-migrator-inv-log-001-') &&
-        f.includes(result.invocationId!) &&
-        f.endsWith('.log'),
-      );
-      expect(agentLog).toBeDefined();
+      const { fileName } = await readLatestAgentLog('code-migrator', 'inv-log-001');
+      expect(fileName).toContain(result.invocationId!);
     });
 
     it('should include invocationId on error/catch path', async () => {
@@ -849,12 +822,7 @@ describe('AgentLauncher', () => {
 
       expect(result.success).toBe(true);
 
-      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-      const logFiles = await readdir(logDir);
-      const agentLog = logFiles.find(f => f.startsWith('code-migrator-extra-path-001'));
-      expect(agentLog).toBeDefined();
-
-      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      const { content: logContent } = await readLatestAgentLog('code-migrator', 'extra-path-001');
       expect(logContent).toContain('PATH_VALUE:/tmp/aamf-extra-bin:');
     });
 
@@ -944,12 +912,7 @@ describe('AgentLauncher', () => {
 
       expect(result.success).toBe(true);
 
-      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-      const logFiles = await readdir(logDir);
-      const agentLog = logFiles.find(f => f.startsWith('impact-assessor-mcp-config-001'));
-      expect(agentLog).toBeDefined();
-
-      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      const { content: logContent } = await readLatestAgentLog('impact-assessor', 'mcp-config-001');
       expect(logContent).toContain('--additional-mcp-config');
       expect(logContent).toContain('aamf-kb');
       expect(logContent).toContain('localhost:4321');
@@ -970,12 +933,7 @@ describe('AgentLauncher', () => {
 
       expect(result.success).toBe(true);
 
-      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-      const logFiles = await readdir(logDir);
-      const agentLog = logFiles.find(f => f.startsWith('code-migrator-no-mcp-001'));
-      expect(agentLog).toBeDefined();
-
-      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      const { content: logContent } = await readLatestAgentLog('code-migrator', 'no-mcp-001');
       expect(logContent).not.toContain('--additional-mcp-config');
     });
 
@@ -1010,12 +968,7 @@ describe('AgentLauncher', () => {
 
       expect(result.success).toBe(true);
 
-      const logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
-      const logFiles = await readdir(logDir);
-      const agentLog = logFiles.find(f => f.startsWith('impact-assessor-claude-mcp-001'));
-      expect(agentLog).toBeDefined();
-
-      const logContent = await readFile(join(logDir, agentLog!), 'utf-8');
+      const { content: logContent } = await readLatestAgentLog('impact-assessor', 'claude-mcp-001');
       expect(logContent).toContain('--mcp-config');
       expect(logContent).toContain('aamf-kb');
       expect(logContent).toContain('localhost:4545');

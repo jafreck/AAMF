@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { AgentName, AgentContext } from './types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { writeJson, ensureDir } from '../util/fs.js';
+import { buildLegacyRuntimePaths } from '../core/runtime-paths.js';
 
 const TASK_DECOMPOSER_SCHEMA_PATH = fileURLToPath(
   new URL('./task-decomposer.tasks.schema.json', import.meta.url),
@@ -26,8 +27,11 @@ export interface ContextBuildOptions {
  * set of input files, an output path, and an optional payload.
  */
 export class ContextBuilder {
+  private readonly legacyPaths: ReturnType<typeof buildLegacyRuntimePaths>;
 
-  constructor(private config: MigrationConfig, private progressDir: string) {}
+  constructor(private config: MigrationConfig, private progressDir: string) {
+    this.legacyPaths = buildLegacyRuntimePaths(progressDir);
+  }
 
   /**
    * Build and write the context file for a given agent invocation.
@@ -46,7 +50,7 @@ export class ContextBuilder {
     const context = this.createContext(agent, phase, taskId, payload);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${agent}-${taskId ?? 'main'}-${timestamp}.json`;
-    const contextDir = join(this.progressDir, 'contexts');
+    const contextDir = join(this.progressDir, 'artifacts', 'contexts');
     await ensureDir(contextDir);
     const contextPath = join(contextDir, filename);
     await writeJson(contextPath, context);
@@ -136,9 +140,9 @@ export class ContextBuilder {
     taskId?: string,
     payload?: Record<string, unknown>,
   ): { inputFiles: string[]; outputPath: string; agentPayload?: Record<string, unknown> } {
-    const kbDir = join(this.progressDir, 'knowledge-base');
-    const impactAssessment = join(this.progressDir, 'impact-assessment.md');
-    const migrationPlan = join(this.progressDir, 'migration-plan.md');
+    const kbDir = this.legacyPaths.knowledgeBaseDir;
+    const impactAssessment = this.legacyPaths.impactAssessmentFile;
+    const migrationPlan = this.legacyPaths.migrationPlanFile;
     const src = this.config.source.path;
     const out = this.config.target.outputPath;
     const remediationContext = this.getRemediationContext(payload);
@@ -156,17 +160,17 @@ export class ContextBuilder {
       case 'migration-planner':
         return {
           inputFiles: [join(kbDir, 'index.md'), impactAssessment],
-          outputPath: join(this.progressDir, 'planning'),
+          outputPath: join(this.progressDir, 'artifacts', 'planning'),
         };
 
       case 'task-decomposer': {
-        const strategyFile = String(payload?.strategyFile ?? join(this.progressDir, 'planning', 'strategy.md'));
+        const strategyFile = String(payload?.strategyFile ?? join(this.progressDir, 'artifacts', 'planning', 'strategy.md'));
         const analysisFiles = Array.isArray(payload?.analysisFiles)
           ? (payload.analysisFiles as string[])
           : [];
         return {
           inputFiles: [TASK_DECOMPOSER_SCHEMA_PATH, strategyFile, ...analysisFiles],
-          outputPath: join(this.progressDir, 'planning', `tasks-${taskId ?? 'unknown'}.json`),
+          outputPath: join(this.progressDir, 'artifacts', 'planning', `tasks-${taskId ?? 'unknown'}.json`),
           agentPayload: {
             groupId: payload?.groupId,
             groupName: payload?.groupName,
@@ -181,7 +185,7 @@ export class ContextBuilder {
           inputFiles: payload?.competingStrategiesFile
             ? [String(payload.competingStrategiesFile)]
             : [],
-          outputPath: join(this.progressDir, 'adjudication-result.md'),
+          outputPath: join(this.progressDir, 'artifacts', 'adjudication', 'adjudication-result.md'),
           agentPayload: { decisionType: payload?.decisionType ?? 'migration-strategy' },
         };
 
@@ -207,7 +211,7 @@ export class ContextBuilder {
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
           ],
-          outputPath: join(this.progressDir, 'parity-reports', `${taskId ?? 'main'}.md`),
+          outputPath: join(this.progressDir, 'artifacts', 'parity', `${taskId ?? 'main'}.md`),
           agentPayload: { taskId },
         };
 
@@ -230,7 +234,7 @@ export class ContextBuilder {
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
           ],
-          outputPath: join(this.progressDir, 'adjudication', `${taskId ?? 'main'}.md`),
+          outputPath: join(this.progressDir, 'artifacts', 'adjudication', `${taskId ?? 'main'}.md`),
           agentPayload: {
             taskId,
             attemptNumber: payload?.attemptNumber ?? 1,
@@ -241,7 +245,7 @@ export class ContextBuilder {
       case 'final-parity-checker':
         return {
           inputFiles: [src, out, migrationPlan],
-          outputPath: join(this.progressDir, 'final-parity-report.md'),
+          outputPath: join(this.progressDir, 'artifacts', 'parity', 'final-parity-report.md'),
         };
 
       case 'e2e-test-crafter':
@@ -256,14 +260,14 @@ export class ContextBuilder {
 
       case 'documentation-writer':
         return {
-          inputFiles: [kbDir, migrationPlan, join(this.progressDir, 'final-parity-report.md')],
+          inputFiles: [kbDir, migrationPlan, join(this.progressDir, 'artifacts', 'parity', 'final-parity-report.md')],
           outputPath: join(out, 'docs'),
         };
 
       case 'idiomatic-reviewer':
         return {
           inputFiles: [out],
-          outputPath: join(this.progressDir, 'idiomatic-review-report.md'),
+          outputPath: join(this.progressDir, 'artifacts', 'parity', 'idiomatic-review-report.md'),
         };
 
       case 'idiomatic-refactorer':
