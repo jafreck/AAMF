@@ -28,6 +28,7 @@ import {
 import { Logger } from '../logging/logger.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { z } from 'zod';
+import { buildRuntimePaths } from './runtime-paths.js';
 
 /** Map each known agent name to its Zod output schema. */
 const agentOutputSchemas: Record<AgentName, z.ZodTypeAny> = {
@@ -84,13 +85,12 @@ function stripVSCodeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 /** Shared helper: write stdout/stderr to a per-agent log file. */
 async function writeAgentLog(logDir: string, agent: string, taskId: string, stdout: string, stderr: string, invocationId?: string): Promise<void> {
-  await ensureDir(logDir);
+  const targetDir = join(logDir, agent, taskId);
+  await ensureDir(targetDir);
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const filename = invocationId
-    ? `${agent}-${taskId}-${invocationId}-${timestamp}.log`
-    : `${agent}-${taskId}-${timestamp}.log`;
+  const filename = invocationId ? `${invocationId}-${timestamp}.log` : `${timestamp}.log`;
   const content = `=== STDOUT ===\n${stdout}\n\n=== STDERR ===\n${stderr}\n`;
-  await atomicWrite(join(logDir, filename), content);
+  await atomicWrite(join(targetDir, filename), content);
 }
 
 /** Shared helper: detect output files created by the agent in the progress directory. */
@@ -208,7 +208,7 @@ export class CopilotRunner implements AgentRunner {
     private readonly projectRoot: string,
     private readonly logger: Logger,
   ) {
-    this.logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+    this.logDir = buildRuntimePaths(projectRoot, config.projectName).logsAgentsDir;
   }
 
   getResolvedPath(): string | undefined {
@@ -405,7 +405,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     private readonly projectRoot: string,
     private readonly logger: Logger,
   ) {
-    this.logDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs');
+    this.logDir = buildRuntimePaths(projectRoot, config.projectName).logsAgentsDir;
   }
 
   getResolvedPath(): string | undefined {

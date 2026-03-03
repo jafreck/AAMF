@@ -227,11 +227,11 @@ describe('CheckpointManager', () => {
   it('should write checkpoint atomically', async () => {    await manager.load('test-project');
     
     // Verify checkpoint file exists
-    const exists = await fileExists(join(tempDir, 'checkpoint.json'));
+    const exists = await fileExists(join(tempDir, 'state', 'checkpoint.json'));
     expect(exists).toBe(true);
     
     // Verify it's valid JSON
-    const data = await readJson(join(tempDir, 'checkpoint.json'));
+    const data = await readJson(join(tempDir, 'state', 'checkpoint.json'));
     expect(data).toBeDefined();
   });
 

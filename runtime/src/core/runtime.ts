@@ -12,6 +12,7 @@ import { Logger } from '../logging/logger.js';
 import { MigrationResult } from '../agents/types.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
 import { fileExists } from '../util/fs.js';
+import { buildRuntimePaths } from './runtime-paths.js';
 
 export interface RuntimeOptions {
   configPath: string;
@@ -70,6 +71,7 @@ export class MigrationRuntime {
   private progress!: ProgressWriter;
   private launcher!: AgentLauncher;
   private progressDir!: string;
+  private paths!: ReturnType<typeof buildRuntimePaths>;
   private projectRoot!: string;
   private phase?: number;
   private runId!: string;
@@ -90,8 +92,9 @@ export class MigrationRuntime {
     await validateSourceAvailability(this.config);
 
     // 2. Setup directories
-    this.progressDir = join(this.projectRoot, '.aamf', 'migration', this.config.projectName);
-    const logDir = join(this.progressDir, 'logs');
+    this.paths = buildRuntimePaths(this.projectRoot, this.config.projectName);
+    this.progressDir = this.paths.root;
+    const logDir = this.paths.logsRuntimeDir;
 
     // 3. Create logger
     this.logger = new Logger({
@@ -108,7 +111,7 @@ export class MigrationRuntime {
     this.checkpoint = new CheckpointManager(this.progressDir, this.logger);
 
     // 5. Create progress writer
-    this.progress = new ProgressWriter(join(this.progressDir, 'progress.md'));
+    this.progress = new ProgressWriter(this.paths.progressReportFile, this.config.projectName);
 
     // 6. Create agent launcher
     this.launcher = new AgentLauncher(this.config, this.projectRoot, this.logger);

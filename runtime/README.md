@@ -154,7 +154,7 @@ In `wave-barrier` mode, each cycle is:
 3. **Fix wave (if needed)** — rerun targeted migration tasks for failed validation and repeat validation until convergence or `options.waveControl.maxConvergenceIterations` is reached.
 
 Blocked-task policy (`continueOnBlocked`, `maxBlockedTasks`) is still enforced in wave mode, but evaluated after each wave.
-Wave lifecycle and convergence are observable in `.aamf/migration/{projectName}/progress.md` (**Wave Lifecycle** table) and in observability outputs under `metrics/summary.json` and `reports/observability/report.md`.
+Wave lifecycle and convergence are observable in `.aamf/migration/{projectName}/reports/progress.md` (**Wave Lifecycle** table) and in observability outputs under `metrics/summary.json` and `reports/observability/index.md`.
 
 When migration/parity retries are exhausted, Phase 4 invokes `failure-adjudicator` and applies decision outcomes:
 
@@ -202,10 +202,11 @@ runtime/src/
 
 The runtime writes several artifacts to track migration progress:
 
-- **`progress.md`** — Human-readable progress report, updated after each phase. Located at `.aamf/migration/{projectName}/progress.md`.
-- **`checkpoint.json`** — Machine-readable snapshot of migration state, enabling `--resume`. Located alongside `progress.md`.
-- **Per-agent logs** — Each agent invocation writes stdout/stderr to the `logs/` directory with timestamped filenames.
-- **`migration.log`** — Unified log of all runtime events (phase transitions, task completions, errors, timing).
+- **`reports/progress.md`** — Human-readable progress report, updated after each phase.
+- **`state/checkpoint.json`** — Machine-readable snapshot of migration state, enabling `--resume` (with `state/checkpoint.backup.json` backup).
+- **Per-agent logs** — Each agent invocation writes stdout/stderr to `logs/agents/{agent}/{taskId}/...`.
+- **Command logs** — Build/test command output is written to `logs/commands/{build|test}/...`.
+- **`logs/runtime/migration.log`** — Unified log of all runtime events (phase transitions, task completions, errors, timing).
 
 ## Artifact Retention
 
@@ -244,10 +245,10 @@ In addition to their markdown output, agents can (and should) write a structured
 ### Sidecar Location
 
 ```
-{progressDir}/results/{agent}-{taskId}.result.json
+{progressDir}/artifacts/results/{agent}-{taskId}.result.json
 ```
 
-For example: `.aamf/migration/my-project/results/code-migrator-task-001.result.json`
+For example: `.aamf/migration/my-project/artifacts/results/code-migrator-task-001.result.json`
 
 ### JSON Schema
 

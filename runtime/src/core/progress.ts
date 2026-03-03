@@ -43,7 +43,7 @@ export class ProgressWriter {
   private agentStatuses: Map<string, string> = new Map();
   private cumulativeDurationMs: number = 0;
 
-  constructor(private filePath: string) {}
+  constructor(private filePath: string, private readonly projectNameOverride?: string) {}
 
   /** Initialize fresh progress.md */
   async initialize(config: MigrationConfig): Promise<void> {
@@ -199,10 +199,17 @@ export class ProgressWriter {
   }
 
   private async writeCurrentState(): Promise<void> {
-    // infer project name from filepath
-    const parts = this.filePath.split('/');
-    const projectName = parts[parts.length - 2] ?? 'unknown';
+    const projectName = this.projectNameOverride ?? this.inferProjectNameFromPath();
     await this.write(projectName);
+  }
+
+  private inferProjectNameFromPath(): string {
+    const parts = this.filePath.split('/');
+    const migrationIndex = parts.lastIndexOf('migration');
+    if (migrationIndex >= 0 && migrationIndex + 1 < parts.length) {
+      return parts[migrationIndex + 1] ?? 'unknown';
+    }
+    return parts[parts.length - 2] ?? 'unknown';
   }
 
   private async write(projectName: string): Promise<void> {
