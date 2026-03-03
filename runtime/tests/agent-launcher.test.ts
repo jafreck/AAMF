@@ -90,7 +90,7 @@ describe('AgentLauncher', () => {
     expect(logContent).toContain('gpt-4o');
     expect(logContent).toContain('--allow-all-tools');
     expect(logContent).toContain('--no-ask-user');
-    expect(logContent).toContain('-s');
+    expect(logContent).not.toContain('-s');
   });
 
   it('should prefer invocation modelOverride over configured model', async () => {

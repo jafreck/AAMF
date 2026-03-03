@@ -240,7 +240,6 @@ export class CopilotRunner implements AgentRunner {
       '--allow-all-tools',
       '--allow-all-paths',
       '--no-ask-user',
-      '-s',
     ];
 
     const model = invocation.modelOverride ?? this.config.copilot.model;
