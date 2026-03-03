@@ -4662,7 +4662,7 @@ describe('MigrationOrchestrator', () => {
       expect(invocations.length).toBeGreaterThan(0);
     });
 
-    it('should serialize phase 4 tasks to parallelism=1 when git is enabled', async () => {
+    it('should serialize phase 4 tasks to parallelism=1 when git is enabled in per-task mode', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
         tempDir,
@@ -4670,6 +4670,7 @@ describe('MigrationOrchestrator', () => {
         {
           options: {
             maxParallelAgents: 3,
+            executionMode: 'per-task',
             git: {
               enabled: true,
               autoInit: true,
@@ -4963,6 +4964,127 @@ describe('MigrationOrchestrator', () => {
       expect(runGitSpy).toHaveBeenNthCalledWith(2, ['add', '-A']);
       expect(runGitSpy).toHaveBeenNthCalledWith(3, ['diff', '--cached', '--name-only']);
       expect(runGitSpy).toHaveBeenNthCalledWith(4, ['commit', '-m', 'normal message']);
+    });
+
+    it('should defer git commits in wave-barrier mode and create a single wave commit', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
+      ];
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+          buildCommand: 'npm run build',
+          testCommand: 'npm test',
+        },
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { waveSize: 2, maxConvergenceIterations: 2 },
+          git: {
+            enabled: true,
+            autoInit: true,
+            commitByAgent: true,
+            commitPerTask: true,
+            authorName: 'Test Bot',
+            authorEmail: 'test@local',
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: true });
+
+      const commitMessages: string[] = [];
+      vi.spyOn(orchestrator as any, 'commitIfDirty').mockImplementation(async (msg: string) => {
+        commitMessages.push(msg);
+      });
+      vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      // Per-agent and per-task commits should NOT appear — only wave commits
+      const agentCommits = commitMessages.filter(m => m.startsWith('aamf: code-migrator'));
+      const taskCommits = commitMessages.filter(m => m.startsWith('aamf: complete'));
+      const waveCommits = commitMessages.filter(m => m.startsWith('aamf: wave'));
+
+      expect(agentCommits).toHaveLength(0);
+      expect(taskCommits).toHaveLength(0);
+      expect(waveCommits.length).toBeGreaterThanOrEqual(1);
+      // The wave commit message should reference both task IDs
+      expect(waveCommits[0]).toContain('task-001');
+      expect(waveCommits[0]).toContain('task-002');
+    });
+
+    it('should allow wave parallelism >1 when git is enabled in wave-barrier mode', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-003', name: 'Task 3', sourceFiles: ['src/c.py'], targetFiles: ['lib/c.ts'] },
+      ];
+
+      const concurrentRuns: number[] = [];
+      let activeCount = 0;
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        if (inv.agent === 'code-migrator') {
+          activeCount++;
+          concurrentRuns.push(activeCount);
+          await new Promise(r => setTimeout(r, 30));
+          activeCount--;
+        }
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 30,
+          outputParsed: false,
+        };
+      };
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        target: {
+          language: 'typescript',
+          framework: 'express',
+          outputPath: tempDir,
+          buildCommand: 'echo ok',
+          testCommand: 'echo ok',
+        },
+        options: {
+          maxParallelAgents: 3,
+          executionMode: 'wave-barrier',
+          waveControl: { waveSize: 3, maxConvergenceIterations: 2 },
+          git: {
+            enabled: true,
+            autoInit: true,
+            commitByAgent: true,
+            commitPerTask: true,
+            authorName: 'Test Bot',
+            authorEmail: 'test@local',
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      await writePhase3PlanningArtifacts(progressDir, tasks);
+
+      vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: true });
+      vi.spyOn(orchestrator as any, 'commitIfDirty').mockResolvedValue(undefined);
+      vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      // At least two code-migrators should have been active concurrently
+      const maxConcurrent = Math.max(...concurrentRuns);
+      expect(maxConcurrent).toBeGreaterThan(1);
     });
   });
 });
