@@ -1,7 +1,7 @@
 // Migrated from zstd v0.7 legacy decoder: lib/legacy/zstd_v07.c + zstd_v07.h
 // Types, constants, and structural definitions for the v0.7 format decoder.
 
-use std::fmt;
+use std::{ffi::c_void, fmt};
 
 // ─── Magic Numbers ──────────────────────────────────────────────────────────
 
@@ -278,8 +278,9 @@ pub struct BlockProperties {
 /// In Rust this is modeled with trait objects or closures; here we provide
 /// a structural equivalent that other modules can adapt.
 pub struct CustomMem {
-    pub alloc_fn: Option<fn(usize) -> *mut u8>,
-    pub free_fn: Option<fn(*mut u8)>,
+    pub alloc_fn: Option<fn(*mut c_void, usize) -> *mut u8>,
+    pub free_fn: Option<fn(*mut c_void, *mut u8)>,
+    pub opaque: *mut c_void,
 }
 
 impl Default for CustomMem {
@@ -287,6 +288,7 @@ impl Default for CustomMem {
         Self {
             alloc_fn: None,
             free_fn: None,
+            opaque: std::ptr::null_mut(),
         }
     }
 }
@@ -380,6 +382,8 @@ pub enum ErrorCode {
     DictionaryCorrupted,
     DictionaryWrong,
     StageWrong,
+    MemoryAllocation,
+    InitMissing,
 }
 
 impl fmt::Display for ErrorCode {
@@ -401,6 +405,8 @@ impl fmt::Display for ErrorCode {
             ErrorCode::DictionaryCorrupted => "Dictionary is corrupted",
             ErrorCode::DictionaryWrong => "Dictionary mismatch",
             ErrorCode::StageWrong => "Operation not authorized at current stage",
+            ErrorCode::MemoryAllocation => "Allocation error: not enough memory",
+            ErrorCode::InitMissing => "Context should be init first",
         };
         write!(f, "{msg}")
     }
@@ -425,16 +431,23 @@ pub fn copy4(dst: &mut [u8], src: &[u8]) {
     dst[..4].copy_from_slice(&src[..4]);
 }
 
-/// Wildcard copy: may over-read up to 7 bytes past `length`.
-/// Equivalent of `ZSTDv07_wildcopy`.
+/// Wildcard copy: may over-read up to 7 bytes past `length`
+/// (8 bytes if `length == 0`).
+/// Equivalent of `ZSTDv07_wildcopy` — uses do-while semantics: always
+/// copies at least one 8-byte chunk even when `length == 0`.
 #[inline]
 pub fn wildcopy(dst: &mut [u8], src: &[u8], length: usize) {
-    let mut pos = 0;
-    while pos < length {
+    let mut pos: usize = 0;
+    loop {
         let end = (pos + 8).min(dst.len()).min(src.len());
         let chunk = end - pos;
-        dst[pos..pos + chunk].copy_from_slice(&src[pos..pos + chunk]);
+        if chunk > 0 {
+            dst[pos..pos + chunk].copy_from_slice(&src[pos..pos + chunk]);
+        }
         pos += 8;
+        if pos >= length {
+            break;
+        }
     }
 }
 
@@ -553,5 +566,14 @@ mod tests {
         let mut dst = [0u8; 16];
         wildcopy(&mut dst, &src, 10);
         assert_eq!(&dst[..10], &src[..10]);
+    }
+
+    #[test]
+    fn test_wildcopy_zero_length() {
+        // C do-while semantics: always copies at least 8 bytes even when length==0
+        let src = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        let mut dst = [0u8; 8];
+        wildcopy(&mut dst, &src, 0);
+        assert_eq!(&dst[..8], &src[..8]);
     }
 }

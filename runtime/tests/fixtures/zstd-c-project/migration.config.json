@@ -21,7 +21,7 @@
   "target": {
     "language": "rust",
     "framework": "stable",
-    "outputPath": "./tmp/zstd-rust-output",
+    "outputPath": ".aamf/zstd-rust-output",
     "testFramework": "cargo-test",
     "buildCommand": "cargo build",
     "testCommand": "cargo test"
@@ -31,6 +31,11 @@
     "maxRetriesPerTask": 3,
     "maxLinesPerTask": 750,
     "tokenBudget": 10000000,
+    "executionMode": "wave-barrier",
+    "waveControl": {
+      "waveSize": 3,
+      "maxConvergenceIterations": 3
+    },
     "dryRun": false,
     "resume": true,
     "keepArtifacts": true,
@@ -43,8 +48,8 @@
   },
   "copilot": {
     "cliCommand": "copilot",
-    "model": "claude-sonnet-4.6",
-    "failureRecoveryModel": "claude-opus-4.6",
+    "model": "claude-opus-4.6",
+    "failureRecoveryModel": "gpt-5.3-codex",
     "agentDir": "../../../../.github/agents",
     "timeout": 3600000
   }
