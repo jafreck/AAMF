@@ -151,7 +151,13 @@ interface TerminalExhaustionDetails {
   summary: string;
 }
 
-type CommandExecutionResult = { success: boolean; error?: string; infraError?: string };
+type CommandExecutionResult = {
+  success: boolean;
+  error?: string;
+  infraError?: string;
+  rawError?: string;
+  logPath?: string;
+};
 
 interface WaveValidationResult {
   success: boolean;
@@ -2611,16 +2617,22 @@ export class MigrationOrchestrator {
         await atomicWrite(logPath, logContent);
 
         if (result.exitCode !== 0 || result.killed) {
+          const combinedOutput = `${result.stdout}\n${result.stderr}`;
           const errorText = result.killed
-            ? `${label} command timed out after ${timeout}ms`
-            : `${label} command failed (exit code ${result.exitCode}): ${result.stderr.slice(0, 500)}`;
+            ? `${label} failed (timed out after ${timeout}ms). See full output: ${logPath}`
+            : `${label} failed (exit code ${result.exitCode}). See full output: ${logPath}`;
           this.logger.error(errorText);
 
           // Classify the error: infrastructure vs. code quality
-          const combinedOutput = `${result.stdout}\n${result.stderr}`;
           const infraLabel = classifyError(combinedOutput);
 
-          return { success: false, error: errorText, infraError: infraLabel };
+          return {
+            success: false,
+            error: errorText,
+            infraError: infraLabel,
+            rawError: combinedOutput,
+            logPath,
+          };
         }
 
         this.logger.info(`${label} command succeeded for task ${taskId}`);
@@ -2735,7 +2747,7 @@ export class MigrationOrchestrator {
         4,
         task.id,
         {
-          failureReport: cmdResult.error,
+          failureReport: cmdResult.logPath ?? cmdResult.rawError ?? cmdResult.error,
           failureType: label,
           sourceFile: task.sourceFiles[0],
           targetFile: task.targetFiles[0],
