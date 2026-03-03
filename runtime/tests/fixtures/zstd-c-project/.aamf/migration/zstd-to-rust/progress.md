@@ -5,8 +5,8 @@
 - **Source**: `examples/common.h` (lines 1-247)
 - **Target**: `examples/common.rs`
 - **Parity**: Passed
-- **Tests**: Pending
-- **Notes**: Migrated all functions and error codes. CHECK macro → check! macro. File I/O helpers preserve exit codes and error messaging. malloc_orDie → malloc_or_die returning Vec<u8>. mallocAndLoadFile_orDie simplified to return Vec<u8> directly (no size out-param needed in Rust).
+- **Tests**: Written (26 tests, all passing)
+- **Notes**: Migrated all functions and error codes. CHECK macro → check! macro. File I/O helpers preserve exit codes and error messaging. malloc_orDie → malloc_or_die returning Vec<u8>. mallocAndLoadFile_orDie simplified to return Vec<u8> directly (no size out-param needed in Rust). Registered tests/examples/common_test.rs as [[test]] target in Cargo.toml so tests are discovered by cargo.
 
 ### Task task-32: v07 types and bitstream
 - **Status**: Completed
@@ -23,3 +23,11 @@
 - **Parity**: Passed
 - **Tests**: Written (4 unit tests, all passing)
 - **Notes**: Complete port of the educational decoder including all type definitions, IO stream types, frame header parsing, block decompression, literals decoding (raw/RLE/Huffman), sequence decoding with FSE, sequence execution with repeat-offset handling, and dictionary support. Error handling converted from exit(1) macros to Rust Result types. All C malloc/free replaced with Vec. cargo check and cargo test pass cleanly.
+
+### Task task-2: Migrate examples/simple_compression.c and examples/simple_decompression.c
+- **Status**: Completed
+- **Source**: `examples/simple_compression.c` (lines 1-68), `examples/simple_decompression.c` (lines 1-65)
+- **Target**: `examples/simple_compression.rs`, `examples/simple_decompression.rs`
+- **Parity**: Partial
+- **Tests**: Pending
+- **Notes**: Faithfully ported both examples preserving all business logic, error handling, and output formatting. Uses #[path = "common.rs"] mod to share helpers. References crate-level compress/decompress/compress_bound/get_frame_content_size APIs that are not yet migrated (depends on core lib tasks). Examples will compile once the core compression API is available in src/lib.rs. String allocation in create_out_filename simplified to String (no manual malloc/free needed in Rust).

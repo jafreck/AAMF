@@ -1,0 +1,24 @@
+{
+  "taskId": "task-2",
+  "agent": "code-migrator",
+  "status": "completed",
+  "outputFiles": [
+    "examples/simple_compression.rs",
+    "examples/simple_decompression.rs"
+  ],
+  "parity": "partial",
+  "issues": [
+    {
+      "severity": "major",
+      "description": "Examples reference crate-level API functions (compress, decompress, compress_bound, get_frame_content_size, CONTENTSIZE_ERROR, CONTENTSIZE_UNKNOWN) that are not yet migrated. Examples will not compile until the core compression/decompression API is available in src/lib.rs.",
+      "sourceLocation": "examples/simple_compression.c:28, examples/simple_decompression.c:26-37",
+      "targetLocation": "examples/simple_compression.rs:22, examples/simple_decompression.rs:23"
+    }
+  ],
+  "metrics": {
+    "linesOfCode": 129,
+    "tokensUsed": 0,
+    "durationMs": 0
+  },
+  "notes": "Faithfully ported both example programs. Uses #[path = \"common.rs\"] mod to share common helpers. Parity is partial because the core zstd API functions are not yet available in the Rust crate; once migrated, these examples should be fully functional. String allocation in create_out_filename simplified from manual malloc+strcat to Rust String::format."
+}
