@@ -39,6 +39,10 @@
     "dryRun": false,
     "resume": true,
     "keepArtifacts": true,
+    "git": {
+      "enabled": true,
+      "autoInit": true
+    },
     "kbIndex": {
       "enabled": true,
       "embeddings": {
