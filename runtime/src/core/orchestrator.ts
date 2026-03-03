@@ -281,7 +281,7 @@ export class MigrationOrchestrator {
 
     // Restore metrics from JSONL if resuming
     if (state.resumeCount > 0) {
-      await this.metricsCollector.loadFromJsonl(this.progressDir, 0);
+      await this.metricsCollector.loadFromJsonl(this.progressDir, state.metricsCount ?? 0);
     }
 
     this.logger.event({ type: 'migration-started', projectName: this.config.projectName });
@@ -1240,6 +1240,80 @@ export class MigrationOrchestrator {
 
   // ─── Phase 4 Helpers ─────────────────────────────────────────────────
 
+  private getPhaseCursors() {
+    const state = this.checkpoint.getState();
+    state.phaseCursors ??= {};
+    return state.phaseCursors;
+  }
+
+  private getPhase4TaskState(taskId: string): { completedSubsteps: string[]; lastSuccessfulStep?: string } {
+    const phaseCursors = this.getPhaseCursors();
+    phaseCursors['4'] ??= { tasks: {} };
+    phaseCursors['4'].tasks ??= {};
+    phaseCursors['4'].tasks[taskId] ??= { completedSubsteps: [] };
+    return phaseCursors['4'].tasks[taskId];
+  }
+
+  private hasPhase4Substep(taskId: string, substep: string): boolean {
+    const taskState = this.getPhase4TaskState(taskId);
+    return taskState.completedSubsteps.includes(substep);
+  }
+
+  private async markPhase4Substep(taskId: string, substep: string): Promise<void> {
+    const taskState = this.getPhase4TaskState(taskId);
+    if (!taskState.completedSubsteps.includes(substep)) {
+      taskState.completedSubsteps.push(substep);
+    }
+    taskState.lastSuccessfulStep = substep;
+    await this.checkpoint.save(this.checkpoint.getState());
+  }
+
+  private getPhase5Cursor(): { iteration: number; fixIndex: number; lastSuccessfulStep?: string } {
+    const phaseCursors = this.getPhaseCursors();
+    phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };
+    phaseCursors['5'].iteration ??= 0;
+    phaseCursors['5'].fixIndex ??= 0;
+    return phaseCursors['5'];
+  }
+
+  private async savePhase5Cursor(cursor: { iteration: number; fixIndex: number; lastSuccessfulStep?: string }): Promise<void> {
+    const phaseCursors = this.getPhaseCursors();
+    phaseCursors['5'] = cursor;
+    await this.checkpoint.save(this.checkpoint.getState());
+  }
+
+  private getPhase6Cursor(): { completedAgents: string[]; lastSuccessfulStep?: string } {
+    const phaseCursors = this.getPhaseCursors();
+    phaseCursors['6'] ??= { completedAgents: [] };
+    phaseCursors['6'].completedAgents ??= [];
+    return phaseCursors['6'];
+  }
+
+  private async savePhase6Cursor(cursor: { completedAgents: string[]; lastSuccessfulStep?: string }): Promise<void> {
+    const phaseCursors = this.getPhaseCursors();
+    phaseCursors['6'] = cursor;
+    await this.checkpoint.save(this.checkpoint.getState());
+  }
+
+  private getPhase8Cursor(): { iteration: number; issueIndex: number; currentFile?: string; lastSuccessfulStep?: string } {
+    const phaseCursors = this.getPhaseCursors();
+    phaseCursors['8'] ??= { iteration: 0, issueIndex: 0 };
+    phaseCursors['8'].iteration ??= 0;
+    phaseCursors['8'].issueIndex ??= 0;
+    return phaseCursors['8'];
+  }
+
+  private async savePhase8Cursor(cursor: {
+    iteration: number;
+    issueIndex: number;
+    currentFile?: string;
+    lastSuccessfulStep?: string;
+  }): Promise<void> {
+    const phaseCursors = this.getPhaseCursors();
+    phaseCursors['8'] = cursor;
+    await this.checkpoint.save(this.checkpoint.getState());
+  }
+
   private normalizeFailureSummary(summary: string): string {
     return summary.replace(/\s+/g, ' ').trim().slice(0, 240);
   }
@@ -1595,194 +1669,212 @@ export class MigrationOrchestrator {
     await this.progress.updateTask(task.id, 'in-progress');
 
     const taskStartMs = Date.now();
+    const taskCursor = this.getPhase4TaskState(task.id);
+    if (taskCursor.lastSuccessfulStep) {
+      this.logger.info(
+        `Resuming ${task.id} from Phase 4 substep: ${taskCursor.lastSuccessfulStep}`,
+      );
+    }
+    let completionEventDurationMs = Date.now() - taskStartMs;
 
     // a. Code migration with retry
-    const migratorCtx = await this.contextBuilder.buildContext(
-      'code-migrator',
-      4,
-      task.id,
-      {
-        sourceFiles: task.sourceFiles,
-        targetFiles: task.targetFiles,
-        kbEntry: task.knowledgeBaseRef,
-        ...(remediationContext ? { remediationContext } : {}),
-      },
-    );
-    const migratorInv = this.buildInvocation('code-migrator', migratorCtx, 4, task.id, task);
-    const fallbackModel = this.getFailureRecoveryModel();
+    if (!this.hasPhase4Substep(task.id, 'migrator')) {
+      const migratorCtx = await this.contextBuilder.buildContext(
+        'code-migrator',
+        4,
+        task.id,
+        {
+          sourceFiles: task.sourceFiles,
+          targetFiles: task.targetFiles,
+          kbEntry: task.knowledgeBaseRef,
+          ...(remediationContext ? { remediationContext } : {}),
+        },
+      );
+      const migratorInv = this.buildInvocation('code-migrator', migratorCtx, 4, task.id, task);
+      const fallbackModel = this.getFailureRecoveryModel();
 
-    // Capture the initial routing decision for retry-aware escalation.
-    const initialRoutingDecision = this.config.options.modelRouting?.enabled
-      ? this.selectModelForInvocation(task, 'code-migrator')
-      : undefined;
+      // Capture the initial routing decision for retry-aware escalation.
+      const initialRoutingDecision = this.config.options.modelRouting?.enabled
+        ? this.selectModelForInvocation(task, 'code-migrator')
+        : undefined;
 
-    const migratorResult = await retryExec.executeWithRetry(migratorInv, {
-      maxAttempts: this.config.options.maxRetriesPerTask,
-      onRetry: async (attempt, error) => {
-        await this.recordRetryTarget({
-          scope: remediationContext?.failureKind === 'wave-convergence' ? 'wave' : 'task',
-          attempt,
-          maxAttempts: this.config.options.maxRetriesPerTask,
-          taskId: task.id,
-          wave: remediationContext?.failureTarget.wave,
-          check: remediationContext?.failureTarget.check ?? 'code-migrator',
-          summary: error,
-        });
-        // Existing transient-failure fallback runs first
-        if (fallbackModel && this.isTransientModelFailure(error) && migratorInv.modelOverride !== fallbackModel) {
-          migratorInv.modelOverride = fallbackModel;
-          this.logger.warn(
-            `Switching ${task.id} code-migrator retries to fallback model: ${fallbackModel}`,
-          );
-        } else if (initialRoutingDecision) {
-          // Retry-aware model escalation
-          const routing = this.config.options.modelRouting!;
-          const escalateAt = routing.escalateOnRetryAttempt ?? 2;
-          if (attempt >= escalateAt) {
-            // Promote to next-higher tier: normal→heavy, heavy→critical, critical stays critical
-            const targetTier: ModelTier = initialRoutingDecision.tier === 'normal'
-              ? 'heavy'
-              : initialRoutingDecision.tier === 'heavy'
-                ? 'critical'
-                : 'critical';
+      const migratorResult = await retryExec.executeWithRetry(migratorInv, {
+        maxAttempts: this.config.options.maxRetriesPerTask,
+        onRetry: async (attempt, error) => {
+          await this.recordRetryTarget({
+            scope: remediationContext?.failureKind === 'wave-convergence' ? 'wave' : 'task',
+            attempt,
+            maxAttempts: this.config.options.maxRetriesPerTask,
+            taskId: task.id,
+            wave: remediationContext?.failureTarget.wave,
+            check: remediationContext?.failureTarget.check ?? 'code-migrator',
+            summary: error,
+          });
+          // Existing transient-failure fallback runs first
+          if (fallbackModel && this.isTransientModelFailure(error) && migratorInv.modelOverride !== fallbackModel) {
+            migratorInv.modelOverride = fallbackModel;
+            this.logger.warn(
+              `Switching ${task.id} code-migrator retries to fallback model: ${fallbackModel}`,
+            );
+          } else if (initialRoutingDecision) {
+            // Retry-aware model escalation
+            const routing = this.config.options.modelRouting!;
+            const escalateAt = routing.escalateOnRetryAttempt ?? 2;
+            if (attempt >= escalateAt) {
+              // Promote to next-higher tier: normal→heavy, heavy→critical, critical stays critical
+              const targetTier: ModelTier = initialRoutingDecision.tier === 'normal'
+                ? 'heavy'
+                : initialRoutingDecision.tier === 'heavy'
+                  ? 'critical'
+                  : 'critical';
 
-            const escalatedModel = targetTier === 'critical'
-              ? (routing.criticalModel ?? routing.heavyModel)
-              : routing.heavyModel;
+              const escalatedModel = targetTier === 'critical'
+                ? (routing.criticalModel ?? routing.heavyModel)
+                : routing.heavyModel;
 
-            if (escalatedModel) {
-              const retryDecision = this.applyRoutingCaps({
-                ...initialRoutingDecision,
-                tier: targetTier,
-                selectedModel: escalatedModel,
-                reason: `${initialRoutingDecision.reason}:retry-escalation`,
-                escalated: true,
-              }, task.id);
+              if (escalatedModel) {
+                const retryDecision = this.applyRoutingCaps({
+                  ...initialRoutingDecision,
+                  tier: targetTier,
+                  selectedModel: escalatedModel,
+                  reason: `${initialRoutingDecision.reason}:retry-escalation`,
+                  escalated: true,
+                }, task.id);
 
-              if (retryDecision.tier !== 'normal') {
-                migratorInv.modelOverride = retryDecision.selectedModel;
-                migratorInv.routingTier = retryDecision.tier;
-                migratorInv.routingReason = retryDecision.reason;
+                if (retryDecision.tier !== 'normal') {
+                  migratorInv.modelOverride = retryDecision.selectedModel;
+                  migratorInv.routingTier = retryDecision.tier;
+                  migratorInv.routingReason = retryDecision.reason;
 
-                if (!this._routedTaskIds.has(task.id)) {
-                  this._routedTaskIds.add(task.id);
+                  if (!this._routedTaskIds.has(task.id)) {
+                    this._routedTaskIds.add(task.id);
+                  }
+                  const defaultModel = this.getDefaultRoutingModel();
+                  const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
+                  const projectedCost = this.costEstimatorInstance.projectCost(retryDecision.selectedModel, avgTokens).total;
+                  const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
+                  this._escalationCostUsd += Math.max(0, projectedCost - baseCost);
+
+                  this.logger.warn(
+                    `Escalating ${task.id} to ${retryDecision.selectedModel} after ${attempt} retries`,
+                  );
+                } else {
+                  this.logger.warn(
+                    `Retry escalation skipped for ${task.id}: ${retryDecision.reason}`,
+                  );
                 }
-                const defaultModel = this.getDefaultRoutingModel();
-                const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
-                const projectedCost = this.costEstimatorInstance.projectCost(retryDecision.selectedModel, avgTokens).total;
-                const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
-                this._escalationCostUsd += Math.max(0, projectedCost - baseCost);
-
-                this.logger.warn(
-                  `Escalating ${task.id} to ${retryDecision.selectedModel} after ${attempt} retries`,
-                );
-              } else {
-                this.logger.warn(
-                  `Retry escalation skipped for ${task.id}: ${retryDecision.reason}`,
-                );
               }
             }
           }
-        }
-        await this.checkpoint.failTask(task.id, error, attempt, false);
-      },
-      onExhausted: async (taskId, lastError) => {
-        const retryExhaustionRemediation = this.buildRemediationContext({
-          failureKind: remediationContext?.failureKind ?? 'task-retry',
-          failureSummary: lastError,
-          taskId,
-          wave: remediationContext?.failureTarget.wave,
-          check: remediationContext?.failureTarget.check ?? 'code-migrator',
-          artifactPaths: [...task.sourceFiles, ...task.targetFiles],
-          expectedSuccessCondition: `code-migrator succeeds for ${taskId}`,
-        });
+          await this.checkpoint.failTask(task.id, error, attempt, false);
+        },
+        onExhausted: async (taskId, lastError) => {
+          const retryExhaustionRemediation = this.buildRemediationContext({
+            failureKind: remediationContext?.failureKind ?? 'task-retry',
+            failureSummary: lastError,
+            taskId,
+            wave: remediationContext?.failureTarget.wave,
+            check: remediationContext?.failureTarget.check ?? 'code-migrator',
+            artifactPaths: [...task.sourceFiles, ...task.targetFiles],
+            expectedSuccessCondition: `code-migrator succeeds for ${taskId}`,
+          });
 
-        const retryContext = await this.contextBuilder.buildContext(
-          'code-migrator',
-          4,
-          task.id,
-          {
-            sourceFiles: task.sourceFiles,
-            targetFiles: task.targetFiles,
-            kbEntry: task.knowledgeBaseRef,
-            remediationContext: retryExhaustionRemediation,
-          },
-        );
-        migratorInv.contextFile = retryContext;
+          const retryContext = await this.contextBuilder.buildContext(
+            'code-migrator',
+            4,
+            task.id,
+            {
+              sourceFiles: task.sourceFiles,
+              targetFiles: task.targetFiles,
+              kbEntry: task.knowledgeBaseRef,
+              remediationContext: retryExhaustionRemediation,
+            },
+          );
+          migratorInv.contextFile = retryContext;
 
-        // Escalate to failure-adjudicator agent
-        const recoveryCtx = await this.contextBuilder.buildContext(
-          'failure-adjudicator',
-          4,
-          taskId,
-          {
-            failureReport: lastError,
-            sourceFile: task.sourceFiles[0],
-            targetFile: task.targetFiles[0],
-            kbEntry: task.knowledgeBaseRef,
-            attemptNumber: this.config.options.maxRetriesPerTask,
-            remediationContext: retryExhaustionRemediation,
-          },
-        );
-        return this.buildInvocation('failure-adjudicator', recoveryCtx, 4, taskId);
-      },
-    });
-
-    this.recordTokens(migratorResult, 4);
-
-    if (!migratorResult.success) {
-      await this.raiseTerminalExhaustion({
-        reasonCode: 'task-retries-exhausted',
-        taskId: task.id,
-        check: remediationContext?.failureTarget.check ?? 'code-migrator',
-        wave: remediationContext?.failureTarget.wave,
-        summary: migratorResult.error ?? `code-migrator failed after ${this.config.options.maxRetriesPerTask} retries`,
+          // Escalate to failure-adjudicator agent
+          const recoveryCtx = await this.contextBuilder.buildContext(
+            'failure-adjudicator',
+            4,
+            taskId,
+            {
+              failureReport: lastError,
+              sourceFile: task.sourceFiles[0],
+              targetFile: task.targetFiles[0],
+              kbEntry: task.knowledgeBaseRef,
+              attemptNumber: this.config.options.maxRetriesPerTask,
+              remediationContext: retryExhaustionRemediation,
+            },
+          );
+          return this.buildInvocation('failure-adjudicator', recoveryCtx, 4, taskId);
+        },
       });
+
+      this.recordTokens(migratorResult, 4);
+
+      if (!migratorResult.success) {
+        await this.raiseTerminalExhaustion({
+          reasonCode: 'task-retries-exhausted',
+          taskId: task.id,
+          check: remediationContext?.failureTarget.check ?? 'code-migrator',
+          wave: remediationContext?.failureTarget.wave,
+          summary: migratorResult.error ?? `code-migrator failed after ${this.config.options.maxRetriesPerTask} retries`,
+        });
+      }
+
+      completionEventDurationMs = migratorResult.duration;
+      await this.markPhase4Substep(task.id, 'migrator');
     }
 
-    await this.commitForAgent('code-migrator', 4, task.id, task.name);
+    if (!this.hasPhase4Substep(task.id, 'migrator-commit')) {
+      await this.commitForAgent('code-migrator', 4, task.id, task.name);
+      await this.markPhase4Substep(task.id, 'migrator-commit');
+    }
 
     // b–c. Parity + test-writer in parallel
-    const parityCtx = await this.contextBuilder.buildContext(
-      'parity-verifier',
-      4,
-      task.id,
-      {
-        sourceFile: task.sourceFiles[0],
-        targetFile: task.targetFiles[0],
-      },
-    );
-    const testCtx = await this.contextBuilder.buildContext(
-      'test-writer',
-      4,
-      task.id,
-      {
-        targetFile: task.targetFiles[0],
-        kbEntry: task.knowledgeBaseRef,
-        testType: 'unit',
-      },
-    );
+    if (!this.hasPhase4Substep(task.id, 'parity-tests')) {
+      const parityCtx = await this.contextBuilder.buildContext(
+        'parity-verifier',
+        4,
+        task.id,
+        {
+          sourceFile: task.sourceFiles[0],
+          targetFile: task.targetFiles[0],
+        },
+      );
+      const testCtx = await this.contextBuilder.buildContext(
+        'test-writer',
+        4,
+        task.id,
+        {
+          targetFile: task.targetFiles[0],
+          kbEntry: task.knowledgeBaseRef,
+          testType: 'unit',
+        },
+      );
 
-    const parallel = new ParallelExecutor(
-      2,
-      (inv) => this.launchAgentWithEvents(inv),
-      this.logger,
-    );
-    const [parityResult, testResult] = await parallel.executeAll([
-      this.buildInvocation('parity-verifier', parityCtx, 4, task.id),
-      this.buildInvocation('test-writer', testCtx, 4, task.id),
-    ]);
-    this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
-    if (parityResult) this.recordTokens(parityResult, 4);
-    if (testResult) this.recordTokens(testResult, 4);
-    if (testResult?.success) {
-      await this.commitForAgent('test-writer', 4, task.id, task.name);
+      const parallel = new ParallelExecutor(
+        2,
+        (inv) => this.launchAgentWithEvents(inv),
+        this.logger,
+      );
+      const [parityResult, testResult] = await parallel.executeAll([
+        this.buildInvocation('parity-verifier', parityCtx, 4, task.id),
+        this.buildInvocation('test-writer', testCtx, 4, task.id),
+      ]);
+      this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
+      if (parityResult) this.recordTokens(parityResult, 4);
+      if (testResult) this.recordTokens(testResult, 4);
+      if (testResult?.success) {
+        await this.commitForAgent('test-writer', 4, task.id, task.name);
+      }
+      await this.markPhase4Substep(task.id, 'parity-tests');
     }
 
     const gateMode = this.getPhase4QualityGateMode();
 
     // b2. Check parity result and retry if non-minor issues found
-    if (gateMode !== 'skip') {
+    if (gateMode !== 'skip' && !this.hasPhase4Substep(task.id, 'parity-gate')) {
       const maxParityRetries = this.config.options.maxRetriesPerTask;
       let parityPassed = await this.checkParityResult(task.id);
 
@@ -1898,6 +1990,7 @@ export class MigrationOrchestrator {
           `Parity check failed for ${task.id}, deferring strict enforcement to wave-end/final gates (qualityPolicy=${this.config.options.qualityPolicy})`,
         );
       }
+      await this.markPhase4Substep(task.id, 'parity-gate');
     }
 
     if (mode === 'wave-migration') {
@@ -1906,41 +1999,49 @@ export class MigrationOrchestrator {
 
     // c2. Run build command if configured
     if (this.config.target.buildCommand) {
-      if (gateMode === 'enforce') {
-        const buildOk = await this.runCommandWithRecovery(
-          'build', this.config.target.buildCommand, task, queue,
-        );
-        if (!buildOk) return { migrated: false };
-      } else if (gateMode === 'advisory') {
-        const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
-        if (!buildResult.success) {
-          this.logger.warn(
-            `Build check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${buildResult.error ?? 'unknown error'}`,
+      if (!this.hasPhase4Substep(task.id, 'build')) {
+        if (gateMode === 'enforce') {
+          const buildOk = await this.runCommandWithRecovery(
+            'build', this.config.target.buildCommand, task, queue,
           );
+          if (!buildOk) return { migrated: false };
+          await this.markPhase4Substep(task.id, 'build');
+        } else if (gateMode === 'advisory') {
+          const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
+          if (!buildResult.success) {
+            this.logger.warn(
+              `Build check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${buildResult.error ?? 'unknown error'}`,
+            );
+          }
+          await this.markPhase4Substep(task.id, 'build');
         }
       }
     }
 
     // c3. Run test command if configured
     if (this.config.target.testCommand) {
-      if (gateMode === 'enforce') {
-        const testOk = await this.runCommandWithRecovery(
-          'test', this.config.target.testCommand, task, queue,
-        );
-        if (!testOk) return { migrated: false };
-      } else if (gateMode === 'advisory') {
-        const testResult = await this.runCommand('test', this.config.target.testCommand, task.id);
-        if (!testResult.success) {
-          this.logger.warn(
-            `Test check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${testResult.error ?? 'unknown error'}`,
+      if (!this.hasPhase4Substep(task.id, 'test')) {
+        if (gateMode === 'enforce') {
+          const testOk = await this.runCommandWithRecovery(
+            'test', this.config.target.testCommand, task, queue,
           );
+          if (!testOk) return { migrated: false };
+          await this.markPhase4Substep(task.id, 'test');
+        } else if (gateMode === 'advisory') {
+          const testResult = await this.runCommand('test', this.config.target.testCommand, task.id);
+          if (!testResult.success) {
+            this.logger.warn(
+              `Test check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${testResult.error ?? 'unknown error'}`,
+            );
+          }
+          await this.markPhase4Substep(task.id, 'test');
         }
       }
     }
 
     // d. Complete task
     const durationMs = Date.now() - taskStartMs;
-    await this.completePhase4Task(task, queue, completedDurationsMs, durationMs, migratorResult.duration);
+    await this.completePhase4Task(task, queue, completedDurationsMs, durationMs, completionEventDurationMs);
     return { migrated: true, durationMs };
   }
 
@@ -2018,8 +2119,27 @@ export class MigrationOrchestrator {
 
   private async executePhase5(start: number): Promise<PhaseResult> {
     const MAX_LOOPBACK = 2;
+    const phase5Cursor = this.getPhase5Cursor();
+    if (phase5Cursor.lastSuccessfulStep === 'complete' || phase5Cursor.iteration > MAX_LOOPBACK) {
+      const outputPath = join(this.progressDir, 'final-parity-report.md');
+      return {
+        phase: 5,
+        name: 'Final Parity Verification',
+        success: true,
+        outputPath,
+        duration: Date.now() - start,
+      };
+    }
+    const startIteration = Math.min(phase5Cursor.iteration, MAX_LOOPBACK);
 
-    for (let iteration = 0; iteration <= MAX_LOOPBACK; iteration++) {
+    for (let iteration = startIteration; iteration <= MAX_LOOPBACK; iteration++) {
+      if (iteration !== phase5Cursor.iteration) {
+        await this.savePhase5Cursor({
+          iteration,
+          fixIndex: 0,
+          lastSuccessfulStep: 'iteration-started',
+        });
+      }
       const ctx = await this.contextBuilder.buildContext('final-parity-checker', 5);
       const inv = this.buildInvocation('final-parity-checker', ctx, 5);
       const result = await this.launchAgentWithEvents(inv);
@@ -2047,18 +2167,34 @@ export class MigrationOrchestrator {
         this.logger.warn('Final-parity-checker structured output unavailable — falling back to ResultParser.parseFinalParityReport');
         fixes = await ResultParser.parseFinalParityReport(reportPath);
       }
-      if (fixes.length === 0) break;
+      if (fixes.length === 0) {
+        await this.savePhase5Cursor({
+          iteration: iteration + 1,
+          fixIndex: 0,
+          lastSuccessfulStep: 'no-fixes',
+        });
+        break;
+      }
 
       if (iteration < MAX_LOOPBACK) {
         this.logger.info(
           `Final parity found ${fixes.length} issue(s), loop-back iteration ${iteration + 1}`,
         );
+        const resumeFixIndex =
+          iteration === phase5Cursor.iteration ? Math.max(0, phase5Cursor.fixIndex) : 0;
         // Create targeted fix tasks and re-migrate
-        for (const fix of fixes) {
+        for (let fixIndex = resumeFixIndex; fixIndex < fixes.length; fixIndex++) {
+          const fix = fixes[fixIndex]!;
+          const fixTaskId = `fix-${iteration}-${fixIndex}`;
+          await this.savePhase5Cursor({
+            iteration,
+            fixIndex,
+            lastSuccessfulStep: 'fix-started',
+          });
           const fixCtx = await this.contextBuilder.buildContext(
             'code-migrator',
             5,
-            `fix-${iteration}-${fixes.indexOf(fix)}`,
+            fixTaskId,
             {
               sourceFiles: fix.sourceFile ? [fix.sourceFile] : [],
               targetFiles: fix.targetFile ? [fix.targetFile] : [],
@@ -2069,18 +2205,34 @@ export class MigrationOrchestrator {
             'code-migrator',
             fixCtx,
             5,
-            `fix-${iteration}-${fixes.indexOf(fix)}`,
+            fixTaskId,
           );
           const fixResult = await this.launchAgentWithEvents(fixInv);
           this.recordTokens(fixResult, 5);
           if (fixResult.success) {
-            await this.commitForAgent('code-migrator', 5, `fix-${iteration}-${fixes.indexOf(fix)}`);
+            await this.commitForAgent('code-migrator', 5, fixTaskId);
+            await this.savePhase5Cursor({
+              iteration,
+              fixIndex: fixIndex + 1,
+              lastSuccessfulStep: 'fix-applied',
+            });
           }
         }
+        await this.savePhase5Cursor({
+          iteration: iteration + 1,
+          fixIndex: 0,
+          lastSuccessfulStep: 'iteration-complete',
+        });
       } else {
         this.logger.warn('Max loop-back iterations reached, proceeding with remaining issues');
       }
     }
+
+    await this.savePhase5Cursor({
+      iteration: MAX_LOOPBACK + 1,
+      fixIndex: 0,
+      lastSuccessfulStep: 'complete',
+    });
 
     const outputPath = join(this.progressDir, 'final-parity-report.md');
     return {
@@ -2095,41 +2247,87 @@ export class MigrationOrchestrator {
   // ─── Phase 6: E2E Testing & Documentation ────────────────────────────
 
   private async executePhase6(start: number): Promise<PhaseResult> {
+    const phase6Cursor = this.getPhase6Cursor();
+    const completedAgents = new Set(phase6Cursor.completedAgents);
     const e2eCtx = await this.contextBuilder.buildContext('e2e-test-crafter', 6);
     const docCtx = await this.contextBuilder.buildContext('documentation-writer', 6);
 
     const results: AgentResult[] = [];
-    if (this.isGitAutomationEnabled()) {
-      const e2eResult = await this.launchAgentWithEvents(
-        this.buildInvocation('e2e-test-crafter', e2eCtx, 6),
-      );
-      results.push(e2eResult);
-      if (e2eResult.success) await this.commitForAgent('e2e-test-crafter', 6);
+    const pendingAgents: Array<{ agent: AgentName; context: string }> = [];
 
-      const docResult = await this.launchAgentWithEvents(
-        this.buildInvocation('documentation-writer', docCtx, 6),
-      );
-      results.push(docResult);
-      if (docResult.success) await this.commitForAgent('documentation-writer', 6);
+    const skipAsCompleted = (agent: AgentName): AgentResult => ({
+      agent,
+      exitCode: 0,
+      success: true,
+      outputFiles: [],
+      duration: 0,
+      outputParsed: false,
+    });
+
+    if (completedAgents.has('e2e-test-crafter')) {
+      results.push(skipAsCompleted('e2e-test-crafter'));
     } else {
-      const parallel = new ParallelExecutor(
-        2,
-        (inv) => this.launchAgentWithEvents(inv),
-        this.logger,
-      );
+      pendingAgents.push({ agent: 'e2e-test-crafter', context: e2eCtx });
+    }
 
-      const parallelResults = await parallel.executeAll([
-        this.buildInvocation('e2e-test-crafter', e2eCtx, 6),
-        this.buildInvocation('documentation-writer', docCtx, 6),
-      ]);
-      this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
-      results.push(...parallelResults);
+    if (completedAgents.has('documentation-writer')) {
+      results.push(skipAsCompleted('documentation-writer'));
+    } else {
+      pendingAgents.push({ agent: 'documentation-writer', context: docCtx });
+    }
+
+    const markAgentComplete = async (agent: AgentName): Promise<void> => {
+      completedAgents.add(agent);
+      await this.savePhase6Cursor({
+        completedAgents: Array.from(completedAgents),
+        lastSuccessfulStep: `completed-${agent}`,
+      });
+    };
+
+    if (this.isGitAutomationEnabled()) {
+      for (const pending of pendingAgents) {
+        const result = await this.launchAgentWithEvents(
+          this.buildInvocation(pending.agent, pending.context, 6),
+        );
+        results.push(result);
+        if (result.success) {
+          await this.commitForAgent(pending.agent, 6);
+          await markAgentComplete(pending.agent);
+        }
+      }
+    } else {
+      if (pendingAgents.length > 0) {
+        const parallel = new ParallelExecutor(
+          Math.min(2, pendingAgents.length),
+          (inv) => this.launchAgentWithEvents(inv),
+          this.logger,
+        );
+
+        const parallelResults = await parallel.executeAll(
+          pendingAgents.map((pending) => this.buildInvocation(pending.agent, pending.context, 6)),
+        );
+        this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
+        results.push(...parallelResults);
+        for (let i = 0; i < parallelResults.length; i++) {
+          const pending = pendingAgents[i]!;
+          if (parallelResults[i]!.success) {
+            await markAgentComplete(pending.agent);
+          }
+        }
+      }
     }
 
     for (const r of results) this.recordTokens(r, 6);
 
     const allSuccess = results.every((r) => r.success);
     const errors = results.filter((r) => !r.success).map((r) => r.error);
+
+    if (allSuccess) {
+      await this.savePhase6Cursor({
+        completedAgents: Array.from(completedAgents),
+        lastSuccessfulStep: 'complete',
+      });
+    }
 
     return {
       phase: 6,
@@ -2160,8 +2358,27 @@ export class MigrationOrchestrator {
 
   private async executePhase8(start: number): Promise<PhaseResult> {
     const maxIterations = this.config.options.idiomaticRefactor?.maxIterations ?? 2;
+    const phase8Cursor = this.getPhase8Cursor();
+    if (phase8Cursor.lastSuccessfulStep === 'complete' || phase8Cursor.iteration >= maxIterations) {
+      const outputPath = join(this.progressDir, 'idiomatic-review-report.md');
+      return {
+        phase: 8,
+        name: 'Idiomatic Refactor',
+        success: true,
+        outputPath,
+        duration: Date.now() - start,
+      };
+    }
+    const startIteration = Math.min(phase8Cursor.iteration, Math.max(0, maxIterations - 1));
 
-    for (let iteration = 0; iteration < maxIterations; iteration++) {
+    for (let iteration = startIteration; iteration < maxIterations; iteration++) {
+      if (iteration !== phase8Cursor.iteration) {
+        await this.savePhase8Cursor({
+          iteration,
+          issueIndex: 0,
+          lastSuccessfulStep: 'iteration-started',
+        });
+      }
       const reviewCtx = await this.contextBuilder.buildContext('idiomatic-reviewer', 8);
       const reviewInv = this.buildInvocation('idiomatic-reviewer', reviewCtx, 8);
       const reviewResult = await this.launchAgentWithEvents(reviewInv);
@@ -2189,13 +2406,29 @@ export class MigrationOrchestrator {
         issues = await ResultParser.parseIdiomaticReport(reportPath);
       }
 
-      if (issues.length === 0) break;
+      if (issues.length === 0) {
+        await this.savePhase8Cursor({
+          iteration: iteration + 1,
+          issueIndex: 0,
+          lastSuccessfulStep: 'no-issues',
+        });
+        break;
+      }
 
       if (iteration < maxIterations - 1) {
         this.logger.info(
           `Idiomatic review found ${issues.length} issue(s), refactor iteration ${iteration + 1}`,
         );
-        for (const issue of issues) {
+        const resumeIssueIndex =
+          iteration === phase8Cursor.iteration ? Math.max(0, phase8Cursor.issueIndex) : 0;
+        for (let issueIndex = resumeIssueIndex; issueIndex < issues.length; issueIndex++) {
+          const issue = issues[issueIndex]!;
+          await this.savePhase8Cursor({
+            iteration,
+            issueIndex,
+            currentFile: issue.file,
+            lastSuccessfulStep: 'refactor-started',
+          });
           const refactorCtx = await this.contextBuilder.buildContext('idiomatic-refactorer', 8, undefined, {
             targetFile: issue.file,
             idiomaticReport: reportPath,
@@ -2205,6 +2438,11 @@ export class MigrationOrchestrator {
           this.recordTokens(refactorResult, 8);
           if (refactorResult.success) {
             await this.commitForAgent('idiomatic-refactorer', 8, issue.file);
+            await this.savePhase8Cursor({
+              iteration,
+              issueIndex: issueIndex + 1,
+              lastSuccessfulStep: 'refactor-complete',
+            });
           }
           if (!refactorResult.success) {
             return {
@@ -2216,10 +2454,21 @@ export class MigrationOrchestrator {
             };
           }
         }
+        await this.savePhase8Cursor({
+          iteration: iteration + 1,
+          issueIndex: 0,
+          lastSuccessfulStep: 'iteration-complete',
+        });
       } else {
         this.logger.warn('Max idiomatic refactor iterations reached, proceeding with remaining issues');
       }
     }
+
+    await this.savePhase8Cursor({
+      iteration: maxIterations,
+      issueIndex: 0,
+      lastSuccessfulStep: 'complete',
+    });
 
     const outputPath = join(this.progressDir, 'idiomatic-review-report.md');
     return {

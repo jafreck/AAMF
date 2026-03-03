@@ -213,6 +213,7 @@ describe('MigrationRuntime', () => {
 
       expect(result.success).toBe(true);
       expect(result.totalDuration).toBe(0);
+      expect(runtime.checkpoint.load).toHaveBeenCalledWith('test-project', { fresh: true });
       expect(runtime.progress.initialize).toHaveBeenCalledTimes(1);
       expect(runtime.progress.reconstructFromCheckpoint).not.toHaveBeenCalled();
       expect(runtime.progress.appendEvent).toHaveBeenCalledWith('Dry run — validation only');
@@ -249,6 +250,7 @@ describe('MigrationRuntime', () => {
 
       await runtime.run();
 
+      expect(runtime.checkpoint.load).toHaveBeenCalledWith('test-project', { fresh: false });
       expect(runtime.progress.initialize).not.toHaveBeenCalled();
       expect(runtime.progress.reconstructFromCheckpoint).toHaveBeenCalledWith(state);
     });
