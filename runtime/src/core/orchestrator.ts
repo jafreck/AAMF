@@ -256,6 +256,12 @@ export class MigrationOrchestrator {
   private _escalationCostUsd = 0;
   /** Phase 4 observability counters (set while Phase 4 is active). */
   private phase4Snapshot?: Phase4MetricsSnapshot;
+  /**
+   * When true, per-task/per-agent git commits inside `executeTask` are
+   * suppressed.  The wave-barrier loop performs a single commit per wave
+   * after convergence succeeds instead.
+   */
+  private _deferGitCommits = false;
 
   constructor(
     private readonly config: MigrationConfig,
@@ -1147,9 +1153,14 @@ export class MigrationOrchestrator {
     const maxBlockedTasks = this.config.options.maxBlockedTasks ?? 0; // 0 = unlimited
     const executionMode = this.config.options.executionMode ?? 'per-task';
     const waveControl = this.config.options.waveControl ?? { waveSize: 3, maxConvergenceIterations: 3 };
-    const phase4Parallelism = this.isGitAutomationEnabled()
-      ? 1
-      : this.config.options.maxParallelAgents;
+    // In wave-barrier mode, wave-level commits replace per-task commits, so
+    // we can safely run multiple tasks in parallel even when git is enabled.
+    // In per-task mode, git commits happen inside executeTask so we must
+    // serialize to avoid concurrent git mutations.
+    const phase4Parallelism =
+      this.isGitAutomationEnabled() && executionMode !== 'wave-barrier'
+        ? 1
+        : this.config.options.maxParallelAgents;
     this.phase4Snapshot = {
       executionMode,
       phase4DurationMs: 0,
@@ -1179,6 +1190,7 @@ export class MigrationOrchestrator {
           waveControl.maxConvergenceIterations,
         );
       } catch (error) {
+        this._deferGitCommits = false;
         if (error instanceof TerminalExhaustionError) {
           return this.buildPhase4TerminalResult(start, queue, error);
         }
@@ -1451,6 +1463,13 @@ export class MigrationOrchestrator {
     let wave = 0;
     const taskStartTimes = new Map<string, number>();
 
+    // In wave-barrier mode, per-task/per-agent commits are replaced by a
+    // single commit per wave created after convergence succeeds.
+    const deferGit = this.isGitAutomationEnabled();
+    if (deferGit) {
+      this._deferGitCommits = true;
+    }
+
     while (!queue.isComplete()) {
       const readyTasks = queue.getReady();
       if (readyTasks.length === 0) {
@@ -1492,10 +1511,14 @@ export class MigrationOrchestrator {
         );
       } catch (error) {
         if (error instanceof TerminalExhaustionError) {
+          if (deferGit) this._deferGitCommits = false;
           return this.buildPhase4TerminalResult(start, queue, error);
         }
         throw error;
       }
+
+      // Re-enable per-task commits now that the parallel section is done.
+      this._deferGitCommits = false;
 
       this.logger.event({ type: 'wave-completed', wave, taskIds, duration: Date.now() - waveStart });
       await this.progress.appendWaveLifecycle({ wave, milestone: 'completed' });
@@ -1594,6 +1617,7 @@ export class MigrationOrchestrator {
             }
           } catch (error) {
             if (error instanceof TerminalExhaustionError) {
+              if (deferGit) this._deferGitCommits = false;
               return this.buildPhase4TerminalResult(start, queue, error);
             }
             throw error;
@@ -1625,6 +1649,19 @@ export class MigrationOrchestrator {
           summary: `Wave ${wave} failed to converge after ${maxConvergenceIterations} iteration(s)`,
         });
       } else {
+        // Commit all wave output in a single git commit before marking tasks complete.
+        const completedIds = waveCandidates
+          .filter(t => !queue.isTaskCompleted(t.id) && !queue.isTaskBlocked(t.id))
+          .map(t => t.id);
+        if (completedIds.length > 0) {
+          await this.commitForWave(wave, completedIds);
+        }
+
+        // Re-defer so that completePhase4Task's commitForTask is suppressed.
+        if (deferGit) {
+          this._deferGitCommits = true;
+        }
+
         for (const task of waveCandidates) {
           if (queue.isTaskCompleted(task.id) || queue.isTaskBlocked(task.id)) continue;
           const startedAt = taskStartTimes.get(task.id) ?? waveStart;
@@ -1659,6 +1696,7 @@ export class MigrationOrchestrator {
 
     const finalProgress = queue.getProgress();
     const deadlocked = finalProgress.remaining > 0;
+    if (deferGit) this._deferGitCommits = false;
     if (this.phase4Snapshot) {
       this.phase4Snapshot.phase4DurationMs = Date.now() - start;
       this.phase4Snapshot.completedTaskCount = finalProgress.completed;
@@ -2915,6 +2953,9 @@ export class MigrationOrchestrator {
   private async commitForAgent(agent: AgentName, phase: number, taskId?: string, detail?: string): Promise<void> {
     if (!this.isGitAutomationEnabled()) return;
     if (!this.config.options.git?.commitByAgent) return;
+    // In wave-barrier mode, per-agent commits are deferred to a single
+    // wave-level commit created after convergence succeeds.
+    if (this._deferGitCommits) return;
 
     const scope = taskId ? `task ${taskId}` : `phase ${phase}`;
     const suffix = detail ? ` (${detail})` : '';
@@ -2925,10 +2966,27 @@ export class MigrationOrchestrator {
   private async commitForTask(task: MigrationTask): Promise<void> {
     if (!this.isGitAutomationEnabled()) return;
     if (!this.config.options.git?.commitPerTask) return;
+    // In wave-barrier mode, per-task commits are deferred to a single
+    // wave-level commit created after convergence succeeds.
+    if (this._deferGitCommits) return;
 
     const message = `aamf: complete ${task.id} - ${task.name}`;
     const allowEmpty = this.config.options.git?.allowEmptyTaskCommits ?? true;
     await this.commitIfDirty(message, allowEmpty);
+  }
+
+  /**
+   * Creates a single git commit covering all output produced by the tasks
+   * in a completed wave.  Called once after wave convergence succeeds,
+   * replacing the many per-agent / per-task commits that would otherwise
+   * be created inside {@link executeTask}.
+   */
+  private async commitForWave(wave: number, taskIds: string[]): Promise<void> {
+    if (!this.isGitAutomationEnabled()) return;
+
+    const taskList = taskIds.join(', ');
+    const message = `aamf: wave ${wave} — ${taskIds.length} task(s) [${taskList}]`;
+    await this.commitIfDirty(message);
   }
 
   private async commitIfDirty(message: string, allowEmpty: boolean = false): Promise<void> {
