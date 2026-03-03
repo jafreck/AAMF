@@ -1,8 +1,0 @@
-[package]
-name = "zstd-educational-decoder"
-version = "0.1.0"
-edition = "2021"
-description = "Educational Zstandard decompressor ported from C"
-
-[lib]
-path = "src/lib.rs"
