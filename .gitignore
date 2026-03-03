@@ -31,6 +31,7 @@ coverage/
 
 # Runtime artifacts
 .aamf/
+**/.aamf/**
 tmp/
 
 # Downloaded source tarballs (fetched at e2e test time)
