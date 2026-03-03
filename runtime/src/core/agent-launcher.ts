@@ -285,18 +285,29 @@ export class CopilotRunner implements AgentRunner {
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
 
     const startTime = Date.now();
-    invLogger.info(`Launching CLI agent: ${cliCommand} ${args.join(' ')}`);
+    invLogger.info(`Launching CLI agent: ${cliCommand} --agent ${invocation.agent}`);
+    invLogger.debug(`Full CLI command: ${cliCommand} ${args.join(' ')}`);
 
     // ── Heartbeat & output-directory watcher ─────────────────────────
     const HEARTBEAT_INTERVAL_MS = 30_000;
     const OUTPUT_POLL_INTERVAL_MS = 10_000;
     const agentName = invocation.agent;
+    // Seed with files that already exist so only truly new files are reported.
     const seenFiles = new Set<string>();
+    try {
+      const ctx = JSON.parse(await readFile(invocation.contextFile, 'utf-8')) as { outputPath?: string };
+      if (ctx.outputPath && await fileExists(ctx.outputPath)) {
+        const s = await stat(ctx.outputPath);
+        if (s.isDirectory()) {
+          for (const f of await readdir(ctx.outputPath)) seenFiles.add(f);
+        }
+      }
+    } catch { /* context file may not exist yet */ }
     let firstOutputDetectedAt: number | undefined;
 
     const heartbeatTimer = setInterval(() => {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      invLogger.info(`Agent ${agentName} still running (${elapsed}s elapsed)`);
+      invLogger.debug(`Agent ${agentName} still running (${elapsed}s elapsed)`);
     }, HEARTBEAT_INTERVAL_MS);
 
     const outputPollTimer = setInterval(async () => {
@@ -306,12 +317,16 @@ export class CopilotRunner implements AgentRunner {
           const s = await stat(context.outputPath);
           if (s.isDirectory()) {
             const files = await readdir(context.outputPath);
+            const newFiles: string[] = [];
             for (const f of files) {
               if (!seenFiles.has(f)) {
                 seenFiles.add(f);
                 if (firstOutputDetectedAt === undefined) firstOutputDetectedAt = Date.now();
-                invLogger.info(`Agent ${agentName} produced new file: ${f}`);
+                newFiles.push(f);
               }
+            }
+            if (newFiles.length > 0) {
+              invLogger.debug(`Agent ${agentName} produced ${newFiles.length} new file(s): ${newFiles.join(', ')}`);
             }
           }
         }
@@ -467,18 +482,29 @@ export class ClaudeCodeRunner implements AgentRunner {
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
 
     const startTime = Date.now();
-    invLogger.info(`Launching Claude Code agent: ${cliCommand} ${args.join(' ')}`);
+    invLogger.info(`Launching Claude Code agent: ${cliCommand} --agent ${invocation.agent}`);
+    invLogger.debug(`Full CLI command: ${cliCommand} ${args.join(' ')}`);
 
     // ── Heartbeat & output-directory watcher ─────────────────────────
     const HEARTBEAT_INTERVAL_MS = 30_000;
     const OUTPUT_POLL_INTERVAL_MS = 10_000;
     const agentName = invocation.agent;
+    // Seed with files that already exist so only truly new files are reported.
     const seenFiles = new Set<string>();
+    try {
+      const ctx = JSON.parse(await readFile(invocation.contextFile, 'utf-8')) as { outputPath?: string };
+      if (ctx.outputPath && await fileExists(ctx.outputPath)) {
+        const s = await stat(ctx.outputPath);
+        if (s.isDirectory()) {
+          for (const f of await readdir(ctx.outputPath)) seenFiles.add(f);
+        }
+      }
+    } catch { /* context file may not exist yet */ }
     let firstOutputDetectedAt: number | undefined;
 
     const heartbeatTimer = setInterval(() => {
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      invLogger.info(`Agent ${agentName} still running (${elapsed}s elapsed)`);
+      invLogger.debug(`Agent ${agentName} still running (${elapsed}s elapsed)`);
     }, HEARTBEAT_INTERVAL_MS);
 
     const outputPollTimer = setInterval(async () => {
@@ -488,12 +514,16 @@ export class ClaudeCodeRunner implements AgentRunner {
           const s = await stat(context.outputPath);
           if (s.isDirectory()) {
             const files = await readdir(context.outputPath);
+            const newFiles: string[] = [];
             for (const f of files) {
               if (!seenFiles.has(f)) {
                 seenFiles.add(f);
                 if (firstOutputDetectedAt === undefined) firstOutputDetectedAt = Date.now();
-                invLogger.info(`Agent ${agentName} produced new file: ${f}`);
+                newFiles.push(f);
               }
+            }
+            if (newFiles.length > 0) {
+              invLogger.debug(`Agent ${agentName} produced ${newFiles.length} new file(s): ${newFiles.join(', ')}`);
             }
           }
         }
