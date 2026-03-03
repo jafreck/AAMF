@@ -27,10 +27,12 @@ describe('CI workflow (.github/workflows/ci.yml)', () => {
     expect(text).toContain('jobs:');
   });
 
-  it('should trigger on push to all branches', async () => {
+  it('should trigger on push to main only', async () => {
     const text = await loadContent();
     expect(text).toContain("push:");
-    expect(text).toMatch(/branches:\s*\[['"]?\*\*['"]?\]/);
+    // push should only target main, not all branches
+    expect(text).not.toMatch(/branches:\s*\[['"]?\*\*['"]?\]/);
+    expect(text).toMatch(/push:\s*\n\s*branches:\s*\[main\]/);
   });
 
   it('should trigger on pull_request targeting main', async () => {
