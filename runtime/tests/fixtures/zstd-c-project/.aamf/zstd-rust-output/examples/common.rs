@@ -12,8 +12,8 @@
 //! from the C original: on failure they print to stderr and exit with a
 //! specific error code.
 
-use std::fs;
-use std::io::{self, Read, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
 use std::process;
 
 /// Error codes returned by utility functions, matching the C enum values.
@@ -61,6 +61,19 @@ macro_rules! check {
     };
 }
 
+/// Check a zstd return code and exit if it indicates an error.
+///
+/// This mirrors the C `CHECK_ZSTD(fn)` helper: evaluate once, validate, and
+/// terminate with a check failure message when the code is an error value.
+#[macro_export]
+macro_rules! check_zstd {
+    ($expr:expr) => {{
+        let err = $expr;
+        $crate::check!((err as isize) >= 0, "zstd error code: {}", err);
+        err
+    }};
+}
+
 /// Get the size of a given file path.
 ///
 /// On failure, prints an error to stderr and exits with `CommonErrorCode::Fsize`.
@@ -86,27 +99,36 @@ pub fn fsize_or_die(filename: &str) -> usize {
     size
 }
 
-/// Open a file for reading or writing.
+/// Open a file using the given mode string (mirrors C `fopen` mode semantics).
 ///
-/// The `instruction` parameter mirrors the C `fopen` mode string:
-/// - `"rb"` opens for reading
-/// - `"wb"` opens for writing (creates/truncates)
+/// Supported modes:
+/// - `"r"` / `"rb"` — open for reading
+/// - `"w"` / `"wb"` — create/truncate for writing
+/// - `"a"` / `"ab"` — open/create for appending
+/// - `"r+"` / `"rb+"` / `"r+b"` — open for read-write
+/// - `"w+"` / `"wb+"` / `"w+b"` — create/truncate for read-write
+/// - `"a+"` / `"ab+"` / `"a+b"` — open/create for read-append
 ///
 /// On failure, prints an error to stderr and exits with `CommonErrorCode::Fopen`.
 pub fn fopen_or_die(filename: &str, instruction: &str) -> fs::File {
-    let result = match instruction {
-        "rb" | "r" => fs::File::open(filename),
-        "wb" | "w" => fs::File::create(filename),
-        other => {
-            // Best-effort: treat anything starting with 'r' as read, 'w' as write
-            if other.starts_with('r') {
-                fs::File::open(filename)
-            } else if other.starts_with('w') {
-                fs::File::create(filename)
-            } else {
-                eprintln!("{}: unsupported mode '{}'", filename, other);
-                process::exit(CommonErrorCode::Fopen as i32);
-            }
+    // Strip the binary flag — Rust I/O is always binary.
+    let mode = instruction.replace('b', "");
+
+    let result = match mode.as_str() {
+        "r" => OpenOptions::new().read(true).open(filename),
+        "w" => OpenOptions::new().write(true).create(true).truncate(true).open(filename),
+        "a" => OpenOptions::new().append(true).create(true).open(filename),
+        "r+" => OpenOptions::new().read(true).write(true).open(filename),
+        "w+" => OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(filename),
+        "a+" => OpenOptions::new().read(true).append(true).create(true).open(filename),
+        _ => {
+            eprintln!("{}: unsupported mode '{}'", filename, instruction);
+            process::exit(CommonErrorCode::Fopen as i32);
         }
     };
 
@@ -137,20 +159,21 @@ pub fn fclose_or_die(file: fs::File) {
 /// Returns the number of bytes actually read. On error (other than EOF),
 /// prints to stderr and exits with `CommonErrorCode::Fread`.
 pub fn fread_or_die(buffer: &mut [u8], size_to_read: usize, file: &mut fs::File) -> usize {
-    let buf = if size_to_read < buffer.len() {
-        &mut buffer[..size_to_read]
-    } else {
-        buffer
-    };
+    let target_size = size_to_read.min(buffer.len());
+    let mut total_read = 0usize;
 
-    match file.read(buf) {
-        Ok(n) => n,
-        Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => 0,
-        Err(e) => {
-            eprintln!("fread: {}", e);
-            process::exit(CommonErrorCode::Fread as i32);
+    while total_read < target_size {
+        match file.read(&mut buffer[total_read..target_size]) {
+            Ok(0) => break, // EOF
+            Ok(n) => total_read += n,
+            Err(e) => {
+                eprintln!("fread: {}", e);
+                process::exit(CommonErrorCode::Fread as i32);
+            }
         }
     }
+
+    total_read
 }
 
 /// Write `size_to_write` bytes from a buffer to a file.
@@ -193,13 +216,7 @@ pub fn load_file_or_die(file_name: &str, buffer: &mut [u8]) -> usize {
     );
 
     let mut in_file = fopen_or_die(file_name, "rb");
-    let read_size = match in_file.read(&mut buffer[..file_size]) {
-        Ok(n) => n,
-        Err(e) => {
-            eprintln!("fread: {} : {}", file_name, e);
-            process::exit(CommonErrorCode::Fread as i32);
-        }
-    };
+    let read_size = fread_or_die(buffer, file_size, &mut in_file);
     if read_size != file_size {
         eprintln!("fread: {} : unexpected short read", file_name);
         process::exit(CommonErrorCode::Fread as i32);
