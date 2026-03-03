@@ -151,6 +151,15 @@ interface TerminalExhaustionDetails {
   summary: string;
 }
 
+type CommandExecutionResult = { success: boolean; error?: string; infraError?: string };
+
+interface WaveValidationResult {
+  success: boolean;
+  failedLabel?: 'build' | 'test';
+  failedCommand?: string;
+  failure?: CommandExecutionResult;
+}
+
 class TerminalExhaustionError extends Error {
   constructor(public readonly details: TerminalExhaustionDetails) {
     const locationParts = [
@@ -1501,8 +1510,8 @@ export class MigrationOrchestrator {
           if (this.phase4Snapshot) {
             this.phase4Snapshot.waveConvergenceIterations++;
           }
-          const validationOk = await this.runWaveValidation(wave);
-          if (validationOk) {
+          const validation = await this.runWaveValidation(wave);
+          if (validation.success) {
             this.logger.event({
               type: 'wave-convergence-status',
               wave,
@@ -1524,6 +1533,9 @@ export class MigrationOrchestrator {
 
           converged = false;
           remainingFailures = waveCandidates.length;
+          const failedCheck = validation.failedLabel ?? 'wave-validation';
+          const failureSummary =
+            validation.failure?.error ?? `Wave ${wave} ${failedCheck} validation failed`;
           if (this.phase4Snapshot) {
             this.phase4Snapshot.waveConvergenceFailures++;
           }
@@ -1557,44 +1569,31 @@ export class MigrationOrchestrator {
               maxAttempts: maxConvergenceIterations,
               taskId: task.id,
               wave,
-              check: 'wave-validation',
-              summary: `Wave ${wave} validation failed`,
+              check: failedCheck,
+              summary: failureSummary,
             });
           }
 
-          let fixResults: Array<{ migrated: boolean; durationMs?: number }>;
           try {
-            fixResults = await Promise.all(
-              waveCandidates.map(task => {
-                const remediation = this.buildRemediationContext({
-                  failureKind: 'wave-convergence',
-                  failureSummary: `Wave ${wave} validation failed (iteration ${iteration})`,
-                  taskId: task.id,
-                  wave,
-                  check: 'wave-validation',
-                  artifactPaths: [...task.sourceFiles, ...task.targetFiles],
-                  expectedSuccessCondition: `Wave ${wave} validation passes`,
-                });
-                return this.executeTask(
-                  task,
-                  retryExec,
-                  queue,
-                  completedDurationsMs,
-                  'wave-migration',
-                  remediation,
-                );
-              }),
+            const recovered = await this.recoverWaveValidationFailure(
+              wave,
+              waveCandidates,
+              queue,
+              validation,
             );
+            if (!recovered) {
+              this.logger.warn(
+                `Wave ${wave} ${failedCheck} recovery attempt did not converge on iteration ${iteration}`,
+              );
+            }
           } catch (error) {
             if (error instanceof TerminalExhaustionError) {
               return this.buildPhase4TerminalResult(start, queue, error);
             }
             throw error;
           }
-          waveCandidates = waveCandidates.filter((task, index) => {
-            const fix = fixResults[index];
-            return !!fix?.migrated && !queue.isTaskBlocked(task.id);
-          });
+
+          waveCandidates = waveCandidates.filter((task) => !queue.isTaskBlocked(task.id));
 
           if (waveCandidates.length === 0) {
             remainingFailures = 0;
@@ -2063,7 +2062,60 @@ export class MigrationOrchestrator {
     return { migrated: true, durationMs };
   }
 
-  private async runWaveValidation(wave: number): Promise<boolean> {
+  private buildWaveRecoveryTask(wave: number, waveCandidates: MigrationTask[]): MigrationTask {
+    const sourceFiles = Array.from(new Set(waveCandidates.flatMap((task) => task.sourceFiles)));
+    const targetFiles = Array.from(new Set(waveCandidates.flatMap((task) => task.targetFiles)));
+    const representative = waveCandidates[0];
+    return {
+      id: `wave-${wave}`,
+      name: `Wave ${wave} validation recovery`,
+      sourceFiles,
+      targetFiles,
+      knowledgeBaseRef: representative?.knowledgeBaseRef ?? `wave-${wave}`,
+      dependencies: [],
+      complexity: 'moderate',
+      description: `Recover wave ${wave} validation failure`,
+      acceptanceCriteria: [`Wave ${wave} build/test validation passes`],
+      parityChecks: ['wave-validation'],
+      lineRange: representative?.lineRange,
+    };
+  }
+
+  private async recoverWaveValidationFailure(
+    wave: number,
+    waveCandidates: MigrationTask[],
+    queue: TaskQueue,
+    validation: WaveValidationResult,
+  ): Promise<boolean> {
+    if (validation.success) return true;
+    const failedLabel = validation.failedLabel;
+    const failedCommand = validation.failedCommand;
+    const failure = validation.failure;
+    if (!failedLabel || !failedCommand || !failure || failure.success) return false;
+
+    const waveTask = this.buildWaveRecoveryTask(wave, waveCandidates);
+    const artifactPaths = Array.from(
+      new Set(waveCandidates.flatMap((task) => [...task.sourceFiles, ...task.targetFiles])),
+    );
+
+    return this.runCommandWithRecovery(
+      failedLabel,
+      failedCommand,
+      waveTask,
+      queue,
+      {
+        initialFailure: failure,
+        wave,
+        retryScope: 'wave',
+        artifactPaths,
+        suppressTerminalOnExhaustion: true,
+        failureSummary: failure.error ?? `Wave ${wave} ${failedLabel} validation failed`,
+        expectedSuccessCondition: `Wave ${wave} ${failedLabel} validation passes`,
+      },
+    );
+  }
+
+  private async runWaveValidation(wave: number): Promise<WaveValidationResult> {
     if (this.phase4Snapshot) {
       this.phase4Snapshot.waveValidationRuns++;
     }
@@ -2071,15 +2123,29 @@ export class MigrationOrchestrator {
 
     if (this.config.target.buildCommand) {
       const build = await this.runCommand('build', this.config.target.buildCommand, waveTaskId);
-      if (!build.success) return false;
+      if (!build.success) {
+        return {
+          success: false,
+          failedLabel: 'build',
+          failedCommand: this.config.target.buildCommand,
+          failure: build,
+        };
+      }
     }
 
     if (this.config.target.testCommand) {
       const test = await this.runCommand('test', this.config.target.testCommand, waveTaskId);
-      if (!test.success) return false;
+      if (!test.success) {
+        return {
+          success: false,
+          failedLabel: 'test',
+          failedCommand: this.config.target.testCommand,
+          failure: test,
+        };
+      }
     }
 
-    return true;
+    return { success: true };
   }
 
   private async blockWaveTask(
@@ -2515,7 +2581,7 @@ export class MigrationOrchestrator {
     label: string,
     command: string,
     taskId: string,
-  ): Promise<{ success: boolean; error?: string; infraError?: string }> {
+  ): Promise<CommandExecutionResult> {
     if (this.phase4Snapshot) {
       if (label === 'build') this.phase4Snapshot.buildCommandRuns++;
       if (label === 'test') this.phase4Snapshot.testCommandRuns++;
@@ -2587,12 +2653,24 @@ export class MigrationOrchestrator {
     command: string,
     task: MigrationTask,
     queue: TaskQueue,
+    options?: {
+      initialFailure?: CommandExecutionResult;
+      wave?: number;
+      retryScope?: RetryTargetDetails['scope'];
+      artifactPaths?: string[];
+      failureSummary?: string;
+      expectedSuccessCondition?: string;
+      suppressTerminalOnExhaustion?: boolean;
+    },
   ): Promise<boolean> {
     const maxAttempts = this.config.options.maxRetriesPerTask;
     const maxInfraRetries = this.config.options.maxInfraRetries ?? 3;
+    const retryScope = options?.retryScope ?? 'command';
+    const artifactPaths = options?.artifactPaths ?? [...task.sourceFiles, ...task.targetFiles];
+    const expectedSuccessCondition = options?.expectedSuccessCondition ?? `${label} command succeeds for ${task.id}`;
 
     // Initial attempt
-    let cmdResult = await this.runCommand(label, command, task.id);
+    let cmdResult = options?.initialFailure ?? await this.runCommand(label, command, task.id);
     if (cmdResult.success) return true;
     const recoveryLoopStartedAt = Date.now();
 
@@ -2632,21 +2710,23 @@ export class MigrationOrchestrator {
         this.phase4Snapshot.commandRecoveryAttempts++;
       }
       await this.recordRetryTarget({
-        scope: 'command',
+        scope: retryScope,
         attempt,
         maxAttempts,
         taskId: task.id,
+        wave: options?.wave,
         check: label,
-        summary: cmdResult.error ?? `${label} command failed`,
+        summary: options?.failureSummary ?? cmdResult.error ?? `${label} command failed`,
       });
 
       const remediationContext = this.buildRemediationContext({
         failureKind: label,
-        failureSummary: cmdResult.error ?? `${label} command failed`,
+        failureSummary: options?.failureSummary ?? cmdResult.error ?? `${label} command failed`,
         taskId: task.id,
+        wave: options?.wave,
         check: label,
-        artifactPaths: [...task.sourceFiles, ...task.targetFiles],
-        expectedSuccessCondition: `${label} command succeeds for ${task.id}`,
+        artifactPaths,
+        expectedSuccessCondition,
       });
 
       // 1. Launch failure-adjudicator with the error output
@@ -2709,6 +2789,14 @@ export class MigrationOrchestrator {
 
     if (this.phase4Snapshot) {
       this.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
+    }
+
+    if (options?.suppressTerminalOnExhaustion) {
+      this.logger.warn(
+        `${label} recovery exhausted for ${task.id} after ${maxAttempts} attempt(s); ` +
+        'deferring to wave convergence limits',
+      );
+      return false;
     }
 
     await this.raiseTerminalExhaustion({
