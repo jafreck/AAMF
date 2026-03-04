@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { readdir } from 'node:fs/promises';
+import { readdir, unlink } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
 import { CheckpointManager } from './checkpoint.js';
@@ -653,6 +653,24 @@ export class MigrationOrchestrator {
     }
 
     this.logger.info('Phase 0 rebuilt — source fingerprint changed or no existing KB');
+
+    // Remove the stale DB before rebuilding.  vec0 virtual tables (symbol_embeddings)
+    // do not support INSERT OR REPLACE — inserting a duplicate rowid raises a
+    // UNIQUE constraint error.  Deleting the file is the simplest guarantee that
+    // the rebuild starts from a clean slate.
+    if (await fileExists(this.kbDbPath)) {
+      try {
+        await unlink(this.kbDbPath);
+        // Also remove WAL / SHM sidecar files if present.
+        await unlink(this.kbDbPath + '-wal').catch(() => {});
+        await unlink(this.kbDbPath + '-shm').catch(() => {});
+        this.logger.info('Removed stale KB database before rebuild');
+      } catch (err) {
+        this.logger.warn(
+          `Failed to remove stale KB database: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     const maxAttempts = this.config.options.maxRetriesPerTask;
     const timeout =

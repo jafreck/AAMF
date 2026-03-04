@@ -11,8 +11,8 @@ describe('Phase Registry', () => {
     expect(ids).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
-  it('should mark phases 1–4 as critical', () => {
-    for (const id of [1, 2, 3, 4]) {
+  it('should mark phases 0–4 as critical', () => {
+    for (const id of [0, 1, 2, 3, 4]) {
       const phase = PHASES.find(p => p.id === id);
       expect(phase?.critical).toBe(true);
     }
@@ -66,10 +66,10 @@ describe('Phase Registry', () => {
       expect(phase?.name).toBe('KB Indexing');
     });
 
-    it('should be optional and non-critical', () => {
+    it('should be optional and critical', () => {
       const phase = getPhase(0);
       expect(phase?.optional).toBe(true);
-      expect(phase?.critical).toBe(false);
+      expect(phase?.critical).toBe(true);
     });
 
     it('should have an empty agents array (Phase 0 runs in-process, no agent launched)', () => {
