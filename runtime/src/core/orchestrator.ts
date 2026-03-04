@@ -585,46 +585,20 @@ export class MigrationOrchestrator {
     this.logger.info(`Building KB index at ${this.kbDbPath} (source: ${sourceRoot})`);
     const lore = await loadLore();
 
-    // Optionally set up the embedding provider for semantic search.
-    const embCfg = this.config.options.kbIndex?.embeddings;
-    if (embCfg?.enabled) {
-      const pythonBin = embCfg.pythonBin ?? 'python3';
-      const model = embCfg.model ?? 'Qwen/Qwen3-Embedding-0.6B';
-      this.logger.info(`Embeddings enabled — ensuring Python deps (python: ${pythonBin}, model: ${model})`);
-      try {
-        await lore.ensurePythonDeps(pythonBin);
-      } catch (err) {
-        this.logger.warn(
-          `Failed to install Python embedding deps — embeddings will be skipped: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-      this.embedder = new lore.SentenceTransformersProvider(model, pythonBin);
-      try {
-        await this.embedder.init();
-        this.logger.info(`Embedding model loaded — dims: ${this.embedder.dims}`);
-      } catch (err) {
-        this.logger.warn(
-          `Failed to initialise embedding model — embeddings will be skipped: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-        try { await this.embedder.dispose(); } catch { /* ignore */ }
-        this.embedder = undefined;
-      }
-    }
-
-    const walkerConfig = { rootDir: sourceRoot };
-    const builder = new lore.IndexBuilder(this.kbDbPath, walkerConfig, this.embedder);
-
     // ── Fingerprint guard: skip re-indexing if the KB already matches ──
-    // Pass the same walkerConfig used by IndexBuilder so the fingerprints match.
+    // Perform this check BEFORE the expensive embedding initialisation so
+    // that resume runs that already have a valid KB exit in milliseconds
+    // rather than spending time loading Python / ML models.
+    const embCfg = this.config.options.kbIndex?.embeddings;
+    const embeddingModelName = embCfg?.enabled
+      ? (embCfg.model ?? 'Qwen/Qwen3-Embedding-0.6B')
+      : undefined;
+    const walkerConfig = { rootDir: sourceRoot };
     const currentFingerprint = computeSourceFingerprintCompat(
       lore,
       sourceRoot,
       walkerConfig as { includeGlobs?: string[]; excludeGlobs?: string[] },
-      this.embedder?.modelName,
+      embeddingModelName,
     );
     if (await fileExists(this.kbDbPath)) {
       try {
@@ -653,6 +627,38 @@ export class MigrationOrchestrator {
     }
 
     this.logger.info('Phase 0 rebuilt — source fingerprint changed or no existing KB');
+
+    // Optionally set up the embedding provider for semantic search.
+    // Only initialised when we actually need to rebuild the index.
+    if (embCfg?.enabled) {
+      const pythonBin = embCfg.pythonBin ?? 'python3';
+      const model = embeddingModelName!;
+      this.logger.info(`Embeddings enabled — ensuring Python deps (python: ${pythonBin}, model: ${model})`);
+      try {
+        await lore.ensurePythonDeps(pythonBin);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to install Python embedding deps — embeddings will be skipped: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      this.embedder = new lore.SentenceTransformersProvider(model, pythonBin);
+      try {
+        await this.embedder.init();
+        this.logger.info(`Embedding model loaded — dims: ${this.embedder.dims}`);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to initialise embedding model — embeddings will be skipped: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        try { await this.embedder.dispose(); } catch { /* ignore */ }
+        this.embedder = undefined;
+      }
+    }
+
+    const builder = new lore.IndexBuilder(this.kbDbPath, walkerConfig, this.embedder);
 
     // Remove the stale DB before rebuilding.  vec0 virtual tables (symbol_embeddings)
     // do not support INSERT OR REPLACE — inserting a duplicate rowid raises a
@@ -748,6 +754,21 @@ export class MigrationOrchestrator {
   // ─── Phase 1: Impact Assessment ──────────────────────────────────────
 
   private async executePhase1(start: number): Promise<PhaseResult> {
+    // Defence-in-depth: if Phase 1 was already completed in a prior run,
+    // skip the agent launch.  The main loop's resume-skip should already
+    // handle this, but this guard protects against checkpoint regression.
+    const checkpointState = this.checkpoint.getState();
+    if (checkpointState.completedPhases.includes(1)) {
+      this.logger.info('Phase 1 skipped on resume — impact assessment already complete');
+      return {
+        phase: 1,
+        name: 'Impact Assessment',
+        success: true,
+        outputPath: this.legacyPaths.impactAssessmentFile,
+        duration: Date.now() - start,
+      };
+    }
+
     const contextFile = await this.contextBuilder.buildContext('impact-assessor', 1);
     const inv = this.buildInvocation('impact-assessor', contextFile, 1);
     const result = await this.launchAgentWithEvents(inv);
@@ -769,6 +790,23 @@ export class MigrationOrchestrator {
   // ─── Phase 2: Knowledge Base Construction ────────────────────────────
 
   private async executePhase2(start: number): Promise<PhaseResult> {
+    const outputPath = this.legacyPaths.knowledgeBaseDir;
+
+    // Defence-in-depth: if the knowledge-base directory already has content
+    // (e.g. from a previous run that completed Phase 2 but whose checkpoint
+    // was regressed by a Phase 0 re-run), skip the expensive agent launch.
+    const checkpointState = this.checkpoint.getState();
+    if (checkpointState.completedPhases.includes(2)) {
+      this.logger.info('Phase 2 skipped on resume — knowledge base already built');
+      return {
+        phase: 2,
+        name: 'Knowledge Base Construction',
+        success: true,
+        outputPath,
+        duration: Date.now() - start,
+      };
+    }
+
     // 1. Launch knowledge-builder
     const kbContext = await this.contextBuilder.buildContext('knowledge-builder', 2);
     const kbInv = this.buildInvocation('knowledge-builder', kbContext, 2);
@@ -787,7 +825,6 @@ export class MigrationOrchestrator {
       };
     }
 
-    const outputPath = this.legacyPaths.knowledgeBaseDir;
     return {
       phase: 2,
       name: 'Knowledge Base Construction',
@@ -796,8 +833,6 @@ export class MigrationOrchestrator {
       duration: Date.now() - start,
     };
   }
-
-  // ─── Phase 3: Migration Planning ─────────────────────────────────────
 
   private async executePhase3(start: number): Promise<PhaseResult> {
     const planningDir = this.paths.artifactsPlanningDir;
@@ -3390,6 +3425,8 @@ export class MigrationOrchestrator {
       tokensCompletion,
       tokensTotal,
       costUsd: costEstimate.total,
+      ...(result.tokenUsage?.cachedInput != null ? { cachedTokens: result.tokenUsage.cachedInput } : {}),
+      ...(result.tokenUsage?.premiumRequests != null ? { premiumRequests: result.tokenUsage.premiumRequests } : {}),
       ...(invocation.routingTier ? { routingTier: invocation.routingTier, routingReason: invocation.routingReason } : {}),
       ...(routingDecision ? { escalationCostUsd: routingDecision.incrementalCost } : {}),
     };

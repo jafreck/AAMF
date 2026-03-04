@@ -36,6 +36,10 @@ export interface MetricsAggregate {
   retriesByPhase: Record<number, number>;
   totalTokens: number;
   totalCost: number;
+  /** Total cached input tokens across all invocations (when available). */
+  totalCachedTokens: number;
+  /** Total premium requests consumed across all invocations (Copilot only, when available). */
+  totalPremiumRequests: number;
   tokensByAgent: Record<string, number>;
   costByAgent: Record<string, number>;
   peakParallelInvocations: number;
@@ -171,6 +175,8 @@ export class MetricsCollector {
     let totalRetries = 0;
     let totalTokens = 0;
     let totalCost = 0;
+    let totalCachedTokens = 0;
+    let totalPremiumRequests = 0;
 
     const escalationsByTier: Record<string, number> = {};
     let escalationCount = 0;
@@ -183,6 +189,13 @@ export class MetricsCollector {
       costByAgent[m.agentType] = (costByAgent[m.agentType] ?? 0) + m.costUsd;
       totalTokens += m.tokensTotal;
       totalCost += m.costUsd;
+
+      if (m.cachedTokens != null) {
+        totalCachedTokens += m.cachedTokens;
+      }
+      if (m.premiumRequests != null) {
+        totalPremiumRequests += m.premiumRequests;
+      }
 
       if (m.wasRetry) {
         totalRetries++;
@@ -234,6 +247,8 @@ export class MetricsCollector {
       retriesByPhase,
       totalTokens,
       totalCost,
+      totalCachedTokens,
+      totalPremiumRequests,
       tokensByAgent,
       costByAgent,
       peakParallelInvocations: peak,

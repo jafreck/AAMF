@@ -472,19 +472,21 @@ export class ResultParser {
    */
   static parseCopilotCliUsage(
     output: string,
-  ): { prompt: number; completion: number; total: number; cachedInput?: number } | undefined {
+  ): { prompt: number; completion: number; total: number; cachedInput?: number; premiumRequests?: number } | undefined {
     const breakdownMatch = output.match(/Breakdown by AI model:/i);
     if (!breakdownMatch) return undefined;
 
     const afterBreakdown = output.slice(breakdownMatch.index! + breakdownMatch[0].length);
 
-    const tokenLineRegexLegacy = /tokens_in:\s*([\d.]+[kmKM]?)\s*,\s*tokens_out:\s*([\d.]+[kmKM]?)(?:\s*,\s*tokens_cached:\s*([\d.]+[kmKM]?))?/g;
-    const tokenLineRegexCurrent = /([\d.]+[kmKM]?)\s+in\s*,\s*([\d.]+[kmKM]?)\s+out(?:\s*,\s*([\d.]+[kmKM]?)\s+cached)?(?:\s*\(Est\.[^)]+\))?/gi;
+    const tokenLineRegexLegacy = /tokens_in:\s*([\d.]+[kmKM]?)\s*,\s*tokens_out:\s*([\d.]+[kmKM]?)(?:\s*,\s*tokens_cached:\s*([\d.]+[kmKM]?))?(?:\s*,\s*premium_requests_est:\s*(\d+))?/g;
+    const tokenLineRegexCurrent = /([\d.]+[kmKM]?)\s+in\s*,\s*([\d.]+[kmKM]?)\s+out(?:\s*,\s*([\d.]+[kmKM]?)\s+cached)?(?:\s*\(Est\.\s*(\d+)\s+Premium\s+requests?\))?/gi;
 
     let totalPrompt = 0;
     let totalCompletion = 0;
     let totalCached = 0;
     let hasCached = false;
+    let totalPremium = 0;
+    let hasPremium = false;
     let foundAny = false;
 
     const consume = (lineMatch: RegExpExecArray): void => {
@@ -494,6 +496,10 @@ export class ResultParser {
       if (lineMatch[3]) {
         totalCached += ResultParser.parseShorthandNumber(lineMatch[3]!);
         hasCached = true;
+      }
+      if (lineMatch[4]) {
+        totalPremium += parseInt(lineMatch[4]!, 10);
+        hasPremium = true;
       }
     };
 
@@ -512,6 +518,7 @@ export class ResultParser {
       completion: totalCompletion,
       total: totalPrompt + totalCompletion,
       ...(hasCached ? { cachedInput: totalCached } : {}),
+      ...(hasPremium ? { premiumRequests: totalPremium } : {}),
     };
   }
 

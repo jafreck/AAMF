@@ -80,10 +80,10 @@ export class CostEstimator {
    * Estimate cost given explicit prompt and completion token counts.
    *
    * @param model - Model identifier.
-   * @param promptTokens - Number of input / prompt tokens.
+   * @param promptTokens - Total number of input / prompt tokens (includes cached tokens).
    * @param completionTokens - Number of output / completion tokens.
-   * @param cachedInputTokens - Number of cached input tokens (billed at 50% of input price).
-   * @returns Breakdown of input, output, cached, and total cost in USD.
+   * @param cachedInputTokens - Number of cached input tokens (subset of promptTokens, billed at 50% of input price).
+   * @returns Breakdown of input (non-cached), output, cached, and total cost in USD.
    */
   estimate(
     model: string,
@@ -92,7 +92,8 @@ export class CostEstimator {
     cachedInputTokens?: number,
   ): { input: number; output: number; cached: number; total: number } {
     const pricing = this.resolvePricing(model);
-    const input = (promptTokens / 1_000_000) * pricing.input;
+    const nonCachedPrompt = Math.max(0, promptTokens - (cachedInputTokens ?? 0));
+    const input = (nonCachedPrompt / 1_000_000) * pricing.input;
     const output = (completionTokens / 1_000_000) * pricing.output;
     const cached = cachedInputTokens !== undefined
       ? (cachedInputTokens / 1_000_000) * pricing.input * 0.5
