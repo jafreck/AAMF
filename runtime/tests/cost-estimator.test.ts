@@ -6,16 +6,16 @@ describe('CostEstimator', () => {
 
   it('should calculate correct pricing for claude-opus-4.6 (1M tokens each)', () => {
     const result = estimator.estimate('claude-opus-4.6', 1_000_000, 1_000_000);
-    expect(result.input).toBe(15.00);
-    expect(result.output).toBe(75.00);
-    expect(result.total).toBe(90.00);
+    expect(result.input).toBe(5.00);
+    expect(result.output).toBe(25.00);
+    expect(result.total).toBe(30.00);
   });
 
   it('should calculate correct pricing for gpt-4.1 (1M tokens each)', () => {
     const result = estimator.estimate('gpt-4.1', 1_000_000, 1_000_000);
-    expect(result.input).toBe(2.50);
-    expect(result.output).toBe(10.00);
-    expect(result.total).toBe(12.50);
+    expect(result.input).toBe(2.00);
+    expect(result.output).toBe(8.00);
+    expect(result.total).toBe(10.00);
   });
 
   it('should calculate correct pricing for claude-sonnet-4.6 (1M tokens each)', () => {
@@ -85,10 +85,15 @@ describe('CostEstimator', () => {
     const models = estimator.getSupportedModels();
     expect(models).toContain('claude-sonnet-4.6');
     expect(models).toContain('claude-opus-4.6');
+    expect(models).toContain('claude-opus-4.6-1m');
     expect(models).toContain('claude-haiku-4.5');
     expect(models).toContain('gpt-5.2-codex');
     expect(models).toContain('gpt-4.1');
     expect(models).toContain('gemini-3-pro-preview');
+    expect(models).toContain('gemini-3.1-pro-preview');
+    expect(models).toContain('gemini-2.5-pro');
+    expect(models).toContain('o3');
+    expect(models).toContain('o4-mini');
   });
 
   it('should list Claude Code CLI model identifiers (dash notation)', () => {
@@ -96,6 +101,9 @@ describe('CostEstimator', () => {
     expect(models).toContain('claude-sonnet-4-5');
     expect(models).toContain('claude-haiku-4-5');
     expect(models).toContain('claude-opus-4-5');
+    expect(models).toContain('claude-opus-4-6');
+    expect(models).toContain('claude-opus-4-6-1m');
+    expect(models).toContain('claude-sonnet-4-6');
   });
 
   it('should calculate cached token cost at 50% of input price for claude-sonnet-4-5', () => {
@@ -124,6 +132,34 @@ describe('CostEstimator', () => {
     expect(result.cached).toBeCloseTo(1.50, 10);
     expect(result.output).toBeCloseTo(7.50, 10);
     expect(result.total).toBeCloseTo(12.00, 10);
+  });
+
+  it('should calculate correct pricing for claude-opus-4.6-1m (1M context variant)', () => {
+    const result = estimator.estimate('claude-opus-4.6-1m', 1_000_000, 1_000_000);
+    expect(result.input).toBe(10.00);
+    expect(result.output).toBe(37.50);
+    expect(result.total).toBe(47.50);
+  });
+
+  it('should calculate correct pricing for claude-opus-4.6-fast', () => {
+    const result = estimator.estimate('claude-opus-4.6-fast', 1_000_000, 1_000_000);
+    expect(result.input).toBe(30.00);
+    expect(result.output).toBe(150.00);
+    expect(result.total).toBe(180.00);
+  });
+
+  it('should calculate correct pricing for gemini-2.5-pro', () => {
+    const result = estimator.estimate('gemini-2.5-pro', 1_000_000, 1_000_000);
+    expect(result.input).toBe(1.25);
+    expect(result.output).toBe(10.00);
+    expect(result.total).toBe(11.25);
+  });
+
+  it('should calculate correct pricing for o3 reasoning model', () => {
+    const result = estimator.estimate('o3', 1_000_000, 1_000_000);
+    expect(result.input).toBe(2.00);
+    expect(result.output).toBe(8.00);
+    expect(result.total).toBe(10.00);
   });
 
   it('should return zero cached cost when cachedInputTokens is omitted', () => {
