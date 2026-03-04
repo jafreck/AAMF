@@ -120,7 +120,7 @@ export interface AgentResult {
   duration: number;
 
   /** Optional token-usage breakdown reported by the agent. */
-  tokenUsage?: { prompt: number; completion: number; total: number; cachedInput?: number };
+  tokenUsage?: { prompt: number; completion: number; total: number; cachedInput?: number; premiumRequests?: number };
 
   /** Captured stderr or error message when the agent fails. */
   error?: string;
@@ -429,6 +429,10 @@ export interface InvocationMetric {
   tokensTotal: number;
   /** Estimated cost in USD for this invocation. */
   costUsd: number;
+  /** Number of cached input tokens (subset of tokensPrompt), if available. */
+  cachedTokens?: number;
+  /** Estimated premium requests consumed (Copilot only), if available. */
+  premiumRequests?: number;
   /** Model routing tier assigned to this invocation. */
   routingTier?: ModelTier;
   /** Human-readable reason for the routing decision. */

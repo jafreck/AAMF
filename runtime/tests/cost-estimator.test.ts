@@ -107,11 +107,23 @@ describe('CostEstimator', () => {
 
   it('should include cached cost in total', () => {
     const result = estimator.estimate('claude-sonnet-4-5', 1_000_000, 1_000_000, 1_000_000);
-    // input = 3.00, output = 15.00, cached = 1.50
-    expect(result.input).toBe(3.00);
+    // All 1M prompt tokens are cached → input (non-cached) = 0, cached = 1.50, output = 15.00
+    expect(result.input).toBe(0);
     expect(result.output).toBe(15.00);
     expect(result.cached).toBeCloseTo(1.50, 10);
-    expect(result.total).toBeCloseTo(19.50, 10);
+    expect(result.total).toBeCloseTo(16.50, 10);
+  });
+
+  it('should correctly split cost between cached and non-cached input tokens', () => {
+    // 2M prompt tokens total, 1M of which are cached
+    const result = estimator.estimate('claude-sonnet-4-5', 2_000_000, 500_000, 1_000_000);
+    // non-cached input: 1M * $3/M = $3.00
+    // cached input: 1M * $3/M * 0.5 = $1.50
+    // output: 500K * $15/M = $7.50
+    expect(result.input).toBeCloseTo(3.00, 10);
+    expect(result.cached).toBeCloseTo(1.50, 10);
+    expect(result.output).toBeCloseTo(7.50, 10);
+    expect(result.total).toBeCloseTo(12.00, 10);
   });
 
   it('should return zero cached cost when cachedInputTokens is omitted', () => {

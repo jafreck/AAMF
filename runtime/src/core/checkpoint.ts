@@ -209,7 +209,10 @@ export class CheckpointManager {
       state.completedPhases.push(phase);
     }
     state.phaseOutputs[phase] = outputPath;
-    state.currentPhase = phase + 1;
+    // Never regress the resume pointer — a re-run of an earlier phase (e.g.
+    // Phase 0 fingerprint check on resume) must not overwrite a more-advanced
+    // currentPhase saved by a previous run.
+    state.currentPhase = Math.max(state.currentPhase, phase + 1);
     state.currentTask = null;
     this.logger.event({ type: 'checkpoint-saved', phase });
     await this.save(state);
