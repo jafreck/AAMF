@@ -30,7 +30,7 @@
     "maxParallelAgents": 8,
     "maxRetriesPerTask": 3,
     "maxLinesPerTask": 750,
-    "tokenBudget": 10000000,
+    "tokenBudget": 200000000,
     "executionMode": "wave-barrier",
     "waveControl": {
       "waveSize": 3,
