@@ -198,11 +198,27 @@ export class ContextBuilder {
           agentPayload: { decisionType: payload?.decisionType ?? 'migration-strategy' },
         };
 
-      case 'code-migrator':
+      case 'code-migrator': {
+        // During parity recovery, include the parity report and adjudication
+        // analysis as direct input files so the agent can read them.
+        const recoveryInputFiles: string[] = [];
+        if (remediationContext) {
+          const parityPaths = (remediationContext.artifactPaths as string[] | undefined) ?? [];
+          for (const p of parityPaths) {
+            if (typeof p === 'string' && p.endsWith('.md') && this.isLikelyPathString(p)) {
+              recoveryInputFiles.push(p);
+            }
+          }
+          const adjudicationPath = (remediationContext as Record<string, unknown>).adjudicationReportPath;
+          if (typeof adjudicationPath === 'string' && this.isLikelyPathString(adjudicationPath)) {
+            recoveryInputFiles.push(adjudicationPath);
+          }
+        }
         return {
           inputFiles: [
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
+            ...recoveryInputFiles,
           ],
           outputPath: out,
           agentPayload: {
@@ -212,6 +228,7 @@ export class ContextBuilder {
             ...(remediationContext ? { remediationContext } : {}),
           },
         };
+      }
 
       case 'parity-verifier':
         return {

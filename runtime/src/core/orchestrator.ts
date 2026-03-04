@@ -1959,20 +1959,39 @@ export class MigrationOrchestrator {
       let parityPassed = await this.checkParityResult(task.id);
 
       if (!parityPassed && gateMode === 'enforce') {
+        const priorAttempts: Array<{ attempt: number; issueCount: number; unresolvedIssues: string[] }> = [];
+
         for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
           // Launch failure-adjudicator with parity report
           const parityReportPath = join(
             this.paths.artifactsParityDir,
             `${task.id}.md`,
           );
+          const adjudicationReportPath = join(
+            this.paths.artifactsAdjudicationDir,
+            `${task.id}.md`,
+          );
+
+          // Build an enriched failure summary from the actual parity sidecar
+          const issueSummary = await this.getParityIssueSummary(task.id);
+          const enrichedSummary = issueSummary
+            ? `Parity verification failed for ${task.id}: ${issueSummary}`
+            : `Parity verification failed for ${task.id}`;
+
           const parityRemediation = this.buildRemediationContext({
             failureKind: 'parity',
-            failureSummary: `Parity verification failed for ${task.id}`,
+            failureSummary: enrichedSummary,
             taskId: task.id,
             check: 'parity-verifier',
             artifactPaths: [parityReportPath, ...task.sourceFiles, ...task.targetFiles],
             expectedSuccessCondition: `Parity checks pass (or only minor issues) for ${task.id}`,
           });
+
+          // Attach adjudication report path and prior attempt history
+          parityRemediation.adjudicationReportPath = adjudicationReportPath;
+          if (priorAttempts.length > 0) {
+            parityRemediation.priorAttempts = [...priorAttempts];
+          }
 
           await this.recordRetryTarget({
             scope: 'parity',
@@ -1980,7 +1999,7 @@ export class MigrationOrchestrator {
             maxAttempts: maxParityRetries,
             taskId: task.id,
             check: 'parity-verifier',
-            summary: `Parity verification failed for ${task.id}`,
+            summary: enrichedSummary,
           });
 
           const recoveryCtx = await this.contextBuilder.buildContext(
@@ -2005,18 +2024,19 @@ export class MigrationOrchestrator {
             continue;
           }
 
-          // Re-run code-migrator with the recovery context
+          // Re-run code-migrator with enriched recovery context —
+          // parity report + adjudication analysis are wired as inputFiles
           const reMigrateCtx = await this.contextBuilder.buildContext(
             'code-migrator',
             4,
             task.id,
-              {
-                sourceFiles: task.sourceFiles,
-                targetFiles: task.targetFiles,
-                kbEntry: task.knowledgeBaseRef,
-                remediationContext: parityRemediation,
-              },
-            );
+            {
+              sourceFiles: task.sourceFiles,
+              targetFiles: task.targetFiles,
+              kbEntry: task.knowledgeBaseRef,
+              remediationContext: parityRemediation,
+            },
+          );
           const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
           const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
           this.recordTokens(reMigrateResult, 4);
@@ -2047,6 +2067,21 @@ export class MigrationOrchestrator {
             this.logger.info(`Parity recovered for ${task.id} on attempt ${attempt}`);
             break;
           }
+
+          // Record this attempt's outcome for next iteration's context
+          const attemptResult = await ResultParser.readTaskResultJson(
+            this.progressDir,
+            'parity-verifier',
+            task.id,
+          );
+          const unresolvedIssues = (attemptResult?.issues ?? [])
+            .filter((i) => i.severity !== 'minor')
+            .map((i) => i.description);
+          priorAttempts.push({
+            attempt,
+            issueCount: attemptResult?.issues?.length ?? 0,
+            unresolvedIssues,
+          });
         }
 
         // After exhausting retries, check if only minor issues remain
@@ -2939,6 +2974,35 @@ export class MigrationOrchestrator {
     );
     if (!result) return false;
     return result.issues.some((i) => i.severity !== 'minor');
+  }
+
+  /**
+   * Build a concise human-readable summary of parity issues from the sidecar.
+   * Returns `undefined` if no sidecar or no issues exist.
+   */
+  private async getParityIssueSummary(taskId: string): Promise<string | undefined> {
+    const result = await ResultParser.readTaskResultJson(
+      this.progressDir,
+      'parity-verifier',
+      taskId,
+    );
+    if (!result || result.issues.length === 0) return undefined;
+
+    const bySeverity = { critical: 0, major: 0, minor: 0 };
+    for (const issue of result.issues) {
+      bySeverity[issue.severity] = (bySeverity[issue.severity] ?? 0) + 1;
+    }
+    const counts = Object.entries(bySeverity)
+      .filter(([, n]) => n > 0)
+      .map(([sev, n]) => `${n} ${sev}`)
+      .join(', ');
+
+    const nonMinor = result.issues
+      .filter((i) => i.severity !== 'minor')
+      .map((i) => i.description)
+      .slice(0, 5); // Cap at 5 to stay within summary length
+
+    return `${counts}: ${nonMinor.join('; ')}`;
   }
 
   private isGitAutomationEnabled(): boolean {

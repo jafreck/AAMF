@@ -165,6 +165,59 @@ describe('ContextBuilder', () => {
       expect(remediation?.failureSummary).toBe('Normalized mismatch in auth handler');
     });
 
+    it('should include parity .md artifact paths as inputFiles for code-migrator during recovery', async () => {
+      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
+        kbEntry: 'kb/auth.md',
+        remediationContext: {
+          failureKind: 'parity',
+          failureSummary: 'Parity failed',
+          failureTarget: { taskId: 'task-001', check: 'parity-verifier' },
+          artifactPaths: ['/tmp/parity/task-001.md', '/tmp/source/auth.py', '/tmp/target/auth.rs'],
+          expectedSuccessCondition: 'Parity passes',
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      // .md files from artifactPaths should appear in inputFiles
+      expect(context.inputFiles).toContain('/tmp/parity/task-001.md');
+      // Non-.md files from artifactPaths should NOT appear in inputFiles
+      expect(context.inputFiles).not.toContain('/tmp/source/auth.py');
+      expect(context.inputFiles).not.toContain('/tmp/target/auth.rs');
+    });
+
+    it('should include adjudicationReportPath as inputFile for code-migrator during recovery', async () => {
+      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
+        remediationContext: {
+          failureKind: 'parity',
+          failureSummary: 'Parity failed',
+          failureTarget: { taskId: 'task-001', check: 'parity-verifier' },
+          artifactPaths: ['/tmp/parity/task-001.md'],
+          expectedSuccessCondition: 'Parity passes',
+          adjudicationReportPath: '/tmp/adjudication/task-001.md',
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).toContain('/tmp/adjudication/task-001.md');
+      expect(context.inputFiles).toContain('/tmp/parity/task-001.md');
+    });
+
+    it('should not add recovery inputFiles for code-migrator without remediationContext', async () => {
+      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
+        kbEntry: 'kb/auth.md',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      // Should only have the migration plan and KB entry
+      expect(context.inputFiles.length).toBe(2);
+    });
+
     it('should prioritize nested remediationContext payload for code-migrator when both shapes are provided', async () => {
       const nestedRemediation = {
         failureKind: 'parity',

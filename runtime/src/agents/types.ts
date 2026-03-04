@@ -214,6 +214,20 @@ export interface RemediationContext {
   artifactPaths: string[];
   /** Condition that determines whether remediation was successful. */
   expectedSuccessCondition: string;
+  /** Path to the failure-adjudicator's analysis output, if available. */
+  adjudicationReportPath?: string;
+  /** Outcomes of prior recovery attempts, enabling the agent to avoid repeating failed strategies. */
+  priorAttempts?: PriorRecoveryAttempt[];
+}
+
+/** Outcome record from a single prior recovery attempt. */
+export interface PriorRecoveryAttempt {
+  /** 1-based attempt number. */
+  attempt: number;
+  /** Number of issues found by parity-verifier on this attempt. */
+  issueCount: number;
+  /** Descriptions of non-minor issues that remained unresolved. */
+  unresolvedIssues: string[];
 }
 
 // ─── Terminal Exhaustion Contracts ────────────────────────────────────────────
