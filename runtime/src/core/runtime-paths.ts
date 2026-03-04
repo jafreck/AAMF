@@ -25,21 +25,8 @@ export interface RuntimePaths {
   metricsInvocationsFile: string;
   metricsSummaryFile: string;
   kbDbFile: string;
-}
-
-export interface LegacyRuntimePaths {
-  checkpointFile: string;
-  checkpointBackupFile: string;
-  contextsDir: string;
-  resultsDir: string;
-  planningDir: string;
-  parityReportsDir: string;
-  adjudicationDir: string;
-  progressReportFile: string;
-  migrationLogDir: string;
-  migrationLogFile: string;
-  impactAssessmentFile: string;
   knowledgeBaseDir: string;
+  impactAssessmentFile: string;
   migrationPlanFile: string;
   competingStrategiesFile: string;
   finalParityReportFile: string;
@@ -53,6 +40,8 @@ export function buildRuntimePaths(projectRoot: string, projectName: string): Run
   const logsAgentsDir = join(root, 'logs', 'agents');
   const logsCommandsDir = join(root, 'logs', 'commands');
   const artifactsDir = join(root, 'artifacts');
+  const artifactsPlanningDir = join(artifactsDir, 'planning');
+  const artifactsParityDir = join(artifactsDir, 'parity');
   const reportsDir = join(root, 'reports');
   const metricsDir = join(root, 'metrics');
 
@@ -71,8 +60,8 @@ export function buildRuntimePaths(projectRoot: string, projectName: string): Run
     artifactsDir,
     artifactsContextsDir: join(artifactsDir, 'contexts'),
     artifactsResultsDir: join(artifactsDir, 'results'),
-    artifactsPlanningDir: join(artifactsDir, 'planning'),
-    artifactsParityDir: join(artifactsDir, 'parity'),
+    artifactsPlanningDir,
+    artifactsParityDir,
     artifactsAdjudicationDir: join(artifactsDir, 'adjudication'),
     reportsDir,
     progressReportFile: join(reportsDir, 'progress.md'),
@@ -81,26 +70,11 @@ export function buildRuntimePaths(projectRoot: string, projectName: string): Run
     metricsInvocationsFile: join(metricsDir, 'invocations.jsonl'),
     metricsSummaryFile: join(metricsDir, 'summary.json'),
     kbDbFile: join(root, 'kb.db'),
-  };
-}
-
-export function buildLegacyRuntimePaths(progressDir: string): LegacyRuntimePaths {
-  return {
-    checkpointFile: join(progressDir, 'checkpoint.json'),
-    checkpointBackupFile: join(progressDir, 'checkpoint.backup.json'),
-    contextsDir: join(progressDir, 'contexts'),
-    resultsDir: join(progressDir, 'results'),
-    planningDir: join(progressDir, 'planning'),
-    parityReportsDir: join(progressDir, 'parity-reports'),
-    adjudicationDir: join(progressDir, 'adjudication'),
-    progressReportFile: join(progressDir, 'progress.md'),
-    migrationLogDir: join(progressDir, 'logs'),
-    migrationLogFile: join(progressDir, 'logs', 'migration.log'),
-    impactAssessmentFile: join(progressDir, 'impact-assessment.md'),
-    knowledgeBaseDir: join(progressDir, 'knowledge-base'),
-    migrationPlanFile: join(progressDir, 'migration-plan.md'),
-    competingStrategiesFile: join(progressDir, 'competing-strategies.md'),
-    finalParityReportFile: join(progressDir, 'final-parity-report.md'),
-    idiomaticReviewReportFile: join(progressDir, 'idiomatic-review-report.md'),
+    knowledgeBaseDir: join(root, 'knowledge-base'),
+    impactAssessmentFile: join(artifactsDir, 'impact-assessment.md'),
+    migrationPlanFile: join(artifactsPlanningDir, 'migration-plan.md'),
+    competingStrategiesFile: join(artifactsPlanningDir, 'competing-strategies.md'),
+    finalParityReportFile: join(artifactsParityDir, 'final-parity-report.md'),
+    idiomaticReviewReportFile: join(artifactsParityDir, 'idiomatic-review-report.md'),
   };
 }

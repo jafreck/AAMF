@@ -85,7 +85,7 @@ After writing migrated code:
 
 ## Output
 
-Update `.aamf/migration/{projectName}/progress.md` with task result:
+Update `.aamf/migration/{projectName}/reports/progress.md` with task result:
 
 ```markdown
 ### Task {id}: {name}

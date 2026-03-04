@@ -66,7 +66,9 @@ async function writeMigrationPlan(progressDir: string, content?: string): Promis
 **Parity Checks:**
 - matches
 `;
-  await writeFile(join(progressDir, 'migration-plan.md'), content ?? defaultPlan);
+  await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+  await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), content ?? defaultPlan);
   // Also write planning artifacts required by the two-step Phase 3 design.
   await writePhase3PlanningArtifacts(progressDir);
 }
@@ -128,7 +130,7 @@ async function writePhase3PlanningArtifacts(
   progressDir: string,
   tasks: MigrationTask[] = DEFAULT_PLANNING_TASKS,
 ): Promise<void> {
-  const planningDir = join(progressDir, 'planning');
+  const planningDir = join(progressDir, 'artifacts', 'planning');
   await mkdir(planningDir, { recursive: true });
   const group = { id: 'core', name: 'Core', analysisFiles: [] };
   await writeFile(join(planningDir, 'groups.json'), JSON.stringify([group], null, 2));
@@ -150,7 +152,8 @@ async function writeParityReport(
       content += `Target file: ${issue.targetFile}\n\n`;
     }
   }
-  await writeFile(join(progressDir, 'final-parity-report.md'), content);
+  await mkdir(join(progressDir, 'artifacts', 'parity'), { recursive: true });
+  await writeFile(join(progressDir, 'artifacts', 'parity', 'final-parity-report.md'), content);
 }
 
 /**
@@ -725,9 +728,9 @@ describe('MigrationOrchestrator', () => {
       // Pre-populate checkpoint with phases 1–3 complete
       const checkpoint = new CheckpointManager(progressDir, logger);
       await checkpoint.load(config.projectName);
-      await checkpoint.completePhase(1, join(progressDir, 'impact-assessment.md'));
+      await checkpoint.completePhase(1, join(progressDir, 'artifacts', 'impact-assessment.md'));
       await checkpoint.completePhase(2, join(progressDir, 'knowledge-base'));
-      await checkpoint.completePhase(3, join(progressDir, 'migration-plan.md'));
+      await checkpoint.completePhase(3, join(progressDir, 'artifacts', 'planning', 'migration-plan.md'));
 
       const progressFile = join(progressDir, 'progress.md');
       const progress = new ProgressWriter(progressFile);
@@ -1067,7 +1070,7 @@ describe('MigrationOrchestrator', () => {
         3,
       );
 
-      const planningDir = join(progressDir, 'planning');
+      const planningDir = join(progressDir, 'artifacts', 'planning');
       await mkdir(planningDir, { recursive: true });
       await writeFile(
         join(planningDir, 'groups.json'),
@@ -1098,7 +1101,7 @@ describe('MigrationOrchestrator', () => {
         3,
       );
 
-      const planningDir = join(progressDir, 'planning');
+      const planningDir = join(progressDir, 'artifacts', 'planning');
       await mkdir(planningDir, { recursive: true });
       const group = { id: 'core', name: 'Core', analysisFiles: [] };
       await writeFile(join(planningDir, 'groups.json'), JSON.stringify([group], null, 2));
@@ -1136,7 +1139,7 @@ describe('MigrationOrchestrator', () => {
         phase3aComplete: true,
         completedPhase3Groups: [],
       };
-      await writeFile(join(progressDir, 'checkpoint.json'), JSON.stringify(checkpoint, null, 2));
+      await writeFile(join(progressDir, 'state', 'checkpoint.json'), JSON.stringify(checkpoint, null, 2));
 
       const result = await orchestrator.run();
 
@@ -1690,7 +1693,8 @@ describe('MigrationOrchestrator', () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
 
-      await writeFile(join(progressDir, 'migration-plan.md'), '# Migration Plan\n\nNo tasks defined.\n');
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), '# Migration Plan\n\nNo tasks defined.\n');
       // Write empty planning artifacts so Phase 3 succeeds with zero tasks.
       await writePhase3PlanningArtifacts(progressDir, []);
 
@@ -1764,7 +1768,8 @@ describe('MigrationOrchestrator', () => {
 **Parity Checks:**
 - matches
 `;
-      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       const result = await orchestrator.run();
@@ -1815,7 +1820,8 @@ describe('MigrationOrchestrator', () => {
 **Parity Checks:**
 - matches
 `;
-      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       const result = await orchestrator.run();
@@ -1891,13 +1897,14 @@ describe('MigrationOrchestrator', () => {
 **Parity Checks:**
 - matches
 `;
-      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       // Write a parity sidecar with critical issues (will be read after parity-verifier runs)
-      await ensureDir(join(progressDir, 'results'));
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
       await writeFile(
-        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
         JSON.stringify({
           taskId: 'task-001',
           agent: 'parity-verifier',
@@ -1985,12 +1992,13 @@ describe('MigrationOrchestrator', () => {
 **Parity Checks:**
 - matches
 `;
-      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
-      await ensureDir(join(progressDir, 'results'));
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
       await writeFile(
-        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
         JSON.stringify({
           taskId: 'task-001',
           agent: 'parity-verifier',
@@ -2080,13 +2088,14 @@ describe('MigrationOrchestrator', () => {
 **Parity Checks:**
 - matches
 `;
-      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       // Write a parity sidecar with only minor issues
-      await ensureDir(join(progressDir, 'results'));
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
       await writeFile(
-        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
         JSON.stringify({
           taskId: 'task-001',
           agent: 'parity-verifier',
@@ -2163,14 +2172,15 @@ describe('MigrationOrchestrator', () => {
 **Parity Checks:**
 - matches
 `;
-      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       // Write a parity sidecar with major issues that downgrade to minor after retry
       // but since the file persists, we simulate "only minor remaining"
-      await ensureDir(join(progressDir, 'results'));
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
       await writeFile(
-        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
         JSON.stringify({
           taskId: 'task-001',
           agent: 'parity-verifier',
@@ -2253,12 +2263,13 @@ describe('MigrationOrchestrator', () => {
 **Parity Checks:**
 - matches
 `;
-      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
-      await ensureDir(join(progressDir, 'results'));
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
       await writeFile(
-        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
         JSON.stringify({
           taskId: 'task-001',
           agent: 'parity-verifier',
@@ -2782,7 +2793,8 @@ describe('MigrationOrchestrator', () => {
 **Parity Checks:**
 - matches
 `;
-      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       const infoSpy = vi.spyOn(logger, 'info');
@@ -2884,7 +2896,8 @@ describe('MigrationOrchestrator', () => {
 **Parity Checks:**
 - matches
 `;
-      await writeFile(join(progressDir, 'migration-plan.md'), threeTaskPlan);
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), threeTaskPlan);
       // Write planning artifacts for the three tasks so Phase 3 succeeds during the resume run.
       const threeTasks: MigrationTask[] = [
         { id: 'task-001', name: 'Module A', sourceFiles: ['src/a.py'], targetFiles: ['src/a.ts'], knowledgeBaseRef: 'kb/task-001.md', dependencies: [], complexity: 'simple', description: 'Migrate A', acceptanceCriteria: ['works'], parityChecks: ['matches'], lineRange: { start: 1, end: 200 } },
@@ -3304,8 +3317,9 @@ describe('MigrationOrchestrator', () => {
       await writeMigrationPlan(progressDir);
 
       // Write an idiomatic report with issues so the loop keeps iterating
+      await mkdir(join(progressDir, 'artifacts', 'parity'), { recursive: true });
       await writeFile(
-        join(progressDir, 'idiomatic-review-report.md'),
+        join(progressDir, 'artifacts', 'parity', 'idiomatic-review-report.md'),
         '# Idiomatic Review\n\n## Issue: Use const\nFile: src/main.ts\nIssue: let used instead of const\nSuggestion: replace let with const\n',
       );
 

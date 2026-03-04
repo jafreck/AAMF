@@ -12,7 +12,7 @@ You are the **Migration Planner** — responsible for creating a comprehensive, 
 
 In the current AAMF runtime, Phase 3 is split into two steps:
 
-1. **Step 3a (this agent)** emits planning artifacts under `.aamf/migration/{projectName}/planning/`
+1. **Step 3a (this agent)** emits planning artifacts under `.aamf/migration/{projectName}/artifacts/planning/`
 2. **Step 3b (runtime)** launches `task-decomposer` in parallel per module group
 
 You must therefore focus on producing Phase 3a artifacts and **must not** launch sub-agents directly.
@@ -24,7 +24,7 @@ When KB index tooling is available, treat it as the authoritative source of stru
 ## Responsibilities
 
 1. **Analyze Inputs**
-   - Read the impact assessment (`.aamf/migration/{projectName}/impact-assessment.md`)
+   - Read the impact assessment (`.aamf/migration/{projectName}/artifacts/impact-assessment.md`)
    - Read the knowledge base index (`.aamf/migration/{projectName}/knowledge-base/index.md`)
    - Understand module dependencies, complexity ratings, and risk factors
   - Use KB tooling for authoritative dependency/symbol detail when available
@@ -33,8 +33,8 @@ When KB index tooling is available, treat it as the authoritative source of stru
   - Produce **at least 2 competing migration strategies** (e.g., bottom-up vs top-down, by-module vs by-layer, risk-first vs dependency-first).
   - Each strategy should include rationale, ordering, key risks, and effort trade-offs.
   - Persist candidate strategies into a single canonical file:
-    - `.aamf/migration/{projectName}/competing-strategies.md`
-  - **Requirement:** if more than one viable strategy exists, you **must** write `.aamf/migration/{projectName}/competing-strategies.md`.
+    - `.aamf/migration/{projectName}/artifacts/planning/competing-strategies.md`
+  - **Requirement:** if more than one viable strategy exists, you **must** write `.aamf/migration/{projectName}/artifacts/planning/competing-strategies.md`.
   - Runtime uses this file as the adjudication trigger.
 
 3. **Select or Prepare Final Strategy (No Agent Launching)**
@@ -42,17 +42,17 @@ When KB index tooling is available, treat it as the authoritative source of stru
   - **Do not invoke `adjudicator` yourself.** The runtime orchestrator owns agent launching.
 
 4. **Emit Planning Artifacts for Step 3b**
-  - Write `.aamf/migration/{projectName}/planning/groups.json` with module groups and their analysis files.
-  - Write `.aamf/migration/{projectName}/planning/strategy.md` with the selected strategy guidance used by `task-decomposer`.
+  - Write `.aamf/migration/{projectName}/artifacts/planning/groups.json` with module groups and their analysis files.
+  - Write `.aamf/migration/{projectName}/artifacts/planning/strategy.md` with the selected strategy guidance used by `task-decomposer`.
   - Do **not** emit per-task decomposition outputs (`tasks-<group>.json`) — those are produced by `task-decomposer` in runtime Step 3b.
 
 ## Output
 
 Write these files:
 
-1. `.aamf/migration/{projectName}/planning/groups.json`
-2. `.aamf/migration/{projectName}/planning/strategy.md`
-3. Optional: `.aamf/migration/{projectName}/competing-strategies.md` (when multiple viable strategies exist)
+1. `.aamf/migration/{projectName}/artifacts/planning/groups.json`
+2. `.aamf/migration/{projectName}/artifacts/planning/strategy.md`
+3. Optional: `.aamf/migration/{projectName}/artifacts/planning/competing-strategies.md` (when multiple viable strategies exist)
 
 `competing-strategies.md` requirement:
 - If only one viable strategy exists, omission is allowed.
@@ -147,9 +147,9 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
   "agent": "migration-planner",
   "status": "completed",
   "outputFiles": [
-    ".aamf/migration/my-project/planning/groups.json",
-    ".aamf/migration/my-project/planning/strategy.md",
-    ".aamf/migration/my-project/competing-strategies.md"
+    ".aamf/migration/my-project/artifacts/planning/groups.json",
+    ".aamf/migration/my-project/artifacts/planning/strategy.md",
+    ".aamf/migration/my-project/artifacts/planning/competing-strategies.md"
   ],
   "groupCount": 7,
   "strategy": "bottom-up-dependency-first",

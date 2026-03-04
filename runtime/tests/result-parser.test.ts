@@ -262,6 +262,97 @@ Here are the tasks:
     });
   });
 
+  describe('readTaskResultJson', () => {
+    it('should read sidecar from artifacts/results/ path', async () => {
+      const { mkdtemp, rm, writeFile, mkdir } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-sidecar-'));
+      try {
+        const resultsDir = join(dir, 'artifacts', 'results');
+        await mkdir(resultsDir, { recursive: true });
+        const sidecar = {
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'pass',
+          issues: [],
+        };
+        await writeFile(
+          join(resultsDir, 'parity-verifier-task-001.result.json'),
+          JSON.stringify(sidecar),
+          'utf-8',
+        );
+        const result = await ResultParser.readTaskResultJson(dir, 'parity-verifier', 'task-001');
+        expect(result).toBeDefined();
+        expect(result?.parity).toBe('pass');
+        expect(result?.issues).toHaveLength(0);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should return undefined when no sidecar file exists', async () => {
+      const { mkdtemp, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-sidecar-'));
+      try {
+        const result = await ResultParser.readTaskResultJson(dir, 'parity-verifier', 'task-999');
+        expect(result).toBeUndefined();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should ignore legacy results/ path and return undefined', async () => {
+      const { mkdtemp, rm, writeFile, mkdir } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-sidecar-'));
+      try {
+        // Write sidecar ONLY to legacy path
+        const legacyDir = join(dir, 'results');
+        await mkdir(legacyDir, { recursive: true });
+        const sidecar = {
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'pass',
+          issues: [],
+        };
+        await writeFile(
+          join(legacyDir, 'parity-verifier-task-001.result.json'),
+          JSON.stringify(sidecar),
+          'utf-8',
+        );
+        // Should NOT find it — legacy path is no longer consulted
+        const result = await ResultParser.readTaskResultJson(dir, 'parity-verifier', 'task-001');
+        expect(result).toBeUndefined();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should return undefined for malformed JSON in sidecar', async () => {
+      const { mkdtemp, rm, writeFile, mkdir } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-sidecar-'));
+      try {
+        const resultsDir = join(dir, 'artifacts', 'results');
+        await mkdir(resultsDir, { recursive: true });
+        await writeFile(
+          join(resultsDir, 'parity-verifier-task-001.result.json'),
+          'not valid json {{{',
+          'utf-8',
+        );
+        const result = await ResultParser.readTaskResultJson(dir, 'parity-verifier', 'task-001');
+        expect(result).toBeUndefined();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('AamfOutputBase schema', () => {
     it('should accept a minimal valid output', () => {
       const result = AamfOutputBase.parse({ status: 'completed', agent: 'code-migrator' });

@@ -88,7 +88,7 @@ Each suite brief in the test plan should follow this template:
 
 1. `.aamf/migration/{projectName}/e2e-test-plan.md` — the full test strategy and suite briefs
 2. Test files in the target project's test directory (written by `test-writer` sub-agents)
-3. Update `.aamf/migration/{projectName}/progress.md`:
+3. Update `.aamf/migration/{projectName}/reports/progress.md`:
 
 ```markdown
 ## End-to-End Tests

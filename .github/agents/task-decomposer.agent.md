@@ -29,7 +29,7 @@ When KB index tooling is available, treat it as the authoritative source of stru
 3. Keep tasks atomic, independently executable, and verifiable.
 4. Prefer KB index-derived dependency/symbol evidence when determining task boundaries and line ranges.
 5. Write the task list to:
-   - `.aamf/migration/{projectName}/planning/tasks-{groupId}.json`
+   - `.aamf/migration/{projectName}/artifacts/planning/tasks-{groupId}.json`
 
 ## Task JSON Schema
 
@@ -51,7 +51,7 @@ The same schema path is also provided in `inputFiles` so it is available even wh
 
 Your response must end with a fenced `aamf-json` code block and it must be the **last fenced block**.
 
-The file `.aamf/migration/{projectName}/planning/tasks-{groupId}.json` is the single source of truth for task payload. Do not duplicate task objects in stdout metadata.
+The file `.aamf/migration/{projectName}/artifacts/planning/tasks-{groupId}.json` is the single source of truth for task payload. Do not duplicate task objects in stdout metadata.
 
 ### Schema
 
@@ -60,7 +60,7 @@ The file `.aamf/migration/{projectName}/planning/tasks-{groupId}.json` is the si
   "agent": "task-decomposer",
   "status": "<completed | failed | needs-review>",
   "taskId": "<groupId>",
-  "outputFiles": [".aamf/migration/{projectName}/planning/tasks-{groupId}.json"],
+  "outputFiles": [".aamf/migration/{projectName}/artifacts/planning/tasks-{groupId}.json"],
   "taskCount": 0,
   "notes": "<brief decomposition summary>"
 }
@@ -78,7 +78,7 @@ The file `.aamf/migration/{projectName}/planning/tasks-{groupId}.json` is the si
   "agent": "task-decomposer",
   "status": "completed",
   "taskId": "core",
-  "outputFiles": [".aamf/migration/my-project/planning/tasks-core.json"],
+  "outputFiles": [".aamf/migration/my-project/artifacts/planning/tasks-core.json"],
   "taskCount": 8,
   "notes": "Decomposed core group into 8 tasks with no dependency cycles."
 }

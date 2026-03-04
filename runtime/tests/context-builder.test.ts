@@ -6,18 +6,65 @@ import { ContextBuilder } from '../src/agents/context-builder.js';
 import { AgentContext } from '../src/agents/types.js';
 import { createMockConfig, createSilentLogger } from './helpers/mocks.js';
 import { ensureDir, fileExists, readJson } from '../src/util/fs.js';
+import type { RuntimePaths } from '../src/core/runtime-paths.js';
 
 describe('ContextBuilder', () => {
   let tempDir: string;
   let progressDir: string;
   let builder: ContextBuilder;
+  let paths: RuntimePaths;
+
+  function buildTestPaths(root: string): RuntimePaths {
+    const stateDir = join(root, 'state');
+    const logsRuntimeDir = join(root, 'logs', 'runtime');
+    const logsAgentsDir = join(root, 'logs', 'agents');
+    const logsCommandsDir = join(root, 'logs', 'commands');
+    const artifactsDir = join(root, 'artifacts');
+    const artifactsPlanningDir = join(artifactsDir, 'planning');
+    const artifactsParityDir = join(artifactsDir, 'parity');
+    const reportsDir = join(root, 'reports');
+    const metricsDir = join(root, 'metrics');
+    return {
+      root,
+      stateDir,
+      checkpointFile: join(stateDir, 'checkpoint.json'),
+      checkpointBackupFile: join(stateDir, 'checkpoint.backup.json'),
+      runManifestFile: join(stateDir, 'run-manifest.json'),
+      logsRuntimeDir,
+      migrationLogFile: join(logsRuntimeDir, 'migration.log'),
+      logsAgentsDir,
+      logsCommandsDir,
+      logsCommandBuildDir: join(logsCommandsDir, 'build'),
+      logsCommandTestDir: join(logsCommandsDir, 'test'),
+      artifactsDir,
+      artifactsContextsDir: join(artifactsDir, 'contexts'),
+      artifactsResultsDir: join(artifactsDir, 'results'),
+      artifactsPlanningDir,
+      artifactsParityDir,
+      artifactsAdjudicationDir: join(artifactsDir, 'adjudication'),
+      reportsDir,
+      progressReportFile: join(reportsDir, 'progress.md'),
+      reportsObservabilityDir: join(reportsDir, 'observability'),
+      metricsDir,
+      metricsInvocationsFile: join(metricsDir, 'invocations.jsonl'),
+      metricsSummaryFile: join(metricsDir, 'summary.json'),
+      kbDbFile: join(root, 'kb.db'),
+      knowledgeBaseDir: join(root, 'knowledge-base'),
+      impactAssessmentFile: join(artifactsDir, 'impact-assessment.md'),
+      migrationPlanFile: join(artifactsPlanningDir, 'migration-plan.md'),
+      competingStrategiesFile: join(artifactsPlanningDir, 'competing-strategies.md'),
+      finalParityReportFile: join(artifactsParityDir, 'final-parity-report.md'),
+      idiomaticReviewReportFile: join(artifactsParityDir, 'idiomatic-review-report.md'),
+    };
+  }
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'aamf-ctx-test-'));
     progressDir = join(tempDir, 'progress');
     await ensureDir(progressDir);
     const config = createMockConfig();
-    builder = new ContextBuilder(config, progressDir);
+    paths = buildTestPaths(progressDir);
+    builder = new ContextBuilder(config, progressDir, paths);
   });
 
   afterEach(async () => {
@@ -468,7 +515,7 @@ describe('ContextBuilder', () => {
           contextWindowTokens: 64_000,
         },
       });
-      const b = new ContextBuilder(config, progressDir);
+      const b = new ContextBuilder(config, progressDir, paths);
       const contextPath = await b.buildContext('impact-assessor', 1);
       const context = await readJson<AgentContext & { contextWindowTokens?: number }>(contextPath);
 
@@ -500,7 +547,7 @@ describe('ContextBuilder', () => {
           contextWindowTokens: 64_000,
         },
       });
-      const b = new ContextBuilder(config, progressDir);
+      const b = new ContextBuilder(config, progressDir, paths);
       const contextPath = await b.buildContext('impact-assessor', 1);
       const context = await readJson<AgentContext & { contextWindowTokens?: number }>(contextPath);
 
@@ -532,7 +579,7 @@ describe('ContextBuilder', () => {
           contextWindowTokens: 128_000,
         },
       });
-      const b = new ContextBuilder(config, progressDir);
+      const b = new ContextBuilder(config, progressDir, paths);
       const contextPath = await b.buildContext('impact-assessor', 1);
       const context = await readJson<AgentContext & { contextWindowTokens?: number }>(contextPath);
 

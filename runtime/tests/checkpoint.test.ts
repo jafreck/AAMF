@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { CheckpointManager } from '../src/core/checkpoint.js';
 import { Logger } from '../src/logging/logger.js';
-import { fileExists, readJson } from '../src/util/fs.js';
+import { ensureDir, fileExists, readJson } from '../src/util/fs.js';
 
 describe('CheckpointManager', () => {
   let tempDir: string;
@@ -151,7 +151,8 @@ describe('CheckpointManager', () => {
       resumeCount: 1,
       // cumulativeDurationMs intentionally omitted
     };
-    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), oldState);
 
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');
@@ -217,7 +218,8 @@ describe('CheckpointManager', () => {
       cumulativeDurationMs: 0,
       // completedTaskDurationsMs intentionally omitted
     };
-    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), oldState);
 
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');
@@ -315,7 +317,8 @@ describe('CheckpointManager', () => {
       completedTaskDurationsMs: [],
       // metricsCount intentionally omitted
     };
-    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), oldState);
 
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');
@@ -342,7 +345,8 @@ describe('CheckpointManager', () => {
       completedTaskDurationsMs: [],
       metricsCount: 0,
     };
-    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), oldState);
 
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');
@@ -451,7 +455,8 @@ describe('CheckpointManager', () => {
       metricsCount: 0,
       // phase0Fingerprint intentionally omitted
     };
-    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), oldState);
 
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');
@@ -533,7 +538,8 @@ describe('CheckpointManager', () => {
       metricsCount: 0,
       // adjudicationWaivers/adjudicationEvents intentionally omitted
     };
-    await writeJson(join(tempDir, 'checkpoint.json'), oldState);
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), oldState);
 
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');

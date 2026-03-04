@@ -59,7 +59,7 @@ The context JSON contains:
 
 ## Output
 
-Write to `.aamf/migration/{projectName}/parity-reports/task-{taskId}.md` and also write a structured JSON result file at:
+Write to `.aamf/migration/{projectName}/artifacts/parity/task-{taskId}.md` and also write a structured JSON result file at:
 
 ```
 .aamf/migration/{projectName}/results/parity-verifier-{taskId}.result.json
@@ -72,7 +72,7 @@ The JSON must conform to this schema:
   "taskId": "task-001",
   "agent": "parity-verifier",
   "status": "completed",
-  "outputFiles": ["parity-reports/task-001.md"],
+  "outputFiles": ["artifacts/parity/task-001.md"],
   "parity": "pass",
   "issues": [
     {
@@ -134,7 +134,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 {
   "agent": "parity-verifier",
   "status": "completed",
-  "outputFiles": ["parity-reports/task-001.md"],
+  "outputFiles": ["artifacts/parity/task-001.md"],
   "taskId": "task-001",
   "parity": "partial",
   "issues": [
