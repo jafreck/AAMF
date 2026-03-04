@@ -13,7 +13,8 @@ import type { AddressInfo } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { EmbeddingProvider } from '@aamf/lore';
 import { openReadOnly } from '../kb-server/db.js';
-import { createKbMcpServer } from '../kb-server/server.js';
+import { createKbMcpServer, type KbServerOptions } from '../kb-server/server.js';
+import type { SearchObserver } from '../kb-server/tools/search.js';
 import type { McpServerConfig } from '../agents/types.js';
 
 // Re-export for convenience.
@@ -38,15 +39,18 @@ export class KbServerProcess {
   private _port: number | null = null;
   private db: import('better-sqlite3').Database | null = null;
   private readonly embedder: EmbeddingProvider | undefined;
+  private readonly searchObserver: SearchObserver | undefined;
 
   /**
-   * @param dbPath     Path to the KB SQLite database.
-   * @param embedder   Optional pre-initialised embedding provider for semantic search.
-   *                   The caller owns the lifecycle — `stop()` will NOT dispose it.
+   * @param dbPath          Path to the KB SQLite database.
+   * @param embedder        Optional pre-initialised embedding provider for semantic search.
+   *                        The caller owns the lifecycle — `stop()` will NOT dispose it.
+   * @param searchObserver  Optional callback invoked after every kb_search call.
    */
-  constructor(dbPath: string, embedder?: EmbeddingProvider) {
+  constructor(dbPath: string, embedder?: EmbeddingProvider, searchObserver?: SearchObserver) {
     this.dbPath = dbPath;
     this.embedder = embedder;
+    this.searchObserver = searchObserver;
   }
 
   /**
@@ -69,7 +73,10 @@ export class KbServerProcess {
 
     this.db = openReadOnly(this.dbPath);
 
-    const mcpServer = createKbMcpServer(this.db, this.dbPath, this.embedder);
+    const serverOptions: KbServerOptions | undefined = this.searchObserver
+      ? { searchObserver: this.searchObserver }
+      : undefined;
+    const mcpServer = createKbMcpServer(this.db, this.dbPath, this.embedder, serverOptions);
 
     // Stateless transport: each POST request gets its own temporary session.
     const transport = new StreamableHTTPServerTransport({

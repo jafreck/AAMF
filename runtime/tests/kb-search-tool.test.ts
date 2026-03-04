@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { handler } from '../src/kb-server/tools/search.js';
+import { handler, type SearchObservation, type SearchObserver } from '../src/kb-server/tools/search.js';
 
 type Row = {
   symbol_id: number;
@@ -125,5 +125,85 @@ describe('kb search tool handler', () => {
 
     expect(result.mode_used).toBe('structural (no query-time embedder)');
     expect(result.results).toEqual([s1, s2]);
+  });
+});
+
+// ─── SearchObserver callback ────────────────────────────────────────────────
+
+describe('kb search tool – observer callback', () => {
+  const s1: Row = {
+    symbol_id: 1,
+    name: 'alpha',
+    kind: 'function',
+    file_path: 'a.ts',
+    start_line: 1,
+    end_line: 2,
+    score: -1,
+  };
+
+  it('should invoke observer with correct fields on structural search', async () => {
+    const db = makeDb({ structural: [s1] });
+    const observations: SearchObservation[] = [];
+    const observer: SearchObserver = (obs) => observations.push(obs);
+
+    await handler(db, { query: 'alpha', mode: 'structural' }, undefined, observer);
+
+    expect(observations).toHaveLength(1);
+    const obs = observations[0]!;
+    expect(obs.query).toBe('alpha');
+    expect(obs.requestedMode).toBe('structural');
+    expect(obs.modeUsed).toBe('structural');
+    expect(obs.resultCount).toBe(1);
+    expect(obs.topScore).toBe(-1);
+    expect(obs.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(obs.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('should report zero results and null topScore on no matches', async () => {
+    const db = makeDb({ structural: [] });
+    const observations: SearchObservation[] = [];
+    const observer: SearchObserver = (obs) => observations.push(obs);
+
+    await handler(db, { query: 'zzz', mode: 'structural' }, undefined, observer);
+
+    expect(observations).toHaveLength(1);
+    expect(observations[0]!.resultCount).toBe(0);
+    expect(observations[0]!.topScore).toBeNull();
+  });
+
+  it('should report fallback mode when semantic requested without embedder', async () => {
+    const db = makeDb({ structural: [s1] });
+    const observations: SearchObservation[] = [];
+    const observer: SearchObserver = (obs) => observations.push(obs);
+
+    await handler(db, { query: 'alpha', mode: 'semantic' }, undefined, observer);
+
+    expect(observations).toHaveLength(1);
+    expect(observations[0]!.requestedMode).toBe('semantic');
+    expect(observations[0]!.modeUsed).toBe('structural (no query-time embedder)');
+  });
+
+  it('should not break search if observer throws', async () => {
+    const db = makeDb({ structural: [s1] });
+    const throwingObserver: SearchObserver = () => { throw new Error('boom'); };
+
+    const result = await handler(db, { query: 'alpha', mode: 'structural' }, undefined, throwingObserver);
+
+    expect(result.mode_used).toBe('structural');
+    expect(result.results).toEqual([s1]);
+  });
+
+  it('should report fused mode on successful fused search', async () => {
+    const semantic = [{ ...s1, score: 0.01 }];
+    const db = makeDb({ structural: [s1], semantic });
+    const embedder = { embed: vi.fn().mockResolvedValue([[0.1, 0.2]]) };
+    const observations: SearchObservation[] = [];
+    const observer: SearchObserver = (obs) => observations.push(obs);
+
+    await handler(db, { query: 'alpha', mode: 'fused' }, embedder as any, observer);
+
+    expect(observations).toHaveLength(1);
+    expect(observations[0]!.requestedMode).toBe('fused');
+    expect(observations[0]!.modeUsed).toBe('fused');
   });
 });

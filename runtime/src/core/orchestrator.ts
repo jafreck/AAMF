@@ -724,7 +724,11 @@ export class MigrationOrchestrator {
   /** Start the KB MCP server (HTTP transport). */
   private async startKbServer(): Promise<void> {
     const { KbServerProcess } = await loadKbServerProcess();
-    this.kbServer = new KbServerProcess(this.kbDbPath, this.embedder);
+    this.kbServer = new KbServerProcess(this.kbDbPath, this.embedder, (obs) => {
+      this.logger.debug(
+        `kb_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
+      );
+    });
     try {
       await this.kbServer.start();
       this.logger.info('KB server started and ready');
