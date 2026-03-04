@@ -19,7 +19,18 @@ You must therefore focus on producing Phase 3a artifacts and **must not** launch
 
 ## Index-First Principle
 
-When KB index tooling is available, treat it as the authoritative source of structural facts (symbol locations, signatures, dependency edges, and source ranges). Use knowledge-base markdown as synthesized context for architecture, risks, and migration guidance. Do not duplicate exhaustive structural inventories in markdown outputs when index-backed facts are available.
+The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that exposes these tools:
+
+| Tool | Purpose |
+|------|---------|
+| `kb_lookup` | Symbol or file lookup (signatures, locations) |
+| `kb_graph` | Call-graph and import-graph queries |
+| `kb_search` | Structural, semantic, and fused code search |
+| `kb_snippet` | Source-code snippet extraction by line range |
+| `kb_metrics` | Aggregate code metrics |
+| `kb_writeback` | Write LLM-generated summaries back to the KB |
+
+When these tools are available, prefer them for structural facts over exhaustive markdown inventories. Use KB markdown only for synthesized architecture, risk, and migration context.
 
 ## Responsibilities
 
@@ -27,7 +38,7 @@ When KB index tooling is available, treat it as the authoritative source of stru
    - Read the impact assessment (`.aamf/migration/{projectName}/artifacts/impact-assessment.md`)
    - Read the knowledge base index (`.aamf/migration/{projectName}/knowledge-base/index.md`)
    - Understand module dependencies, complexity ratings, and risk factors
-  - Use KB tooling for authoritative dependency/symbol detail when available
+  - Use Lore tools (`kb_lookup`, `kb_graph`) for authoritative dependency/symbol detail when available
 
 2. **Generate Strategy Candidates**
   - Produce **at least 2 competing migration strategies** (e.g., bottom-up vs top-down, by-module vs by-layer, risk-first vs dependency-first).
@@ -109,7 +120,7 @@ Do not launch sub-agents directly from this agent. Runtime orchestrates `adjudic
 
 - **Do not read source code files** — rely entirely on the knowledge base and impact assessment.
 - Read only the knowledge base documents relevant to the current planning phase.
-- Use KB index tooling (graph/lookup/snippet) for code-layout and dependency detail.
+- Use Lore tools (`kb_graph`, `kb_lookup`, `kb_snippet`) for code-layout and dependency detail.
 - Treat KB markdown as decision context (architecture, risks, caveats), not as a full symbol/dependency inventory.
 - Write strategy and grouping artifacts incrementally and deterministically.
 
@@ -121,24 +132,7 @@ Do not launch sub-agents directly from this agent. Runtime orchestrates `adjudic
 
 ## Output Format
 
-Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record migration planning results. It **must** be the last fenced code block in your output.
-
-### Schema
-
-```json
-{
-  "agent": "migration-planner",
-  "status": "<completed | failed | needs-review>",
-  "outputFiles": [
-    "<path to planning/groups.json>",
-    "<path to planning/strategy.md>",
-    "<optional path to competing-strategies.md>"
-  ],
-  "groupCount": 0,
-  "strategy": "<short selected strategy label>",
-  "notes": "<summary of grouping rationale and planning trade-offs>"
-}
-```
+Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
 
 ### Example
 
@@ -157,7 +151,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 }
 ```
 
-> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.
+> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
 
 ## Input Schema (Required)
 

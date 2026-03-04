@@ -69,24 +69,7 @@ Initialize `.aamf/migration/{projectName}/reports/progress.md` with:
 - If the orchestrator CLI invocation fails to launch, retry once. On second failure, record the error and terminate.
 - Never attempt to perform migration work yourself — always delegate to the orchestrator.
 
-## Output Format
-
-Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to confirm the migration runner's initialization and handoff. It **must** be the last fenced code block in your output.
-
-### Schema
-
-```json
-{
-  "agent": "migration-runner",
-  "status": "<completed | failed | needs-review>",
-  "outputFiles": ["<paths to reports/progress.md and state/checkpoint.json initialized>"],
-  "projectName": "<name of the migration project>",
-  "orchestratorLaunched": true,
-  "notes": "<any validation errors or startup issues>"
-}
-```
-
-### Example
+## Output Format\n\nYour response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.\n\n### Example
 
 ```aamf-json
 {
@@ -102,7 +85,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 }
 ```
 
-> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.
+> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
 
 ## Input Schema (Required)
 

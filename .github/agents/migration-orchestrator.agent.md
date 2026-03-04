@@ -36,7 +36,7 @@ Execute these phases in order. On resume, skip completed phases (read from `stat
 - Launch: `adjudicator` (to select the best plan from competing proposals)
 - Input: Knowledge base, impact assessment
 - Output: `.aamf/migration/{projectName}/artifacts/planning/migration-plan.md`
-- **Important**: Structural decomposition should come from KB index tools; markdown KB should stay high-level.
+- **Important**: Structural decomposition should come from Lore tools (`kb_graph`, `kb_lookup`); markdown KB should stay high-level.
 
 ### Phase 4: Code Migration (Iterative Loop)
 For each task in the migration plan:
@@ -138,22 +138,7 @@ When any agent invocation fails:
 
 ## Output Format
 
-Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to track orchestrator phase transitions and overall migration progress. It **must** be the last fenced code block in your output.
-
-### Schema
-
-```json
-{
-  "agent": "migration-orchestrator",
-  "status": "<completed | failed | needs-review>",
-  "outputFiles": ["<paths to reports/progress.md and state/checkpoint.json updated>"],
-  "currentPhase": 0,
-  "completedTasks": ["<task-NNN>"],
-  "failedTasks": ["<task-NNN>"],
-  "overallStatus": "<in-progress | completed | blocked>",
-  "notes": "<summary of current state, any blocked tasks, and next steps>"
-}
-```
+Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
 
 ### Example
 
@@ -173,7 +158,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 }
 ```
 
-> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.
+> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
 
 ## Input Schema (Required)
 
