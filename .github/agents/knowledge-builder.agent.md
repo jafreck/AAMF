@@ -14,7 +14,18 @@ The knowledge base must serve as a **context-efficient substitute for reading so
 
 ## Index-First Principle
 
-When KB index tooling is available, treat it as the authoritative source of structural facts (symbol locations, signatures, dependency edges, and source ranges). Use knowledge-base markdown as synthesized context for architecture, risks, and migration guidance. Do not duplicate exhaustive structural inventories in markdown outputs when index-backed facts are available.
+The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that exposes these tools:
+
+| Tool | Purpose |
+|------|---------|
+| `kb_lookup` | Symbol or file lookup (signatures, locations) |
+| `kb_graph` | Call-graph and import-graph queries |
+| `kb_search` | Structural, semantic, and fused code search |
+| `kb_snippet` | Source-code snippet extraction by line range |
+| `kb_metrics` | Aggregate code metrics |
+| `kb_writeback` | Write LLM-generated summaries back to the KB |
+
+When these tools are available, prefer them for structural facts over exhaustive markdown inventories. Use KB markdown only for synthesized architecture, risk, and migration context.
 
 ## Responsibilities
 
@@ -66,20 +77,21 @@ knowledge-base/
 │   └── ...
 ```
 
-## KB MCP Tools
+## Lore MCP Usage
 
-If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer MCP tools over exhaustive code layout markdown:
+When the `aamf-kb` tools listed in the Index-First Principle section are available, use them instead of exhaustive code layout in markdown:
 
 - **`kb_graph`** for module and symbol dependency topology.
 - **`kb_lookup`** for API surface/signature/source locations.
 - **`kb_snippet`** for targeted line-range extraction when behavior details are needed.
+- **`kb_search`** for finding symbols, patterns, or code by name or semantics.
 
-### Index-First Rules (Avoid Duplication)
+### Avoid Duplication
 
 - Do **not** reproduce complete symbol tables, full API dumps, or exhaustive dependency edge lists in markdown.
-- Use KB tools to gather structural facts, then summarize only what downstream agents need for migration decisions.
+- Use Lore tools to gather structural facts, then summarize only what downstream agents need for migration decisions.
 - Include concise evidence pointers (file paths, symbol names, or snippet ranges) for non-obvious claims.
-- If a detail is fully retrievable via KB tools and not decision-relevant, omit it from markdown.
+- If a detail is fully retrievable via Lore tools and not decision-relevant, omit it from markdown.
 - Prefer "what matters for migration" over "everything present in code".
 
 ## Context Window Management
@@ -87,7 +99,7 @@ If the KB index is available (indicated by `KB_DB_PATH` in your environment), pr
 - **Process the codebase module-by-module**, not all at once.
 - For each module, read only the files in that module, document it, then release that context before moving to the next.
 - Use `find` and `wc -l` to identify files and sizes without reading content.
-- When KB tools are available, use them first for symbols/dependencies; read source snippets only when behavior needs clarification.
+- When Lore tools are available, use them first for symbols/dependencies; read source snippets only when behavior needs clarification.
 - For very large modules (>20 files), process in sub-batches of 5-10 files.
 - Write each module document to disk immediately after completing it — do not hold all documents in context.
 - The `index.md` should be built incrementally — append each module as its documentation is completed.
@@ -136,19 +148,7 @@ Each module document should follow this template:
 
 ## Output Format
 
-Your response must end with a fenced `aamf-json` code block. This block is parsed by the AAMF runtime to record knowledge base construction results. It **must** be the last fenced code block in your output.
-
-### Schema
-
-```json
-{
-  "agent": "knowledge-builder",
-  "status": "<completed | failed | needs-review>",
-  "outputFiles": ["<paths to knowledge base files written>"],
-  "modulesDocumented": 0,
-  "notes": "<summary of coverage and any modules that could not be fully documented>"
-}
-```
+Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
 
 ### Example
 
@@ -162,11 +162,11 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
       ".aamf/migration/my-project/knowledge-base/modules/auth.md"
   ],
   "modulesDocumented": 12,
-   "notes": "All modules documented. KB index-backed graph and symbol lookups were used for structural detail."
+   "notes": "All modules documented. Lore-backed graph and symbol lookups were used for structural detail."
 }
 ```
 
-> ⚠️ **Non-conformance warning**: If the `aamf-json` block is missing, malformed, or is not the last fenced code block in your response, the AAMF runtime will mark this agent run as failed.
+> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
 
 ## Input Schema (Required)
 
