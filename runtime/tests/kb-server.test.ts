@@ -12,15 +12,14 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join, resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { IndexBuilder } from '@aamf/lore';
-import { openReadOnly } from '../src/kb-server/db.js';
-import type { Database } from '../src/kb-server/db.js';
-import { handler as lookupHandler } from '../src/kb-server/tools/lookup.js';
-import { handler as graphHandler } from '../src/kb-server/tools/graph.js';
-import { handler as searchHandler } from '../src/kb-server/tools/search.js';
-import { handler as snippetHandler } from '../src/kb-server/tools/snippet.js';
-import { handler as metricsHandler } from '../src/kb-server/tools/metrics.js';
-import { handler as writebackHandler } from '../src/kb-server/tools/writeback.js';
+import { IndexBuilder, openReadOnly } from '@aamf/lore';
+import type { Database } from '@aamf/lore';
+import { handler as lookupHandler } from '@aamf/lore/kb-server/tools/lookup';
+import { handler as graphHandler } from '@aamf/lore/kb-server/tools/graph';
+import { handler as searchHandler } from '@aamf/lore/kb-server/tools/search';
+import { handler as snippetHandler } from '@aamf/lore/kb-server/tools/snippet';
+import { handler as metricsHandler } from '@aamf/lore/kb-server/tools/metrics';
+import { handler as writebackHandler } from '@aamf/lore/kb-server/tools/writeback';
 
 // ─── Fixture setup ────────────────────────────────────────────────────────────
 

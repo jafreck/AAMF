@@ -726,7 +726,7 @@ export class MigrationOrchestrator {
     const { KbServerProcess } = await loadKbServerProcess();
     this.kbServer = new KbServerProcess(this.kbDbPath, this.embedder, (obs) => {
       this.logger.debug(
-        `kb_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
+        `lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
       );
     });
     try {

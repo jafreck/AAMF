@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { handler, type SearchObservation, type SearchObserver } from '../src/kb-server/tools/search.js';
+import { handler, type SearchObservation, type SearchObserver } from '@aamf/lore/kb-server/tools/search';
 
 type Row = {
   symbol_id: number;
