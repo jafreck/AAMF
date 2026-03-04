@@ -106,7 +106,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 {
   "agent": "failure-adjudicator",
   "status": "completed",
-  "outputFiles": ["src/auth/login.ts", ".aamf/migration/my-project/progress.md"],
+  "outputFiles": ["src/auth/login.ts", ".aamf/migration/my-project/reports/progress.md"],
   "taskId": "task-001",
   "recoveryStrategy": "direct-fix",
   "resolved": true,

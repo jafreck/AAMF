@@ -69,7 +69,7 @@ Per-task parity verification catches issues within individual files but can miss
 
 ## Output
 
-Write to `.aamf/migration/{projectName}/final-parity-report.md`
+Write to `.aamf/migration/{projectName}/artifacts/parity/final-parity-report.md`
 
 ## Sub-Agents
 
@@ -114,7 +114,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 {
   "agent": "final-parity-checker",
   "status": "completed",
-  "outputFiles": [".aamf/migration/my-project/final-parity-report.md"],
+  "outputFiles": [".aamf/migration/my-project/artifacts/parity/final-parity-report.md"],
   "overallParity": "partial",
   "missingFiles": 0,
   "stubsFound": 2,

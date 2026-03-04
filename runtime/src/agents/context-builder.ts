@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { AgentName, AgentContext } from './types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { writeJson, ensureDir } from '../util/fs.js';
-import { buildLegacyRuntimePaths } from '../core/runtime-paths.js';
+import type { RuntimePaths } from '../core/runtime-paths.js';
 
 const TASK_DECOMPOSER_SCHEMA_PATH = fileURLToPath(
   new URL('./task-decomposer.tasks.schema.json', import.meta.url),
@@ -27,10 +27,10 @@ export interface ContextBuildOptions {
  * set of input files, an output path, and an optional payload.
  */
 export class ContextBuilder {
-  private readonly legacyPaths: ReturnType<typeof buildLegacyRuntimePaths>;
+  private readonly paths: RuntimePaths;
 
-  constructor(private config: MigrationConfig, private progressDir: string) {
-    this.legacyPaths = buildLegacyRuntimePaths(progressDir);
+  constructor(private config: MigrationConfig, private progressDir: string, paths: RuntimePaths) {
+    this.paths = paths;
   }
 
   /**
@@ -149,9 +149,9 @@ export class ContextBuilder {
     taskId?: string,
     payload?: Record<string, unknown>,
   ): { inputFiles: string[]; outputPath: string; agentPayload?: Record<string, unknown> } {
-    const kbDir = this.legacyPaths.knowledgeBaseDir;
-    const impactAssessment = this.legacyPaths.impactAssessmentFile;
-    const migrationPlan = this.legacyPaths.migrationPlanFile;
+    const kbDir = this.paths.knowledgeBaseDir;
+    const impactAssessment = this.paths.impactAssessmentFile;
+    const migrationPlan = this.paths.migrationPlanFile;
     const src = this.config.source.path;
     const out = this.config.target.outputPath;
     const remediationContext = this.getRemediationContext(payload);

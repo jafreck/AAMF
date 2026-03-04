@@ -63,7 +63,7 @@ The context JSON contains:
 
 ## Output
 
-Write the full assessment to `.aamf/migration/{projectName}/impact-assessment.md`:
+Write the full assessment to `.aamf/migration/{projectName}/artifacts/impact-assessment.md`:
 
 ```markdown
 # Impact Assessment: {projectName}
@@ -151,7 +151,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 {
   "agent": "impact-assessor",
   "status": "completed",
-  "outputFiles": [".aamf/migration/my-project/impact-assessment.md"],
+  "outputFiles": [".aamf/migration/my-project/artifacts/impact-assessment.md"],
   "totalFiles": 84,
   "totalLoc": 12400,
   "riskCount": 5,

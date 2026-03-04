@@ -75,7 +75,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 {
   "agent": "idiomatic-reviewer",
   "status": "completed",
-  "outputFiles": [".aamf/migration/my-project/idiomatic-review-report.md"],
+  "outputFiles": [".aamf/migration/my-project/artifacts/parity/idiomatic-review-report.md"],
   "issuesFound": 5,
   "notes": "Found 5 non-idiomatic patterns; most are direct transliterations of source language constructs."
 }

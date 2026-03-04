@@ -35,18 +35,18 @@ The context JSON contains:
 ## Critical Design Principles
 
 1. **Out-of-Process Execution**: You NEVER execute migration work yourself. You launch each agent as a **headless, out-of-process CLI invocation** of the same model.
-2. **Checkpointing**: After every phase completion (and at key sub-phase boundaries), write checkpoint state to `checkpoints.json` so the migration can resume from any failure point.
+2. **Checkpointing**: After every phase completion (and at key sub-phase boundaries), write checkpoint state to `state/checkpoint.json` so the migration can resume from any failure point.
 3. **Context Window Discipline**: You must NOT load source code files into your context. You only read/write progress files, checkpoint state, and phase outputs (summaries, plans, reports). All heavy analysis is delegated to sub-agents.
 4. **Read-only agents may be parallelized**: Impact assessment, knowledge building, and analysis agents can run concurrently. Code-writing agents run serially.
 
 ## Migration Phases
 
-Execute these phases in order. On resume, skip completed phases (read from `checkpoints.json`).
+Execute these phases in order. On resume, skip completed phases (read from `state/checkpoint.json`).
 
 ### Phase 1: Impact Assessment & Cost Estimation
 - Launch: `impact-assessor`
 - Input: Source codebase path, target specification
-- Output: `.aamf/migration/{projectName}/impact-assessment.md`
+- Output: `.aamf/migration/{projectName}/artifacts/impact-assessment.md`
 - Parallelizable: YES (read-only)
 
 ### Phase 2: Investigation & Knowledge Base Construction
@@ -59,7 +59,7 @@ Execute these phases in order. On resume, skip completed phases (read from `chec
 - Launch: `migration-planner` (spawns multiple investigator instances)
 - Launch: `adjudicator` (to select the best plan from competing proposals)
 - Input: Knowledge base, impact assessment
-- Output: `.aamf/migration/{projectName}/migration-plan.md`
+- Output: `.aamf/migration/{projectName}/artifacts/planning/migration-plan.md`
 - **Important**: Structural decomposition should come from KB index tools; markdown KB should stay high-level.
 
 ### Phase 4: Code Migration (Iterative Loop)
@@ -75,7 +75,7 @@ Serial execution required for code-writing. Parity verification is read-only and
 ### Phase 5: Final Parity Check
 - Launch: `final-parity-checker`
 - Input: Entire migrated codebase + original codebase
-- Output: `.aamf/migration/{projectName}/final-parity-report.md`
+- Output: `.aamf/migration/{projectName}/artifacts/parity/final-parity-report.md`
 - If gaps/stubs/differences found → Loop back to Phase 4 for targeted fixes.
 
 ### Phase 6: End-to-End Test Crafting
@@ -106,7 +106,7 @@ Serial execution required for code-writing. Parity verification is read-only and
 
 ## Checkpointing Format
 
-`checkpoints.json`:
+`state/checkpoint.json`:
 ```json
 {
   "projectName": "...",
@@ -116,9 +116,9 @@ Serial execution required for code-writing. Parity verification is read-only and
   "completedTasks": ["module-user-model", "module-db-layer"],
   "failedTasks": [],
   "phaseOutputs": {
-    "1": "impact-assessment.md",
+    "1": "artifacts/impact-assessment.md",
     "2": "knowledge-base/",
-    "3": "migration-plan.md"
+    "3": "artifacts/planning/migration-plan.md"
   },
   "lastCheckpoint": "2026-02-21T10:30:00Z"
 }
@@ -126,7 +126,7 @@ Serial execution required for code-writing. Parity verification is read-only and
 
 ## Progress Tracking
 
-Update `.aamf/migration/{projectName}/progress.md` after every phase transition and significant sub-phase event. Include:
+Update `.aamf/migration/{projectName}/reports/progress.md` after every phase transition and significant sub-phase event. Include:
 - Current phase and task
 - Completion percentages
 - Any failures with timestamps
@@ -135,8 +135,8 @@ Update `.aamf/migration/{projectName}/progress.md` after every phase transition 
 ## Failure Handling
 
 When any agent invocation fails:
-1. Record the failure in `progress.md` with full context.
-2. Add the failed task to `failedTasks` in `checkpoints.json`.
+1. Record the failure in `reports/progress.md` with full context.
+2. Add the failed task to `failedTasks` in `state/checkpoint.json`.
 3. Launch `failure-adjudicator` agent with the failure context.
 4. `failure-adjudicator` will produce a fix plan (potentially with reduced scope).
 5. Re-attempt the failed task with the fix plan.
@@ -145,7 +145,7 @@ When any agent invocation fails:
 ## Context Window Management
 
 - **Never load source code** — delegate all code reading to sub-agents.
-- Only maintain: progress.md, checkpoints.json, phase output summaries.
+- Only maintain: reports/progress.md, state/checkpoint.json, phase output summaries.
 - When passing context to sub-agents, provide only the relevant slice.
 - Use file references (paths) instead of inline content wherever possible.
 
@@ -159,7 +159,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 {
   "agent": "migration-orchestrator",
   "status": "<completed | failed | needs-review>",
-  "outputFiles": ["<paths to progress.md and checkpoints.json updated>"],
+  "outputFiles": ["<paths to reports/progress.md and state/checkpoint.json updated>"],
   "currentPhase": 0,
   "completedTasks": ["<task-NNN>"],
   "failedTasks": ["<task-NNN>"],
@@ -175,8 +175,8 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
   "agent": "migration-orchestrator",
   "status": "completed",
   "outputFiles": [
-    ".aamf/migration/my-project/progress.md",
-    ".aamf/migration/my-project/checkpoints.json"
+    ".aamf/migration/my-project/reports/progress.md",
+    ".aamf/migration/my-project/state/checkpoint.json"
   ],
   "currentPhase": 7,
   "completedTasks": ["task-001", "task-002", "task-003"],

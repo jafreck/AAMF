@@ -42,8 +42,8 @@ The context JSON contains:
 
 2. **Initialize Progress Tracking**
    - Create the progress directory at `.aamf/migration/{projectName}/` if it does not exist.
-   - Create the initial `progress.md` file with migration metadata.
-   - Create `checkpoints.json` to track orchestrator checkpoint state.
+   - Create the initial `reports/progress.md` file with migration metadata.
+   - Create `state/checkpoint.json` to track orchestrator checkpoint state.
 
 3. **Launch the Migration Orchestrator**
    - Invoke the `migration-orchestrator` agent with the migration configuration and progress directory path.
@@ -60,7 +60,7 @@ The context JSON contains:
 
 ## Progress File Initialization
 
-Initialize `.aamf/migration/{projectName}/progress.md` with:
+Initialize `.aamf/migration/{projectName}/reports/progress.md` with:
 
 ```markdown
 # Migration Progress: {projectName}
@@ -76,7 +76,7 @@ Initialize `.aamf/migration/{projectName}/progress.md` with:
 |-------|--------|---------|-----------|-------|
 ```
 
-Initialize `.aamf/migration/{projectName}/checkpoints.json` with:
+Initialize `.aamf/migration/{projectName}/state/checkpoint.json` with:
 
 ```json
 {
@@ -93,7 +93,7 @@ Initialize `.aamf/migration/{projectName}/checkpoints.json` with:
 
 ## Error Handling
 
-- If configuration validation fails, write the error to progress.md and terminate with a clear message.
+- If configuration validation fails, write the error to reports/progress.md and terminate with a clear message.
 - If the orchestrator invocation fails to launch, retry once. On second failure, record the error and terminate.
 - Never attempt to perform migration work yourself — always delegate to the orchestrator.
 
@@ -113,7 +113,7 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
 {
   "agent": "migration-runner",
   "status": "<completed | failed | needs-review>",
-  "outputFiles": ["<paths to progress.md and checkpoints.json initialized>"],
+  "outputFiles": ["<paths to reports/progress.md and state/checkpoint.json initialized>"],
   "projectName": "<project name>",
   "orchestratorLaunched": true,
   "notes": "<brief summary of initialization and any validation issues>"
@@ -127,8 +127,8 @@ Your response must end with a fenced `aamf-json` code block. This block is parse
   "agent": "migration-runner",
   "status": "completed",
   "outputFiles": [
-    ".aamf/migration/my-project/progress.md",
-    ".aamf/migration/my-project/checkpoints.json"
+    ".aamf/migration/my-project/reports/progress.md",
+    ".aamf/migration/my-project/state/checkpoint.json"
   ],
   "projectName": "my-project",
   "orchestratorLaunched": true,

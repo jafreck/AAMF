@@ -37,7 +37,7 @@ import type { Phase4MetricsSnapshot } from '../observability/metrics-collector.j
 import { ReportGenerator } from '../observability/report-generator.js';
 import type { InvocationMetric } from '../agents/types.js';
 import { z } from 'zod';
-import { buildLegacyRuntimePaths, buildRuntimePaths } from './runtime-paths.js';
+import { buildRuntimePaths } from './runtime-paths.js';
 
 const loadLore = () => import('@aamf/lore');
 const loadKbServerProcess = () => import('./kb-server-process.js');
@@ -247,7 +247,6 @@ export class MigrationOrchestrator {
   private readonly reportGenerator: ReportGenerator;
   private readonly runId: string;
   private readonly paths: ReturnType<typeof buildRuntimePaths>;
-  private readonly legacyPaths: ReturnType<typeof buildLegacyRuntimePaths>;
   /** Tracks the maximum concurrency observed across all ParallelExecutor instances. */
   private _peakConcurrency = 0;
   /** Unique task IDs that have consumed routed-task budget (heavy/critical). */
@@ -276,8 +275,7 @@ export class MigrationOrchestrator {
     this.projectRoot = projectRoot;
     this.paths = buildRuntimePaths(projectRoot, config.projectName);
     this.progressDir = this.paths.root;
-    this.legacyPaths = buildLegacyRuntimePaths(this.progressDir);
-    this.contextBuilder = new ContextBuilder(config, this.progressDir);
+    this.contextBuilder = new ContextBuilder(config, this.progressDir, this.paths);
     this.tokenTracker = new TokenTracker();
     this.singlePhase = singlePhase;
     this.kbDbPath = this.paths.kbDbFile;
@@ -764,7 +762,7 @@ export class MigrationOrchestrator {
         phase: 1,
         name: 'Impact Assessment',
         success: true,
-        outputPath: this.legacyPaths.impactAssessmentFile,
+        outputPath: this.paths.impactAssessmentFile,
         duration: Date.now() - start,
       };
     }
@@ -774,7 +772,7 @@ export class MigrationOrchestrator {
     const result = await this.launchAgentWithEvents(inv);
     this.recordTokens(result, 1);
 
-    const outputPath = this.legacyPaths.impactAssessmentFile;
+    const outputPath = this.paths.impactAssessmentFile;
     return {
       phase: 1,
       name: 'Impact Assessment',
@@ -790,7 +788,7 @@ export class MigrationOrchestrator {
   // ─── Phase 2: Knowledge Base Construction ────────────────────────────
 
   private async executePhase2(start: number): Promise<PhaseResult> {
-    const outputPath = this.legacyPaths.knowledgeBaseDir;
+    const outputPath = this.paths.knowledgeBaseDir;
 
     // Defence-in-depth: if the knowledge-base directory already has content
     // (e.g. from a previous run that completed Phase 2 but whose checkpoint
@@ -836,12 +834,9 @@ export class MigrationOrchestrator {
 
   private async executePhase3(start: number): Promise<PhaseResult> {
     const planningDir = this.paths.artifactsPlanningDir;
-    const legacyPlanningDir = this.legacyPaths.planningDir;
     const groupsFile = join(planningDir, 'groups.json');
     const strategyFile = join(planningDir, 'strategy.md');
     const mergedTasksFile = join(planningDir, 'tasks-merged.json');
-    const legacyGroupsFile = join(legacyPlanningDir, 'groups.json');
-    const legacyStrategyFile = join(legacyPlanningDir, 'strategy.md');
 
     // ── Step 3a: migration-planner (fast, serial) ──────────────────────────
     //   Reads the knowledge base and emits planning/groups.json +
@@ -870,12 +865,10 @@ export class MigrationOrchestrator {
 
       // Adjudicator runs before task decomposition when competing strategies
       // were written to disk by the migration-planner.
-      const adjudicationFile = join(this.paths.artifactsPlanningDir, 'competing-strategies.md');
-      const legacyAdjudicationFile = this.legacyPaths.competingStrategiesFile;
-      if (await fileExists(adjudicationFile) || await fileExists(legacyAdjudicationFile)) {
-        const fileToUse = await fileExists(adjudicationFile) ? adjudicationFile : legacyAdjudicationFile;
+      const adjudicationFile = this.paths.competingStrategiesFile;
+      if (await fileExists(adjudicationFile)) {
         const adjCtx = await this.contextBuilder.buildContext('adjudicator', 3, undefined, {
-          competingStrategiesFile: fileToUse,
+          competingStrategiesFile: adjudicationFile,
           decisionType: 'migration-strategy',
         });
         const adjInv = this.buildInvocation('adjudicator', adjCtx, 3);
@@ -924,10 +917,7 @@ export class MigrationOrchestrator {
     //   Each invocation reads strategy.md + its group's analysis files and
     //   emits planning/tasks-<group>.json.  Completed groups are tracked in
     //   the checkpoint so partial failures can be retried cheaply on resume.
-    const groupsFileToRead = await fileExists(groupsFile)
-      ? groupsFile
-      : (await fileExists(legacyGroupsFile) ? legacyGroupsFile : undefined);
-    if (!groupsFileToRead) {
+    if (!(await fileExists(groupsFile))) {
       return {
         phase: 3,
         name: 'Migration Planning',
@@ -937,7 +927,7 @@ export class MigrationOrchestrator {
       };
     }
 
-    const groups = await readJson<ModuleGroup[]>(groupsFileToRead);
+    const groups = await readJson<ModuleGroup[]>(groupsFile);
     const completedGroups = new Set(this.checkpoint.getState().completedPhase3Groups ?? []);
     const remainingGroups = groups.filter(g => !completedGroups.has(g.id));
 
@@ -952,7 +942,7 @@ export class MigrationOrchestrator {
         const ctx = await this.contextBuilder.buildContext('task-decomposer', 3, group.id, {
           groupId: group.id,
           groupName: group.name,
-          strategyFile: await fileExists(strategyFile) ? strategyFile : legacyStrategyFile,
+          strategyFile,
           analysisFiles: group.analysisFiles,
         });
         invocations.push(this.buildInvocation('task-decomposer', ctx, 3, group.id));
@@ -1031,12 +1021,8 @@ export class MigrationOrchestrator {
     const allTasks: MigrationTask[] = [];
     for (const group of groups) {
       const taskFile = join(planningDir, `tasks-${group.id}.json`);
-      const legacyTaskFile = join(legacyPlanningDir, `tasks-${group.id}.json`);
-      const taskFileToRead = await fileExists(taskFile)
-        ? taskFile
-        : (await fileExists(legacyTaskFile) ? legacyTaskFile : undefined);
-      if (taskFileToRead) {
-        const groupTasksRaw = await readJson<unknown>(taskFileToRead);
+      if (await fileExists(taskFile)) {
+        const groupTasksRaw = await readJson<unknown>(taskFile);
         const parsed = TaskFileSchema.safeParse(groupTasksRaw);
         if (!parsed.success) {
           const issueSummary = parsed.error.issues
@@ -1047,7 +1033,7 @@ export class MigrationOrchestrator {
             })
             .join('; ');
           const validationError =
-            `Invalid task-decomposer output for group "${group.id}" at ${taskFileToRead}. ` +
+            `Invalid task-decomposer output for group "${group.id}" at ${taskFile}. ` +
             `Schema validation failed: ${issueSummary}`;
           this.logger.error(validationError);
           return {
@@ -1095,7 +1081,7 @@ export class MigrationOrchestrator {
   // ─── Phase 4: Iterative Migration ────────────────────────────────────
 
   private async executePhase4(start: number): Promise<PhaseResult> {
-    const planPath = this.legacyPaths.migrationPlanFile;
+    const planPath = this.paths.migrationPlanFile;
 
     // 1. Parse migration plan — prefer structuredOutput from Phase 3, fall back to file
     let tasks: MigrationTask[];
@@ -1106,13 +1092,11 @@ export class MigrationOrchestrator {
         // Also check for the newer planning/tasks-merged.json produced by the
         // two-step Phase 3 (migration-planner + parallel task-decomposer).
         const mergedPlanPath = join(this.paths.artifactsPlanningDir, 'tasks-merged.json');
-        const legacyMergedPlanPath = join(this.legacyPaths.planningDir, 'tasks-merged.json');
-        if (await fileExists(mergedPlanPath) || await fileExists(legacyMergedPlanPath)) {
-          const mergedToRead = await fileExists(mergedPlanPath) ? mergedPlanPath : legacyMergedPlanPath;
+        if (await fileExists(mergedPlanPath)) {
           this.logger.warn(
             'Phase 3 structured output unavailable — falling back to tasks-merged.json artifact',
           );
-          tasks = await readJson<MigrationTask[]>(mergedToRead);
+          tasks = await readJson<MigrationTask[]>(mergedPlanPath);
         } else {
           return {
             phase: 4,
@@ -2378,11 +2362,8 @@ export class MigrationOrchestrator {
       if (result.outputParsed && Array.isArray(result.structuredOutput?.['fixes'])) {
         fixes = result.structuredOutput['fixes'] as Array<{ description: string; sourceFile: string; targetFile: string }>;
       } else {
-        const reportPath = join(this.paths.artifactsParityDir, 'final-parity-report.md');
-        const legacyReportPath = this.legacyPaths.finalParityReportFile;
-        const reportToRead = await fileExists(reportPath)
-          ? reportPath
-          : (await fileExists(legacyReportPath) ? legacyReportPath : undefined);
+        const reportPath = this.paths.finalParityReportFile;
+        const reportToRead = await fileExists(reportPath) ? reportPath : undefined;
         if (!reportToRead) break;
         this.logger.warn('Final-parity-checker structured output unavailable — falling back to ResultParser.parseFinalParityReport');
         fixes = await ResultParser.parseFinalParityReport(reportToRead);
@@ -2617,15 +2598,13 @@ export class MigrationOrchestrator {
       }
 
       // Parse idiomatic issues
-      const reportPath = join(this.paths.artifactsParityDir, 'idiomatic-review-report.md');
-      const legacyReportPath = this.legacyPaths.idiomaticReviewReportFile;
+      const reportPath = this.paths.idiomaticReviewReportFile;
       let issues: Array<{ file: string; issue: string; suggestion: string }>;
       if (reviewResult.outputParsed && Array.isArray(reviewResult.structuredOutput?.['issues'])) {
         issues = reviewResult.structuredOutput['issues'] as Array<{ file: string; issue: string; suggestion: string }>;
       } else {
         this.logger.warn('Idiomatic-reviewer structured output unavailable — falling back to ResultParser.parseIdiomaticReport');
-        const reportToRead = await fileExists(reportPath) ? reportPath : legacyReportPath;
-        issues = await ResultParser.parseIdiomaticReport(reportToRead);
+        issues = await ResultParser.parseIdiomaticReport(reportPath);
       }
 
       if (issues.length === 0) {

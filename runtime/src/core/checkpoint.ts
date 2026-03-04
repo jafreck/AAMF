@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 import { atomicWrite, ensureDir, fileExists, readJson, writeJson } from '../util/fs.js';
 import { Logger } from '../logging/logger.js';
 import type { TerminalReasonCode } from '../agents/types.js';
-import { buildLegacyRuntimePaths } from './runtime-paths.js';
 
 export interface TerminalExhaustionState {
   reasonCode: TerminalReasonCode;
@@ -118,17 +117,12 @@ export class CheckpointManager {
   private state: CheckpointState | null = null;
   private readonly checkpointPath: string;
   private readonly backupPath: string;
-  private readonly legacyCheckpointPath: string;
-  private readonly legacyBackupPath: string;
   private readonly stateDir: string;
 
   constructor(private readonly progressDir: string, private readonly logger: Logger) {
     this.stateDir = `${progressDir}/state`;
-    const legacyPaths = buildLegacyRuntimePaths(progressDir);
     this.checkpointPath = `${this.stateDir}/checkpoint.json`;
     this.backupPath = `${this.stateDir}/checkpoint.backup.json`;
-    this.legacyCheckpointPath = legacyPaths.checkpointFile;
-    this.legacyBackupPath = legacyPaths.checkpointBackupFile;
   }
 
   /** Read the current checkpoint, or create initial state */
@@ -398,18 +392,12 @@ export class CheckpointManager {
     if (await fileExists(this.checkpointPath)) {
       return this.checkpointPath;
     }
-    if (await fileExists(this.legacyCheckpointPath)) {
-      return this.legacyCheckpointPath;
-    }
     return undefined;
   }
 
   private async resolveBackupReadPath(): Promise<string | undefined> {
     if (await fileExists(this.backupPath)) {
       return this.backupPath;
-    }
-    if (await fileExists(this.legacyBackupPath)) {
-      return this.legacyBackupPath;
     }
     return undefined;
   }
