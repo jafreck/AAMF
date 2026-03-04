@@ -1941,6 +1941,116 @@ describe('MigrationOrchestrator', () => {
       expect(foundParityRemediation).toBe(true);
     });
 
+    it('should pass enriched context to code-migrator during parity recovery', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 1,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+            avgTokensPerTask: 5000,
+          },
+        },
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await writeFile(join(progressDir, 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'results'));
+      await writeFile(
+        join(progressDir, 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: ['parity-reports/task-001.md'],
+          parity: 'fail',
+          issues: [
+            {
+              severity: 'major',
+              description: 'HashMap shim instead of direct struct access',
+              sourceLocation: 'src/wrapper.c:178',
+              targetLocation: 'src/lib.rs:120',
+            },
+            {
+              severity: 'critical',
+              description: 'Missing z_deflate wrapper functions',
+              sourceLocation: 'src/wrapper.c:263',
+              targetLocation: 'src/lib.rs',
+            },
+          ],
+        }),
+      );
+
+      await orchestrator.run();
+
+      // Find the code-migrator invocation that has a parity remediationContext
+      const reMigrateCandidates = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      let reMigrateCtx: Record<string, unknown> | undefined;
+      for (const inv of reMigrateCandidates) {
+        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
+        if (ctx.payload?.remediationContext?.failureKind === 'parity') {
+          reMigrateCtx = ctx;
+          break;
+        }
+      }
+      expect(reMigrateCtx).toBeDefined();
+
+      // Enriched failureSummary should contain the specific issue descriptions
+      const remediation = reMigrateCtx!.payload?.remediationContext as Record<string, unknown>;
+      const summary = remediation?.failureSummary as string;
+      expect(summary).toContain('major');
+      expect(summary).toContain('critical');
+      expect(summary).toContain('HashMap shim');
+
+      // Parity report .md should be in inputFiles
+      const inputFiles = reMigrateCtx!.inputFiles as string[];
+      const hasParityMd = inputFiles.some((f: string) => f.endsWith('.md') && f.includes('parity'));
+      expect(hasParityMd).toBe(true);
+
+      // Adjudication report path should be in inputFiles
+      const hasAdjudicationMd = inputFiles.some((f: string) => f.includes('adjudication'));
+      expect(hasAdjudicationMd).toBe(true);
+
+      // adjudicationReportPath should be set in remediationContext
+      expect(remediation?.adjudicationReportPath).toBeDefined();
+      expect(typeof remediation?.adjudicationReportPath).toBe('string');
+    });
+
     it('should not trigger recovery when parity has only minor issues', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
