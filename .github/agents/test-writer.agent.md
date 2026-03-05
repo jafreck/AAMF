@@ -72,6 +72,24 @@ Create intermediate directories as needed.
 - Do NOT introduce new dependencies; use only packages already in `package.json`
 - Run `npx vitest run` and confirm all tests pass before writing your result summary
 
+## Output Format
+
+Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
+
+### Example
+
+```aamf-json
+{
+  "agent": "test-writer",
+  "status": "completed",
+  "outputFiles": ["tests/foo/bar.test.ts"],
+  "taskId": "task-001",
+  "notes": "Added 12 test cases covering happy path and error scenarios."
+}
+```
+
+> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
+
 ## Input Schema (Required)
 
 ```json

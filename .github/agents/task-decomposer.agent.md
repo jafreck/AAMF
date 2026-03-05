@@ -82,6 +82,8 @@ The file `.aamf/migration/{projectName}/artifacts/planning/tasks-{groupId}.json`
 }
 ```
 
+> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
+
 ## Input Schema (Required)
 
 ```json
