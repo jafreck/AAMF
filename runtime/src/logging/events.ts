@@ -29,6 +29,7 @@ export type RuntimeEvent =
   | { type: 'agent-heartbeat'; agent: string; taskId?: string; runId?: string; invocationId?: string; elapsedSeconds: number }
   | { type: 'agent-output-file-detected'; agent: string; taskId?: string; runId?: string; invocationId?: string; file: string }
   | { type: 'agent-timed-out'; agent: string; taskId?: string; runId?: string; invocationId?: string; timeout: number }
+  | { type: 'agent-output-line'; agent: string; taskId?: string; runId?: string; invocationId?: string; stream: 'stdout' | 'stderr'; line: string }
   | { type: 'task-started'; taskId: string; name: string }
   | { type: 'task-completed'; taskId: string; name: string; duration: number }
   | { type: 'task-failed'; taskId: string; name: string; error: string; attempt: number }

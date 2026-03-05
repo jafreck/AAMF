@@ -1015,4 +1015,113 @@ describe('AgentLauncher', () => {
       setTimeoutSpy.mockRestore();
     });
   });
+
+  describe('live output streaming', () => {
+    it('should create a .live.log file with streamed stdout lines', async () => {
+      const script = await createScript('live-stdout.sh', [
+        'echo "line one"',
+        'echo "line two"',
+        'echo "line three"',
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('live-stdout-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'live-stdout-001',
+      });
+
+      expect(result.success).toBe(true);
+
+      // Find the .live.log file
+      const agentLogDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs', 'agents', 'code-migrator', 'live-stdout-001');
+      const logFiles = await readdir(agentLogDir);
+      const liveLogFile = logFiles.find(f => f.endsWith('.live.log'));
+      expect(liveLogFile).toBeDefined();
+
+      const liveContent = await readFile(join(agentLogDir, liveLogFile!), 'utf-8');
+      expect(liveContent).toContain('[stdout] line one');
+      expect(liveContent).toContain('[stdout] line two');
+      expect(liveContent).toContain('[stdout] line three');
+    });
+
+    it('should include stderr lines prefixed with [stderr] in the live log', async () => {
+      const script = await createScript('live-stderr.sh', [
+        'echo "stdout stuff"',
+        'echo "error stuff" >&2',
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('live-stderr-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'live-stderr-001',
+      });
+
+      expect(result.success).toBe(true);
+
+      const agentLogDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs', 'agents', 'code-migrator', 'live-stderr-001');
+      const logFiles = await readdir(agentLogDir);
+      const liveLogFile = logFiles.find(f => f.endsWith('.live.log'));
+      expect(liveLogFile).toBeDefined();
+
+      const liveContent = await readFile(join(agentLogDir, liveLogFile!), 'utf-8');
+      expect(liveContent).toContain('[stdout] stdout stuff');
+      expect(liveContent).toContain('[stderr] error stuff');
+    });
+
+    it('should still create the final agent log alongside the live log', async () => {
+      const script = await createScript('live-both.sh', 'echo "output"\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('live-both-001');
+
+      await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'live-both-001',
+      });
+
+      const agentLogDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs', 'agents', 'code-migrator', 'live-both-001');
+      const logFiles = await readdir(agentLogDir);
+      const liveLogFile = logFiles.find(f => f.endsWith('.live.log'));
+      const finalLogFile = logFiles.find(f => f.endsWith('.log') && !f.endsWith('.live.log'));
+      expect(liveLogFile).toBeDefined();
+      expect(finalLogFile).toBeDefined();
+    });
+
+    it('should create live log even when agent fails', async () => {
+      const script = await createScript('live-fail.sh', 'echo "before fail"\necho "fail reason" >&2\nexit 1');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('live-fail-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'live-fail-001',
+      });
+
+      expect(result.success).toBe(false);
+
+      const agentLogDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs', 'agents', 'code-migrator', 'live-fail-001');
+      const logFiles = await readdir(agentLogDir);
+      const liveLogFile = logFiles.find(f => f.endsWith('.live.log'));
+      expect(liveLogFile).toBeDefined();
+
+      const liveContent = await readFile(join(agentLogDir, liveLogFile!), 'utf-8');
+      expect(liveContent).toContain('[stdout] before fail');
+      expect(liveContent).toContain('[stderr] fail reason');
+    });
+  });
 });

@@ -16,6 +16,10 @@ export interface SpawnWithTimeoutOptions extends SpawnOptions {
   timeout?: number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /** Called with each chunk of stdout data as it arrives (streaming). */
+  onStdoutData?: (chunk: Buffer) => void;
+  /** Called with each chunk of stderr data as it arrives (streaming). */
+  onStderrData?: (chunk: Buffer) => void;
 }
 
 /**
@@ -27,7 +31,7 @@ export async function spawnWithTimeout(
   args: string[],
   options: SpawnWithTimeoutOptions = {},
 ): Promise<SpawnResult> {
-  const { timeout, ...spawnOpts } = options;
+  const { timeout, onStdoutData, onStderrData, ...spawnOpts } = options;
   const start = performance.now();
 
   return new Promise<SpawnResult>((resolve, reject) => {
@@ -67,8 +71,14 @@ export async function spawnWithTimeout(
       });
     };
 
-    child.stdout!.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr!.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stdout!.on('data', (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+      if (onStdoutData) onStdoutData(chunk);
+    });
+    child.stderr!.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      if (onStderrData) onStderrData(chunk);
+    });
 
     if (timeout !== undefined && timeout > 0) {
       timer = setTimeout(() => {
