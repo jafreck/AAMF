@@ -53,21 +53,24 @@ Avoid selecting an option solely because it is more sophisticated or uses newer 
 
 - **Read files**: Inspect source files, configuration, and tests to understand the codebase context and implications of each option
 
-## Example Output
+## Output Format
 
+Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
+
+### Example
+
+```aamf-json
+{
+  "agent": "adjudicator",
+  "status": "completed",
+  "outputFiles": [],
+  "taskId": "task-001",
+  "decision": "Option B — single configuration file with environment-specific overrides.",
+  "notes": "Option B keeps configuration centralized, reducing inconsistency risk."
+}
 ```
-### Selected Option
-Option B — use a single configuration file with environment-specific overrides.
 
-### Rationale
-Option B keeps configuration centralized in one place, reducing the risk of inconsistency between environments. It aligns with the existing pattern used in the `config/` directory and requires fewer new files. Option A's per-environment files would require changes in multiple places for any shared setting, increasing maintenance burden. The override mechanism in Option B is a well-understood pattern already supported by the config library in use.
-
-### Trade-offs Accepted
-- Slightly more complex merge logic when environment overrides are applied
-- Developers must understand the override precedence rules
-
-### Risks
-- Misconfigured overrides could silently apply incorrect values; mitigate by adding validation at startup and clear error messages for missing required keys.
+> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
 
 ## Input Schema (Required)
 

@@ -38,6 +38,8 @@ Resolve the failing task quickly and safely by:
 - Do not emit any fenced code block after `aamf-json`.
 - Keep the JSON valid (double quotes, no trailing commas, no comments).
 
+> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
+
 ### Required `aamf-json` shape
 
 ```aamf-json
