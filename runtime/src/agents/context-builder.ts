@@ -170,6 +170,9 @@ export class ContextBuilder {
         return {
           inputFiles: [join(kbDir, 'index.md'), impactAssessment],
           outputPath: join(this.progressDir, 'artifacts', 'planning'),
+          agentPayload: {
+            executionStrategy: this.buildExecutionStrategy(),
+          },
         };
 
       case 'task-decomposer': {
@@ -185,6 +188,7 @@ export class ContextBuilder {
             groupName: payload?.groupName,
             taskSchemaPath: TASK_DECOMPOSER_SCHEMA_PATH,
             maxLinesPerTask: this.config.options.maxLinesPerTask,
+            executionStrategy: this.buildExecutionStrategy(),
           },
         };
       }
@@ -320,5 +324,27 @@ export class ContextBuilder {
           outputPath: this.progressDir,
         };
     }
+  }
+
+  /**
+   * Build the execution-strategy descriptor from the current config.
+   * Injected into the planning agents' payload so they can reason about
+   * how Phase 4 will execute their task graph.
+   */
+  private buildExecutionStrategy(): import('./types.js').ExecutionStrategy {
+    const opts = this.config.options;
+    const waveControl = opts.waveControl ?? { waveSize: 3, maxConvergenceIterations: 3 };
+    return {
+      executionMode: opts.executionMode ?? 'per-task',
+      maxParallelAgents: opts.maxParallelAgents,
+      waveControl: {
+        waveSize: waveControl.waveSize,
+        maxConvergenceIterations: waveControl.maxConvergenceIterations,
+      },
+      maxRetriesPerTask: opts.maxRetriesPerTask,
+      buildCommand: this.config.target.buildCommand,
+      testCommand: this.config.target.testCommand,
+      requiresNonOverlappingTargets: true,
+    };
   }
 }

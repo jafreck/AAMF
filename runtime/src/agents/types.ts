@@ -186,6 +186,49 @@ export interface AgentContext {
   payload?: Record<string, unknown>;
 }
 
+// ─── Execution Strategy ──────────────────────────────────────────────────────
+
+/**
+ * Execution-topology context passed to planning agents (`migration-planner`,
+ * `task-decomposer`) so they can tailor task granularity, grouping, and
+ * dependency design to the actual Phase 4 execution mode.
+ *
+ * Agents that receive this in their `payload.executionStrategy` can, for
+ * example, co-locate related files into the same wave-friendly grouping,
+ * avoid target-directory overlap that would shrink wave batch size, or
+ * calibrate task complexity against the available recovery budget.
+ */
+export interface ExecutionStrategy {
+  /** Phase 4 execution mode: `'per-task'` (serial) or `'wave-barrier'` (concurrent waves). */
+  executionMode: 'per-task' | 'wave-barrier';
+
+  /** Maximum number of agent subprocesses running in parallel. */
+  maxParallelAgents: number;
+
+  /** Wave-barrier settings (only meaningful when `executionMode === 'wave-barrier'`). */
+  waveControl: {
+    /** Number of tasks that run concurrently within a single wave. */
+    waveSize: number;
+    /** Maximum build/test convergence iterations per wave before giving up. */
+    maxConvergenceIterations: number;
+  };
+
+  /** Maximum retry attempts per task before failure-adjudication. */
+  maxRetriesPerTask: number;
+
+  /** Shell command used to build the target project (empty when not configured). */
+  buildCommand?: string;
+
+  /** Shell command used to test the target project (empty when not configured). */
+  testCommand?: string;
+
+  /**
+   * Whether wave members must have non-overlapping target files/directories.
+   * Always `true` — exposed so the planner can reason about the constraint.
+   */
+  requiresNonOverlappingTargets: true;
+}
+
 // ─── Recovery Remediation Contracts ───────────────────────────────────────────
 
 /**

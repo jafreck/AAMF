@@ -137,6 +137,63 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toContain('planning');
     });
 
+    it('should include executionStrategy in migration-planner payload with default config', async () => {
+      const contextPath = await builder.buildContext('migration-planner', 3);
+      const context = await readJson<AgentContext>(contextPath);
+      const strategy = context.payload?.executionStrategy as Record<string, unknown>;
+
+      expect(strategy).toBeDefined();
+      expect(strategy.executionMode).toBe('per-task');
+      expect(strategy.maxParallelAgents).toBe(3);
+      expect(strategy.maxRetriesPerTask).toBe(3);
+      expect(strategy.requiresNonOverlappingTargets).toBe(true);
+      expect(strategy.waveControl).toEqual({ waveSize: 3, maxConvergenceIterations: 3 });
+      expect(strategy.buildCommand).toBeUndefined();
+      expect(strategy.testCommand).toBeUndefined();
+    });
+
+    it('should reflect wave-barrier mode and build/test commands in migration-planner executionStrategy', async () => {
+      const config = createMockConfig({
+        target: {
+          language: 'rust',
+          outputPath: '/tmp/target',
+          buildCommand: 'cargo build',
+          testCommand: 'cargo test',
+        },
+        options: {
+          maxParallelAgents: 5,
+          maxRetriesPerTask: 2,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 5000,
+          contextWindowStrategy: 'per-invocation' as const,
+          keepArtifacts: false,
+          qualityPolicy: 'strict' as const,
+          executionMode: 'wave-barrier' as const,
+          waveControl: { waveSize: 4, maxConvergenceIterations: 5 },
+          git: { enabled: false, autoInit: true, commitByAgent: true, commitPerTask: true, authorName: 'AAMF Migration Bot', authorEmail: 'aamf@local.invalid' },
+        },
+      });
+      const b = new ContextBuilder(config, progressDir, paths);
+      const contextPath = await b.buildContext('migration-planner', 3);
+      const context = await readJson<AgentContext>(contextPath);
+      const strategy = context.payload?.executionStrategy as Record<string, unknown>;
+
+      expect(strategy.executionMode).toBe('wave-barrier');
+      expect(strategy.maxParallelAgents).toBe(5);
+      expect(strategy.maxRetriesPerTask).toBe(2);
+      expect(strategy.waveControl).toEqual({ waveSize: 4, maxConvergenceIterations: 5 });
+      expect(strategy.buildCommand).toBe('cargo build');
+      expect(strategy.testCommand).toBe('cargo test');
+      expect(strategy.requiresNonOverlappingTargets).toBe(true);
+    });
+
     it('should route adjudicator to competing strategies file', async () => {
       const contextPath = await builder.buildContext('adjudicator', 3, undefined, {
         competingStrategiesFile: '/tmp/strategies.md',
@@ -174,6 +231,22 @@ describe('ContextBuilder', () => {
       expect(context.payload?.maxLinesPerTask).toBe(500);
       expect(context.inputFiles).toContain('/tmp/strategy.md');
       expect(context.inputFiles).toContain('/tmp/kb-core.md');
+    });
+
+    it('should include executionStrategy in task-decomposer payload', async () => {
+      const contextPath = await builder.buildContext('task-decomposer', 3, 'core', {
+        strategyFile: '/tmp/strategy.md',
+        analysisFiles: ['/tmp/kb-core.md'],
+        groupId: 'core',
+        groupName: 'Core',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      const strategy = context.payload?.executionStrategy as Record<string, unknown>;
+
+      expect(strategy).toBeDefined();
+      expect(strategy.executionMode).toBe('per-task');
+      expect(strategy.maxParallelAgents).toBe(3);
+      expect(strategy.requiresNonOverlappingTargets).toBe(true);
     });
 
     it('should route code-migrator with task-specific source/target files', async () => {
