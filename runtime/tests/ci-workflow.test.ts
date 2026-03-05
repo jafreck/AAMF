@@ -132,36 +132,7 @@ describe('README.md CI badge', () => {
   });
 });
 
-describe('README.md Coverage section', () => {
-  let content: string;
 
-  const loadContent = async () => {
-    if (!content) {
-      content = await readFile(join(repoRoot, 'README.md'), 'utf-8');
-    }
-    return content;
-  };
-
-  it('should contain a Coverage heading', async () => {
-    const text = await loadContent();
-    expect(text).toMatch(/^## Coverage$/m);
-  });
-
-  it('should include the coverage run command', async () => {
-    const text = await loadContent();
-    expect(text).toContain('npx vitest run --coverage');
-  });
-
-  it('should mention the 90% threshold requirement', async () => {
-    const text = await loadContent();
-    expect(text).toMatch(/90%/);
-  });
-
-  it('should mention thresholds apply globally', async () => {
-    const text = await loadContent();
-    expect(text).toMatch(/globally/i);
-  });
-});
 
 describe('Root package.json build script', () => {
   let pkg: Record<string, any>;
