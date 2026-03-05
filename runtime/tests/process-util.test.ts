@@ -87,4 +87,42 @@ describe('spawnWithTimeout', () => {
   it('killProcessTree should not throw for a non-existent pid', async () => {
     await expect(killProcessTree(999_999)).resolves.toBeUndefined();
   });
+
+  describe('streaming callbacks', () => {
+    it('should invoke onStdoutData for each stdout chunk', async () => {
+      const chunks: string[] = [];
+      const result = await spawnWithTimeout('echo', ['hello streaming'], {
+        onStdoutData: (chunk) => chunks.push(chunk.toString()),
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('hello streaming');
+      // The callback should have received at least one chunk containing the output
+      const combined = chunks.join('');
+      expect(combined).toContain('hello streaming');
+    });
+
+    it('should invoke onStderrData for each stderr chunk', async () => {
+      const chunks: string[] = [];
+      const result = await spawnWithTimeout('node', ['-e', "console.error('err-stream')"], {
+        onStderrData: (chunk) => chunks.push(chunk.toString()),
+      });
+      expect(result.stderr.trim()).toBe('err-stream');
+      const combined = chunks.join('');
+      expect(combined).toContain('err-stream');
+    });
+
+    it('should still produce full stdout/stderr when callbacks are provided', async () => {
+      const stdoutChunks: string[] = [];
+      const stderrChunks: string[] = [];
+      const result = await spawnWithTimeout('node', [
+        '-e', "console.log('out1'); console.log('out2'); console.error('err1');",
+      ], {
+        onStdoutData: (chunk) => stdoutChunks.push(chunk.toString()),
+        onStderrData: (chunk) => stderrChunks.push(chunk.toString()),
+      });
+      expect(result.stdout).toContain('out1');
+      expect(result.stdout).toContain('out2');
+      expect(result.stderr).toContain('err1');
+    });
+  });
 });

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat, appendFile } from 'node:fs/promises';
 import { AgentInvocation, AgentName, AgentResult } from '../agents/types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { spawnWithTimeout, resolveLoginPath } from '../util/process.js';
@@ -91,6 +91,95 @@ async function writeAgentLog(logDir: string, agent: string, taskId: string, stdo
   const filename = invocationId ? `${invocationId}-${timestamp}.log` : `${timestamp}.log`;
   const content = `=== STDOUT ===\n${stdout}\n\n=== STDERR ===\n${stderr}\n`;
   await atomicWrite(join(targetDir, filename), content);
+}
+
+// ─── Live output streaming ────────────────────────────────────────────────────
+
+/**
+ * Create a pair of callbacks that stream agent stdout/stderr line-by-line to:
+ *  1. A live log file (`.live.log`) in the agent log directory
+ *  2. The runtime logger as `agent-output-line` events (debug level)
+ *
+ * Chunks from the child process may not be line-aligned, so each callback
+ * maintains a residual buffer and flushes complete lines only.
+ *
+ * Returns `{ onStdoutData, onStderrData, flush }`. Call `flush()` after the
+ * process exits to write any remaining partial line.
+ */
+function createLiveOutputCallbacks(
+  logDir: string,
+  agent: string,
+  taskId: string,
+  invocationId: string,
+  logger: Logger,
+): {
+  onStdoutData: (chunk: Buffer) => void;
+  onStderrData: (chunk: Buffer) => void;
+  flush: () => Promise<void>;
+} {
+  const targetDir = join(logDir, agent, taskId);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const liveLogPath = join(targetDir, `${invocationId}-${timestamp}.live.log`);
+
+  // Serialise writes so they never interleave
+  let writeChain: Promise<void> = ensureDir(targetDir);
+
+  const enqueueWrite = (text: string): void => {
+    writeChain = writeChain
+      .then(() => appendFile(liveLogPath, text, 'utf-8'))
+      .catch(() => {/* best-effort */});
+  };
+
+  // Per-stream residual buffers for incomplete lines
+  let stdoutResidue = '';
+  let stderrResidue = '';
+
+  const processChunk = (
+    chunk: Buffer,
+    residue: string,
+    stream: 'stdout' | 'stderr',
+  ): string => {
+    const text = residue + chunk.toString('utf-8');
+    const lines = text.split('\n');
+    // Last element is either empty (if text ended with \n) or an incomplete line
+    const remaining = lines.pop()!;
+
+    for (const line of lines) {
+      const prefixed = `[${stream}] ${line}\n`;
+      enqueueWrite(prefixed);
+      logger.event({
+        type: 'agent-output-line',
+        agent,
+        taskId,
+        invocationId,
+        stream,
+        line,
+      });
+    }
+
+    return remaining;
+  };
+
+  return {
+    onStdoutData: (chunk: Buffer) => {
+      stdoutResidue = processChunk(chunk, stdoutResidue, 'stdout');
+    },
+    onStderrData: (chunk: Buffer) => {
+      stderrResidue = processChunk(chunk, stderrResidue, 'stderr');
+    },
+    flush: async () => {
+      // Flush any remaining partial lines
+      if (stdoutResidue) {
+        enqueueWrite(`[stdout] ${stdoutResidue}\n`);
+        stdoutResidue = '';
+      }
+      if (stderrResidue) {
+        enqueueWrite(`[stderr] ${stderrResidue}\n`);
+        stderrResidue = '';
+      }
+      await writeChain;
+    },
+  };
 }
 
 /** Shared helper: detect output files created by the agent in the progress directory. */
@@ -341,14 +430,24 @@ export class CopilotRunner implements AgentRunner {
     };
     // ────────────────────────────────────────────────────────────────
 
+    // ── Live output streaming ────────────────────────────────────────
+    const liveTaskId = invocation.taskId ?? 'main';
+    const liveCallbacks = createLiveOutputCallbacks(
+      this.logDir, invocation.agent, liveTaskId, invocationId, invLogger,
+    );
+    // ────────────────────────────────────────────────────────────────
+
     try {
       const result = await spawnWithTimeout(cliCommand, args, {
         cwd: this.projectRoot,
         env,
         timeout,
+        onStdoutData: liveCallbacks.onStdoutData,
+        onStderrData: liveCallbacks.onStderrData,
       });
 
       stopTimers();
+      await liveCallbacks.flush();
       const duration = Date.now() - startTime;
 
       const taskId = invocation.taskId ?? 'main';
@@ -379,6 +478,7 @@ export class CopilotRunner implements AgentRunner {
       return finaliseResult(agentResult, result.stdout, prompt, invLogger);
     } catch (err) {
       stopTimers();
+      await liveCallbacks.flush().catch(() => {});
       const duration = Date.now() - startTime;
       const estimatedTotal = TokenTracker.estimateTokens(prompt);
       invLogger.warn(
@@ -538,14 +638,24 @@ export class ClaudeCodeRunner implements AgentRunner {
     };
     // ────────────────────────────────────────────────────────────────
 
+    // ── Live output streaming ────────────────────────────────────────
+    const liveTaskId = invocation.taskId ?? 'main';
+    const liveCallbacks = createLiveOutputCallbacks(
+      this.logDir, invocation.agent, liveTaskId, invocationId, invLogger,
+    );
+    // ────────────────────────────────────────────────────────────────
+
     try {
       const result = await spawnWithTimeout(cliCommand, args, {
         cwd: this.projectRoot,
         env,
         timeout,
+        onStdoutData: liveCallbacks.onStdoutData,
+        onStderrData: liveCallbacks.onStderrData,
       });
 
       stopTimers();
+      await liveCallbacks.flush();
       const duration = Date.now() - startTime;
 
       const taskId = invocation.taskId ?? 'main';
@@ -577,6 +687,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       return finaliseResult(agentResult, result.stdout, prompt, invLogger);
     } catch (err) {
       stopTimers();
+      await liveCallbacks.flush().catch(() => {});
       const duration = Date.now() - startTime;
       const estimatedTotal = TokenTracker.estimateTokens(prompt);
       invLogger.warn(
