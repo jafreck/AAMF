@@ -5,30 +5,58 @@
 
 /** Pricing per 1 M tokens (USD) for input and output. */
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  // Claude models (dot notation — Copilot CLI)
-  'claude-sonnet-4.6': { input: 3.00, output: 15.00 },
-  'claude-sonnet-4.5': { input: 3.00, output: 15.00 },
-  'claude-haiku-4.5': { input: 0.80, output: 4.00 },
-  'claude-opus-4.6': { input: 15.00, output: 75.00 },
-  'claude-opus-4.6-fast': { input: 15.00, output: 75.00 },
-  'claude-opus-4.5': { input: 15.00, output: 75.00 },
-  'claude-sonnet-4': { input: 3.00, output: 15.00 },
-  // Claude models (dash notation — Claude Code CLI)
-  'claude-sonnet-4-5': { input: 3.00, output: 15.00 },
-  'claude-haiku-4-5': { input: 0.80, output: 4.00 },
-  'claude-opus-4-5': { input: 15.00, output: 75.00 },
-  // Gemini models
-  'gemini-3-pro-preview': { input: 3.50, output: 10.50 },
-  // GPT models
-  'gpt-5.3-codex': { input: 5.00, output: 15.00 },
-  'gpt-5.2-codex': { input: 5.00, output: 15.00 },
-  'gpt-5.2': { input: 5.00, output: 15.00 },
-  'gpt-5.1-codex-max': { input: 10.00, output: 30.00 },
-  'gpt-5.1-codex': { input: 5.00, output: 15.00 },
-  'gpt-5.1': { input: 5.00, output: 15.00 },
-  'gpt-5.1-codex-mini': { input: 1.50, output: 6.00 },
-  'gpt-5-mini': { input: 0.30, output: 1.20 },
-  'gpt-4.1': { input: 2.50, output: 10.00 },
+  // ── Claude (dot notation — Copilot CLI) ────────────────────────────
+  'claude-opus-4.6':        { input:  5.00, output:  25.00 },
+  'claude-opus-4.6-fast':   { input: 30.00, output: 150.00 },
+  'claude-opus-4.6-1m':     { input: 10.00, output:  37.50 },
+  'claude-opus-4.5':        { input:  5.00, output:  25.00 },
+  'claude-opus-4.1':        { input: 15.00, output:  75.00 },
+  'claude-opus-4':          { input: 15.00, output:  75.00 },
+  'claude-opus-3':          { input: 15.00, output:  75.00 },
+  'claude-sonnet-4.6':      { input:  3.00, output:  15.00 },
+  'claude-sonnet-4.5':      { input:  3.00, output:  15.00 },
+  'claude-sonnet-4':        { input:  3.00, output:  15.00 },
+  'claude-haiku-4.5':       { input:  1.00, output:   5.00 },
+  'claude-haiku-3.5':       { input:  0.80, output:   4.00 },
+  'claude-haiku-3':         { input:  0.25, output:   1.25 },
+  // ── Claude (dash notation — Claude Code CLI) ──────────────────────
+  'claude-opus-4-6':        { input:  5.00, output:  25.00 },
+  'claude-opus-4-6-fast':   { input: 30.00, output: 150.00 },
+  'claude-opus-4-6-1m':     { input: 10.00, output:  37.50 },
+  'claude-opus-4-5':        { input:  5.00, output:  25.00 },
+  'claude-opus-4-1':        { input: 15.00, output:  75.00 },
+  'claude-sonnet-4-6':      { input:  3.00, output:  15.00 },
+  'claude-sonnet-4-5':      { input:  3.00, output:  15.00 },
+  'claude-haiku-4-5':       { input:  1.00, output:   5.00 },
+  'claude-haiku-3-5':       { input:  0.80, output:   4.00 },
+  // ── Gemini ────────────────────────────────────────────────────────
+  'gemini-3.1-pro-preview': { input:  2.00, output:  12.00 },
+  'gemini-3-pro-preview':   { input:  2.00, output:  12.00 },
+  'gemini-3-flash-preview':  { input:  0.50, output:   3.00 },
+  'gemini-3.1-flash-lite-preview': { input: 0.25, output: 1.50 },
+  'gemini-2.5-pro':         { input:  1.25, output:  10.00 },
+  'gemini-2.5-flash':       { input:  0.30, output:   2.50 },
+  'gemini-2.5-flash-lite':  { input:  0.10, output:   0.40 },
+  'gemini-2.0-flash':       { input:  0.10, output:   0.40 },
+  // ── GPT / OpenAI ─────────────────────────────────────────────────
+  'gpt-5.3-codex':          { input:  1.75, output:  14.00 },
+  'gpt-5.2-codex':          { input:  1.75, output:  14.00 },
+  'gpt-5.2':                { input:  1.75, output:  14.00 },
+  'gpt-5.2-pro':            { input: 21.00, output: 168.00 },
+  'gpt-5.1-codex-max':      { input:  1.25, output:  10.00 },
+  'gpt-5.1-codex':          { input:  1.25, output:  10.00 },
+  'gpt-5.1':                { input:  1.25, output:  10.00 },
+  'gpt-5.1-codex-mini':     { input:  0.25, output:   2.00 },
+  'gpt-5':                  { input:  1.25, output:  10.00 },
+  'gpt-5-mini':             { input:  0.25, output:   2.00 },
+  'gpt-5-nano':             { input:  0.05, output:   0.40 },
+  'gpt-4.1':                { input:  2.00, output:   8.00 },
+  'gpt-4.1-mini':           { input:  0.40, output:   1.60 },
+  'gpt-4.1-nano':           { input:  0.10, output:   0.40 },
+  // ── OpenAI reasoning ─────────────────────────────────────────────
+  'o3':                     { input:  2.00, output:   8.00 },
+  'o3-pro':                 { input: 20.00, output:  80.00 },
+  'o4-mini':                { input:  1.10, output:   4.40 },
 };
 
 /** Default fallback pricing when a model is unknown and no overrides exist. */
