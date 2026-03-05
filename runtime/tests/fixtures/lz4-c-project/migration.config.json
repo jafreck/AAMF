@@ -47,6 +47,7 @@
     "testCommand": "cargo test"
   },
   "options": {
+    "qualityPolicy": "strict",
     "maxParallelAgents": 5,
     "maxRetriesPerTask": 2,
     "maxLinesPerTask": 500,
