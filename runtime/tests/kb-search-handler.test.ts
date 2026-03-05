@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
-import { handler, type SearchArgs, type SearchResult } from '../src/kb-server/tools/search.js';
+import { handler, type SearchArgs, type SearchResult } from '@aamf/lore/kb-server/tools/search';
 import type { EmbeddingProvider } from '@aamf/lore';
 
 /**
@@ -19,6 +19,7 @@ function buildTestDb(): Database.Database {
     CREATE TABLE files (
       id INTEGER PRIMARY KEY,
       path TEXT NOT NULL,
+      branch TEXT NOT NULL DEFAULT '',
       language TEXT NOT NULL,
       size_bytes INTEGER DEFAULT 0,
       last_hash TEXT,

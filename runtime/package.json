@@ -15,7 +15,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@aamf/lore": "npm:@jafreck/lore@latest",
+    "@aamf/lore": "npm:@jafreck/lore@^0.2.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.6.2",
