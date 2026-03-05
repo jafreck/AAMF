@@ -27,13 +27,14 @@
     "testCommand": "cargo test"
   },
   "options": {
+    "qualityPolicy": "strict",
     "maxParallelAgents": 8,
     "maxRetriesPerTask": 3,
     "maxLinesPerTask": 750,
-    "tokenBudget": 200000000,
+    "tokenBudget": 400000000,
     "executionMode": "wave-barrier",
     "waveControl": {
-      "waveSize": 3,
+      "waveSize": 4,
       "maxConvergenceIterations": 3
     },
     "dryRun": false,
