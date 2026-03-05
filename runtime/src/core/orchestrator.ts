@@ -2412,8 +2412,31 @@ export class MigrationOrchestrator {
             5,
             fixTaskId,
           );
-          const fixResult = await this.launchAgentWithEvents(fixInv);
+          let fixResult = await this.launchAgentWithEvents(fixInv);
           this.recordTokens(fixResult, 5);
+
+          // Schema-only failure: the agent did the work (exit 0) but its
+          // structured output was malformed. Grant one bonus retry before
+          // moving on — the underlying code changes may have been applied.
+          if (!fixResult.success && fixResult.schemaOnlyFailure) {
+            this.logger.warn(
+              `Schema-only failure for ${fixTaskId} — retrying once`,
+            );
+            const retryCtx = await this.contextBuilder.buildContext(
+              'code-migrator', 5, fixTaskId,
+              {
+                sourceFiles: fix.sourceFile ? [fix.sourceFile] : [],
+                targetFiles: fix.targetFile ? [fix.targetFile] : [],
+                description: fix.description,
+              },
+            );
+            const retryInv = this.buildInvocation(
+              'code-migrator', retryCtx, 5, fixTaskId,
+            );
+            fixResult = await this.launchAgentWithEvents(retryInv);
+            this.recordTokens(fixResult, 5);
+          }
+
           if (fixResult.success) {
             await this.commitForAgent('code-migrator', 5, fixTaskId);
             await this.savePhase5Cursor({

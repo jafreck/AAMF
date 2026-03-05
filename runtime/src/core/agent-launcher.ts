@@ -231,7 +231,9 @@ function finaliseResult(
   logger: Logger,
 ): AgentResult {
   const schema = agentOutputSchemas[agentResult.agent];
-  const parseResult = ResultParser.parseAamfOutput(stdout, schema);
+  // Pass the canonical agent name as a hint so the parser can inject/correct
+  // the `agent` field and normalise common LLM status typos before validation.
+  const parseResult = ResultParser.parseAamfOutput(stdout, schema, agentResult.agent);
   if (parseResult.parsed) {
     const parsedData = parseResult.data as Record<string, unknown> & {
       tokenUsage?: AgentResult['tokenUsage'];
@@ -250,6 +252,7 @@ function finaliseResult(
     // Block present but malformed or invalid — force failure
     agentResult.outputParsed = false;
     agentResult.parseError = parseResult.error;
+    agentResult.schemaOnlyFailure = agentResult.exitCode === 0;
     agentResult.success = false;
     agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
   }

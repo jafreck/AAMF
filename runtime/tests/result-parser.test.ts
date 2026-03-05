@@ -22,6 +22,7 @@ import {
   DocumentationWriterOutput,
   MigrationRunnerOutput,
   KbIndexerOutput,
+  normaliseAamfPayload,
 } from '../src/agents/result-parser.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -675,6 +676,175 @@ intermediate text
       if (!result.parsed) {
         expect(result.error).toContain('schema validation failed');
       }
+    });
+
+    // ─── agentHint normalisation ───────────────────────────────────────
+
+    it('should inject agent field from agentHint when agent key is missing', () => {
+      const stdout = '```aamf-json\n{"status":"completed","taskId":"fix-0-4"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput, 'code-migrator');
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.agent).toBe('code-migrator');
+      }
+    });
+
+    it('should correct agentRole alias to agent via agentHint', () => {
+      // Real-world failure: agent emits "agentRole" instead of "agent"
+      const stdout = '```aamf-json\n{"status":"completed","agentRole":"code-migrator","taskId":"fix-0-0"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput, 'code-migrator');
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.agent).toBe('code-migrator');
+        expect((result.data as Record<string, unknown>).agentRole).toBeUndefined();
+      }
+    });
+
+    it('should normalise "complete" status typo to "completed"', () => {
+      // Real-world failure: agent emits "status": "complete" instead of "completed"
+      const stdout = '```aamf-json\n{"status":"complete","agent":"code-migrator"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput, 'code-migrator');
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('completed');
+      }
+    });
+
+    it('should normalise "success" status typo to "completed"', () => {
+      const stdout = '```aamf-json\n{"status":"success","agent":"code-migrator"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput, 'code-migrator');
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('completed');
+      }
+    });
+
+    it('should normalise "fail" status typo to "failed"', () => {
+      const stdout = '```aamf-json\n{"status":"fail","agent":"test-writer"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, TestWriterOutput, 'test-writer');
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('failed');
+      }
+    });
+
+    it('should normalise "needs_review" to "needs-review"', () => {
+      const stdout = '```aamf-json\n{"status":"needs_review","agent":"code-migrator"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput, 'code-migrator');
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('needs-review');
+      }
+    });
+
+    it('should fix both missing agent and status typo simultaneously', () => {
+      // Mimics exact fix-0-4 failure from the zstd migration
+      const stdout = '```aamf-json\n{"taskId":"fix-0-4","status":"complete","outputFiles":["src/decompress.rs"]}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput, 'code-migrator');
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.agent).toBe('code-migrator');
+        expect(result.data.status).toBe('completed');
+      }
+    });
+
+    it('should not normalise when agentHint is not provided (backward compat)', () => {
+      const stdout = '```aamf-json\n{"status":"complete","agentRole":"code-migrator"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput);
+      // Without agentHint, the old strict behaviour applies
+      expect(result.parsed).toBe(false);
+    });
+
+    it('should override wrong agent literal with agentHint', () => {
+      // Agent says "impact-assessor" but runtime knows it launched "code-migrator"
+      const stdout = '```aamf-json\n{"status":"completed","agent":"impact-assessor"}\n```';
+      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput, 'code-migrator');
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.agent).toBe('code-migrator');
+      }
+    });
+  });
+
+  describe('normaliseAamfPayload', () => {
+    it('should inject agent from hint when agent key is absent', () => {
+      const payload: Record<string, unknown> = { status: 'completed', taskId: 'task-1' };
+      normaliseAamfPayload(payload, 'code-migrator');
+      expect(payload.agent).toBe('code-migrator');
+    });
+
+    it('should override existing agent with hint', () => {
+      const payload: Record<string, unknown> = { status: 'completed', agent: 'wrong-agent' };
+      normaliseAamfPayload(payload, 'test-writer');
+      expect(payload.agent).toBe('test-writer');
+    });
+
+    it('should remove agentRole alias and set agent from hint', () => {
+      const payload: Record<string, unknown> = { status: 'completed', agentRole: 'code-migrator' };
+      normaliseAamfPayload(payload, 'code-migrator');
+      expect(payload.agent).toBe('code-migrator');
+      expect(payload.agentRole).toBeUndefined();
+    });
+
+    it('should remove agentName alias and set agent from hint', () => {
+      const payload: Record<string, unknown> = { status: 'completed', agentName: 'code-migrator' };
+      normaliseAamfPayload(payload, 'code-migrator');
+      expect(payload.agent).toBe('code-migrator');
+      expect(payload.agentName).toBeUndefined();
+    });
+
+    it('should correct "complete" to "completed"', () => {
+      const payload: Record<string, unknown> = { status: 'complete', agent: 'x' };
+      normaliseAamfPayload(payload);
+      expect(payload.status).toBe('completed');
+    });
+
+    it('should correct "success" to "completed"', () => {
+      const payload: Record<string, unknown> = { status: 'success', agent: 'x' };
+      normaliseAamfPayload(payload);
+      expect(payload.status).toBe('completed');
+    });
+
+    it('should correct "fail" to "failed"', () => {
+      const payload: Record<string, unknown> = { status: 'fail', agent: 'x' };
+      normaliseAamfPayload(payload);
+      expect(payload.status).toBe('failed');
+    });
+
+    it('should correct "needs_review" to "needs-review"', () => {
+      const payload: Record<string, unknown> = { status: 'needs_review', agent: 'x' };
+      normaliseAamfPayload(payload);
+      expect(payload.status).toBe('needs-review');
+    });
+
+    it('should correct "needsReview" to "needs-review"', () => {
+      const payload: Record<string, unknown> = { status: 'needsReview', agent: 'x' };
+      normaliseAamfPayload(payload);
+      expect(payload.status).toBe('needs-review');
+    });
+
+    it('should leave already-correct status values unchanged', () => {
+      const payload: Record<string, unknown> = { status: 'completed', agent: 'x' };
+      normaliseAamfPayload(payload);
+      expect(payload.status).toBe('completed');
+    });
+
+    it('should not modify status when it is not a string', () => {
+      const payload: Record<string, unknown> = { status: 42, agent: 'x' };
+      normaliseAamfPayload(payload);
+      expect(payload.status).toBe(42);
+    });
+
+    it('should not inject agent when no hint is provided', () => {
+      const payload: Record<string, unknown> = { status: 'completed' };
+      normaliseAamfPayload(payload);
+      expect(payload.agent).toBeUndefined();
+    });
+
+    it('should return the same object reference', () => {
+      const payload: Record<string, unknown> = { status: 'completed', agent: 'x' };
+      const returned = normaliseAamfPayload(payload, 'y');
+      expect(returned).toBe(payload);
     });
   });
 

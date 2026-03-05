@@ -462,8 +462,9 @@ describe('AgentLauncher', () => {
       expect(result.parseError).toBeUndefined();
     });
 
-    it('should force success: false and set parseError when aamf-json block is present but schema-invalid', async () => {
-      // wrong agent literal → schema validation fails
+    it('should auto-correct wrong agent literal via agentHint injection and succeed', async () => {
+      // Agent emitted 'impact-assessor' but runtime knows it launched 'code-migrator'.
+      // The agent-hint normalisation injects the correct agent before validation.
       const aamfBlock = JSON.stringify({ status: 'completed', agent: 'impact-assessor' });
       const script = await createScript('bad-aamf.sh', [
         `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
@@ -480,10 +481,34 @@ describe('AgentLauncher', () => {
         taskId: 'aamf-invalid-001',
       });
 
+      expect(result.success).toBe(true);
+      expect(result.outputParsed).toBe(true);
+      expect(result.structuredOutput?.agent).toBe('code-migrator');
+      expect(result.parseError).toBeUndefined();
+    });
+
+    it('should set schemaOnlyFailure when aamf-json has non-recoverable schema error and exit code 0', async () => {
+      // status is a number (not string) → cannot be normalised
+      const aamfBlock = JSON.stringify({ status: 123, agent: 'code-migrator' });
+      const script = await createScript('schema-only-fail.sh', [
+        `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('schema-only-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 4,
+        taskId: 'schema-only-001',
+      });
+
       expect(result.success).toBe(false);
       expect(result.outputParsed).toBe(false);
+      expect(result.schemaOnlyFailure).toBe(true);
       expect(result.parseError).toBeDefined();
-      expect(result.parseError!.length).toBeGreaterThan(0);
     });
 
     it('should force success: false and set parseError when aamf-json block contains malformed JSON', async () => {

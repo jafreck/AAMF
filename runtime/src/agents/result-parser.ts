@@ -6,6 +6,64 @@ import { fileExists, readJson } from '../util/fs.js';
 
 export const MISSING_BLOCK_ERROR = 'missing aamf-json block';
 
+// ─── Output Normalisation ──────────────────────────────────────────────────────
+
+/** Known alternate field names LLMs sometimes emit instead of the canonical `agent` key. */
+const AGENT_FIELD_ALIASES = ['agentRole', 'agentName', 'agentType', 'role'] as const;
+
+/** Common LLM status typos and their canonical corrections. */
+const STATUS_CORRECTIONS: Record<string, 'completed' | 'failed' | 'needs-review'> = {
+  complete: 'completed',
+  done: 'completed',
+  success: 'completed',
+  succeeded: 'completed',
+  fail: 'failed',
+  error: 'failed',
+  'needs_review': 'needs-review',
+  'needsReview': 'needs-review',
+  review: 'needs-review',
+};
+
+/**
+ * Normalise a raw aamf-json payload before schema validation.
+ *
+ * When `agentHint` is provided (the canonical agent name known by the runtime),
+ * the function:
+ *  1. Sets or overwrites the `agent` field to match the expected literal.
+ *  2. Moves data from known alternate field names (`agentRole`, etc.) if `agent` is absent.
+ *  3. Corrects common LLM status typos (`"complete"` → `"completed"`).
+ *
+ * Mutations are applied **in-place** for efficiency and the object is returned.
+ */
+export function normaliseAamfPayload(
+  raw: Record<string, unknown>,
+  agentHint?: string,
+): Record<string, unknown> {
+  // 1. Inject / correct the `agent` field
+  if (agentHint) {
+    // If the agent already used an alias instead of 'agent', remove the alias
+    if (!raw.agent || typeof raw.agent !== 'string') {
+      for (const alias of AGENT_FIELD_ALIASES) {
+        if (raw[alias] !== undefined) {
+          delete raw[alias];
+          break;
+        }
+      }
+    }
+    raw.agent = agentHint;
+  }
+
+  // 2. Normalise status typos
+  if (typeof raw.status === 'string') {
+    const corrected = STATUS_CORRECTIONS[raw.status];
+    if (corrected) {
+      raw.status = corrected;
+    }
+  }
+
+  return raw;
+}
+
 // ─── AamfOutput Schemas ───────────────────────────────────────────────────────
 
 /**
@@ -256,13 +314,19 @@ export class ResultParser {
    * Extract the last ```aamf-json fenced block from agent stdout and validate
    * it against the provided Zod schema.
    *
+   * When `agentHint` is provided the runtime injects the `agent` field and
+   * normalises common LLM typos (e.g. `"complete"` → `"completed"`) before
+   * schema validation, dramatically reducing spurious parse failures.
+   *
    * @param stdout - Raw agent stdout string.
    * @param schema - Zod schema to validate the parsed JSON against.
+   * @param agentHint - Optional canonical agent name; injected into the payload before validation.
    * @returns `{ data, parsed: true }` on success, or `{ parsed: false, error }`.
    */
   static parseAamfOutput<T extends z.ZodTypeAny>(
     stdout: string,
     schema: T,
+    agentHint?: string,
   ): { data: z.infer<T>; parsed: true } | { parsed: false; error: string } {
     // Find all ```aamf-json ... ``` blocks; use the last one.
     const blockRegex = /```aamf-json\r?\n([\s\S]*?)```/g;
@@ -281,6 +345,11 @@ export class ResultParser {
       raw = JSON.parse(lastMatch[1]!.trim());
     } catch (err) {
       return { parsed: false, error: `malformed JSON in aamf-json block: ${String(err)}` };
+    }
+
+    // Normalise known LLM drift before schema validation
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      normaliseAamfPayload(raw as Record<string, unknown>, agentHint);
     }
 
     const result = schema.safeParse(raw);

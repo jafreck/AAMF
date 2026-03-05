@@ -129,6 +129,24 @@ export class RetryExecutor {
       }
     }
 
+    // Schema-only failure: the agent process succeeded (exit 0) but the
+    // structured output block failed validation. Grant one bonus retry since
+    // the underlying work was likely performed — the LLM just emitted a
+    // non-conformant aamf-json block.
+    if (lastResult?.schemaOnlyFailure) {
+      this.logger.info(
+        `Schema-only failure detected for ${invocation.agent}` +
+        `${invocation.taskId ? ` (${invocation.taskId})` : ''} — granting bonus retry`,
+      );
+      const bonusAttempt = options.maxAttempts + 1;
+      const bonusInv = { ...invocation, attemptNumber: bonusAttempt, maxAttempts: bonusAttempt };
+      const bonusResult = await this.launcher(bonusInv);
+      if (bonusResult.success) {
+        return { ...bonusResult, attempts: bonusAttempt, recoveryAttempted, wasRetry: true };
+      }
+      return { ...bonusResult, attempts: bonusAttempt, recoveryAttempted, wasRetry: true };
+    }
+
     return { ...lastResult!, attempts: options.maxAttempts, recoveryAttempted, wasRetry: options.maxAttempts > 1 };
   }
 }

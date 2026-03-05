@@ -137,6 +137,15 @@ export interface AgentResult {
   /** Error message describing why output parsing failed, if applicable. */
   parseError?: string;
 
+  /**
+   * True when the agent process exited successfully (exit code 0) but the
+   * aamf-json output block failed schema validation.  This distinguishes
+   * "the agent did the work but its structured reply was malformed" from
+   * "the agent itself errored out", allowing callers to retry cheaply or
+   * treat the run as partially successful.
+   */
+  schemaOnlyFailure?: boolean;
+
   /** Unique identifier for this specific invocation, for log correlation. */
   invocationId?: string;
 

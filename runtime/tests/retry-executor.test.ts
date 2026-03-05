@@ -482,4 +482,142 @@ describe('RetryExecutor', () => {
       expect(result.wasRetry).toBe(true);
     });
   });
+
+  // ─── Schema-Only Bonus Retry ─────────────────────────────────────────
+
+  describe('Schema-Only Bonus Retry', () => {
+    it('should grant a bonus retry when last failure is schema-only', async () => {
+      let attempt = 0;
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        attempt++;
+        if (attempt <= 2) {
+          return {
+            agent: inv.agent,
+            taskId: inv.taskId,
+            exitCode: 0,
+            success: false,
+            outputFiles: [],
+            duration: 100,
+            outputParsed: false,
+            parseError: 'schema validation failed: agent mismatch',
+            schemaOnlyFailure: true,
+            error: 'aamf-json parse failed: schema validation failed',
+          };
+        }
+        // Bonus retry succeeds
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: ['out.rs'],
+          duration: 100,
+          outputParsed: true,
+        };
+      };
+
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 2,
+        initialDelayMs: 0,
+      });
+
+      // 2 normal attempts + 1 bonus = 3
+      expect(result.attempts).toBe(3);
+      expect(result.success).toBe(true);
+      expect(result.wasRetry).toBe(true);
+    });
+
+    it('should not grant bonus retry when failure is not schema-only', async () => {
+      const launcher = createFailingLauncher(['code-migrator'], 'Agent crashed');
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 2,
+        initialDelayMs: 0,
+      });
+
+      expect(result.attempts).toBe(2);
+      expect(result.success).toBe(false);
+    });
+
+    it('should return failure if bonus retry also fails', async () => {
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
+        agent: inv.agent,
+        taskId: inv.taskId,
+        exitCode: 0,
+        success: false,
+        outputFiles: [],
+        duration: 100,
+        outputParsed: false,
+        parseError: 'schema validation failed',
+        schemaOnlyFailure: true,
+        error: 'aamf-json parse failed',
+      });
+
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 1,
+        initialDelayMs: 0,
+      });
+
+      // 1 normal + 1 bonus = 2
+      expect(result.attempts).toBe(2);
+      expect(result.success).toBe(false);
+      expect(result.wasRetry).toBe(true);
+    });
+
+    it('should prefer onExhausted recovery over schema-only bonus retry', async () => {
+      let launchCount = 0;
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        launchCount++;
+        if (inv.agent === 'failure-adjudicator') {
+          return {
+            agent: 'failure-adjudicator',
+            taskId: inv.taskId,
+            exitCode: 0,
+            success: true,
+            outputFiles: [],
+            duration: 50,
+            outputParsed: true,
+          };
+        }
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: false,
+          outputFiles: [],
+          duration: 100,
+          outputParsed: false,
+          parseError: 'schema validation failed',
+          schemaOnlyFailure: true,
+          error: 'aamf-json parse failed',
+        };
+      };
+
+      const logger = createSilentLogger(tempDir);
+      const executor = new RetryExecutor(launcher, logger);
+
+      const result = await executor.executeWithRetry(makeInvocation(), {
+        maxAttempts: 1,
+        initialDelayMs: 0,
+        onExhausted: async () => ({
+          agent: 'failure-adjudicator' as const,
+          contextFile: '/tmp/recovery.json',
+          progressDir: '/tmp/progress',
+          phase: 4,
+          taskId: 'task-001',
+        }),
+      });
+
+      // onExhausted fires before schema-only bonus retry
+      expect(result.recoveryAttempted).toBe(true);
+    });
+  });
 });
