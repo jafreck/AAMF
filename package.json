@@ -9,8 +9,8 @@
     "build": "npm run build --prefix runtime",
     "test": "npm test --prefix runtime",
     "install-runtime": "npm install --prefix runtime",
-    "ci:prepush": "npm --prefix runtime exec -- tsc --noEmit -p runtime/tsconfig.json",
-    "ci:local": "npm --prefix runtime exec -- tsc --noEmit -p runtime/tsconfig.json && npm --prefix runtime exec -- vitest run --coverage",
+    "ci:prepush": "npm --prefix runtime run lint",
+    "ci:local": "npm --prefix runtime run lint && npm --prefix runtime run test -- --coverage",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "engines": {
