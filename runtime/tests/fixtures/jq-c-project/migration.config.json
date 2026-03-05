@@ -15,6 +15,7 @@
     "testCommand": "dotnet test"
   },
   "options": {
+    "qualityPolicy": "strict",
     "maxParallelAgents": 3,
     "maxRetriesPerTask": 2,
     "maxLinesPerTask": 500,
