@@ -2,12 +2,12 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['runtime/tests/**/*.test.ts'],
+    root: 'runtime',
     exclude: [
       ...configDefaults.exclude,
-      'runtime/tests/indexer.test.ts',
-      'runtime/tests/indexer/**/*.test.ts',
-      'runtime/tests/ensure-python-deps.test.ts',
+      'tests/indexer.test.ts',
+      'tests/indexer/**/*.test.ts',
+      'tests/ensure-python-deps.test.ts',
     ],
     coverage: {
       provider: 'v8',

@@ -95,41 +95,6 @@ Each suite brief in the test plan should follow this template:
 | **Error Handling** | Invalid inputs, service failures, timeout recovery | High |
 | **Integration Points** | API endpoints, message queue handling, file I/O | High |
 | **Edge Cases** | Concurrent access, large payloads, empty states | Medium |
-| **Cross-Implementation Interop** | source_decode(target_encode(data)), target_decode(source_encode(data)) | High |
-
-## Output-Quality Assertions
-
-Round-trip correctness alone does not guarantee a transformation is working properly. When tests exercise data transformations (compression, encryption, encoding, hashing, serialization, etc.), also assert that the output exhibits the expected qualities:
-
-- **Size**: compressed output should be smaller than the input (or within an expected ratio).
-- **Format**: encoded output should match the expected wire format (e.g., valid Base64 alphabet, correct header bytes, expected ASN.1 structure).
-- **Entropy / randomness**: encrypted or hashed output should appear random — no long runs of zero bytes or obvious patterns.
-- **Determinism**: the same input should produce the same output for deterministic algorithms; non-deterministic algorithms (e.g., encryption with random IVs) should produce *different* ciphertext on repeated calls while still round-tripping correctly.
-- **Spec conformance**: where a format specification exists (e.g., gzip magic bytes, JWT segment count, protobuf wire types), spot-check structural invariants.
-
-Include at least one output-quality assertion per transformation type covered in the test plan.
-
-## Cross-Implementation Interoperability Tests
-
-When the source implementation is available alongside the migrated target, generate **cross-implementation interop tests** that verify data produced by one implementation can be consumed by the other. This catches subtle encoding, padding, endianness, or default-value differences that round-trip tests within a single implementation cannot detect.
-
-For each relevant transformation, generate both directions:
-
-1. `source_decode(target_encode(data))` — encode with the target (migrated) implementation, decode with the source (original) implementation.
-2. `target_decode(source_encode(data))` — encode with the source implementation, decode with the target implementation.
-
-Include interop scenarios for every codec, serializer, or protocol handler that the migration rewrites. Prioritize formats that cross process or network boundaries (wire protocols, file formats, shared caches).
-
-### Golden-File Fallback
-
-When building or invoking the source implementation in tests is impractical (e.g., different runtime, external dependency, deprecated toolchain):
-
-1. Before migration, compress/encode/serialize a set of representative reference inputs using the source implementation.
-2. Store the outputs as **golden fixtures** (e.g., `fixtures/interop/source-encoded-payload.bin`).
-3. In the target test suite, assert that the target implementation can decode each golden fixture and produce the expected plaintext.
-4. Optionally, also store target-encoded outputs and verify the source implementation (if reachable via a script or container) can decode them.
-
-Golden fixtures should cover normal payloads, boundary sizes, and at least one edge-case input per transformation.
 
 ## Output Format
 
