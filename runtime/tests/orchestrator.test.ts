@@ -2448,7 +2448,7 @@ describe('MigrationOrchestrator', () => {
 
         expect((strict.orchestrator as any).getPhase4QualityGateMode()).toBe('enforce');
         expect((balanced.orchestrator as any).getPhase4QualityGateMode()).toBe('advisory');
-        expect((deferred.orchestrator as any).getPhase4QualityGateMode()).toBe('skip');
+        expect((deferred.orchestrator as any).getPhase4QualityGateMode()).toBe('advisory');
       });
 
       it('should return a wave-end build gate error and skip test gate after build failure', async () => {
@@ -2522,6 +2522,505 @@ describe('MigrationOrchestrator', () => {
         expect(phase4).toBeDefined();
         expect(phase4?.success).toBe(false);
         expect(phase4?.error).toContain('wave-end test gate failed (deferred-strict)');
+      });
+
+      it('should pass wave-end parity gate in deferred-strict when all tasks have only minor issues', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'deferred-parity-pass-output'),
+          },
+          options: { qualityPolicy: 'deferred-strict', maxRetriesPerTask: 2 },
+        });
+
+        const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+        await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+        await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+        await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+        // Write a parity sidecar with only minor issues
+        await ensureDir(join(progressDir, 'artifacts', 'results'));
+        await writeFile(
+          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+          JSON.stringify({
+            taskId: 'task-001',
+            agent: 'parity-verifier',
+            status: 'completed',
+            outputFiles: [],
+            parity: 'partial',
+            issues: [{ severity: 'minor', description: 'Slightly different API surface' }],
+          }),
+        );
+
+        const result = await orchestrator.run();
+
+        expect(result.success).toBe(true);
+        // No remediation agents should have been invoked at wave-end
+        const waveEndAdjudicator = mockLauncher.invocations.filter(
+          (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+        );
+        expect(waveEndAdjudicator).toHaveLength(0);
+      });
+
+      it('should trigger batched remediation at wave-end in deferred-strict for non-minor parity issues', async () => {
+        const launcherFn = createMockLauncher((inv) => {
+          // After remediation, parity-verifier writes a passing sidecar
+          // (the withParityPassSidecar wrapper handles this automatically)
+          return {};
+        });
+        const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'deferred-remediation-output'),
+          },
+          options: { qualityPolicy: 'deferred-strict', maxRetriesPerTask: 2 },
+        });
+
+        const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+        await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+        await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+        await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+        // Write a parity sidecar with major issues
+        await ensureDir(join(progressDir, 'artifacts', 'results'));
+        await writeFile(
+          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+          JSON.stringify({
+            taskId: 'task-001',
+            agent: 'parity-verifier',
+            status: 'completed',
+            outputFiles: ['parity-reports/task-001.md'],
+            parity: 'fail',
+            issues: [{ severity: 'major', description: 'Missing validation logic' }],
+          }),
+        );
+
+        const result = await orchestrator.run();
+
+        // Remediation should have been triggered at wave-end
+        const adjudicatorInvocations = mockLauncher.invocations.filter(
+          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+        );
+        const codeMigratorInvocations = mockLauncher.invocations.filter(
+          (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+        );
+        // At least one remediation attempt should have happened
+        expect(adjudicatorInvocations.length).toBeGreaterThanOrEqual(1);
+        expect(codeMigratorInvocations.length).toBeGreaterThanOrEqual(1);
+      });
+
+      it('should raise terminal exhaustion at wave-end in deferred-strict when remediation does not converge', async () => {
+        // Launcher always returns success, but the parity sidecar persists with major issues
+        const launcherFn = createMockLauncher();
+        const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'deferred-exhaustion-output'),
+          },
+          options: { qualityPolicy: 'deferred-strict', maxRetriesPerTask: 1 },
+        });
+
+        const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+        await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+        await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+        await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+        // Write a parity sidecar with major issues that won't be resolved
+        await ensureDir(join(progressDir, 'artifacts', 'results'));
+        await writeFile(
+          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+          JSON.stringify({
+            taskId: 'task-001',
+            agent: 'parity-verifier',
+            status: 'completed',
+            outputFiles: ['parity-reports/task-001.md'],
+            parity: 'fail',
+            issues: [{ severity: 'major', description: 'Critical behavior divergence' }],
+          }),
+        );
+
+        const result = await orchestrator.run();
+        const phase4 = result.phases.find((p) => p.phase === 4);
+
+        expect(result.success).toBe(false);
+        expect(phase4?.error).toContain('parity-non-minor-exhausted');
+      });
+
+      it('should return skip gate mode for unknown qualityPolicy values', async () => {
+        const launcherFn = createMockLauncher();
+        const unknown = await setupOrchestrator(tempDir, launcherFn, {
+          options: { qualityPolicy: 'some-future-policy' as any },
+        });
+
+        expect((unknown.orchestrator as any).getPhase4QualityGateMode()).toBe('skip');
+      });
+
+      it('should skip parity evaluation in deferred-strict when waveTasks is empty', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+          options: { qualityPolicy: 'deferred-strict' },
+        });
+        vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: true });
+
+        const result = await (orchestrator as any).runWaveEndQualityGates([], 1);
+
+        expect(result).toBeUndefined();
+        // No remediation agents should have been invoked
+        const adjudicators = mockLauncher.invocations.filter(
+          (i) => i.agent === 'failure-adjudicator',
+        );
+        expect(adjudicators).toHaveLength(0);
+      });
+
+      it('should pass wave-end parity gate in deferred-strict when all tasks have parity: pass', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'deferred-parity-full-pass-output'),
+          },
+          options: { qualityPolicy: 'deferred-strict', maxRetriesPerTask: 2 },
+        });
+
+        const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+        await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+        await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+        await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+        // Write a parity sidecar with parity: 'pass' and no issues
+        await ensureDir(join(progressDir, 'artifacts', 'results'));
+        await writeFile(
+          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+          JSON.stringify({
+            taskId: 'task-001',
+            agent: 'parity-verifier',
+            status: 'completed',
+            outputFiles: [],
+            parity: 'pass',
+            issues: [],
+          }),
+        );
+
+        const result = await orchestrator.run();
+
+        expect(result.success).toBe(true);
+        const waveEndAdjudicator = mockLauncher.invocations.filter(
+          (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+        );
+        expect(waveEndAdjudicator).toHaveLength(0);
+      });
+
+      it('should treat missing parity sidecar as fail-closed and trigger remediation in deferred-strict', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'deferred-missing-sidecar-output'),
+          },
+          options: { qualityPolicy: 'deferred-strict', maxRetriesPerTask: 1 },
+        });
+
+        const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+        await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+        await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+        await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+        // Intentionally do NOT write a parity sidecar — the initial pass sidecar
+        // written by withParityPassSidecar during Phase 4 migration will be present,
+        // so we must delete it after phase 4 migration runs. Instead, we spy on
+        // hasNonMinorParityIssues to simulate missing sidecar at wave-end.
+        const hasNonMinorSpy = vi.spyOn(orchestrator as any, 'hasNonMinorParityIssues')
+          .mockResolvedValue(true);
+
+        const result = await orchestrator.run();
+
+        // Should have triggered remediation (and then exhaustion since issues persist)
+        const adjudicatorInvocations = mockLauncher.invocations.filter(
+          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+        );
+        expect(adjudicatorInvocations.length).toBeGreaterThanOrEqual(1);
+        expect(result.success).toBe(false);
+
+        hasNonMinorSpy.mockRestore();
+      });
+
+      it('should trigger remediation for critical severity parity issues in deferred-strict', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'deferred-critical-output'),
+          },
+          options: { qualityPolicy: 'deferred-strict', maxRetriesPerTask: 1 },
+        });
+
+        const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+        await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+        await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+        await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+        // Write a parity sidecar with critical severity issues
+        await ensureDir(join(progressDir, 'artifacts', 'results'));
+        await writeFile(
+          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+          JSON.stringify({
+            taskId: 'task-001',
+            agent: 'parity-verifier',
+            status: 'completed',
+            outputFiles: ['parity-reports/task-001.md'],
+            parity: 'fail',
+            issues: [{ severity: 'critical', description: 'Security check missing entirely' }],
+          }),
+        );
+
+        const result = await orchestrator.run();
+
+        const adjudicatorInvocations = mockLauncher.invocations.filter(
+          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+        );
+        expect(adjudicatorInvocations.length).toBeGreaterThanOrEqual(1);
+        expect(result.success).toBe(false);
+        const phase4 = result.phases.find((p) => p.phase === 4);
+        expect(phase4?.error).toContain('parity-non-minor-exhausted');
+      });
+
+      it('should not run parity evaluation at wave-end when build gate fails in deferred-strict', async () => {
+        const launcherFn = createMockLauncher();
+        const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'deferred-build-fail-no-parity-output'),
+            buildCommand: 'false',
+          },
+          options: { qualityPolicy: 'deferred-strict', maxRetriesPerTask: 2 },
+        });
+
+        const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+        await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+        await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+        await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+        // Write a parity sidecar with major issues — but build gate should fail first
+        await ensureDir(join(progressDir, 'artifacts', 'results'));
+        await writeFile(
+          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+          JSON.stringify({
+            taskId: 'task-001',
+            agent: 'parity-verifier',
+            status: 'completed',
+            outputFiles: [],
+            parity: 'fail',
+            issues: [{ severity: 'major', description: 'Major divergence' }],
+          }),
+        );
+
+        const result = await orchestrator.run();
+        const phase4 = result.phases.find((p) => p.phase === 4);
+
+        // Build failure should take precedence; no parity remediation should occur
+        expect(phase4?.error).toContain('wave-end build gate failed');
+        const adjudicatorInvocations = mockLauncher.invocations.filter(
+          (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+        );
+        expect(adjudicatorInvocations).toHaveLength(0);
+      });
+
+      it('should run batched remediation in parallel across multiple failing tasks at wave-end', async () => {
+        const invocationOrder: string[] = [];
+        const launcherFn = createMockLauncher((inv) => {
+          invocationOrder.push(`${inv.agent}:${inv.taskId}`);
+          return {};
+        });
+        const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+          target: {
+            outputPath: join(tempDir, 'deferred-parallel-output'),
+          },
+          options: { qualityPolicy: 'deferred-strict', maxRetriesPerTask: 1 },
+        });
+        await writeMigrationPlan(progressDir);
+
+        // Write parity sidecars with major issues for both tasks
+        await ensureDir(join(progressDir, 'artifacts', 'results'));
+        await writeFile(
+          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+          JSON.stringify({
+            taskId: 'task-001',
+            agent: 'parity-verifier',
+            status: 'completed',
+            outputFiles: [],
+            parity: 'fail',
+            issues: [{ severity: 'major', description: 'Divergence in task-001' }],
+          }),
+        );
+        await writeFile(
+          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-002.result.json'),
+          JSON.stringify({
+            taskId: 'task-002',
+            agent: 'parity-verifier',
+            status: 'completed',
+            outputFiles: [],
+            parity: 'fail',
+            issues: [{ severity: 'major', description: 'Divergence in task-002' }],
+          }),
+        );
+
+        const result = await orchestrator.run();
+
+        // Both tasks should have had remediation attempts
+        const task1Adjudicator = mockLauncher.invocations.filter(
+          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+        );
+        const task2Adjudicator = mockLauncher.invocations.filter(
+          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-002' && i.phase === 4,
+        );
+        expect(task1Adjudicator.length).toBeGreaterThanOrEqual(1);
+        expect(task2Adjudicator.length).toBeGreaterThanOrEqual(1);
+
+        // Verify terminal exhaustion since issues persist
+        expect(result.success).toBe(false);
+        const phase4 = result.phases.find((p) => p.phase === 4);
+        expect(phase4?.error).toContain('parity-non-minor-exhausted');
       });
     });
 

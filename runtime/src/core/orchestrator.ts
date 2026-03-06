@@ -1308,7 +1308,11 @@ export class MigrationOrchestrator {
     let waveEndGateError: string | undefined;
     const gateMode = this.getPhase4QualityGateMode();
     if (!deadlocked && finalProgress.blocked === 0 && gateMode !== 'enforce') {
-      waveEndGateError = await this.runWaveEndQualityGates();
+      const completedWaveTasks = queue.getAllTaskIds()
+        .filter(id => queue.isTaskCompleted(id))
+        .map(id => queue.getTask(id)!)
+        .filter(Boolean);
+      waveEndGateError = await this.runWaveEndQualityGates(completedWaveTasks);
     }
     return {
       phase: 4,
@@ -3146,10 +3150,11 @@ export class MigrationOrchestrator {
     const policy = this.config.options.qualityPolicy;
     if (policy === 'strict') return 'enforce';
     if (policy === 'balanced') return 'advisory';
+    if (policy === 'deferred-strict') return 'advisory';
     return 'skip';
   }
 
-  private async runWaveEndQualityGates(): Promise<string | undefined> {
+  private async runWaveEndQualityGates(waveTasks: MigrationTask[] = [], waveNumber?: number): Promise<string | undefined> {
     const policy = this.config.options.qualityPolicy;
     this.logger.info(
       `Running wave-end strict quality gates (qualityPolicy=${policy})`,
@@ -3166,6 +3171,131 @@ export class MigrationOrchestrator {
       const testResult = await this.runCommand('test', this.config.target.testCommand, 'wave-end');
       if (!testResult.success) {
         return `wave-end test gate failed (${policy}): ${testResult.error ?? 'unknown error'}`;
+      }
+    }
+
+    // Deferred-strict: collect and evaluate parity results for all wave tasks
+    if (policy === 'deferred-strict' && waveTasks.length > 0) {
+      const maxRetries = this.config.options.maxRetriesPerTask;
+
+      // Identify tasks with non-minor parity issues
+      let failingTasks: MigrationTask[] = [];
+      for (const task of waveTasks) {
+        const hasNonMinor = await this.hasNonMinorParityIssues(task.id);
+        if (hasNonMinor) failingTasks.push(task);
+      }
+
+      if (failingTasks.length === 0) return undefined;
+
+      this.logger.info(
+        `Wave-end parity gate: ${failingTasks.length}/${waveTasks.length} task(s) have non-minor parity issues`,
+      );
+
+      // Batched remediation loop
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        await Promise.all(failingTasks.map(async (task) => {
+          const parityReportPath = join(
+            this.paths.artifactsParityDir,
+            `${task.id}.md`,
+          );
+          const adjudicationReportPath = join(
+            this.paths.artifactsAdjudicationDir,
+            `${task.id}.md`,
+          );
+
+          const issueSummary = await this.getParityIssueSummary(task.id);
+          const enrichedSummary = issueSummary
+            ? `Parity verification failed for ${task.id}: ${issueSummary}`
+            : `Parity verification failed for ${task.id}`;
+
+          const parityRemediation = this.buildRemediationContext({
+            failureKind: 'parity',
+            failureSummary: enrichedSummary,
+            taskId: task.id,
+            wave: waveNumber,
+            check: 'parity-verifier',
+            artifactPaths: [parityReportPath, ...task.sourceFiles, ...task.targetFiles],
+            expectedSuccessCondition: `Parity checks pass (or only minor issues) for ${task.id}`,
+          });
+          parityRemediation.adjudicationReportPath = adjudicationReportPath;
+
+          // failure-adjudicator
+          const recoveryCtx = await this.contextBuilder.buildContext(
+            'failure-adjudicator',
+            4,
+            task.id,
+            {
+              failureReport: parityReportPath,
+              sourceFile: task.sourceFiles[0],
+              targetFile: task.targetFiles[0],
+              kbEntry: task.knowledgeBaseRef,
+              attemptNumber: attempt,
+              remediationContext: parityRemediation,
+            },
+          );
+          const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
+          const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
+          this.recordTokens(recoveryResult, 4);
+
+          if (!recoveryResult.success) return;
+
+          // code-migrator
+          const reMigrateCtx = await this.contextBuilder.buildContext(
+            'code-migrator',
+            4,
+            task.id,
+            {
+              sourceFiles: task.sourceFiles,
+              targetFiles: task.targetFiles,
+              kbEntry: task.knowledgeBaseRef,
+              remediationContext: parityRemediation,
+            },
+          );
+          const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
+          const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
+          this.recordTokens(reMigrateResult, 4);
+
+          if (!reMigrateResult.success) return;
+
+          // parity-verifier re-run
+          const reParityCtx = await this.contextBuilder.buildContext(
+            'parity-verifier',
+            4,
+            task.id,
+            {
+              sourceFile: task.sourceFiles[0],
+              targetFile: task.targetFiles[0],
+            },
+          );
+          const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
+          const reParityResult = await this.launchAgentWithEvents(reParityInv);
+          this.recordTokens(reParityResult, 4);
+        }));
+
+        // Re-evaluate: filter to tasks that still have non-minor issues
+        const stillFailing: MigrationTask[] = [];
+        for (const task of failingTasks) {
+          const hasNonMinor = await this.hasNonMinorParityIssues(task.id);
+          if (hasNonMinor) stillFailing.push(task);
+        }
+        failingTasks = stillFailing;
+
+        if (failingTasks.length === 0) {
+          this.logger.info(`Wave-end parity remediation converged on attempt ${attempt}`);
+          return undefined;
+        }
+      }
+
+      // Exhausted retries — raise terminal exhaustion for the first remaining failing task
+      const firstFailing = failingTasks[0];
+      if (firstFailing) {
+        await this.raiseTerminalExhaustion({
+          reasonCode: 'parity-non-minor-exhausted',
+          taskId: firstFailing.id,
+          wave: waveNumber,
+          check: 'parity-verifier',
+          summary: `Wave-end parity verification still has non-minor issues for ${failingTasks.length} task(s) after ${maxRetries} attempt(s)`,
+        });
       }
     }
 
