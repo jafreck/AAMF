@@ -1205,5 +1205,246 @@ No proper fields here.
       expect(suites[0]?.id).toBe('suite-001');
       expect(suites[0]?.name).toBe('Colon Separated');
     });
+
+    it('should handle alternate bold-colon formatting (**Purpose**:)', () => {
+      const content = `### Suite: suite-001 - Alt Format
+
+**Purpose**: Alternate bold-colon format
+**Framework**: vitest
+**Output Location**: tests/e2e/alt
+
+**Target Files:**
+- src/alt.ts
+
+**KB References:**
+- kb-alt-001
+
+**Scenarios:**
+- Alternate scenario
+`;
+      const log = silentLogger();
+      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      expect(suites[0]?.purpose).toBe('Alternate bold-colon format');
+      expect(suites[0]?.framework).toBe('vitest');
+      expect(suites[0]?.outputLocation).toBe('tests/e2e/alt');
+    });
+
+    it('should strip backticks from list items', () => {
+      const content = `### Suite: suite-001 - Backtick Suite
+
+**Purpose:** Test backtick stripping
+**Framework:** vitest
+**Output Location:** tests/e2e
+
+**Target Files:**
+- \`src/foo.ts\`
+- \`src/bar.ts\`
+
+**KB References:**
+- \`kb-ref-001\`
+
+**Scenarios:**
+- Scenario one
+`;
+      const log = silentLogger();
+      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      expect(suites[0]?.targetFiles).toEqual(['src/foo.ts', 'src/bar.ts']);
+      expect(suites[0]?.kbReferences).toEqual(['kb-ref-001']);
+    });
+
+    it('should use default console logger when no logger is provided', () => {
+      const content = `### Suite: bad-format Missing ID Pattern
+
+No proper fields here.
+`;
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const suites = ResultParser.parseE2eTestPlanContent(content);
+        expect(suites).toHaveLength(0);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('malformed suite block'));
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('should parse three or more suite blocks', () => {
+      const content = `# E2E Test Plan
+
+### Suite: suite-001 - First
+
+**Purpose:** First suite
+**Framework:** vitest
+**Output Location:** tests/e2e/first
+
+**Target Files:**
+- src/first.ts
+
+**Scenarios:**
+- First scenario
+
+### Suite: suite-002 - Second
+
+**Purpose:** Second suite
+**Framework:** vitest
+**Output Location:** tests/e2e/second
+
+**Target Files:**
+- src/second.ts
+
+**Scenarios:**
+- Second scenario
+
+### Suite: suite-003 - Third
+
+**Purpose:** Third suite
+**Framework:** jest
+**Output Location:** tests/e2e/third
+
+**Target Files:**
+- src/third.ts
+
+**Scenarios:**
+- Third scenario
+`;
+      const log = silentLogger();
+      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(3);
+      expect(suites.map(s => s.id)).toEqual(['suite-001', 'suite-002', 'suite-003']);
+      expect(suites.map(s => s.name)).toEqual(['First', 'Second', 'Third']);
+      expect(suites[2]?.framework).toBe('jest');
+    });
+
+    it('should return all E2eSuiteBrief fields with correct types', () => {
+      const content = `### Suite: suite-001 - Type Check
+
+**Purpose:** Verify field types
+**Framework:** vitest
+**Output Location:** tests/e2e/types
+
+**Target Files:**
+- src/types.ts
+
+**KB References:**
+- kb-001
+
+**Scenarios:**
+- Scenario A
+- Scenario B
+`;
+      const log = silentLogger();
+      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      const suite = suites[0]!;
+      expect(typeof suite.id).toBe('string');
+      expect(typeof suite.name).toBe('string');
+      expect(typeof suite.purpose).toBe('string');
+      expect(Array.isArray(suite.targetFiles)).toBe(true);
+      expect(Array.isArray(suite.kbReferences)).toBe(true);
+      expect(typeof suite.framework).toBe('string');
+      expect(typeof suite.outputLocation).toBe('string');
+      expect(Array.isArray(suite.scenarios)).toBe(true);
+      expect(suite.scenarios).toHaveLength(2);
+    });
+  });
+
+  describe('parseE2eTestPlan (file-based)', () => {
+    it('should read a file and return parsed suites', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-e2e-'));
+      try {
+        const planContent = `# E2E Test Plan
+
+### Suite: suite-001 - File Based Suite
+
+**Purpose:** Test file-based parsing
+**Framework:** vitest
+**Output Location:** tests/e2e/file
+
+**Target Files:**
+- src/file.ts
+
+**KB References:**
+- kb-file-001
+
+**Scenarios:**
+- File scenario A
+- File scenario B
+`;
+        const planPath = join(dir, 'e2e-test-plan.md');
+        await writeFile(planPath, planContent, 'utf-8');
+        const suites = await ResultParser.parseE2eTestPlan(planPath);
+        expect(suites).toHaveLength(1);
+        expect(suites[0]?.id).toBe('suite-001');
+        expect(suites[0]?.name).toBe('File Based Suite');
+        expect(suites[0]?.purpose).toBe('Test file-based parsing');
+        expect(suites[0]?.targetFiles).toEqual(['src/file.ts']);
+        expect(suites[0]?.scenarios).toHaveLength(2);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should return empty array for an empty file', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-e2e-'));
+      try {
+        const planPath = join(dir, 'e2e-test-plan.md');
+        await writeFile(planPath, '', 'utf-8');
+        const suites = await ResultParser.parseE2eTestPlan(planPath);
+        expect(suites).toEqual([]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should throw when the file does not exist', async () => {
+      await expect(
+        ResultParser.parseE2eTestPlan('/nonexistent/path/e2e-test-plan.md'),
+      ).rejects.toThrow();
+    });
+
+    it('should parse multiple suites from a file', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-e2e-'));
+      try {
+        const planContent = `### Suite: suite-001 - Alpha
+
+**Purpose:** Alpha suite
+**Framework:** vitest
+**Output Location:** tests/e2e/alpha
+
+**Target Files:**
+- src/alpha.ts
+
+**Scenarios:**
+- Alpha scenario
+
+### Suite: suite-002 - Beta
+
+**Purpose:** Beta suite
+**Framework:** vitest
+**Output Location:** tests/e2e/beta
+
+**Target Files:**
+- src/beta.ts
+
+**Scenarios:**
+- Beta scenario
+`;
+        const planPath = join(dir, 'e2e-test-plan.md');
+        await writeFile(planPath, planContent, 'utf-8');
+        const suites = await ResultParser.parseE2eTestPlan(planPath);
+        expect(suites).toHaveLength(2);
+        expect(suites[0]?.id).toBe('suite-001');
+        expect(suites[1]?.id).toBe('suite-002');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
   });
 });
