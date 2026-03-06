@@ -66,20 +66,6 @@ Create intermediate directories as needed.
 - Do not test implementation details — test observable behavior through the public API
 - Aim for meaningful coverage, not line-count coverage
 
-## Output-Quality Assertions
-
-When the code under test performs a data transformation, do not rely solely on round-trip correctness (`decode(encode(x)) === x`). Also assert that the transformation's output exhibits the expected measurable properties:
-
-| Transformation | Assertion examples |
-|---|---|
-| **Compression** | Compressed size < input size for non-trivial inputs; output starts with the expected magic bytes or header |
-| **Encryption** | Ciphertext differs from plaintext; ciphertext length ≥ plaintext length; output is not trivially patterned |
-| **Encoding** (base64, hex, URL-encoding, etc.) | Output matches the expected character set (e.g., `/^[A-Za-z0-9+/=]+$/` for base64); length is in the expected ratio to input |
-| **Hashing** | Output has the correct fixed length (e.g., 64 hex chars for SHA-256); output matches `/^[0-9a-f]+$/`; same input produces the same hash; different inputs produce different hashes |
-| **Serialization** (JSON, protobuf, msgpack, etc.) | Output is valid in the target format (e.g., `JSON.parse` does not throw); output contains expected keys or markers |
-
-These assertions catch implementations that silently return the input unchanged, produce empty output, or apply the wrong algorithm — failures that round-trip tests alone cannot detect.
-
 ## Constraints
 
 - Do NOT modify source files — only create or modify files under `tests/`

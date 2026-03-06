@@ -157,6 +157,37 @@ async function writeParityReport(
 }
 
 /**
+ * Wrap a launcher function so parity-verifier invocations auto-write a
+ * pass sidecar when none exists, matching the fail-closed default (#118).
+ */
+function withParityPassSidecar(
+  fn: (inv: AgentInvocation) => Promise<AgentResult>,
+): (inv: AgentInvocation) => Promise<AgentResult> {
+  return async (inv: AgentInvocation): Promise<AgentResult> => {
+    const result = await fn(inv);
+    if (inv.agent === 'parity-verifier' && inv.taskId && inv.progressDir) {
+      const resultsDir = join(inv.progressDir, 'artifacts', 'results');
+      const sidecarPath = join(resultsDir, `parity-verifier-${inv.taskId}.result.json`);
+      if (!(await fileExists(sidecarPath))) {
+        await mkdir(resultsDir, { recursive: true });
+        await writeFile(
+          sidecarPath,
+          JSON.stringify({
+            taskId: inv.taskId,
+            agent: 'parity-verifier',
+            status: 'completed',
+            outputFiles: [],
+            parity: 'pass',
+            issues: [],
+          }),
+        );
+      }
+    }
+    return result;
+  };
+}
+
+/**
  * Write an e2e-test-plan.md fixture file to the target output e2e directory.
  */
 async function writeE2eTestPlan(
@@ -201,7 +232,7 @@ async function setupOrchestrator(
   const progress = new ProgressWriter(progressFile);
   await progress.initialize(config);
 
-  const mockLauncher = new MockAgentLauncher(launcherFn);
+  const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
 
   const orchestrator = new MigrationOrchestrator(
     config,
@@ -765,7 +796,7 @@ describe('MigrationOrchestrator', () => {
       const progress = new ProgressWriter(progressFile);
       await progress.initialize(config);
 
-      const mockLauncher = new MockAgentLauncher(launcherFn);
+      const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
 
       const orchestrator = new MigrationOrchestrator(
         config,
@@ -844,7 +875,7 @@ describe('MigrationOrchestrator', () => {
       const progress = new ProgressWriter(progressFile);
       await progress.initialize(config);
 
-      const mockLauncher = new MockAgentLauncher(launcherFn);
+      const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
       const orchestrator = new MigrationOrchestrator(
         config,
         checkpoint,
@@ -1030,7 +1061,7 @@ describe('MigrationOrchestrator', () => {
       const progress = new ProgressWriter(progressFile);
       await progress.initialize(config);
 
-      const mockLauncher = new MockAgentLauncher(launcherFn);
+      const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
       const orchestrator = new MigrationOrchestrator(
         config,
         checkpoint,
@@ -2524,7 +2555,7 @@ describe('MigrationOrchestrator', () => {
       const progress = new ProgressWriter(progressFile);
       await progress.initialize(config);
 
-      const mockLauncher = new MockAgentLauncher(launcherFn);
+      const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
       const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, tempDir, 'test-run-id');
 
       await writeMigrationPlan(progressDir);
@@ -2550,7 +2581,7 @@ describe('MigrationOrchestrator', () => {
         await checkpoint.load(config.projectName);
         const progress = new ProgressWriter(join(progressDir2, 'progress.md'));
         await progress.initialize(config);
-        const mockLauncher = new MockAgentLauncher(launcherFn);
+        const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
         const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub1'), 'test-run-id');
         await writeMigrationPlan(progressDir2);
         await orchestrator.run();
@@ -2573,7 +2604,7 @@ describe('MigrationOrchestrator', () => {
         await checkpoint.load(config.projectName);
         const progress = new ProgressWriter(join(progressDir3, 'progress.md'));
         await progress.initialize(config);
-        const mockLauncher = new MockAgentLauncher(launcherFn);
+        const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
         const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub2'), 'test-run-id');
         await writeMigrationPlan(progressDir3);
         await orchestrator.run();
@@ -2876,6 +2907,234 @@ describe('MigrationOrchestrator', () => {
     });
   });
 
+  // ─── Parity Sidecar Fail-Closed ────────────────────────────────────
+
+  describe('Parity sidecar fail-closed defaults', () => {
+    it('checkParityResult returns false when no sidecar file exists', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
+      // Ensure the results directory exists but no sidecar is written
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+
+      const warnSpy = vi.spyOn(logger, 'warn');
+      const result = await (orchestrator as any).checkParityResult('task-001');
+
+      expect(result).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Parity sidecar missing for task-001'),
+      );
+    });
+
+    it('hasNonMinorParityIssues returns true when no sidecar file exists', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+
+      const warnSpy = vi.spyOn(logger, 'warn');
+      const result = await (orchestrator as any).hasNonMinorParityIssues('task-001');
+
+      expect(result).toBe(true);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Parity sidecar missing for task-001'),
+      );
+    });
+
+    it('checkParityResult returns true when sidecar has parity pass', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'pass',
+          issues: [],
+        }),
+      );
+
+      const result = await (orchestrator as any).checkParityResult('task-001');
+      expect(result).toBe(true);
+    });
+
+    it('hasNonMinorParityIssues returns false when sidecar has only minor issues', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'partial',
+          issues: [{ severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' }],
+        }),
+      );
+
+      const result = await (orchestrator as any).hasNonMinorParityIssues('task-001');
+      expect(result).toBe(false);
+    });
+
+    it('checkParityResult returns false when parity is fail', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [{ severity: 'critical', description: 'missing function', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' }],
+        }),
+      );
+
+      const result = await (orchestrator as any).checkParityResult('task-001');
+      expect(result).toBe(false);
+    });
+
+    it('checkParityResult returns true when parity is partial with all minor issues', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'partial',
+          issues: [
+            { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
+            { severity: 'minor', description: 'whitespace diff', sourceLocation: 'a.py:5', targetLocation: 'a.ts:5' },
+          ],
+        }),
+      );
+
+      const result = await (orchestrator as any).checkParityResult('task-001');
+      expect(result).toBe(true);
+    });
+
+    it('checkParityResult returns false when parity is partial with a major issue', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'partial',
+          issues: [
+            { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
+            { severity: 'major', description: 'logic mismatch', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' },
+          ],
+        }),
+      );
+
+      const result = await (orchestrator as any).checkParityResult('task-001');
+      expect(result).toBe(false);
+    });
+
+    it('hasNonMinorParityIssues returns true when sidecar has a critical issue', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
+            { severity: 'critical', description: 'missing export', sourceLocation: 'a.py:20', targetLocation: 'a.ts:20' },
+          ],
+        }),
+      );
+
+      const result = await (orchestrator as any).hasNonMinorParityIssues('task-001');
+      expect(result).toBe(true);
+    });
+
+    it('hasNonMinorParityIssues returns false when issues array is empty', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'pass',
+          issues: [],
+        }),
+      );
+
+      const result = await (orchestrator as any).hasNonMinorParityIssues('task-001');
+      expect(result).toBe(false);
+    });
+
+    it('checkParityResult does not log warning when sidecar exists', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'pass',
+          issues: [],
+        }),
+      );
+
+      const warnSpy = vi.spyOn(logger, 'warn');
+      await (orchestrator as any).checkParityResult('task-001');
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('Parity sidecar missing'),
+      );
+    });
+
+    it('hasNonMinorParityIssues does not log warning when sidecar exists', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
+      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'pass',
+          issues: [],
+        }),
+      );
+
+      const warnSpy = vi.spyOn(logger, 'warn');
+      await (orchestrator as any).hasNonMinorParityIssues('task-001');
+      expect(warnSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('Parity sidecar missing'),
+      );
+    });
+  });
+
   // ─── ETA Logging ───────────────────────────────────────────────────
 
   describe('ETA Logging', () => {
@@ -3073,7 +3332,7 @@ describe('MigrationOrchestrator', () => {
       await checkpoint2.load(config2.projectName);
       const progress2 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress2.initialize(config2);
-      const mockLauncher2 = new MockAgentLauncher(createMockLauncher());
+      const mockLauncher2 = new MockAgentLauncher(withParityPassSidecar(createMockLauncher()));
       const orch2 = new MigrationOrchestrator(
         config2,
         checkpoint2,
@@ -3283,7 +3542,7 @@ describe('MigrationOrchestrator', () => {
       await checkpoint1.load(config.projectName);
       const progress1 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress1.initialize(config);
-      const orch1 = new MigrationOrchestrator(config, checkpoint1, new MockAgentLauncher(launcherFn) as any, progress1, logger, tempDir, 'test-run-id');
+      const orch1 = new MigrationOrchestrator(config, checkpoint1, new MockAgentLauncher(withParityPassSidecar(launcherFn)) as any, progress1, logger, tempDir, 'test-run-id');
       const result1 = await orch1.run();
 
       expect(result1.cumulativeDuration).toBe(result1.totalDuration);
@@ -3303,7 +3562,7 @@ describe('MigrationOrchestrator', () => {
 
       const progress2 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress2.initialize(config2);
-      const orch2 = new MigrationOrchestrator(config2, checkpoint2, new MockAgentLauncher(launcherFn) as any, progress2, logger, tempDir, 'test-run-id');
+      const orch2 = new MigrationOrchestrator(config2, checkpoint2, new MockAgentLauncher(withParityPassSidecar(launcherFn)) as any, progress2, logger, tempDir, 'test-run-id');
       const result2 = await orch2.run();
 
       expect(result2.cumulativeDuration).toBe(afterFirst + result2.totalDuration);
