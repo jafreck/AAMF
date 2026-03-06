@@ -18,6 +18,7 @@ import {
   ModelTier,
   RemediationContext,
   TerminalReasonCode,
+  E2eSuiteBrief,
 } from '../agents/types.js';
 import { ContextBuilder } from '../agents/context-builder.js';
 import { ResultParser } from '../agents/result-parser.js';
@@ -1375,14 +1376,15 @@ export class MigrationOrchestrator {
     await this.checkpoint.save(this.checkpoint.getState());
   }
 
-  private getPhase6Cursor(): { completedAgents: string[]; lastSuccessfulStep?: string } {
+  private getPhase6Cursor(): { completedAgents: string[]; completedSuites: string[]; lastSuccessfulStep?: string } {
     const phaseCursors = this.getPhaseCursors();
     phaseCursors['6'] ??= { completedAgents: [] };
     phaseCursors['6'].completedAgents ??= [];
-    return phaseCursors['6'];
+    phaseCursors['6'].completedSuites ??= [];
+    return phaseCursors['6'] as { completedAgents: string[]; completedSuites: string[]; lastSuccessfulStep?: string };
   }
 
-  private async savePhase6Cursor(cursor: { completedAgents: string[]; lastSuccessfulStep?: string }): Promise<void> {
+  private async savePhase6Cursor(cursor: { completedAgents: string[]; completedSuites?: string[]; lastSuccessfulStep?: string }): Promise<void> {
     const phaseCursors = this.getPhaseCursors();
     phaseCursors['6'] = cursor;
     await this.checkpoint.save(this.checkpoint.getState());
@@ -2494,11 +2496,9 @@ export class MigrationOrchestrator {
   private async executePhase6(start: number): Promise<PhaseResult> {
     const phase6Cursor = this.getPhase6Cursor();
     const completedAgents = new Set(phase6Cursor.completedAgents);
-    const e2eCtx = await this.contextBuilder.buildContext('e2e-test-crafter', 6);
-    const docCtx = await this.contextBuilder.buildContext('documentation-writer', 6);
+    const completedSuites = new Set(phase6Cursor.completedSuites);
 
     const results: AgentResult[] = [];
-    const pendingAgents: Array<{ agent: AgentName; context: string }> = [];
 
     const skipAsCompleted = (agent: AgentName): AgentResult => ({
       agent,
@@ -2509,69 +2509,102 @@ export class MigrationOrchestrator {
       outputParsed: false,
     });
 
-    if (completedAgents.has('e2e-test-crafter')) {
-      results.push(skipAsCompleted('e2e-test-crafter'));
-    } else {
-      pendingAgents.push({ agent: 'e2e-test-crafter', context: e2eCtx });
-    }
-
-    if (completedAgents.has('documentation-writer')) {
-      results.push(skipAsCompleted('documentation-writer'));
-    } else {
-      pendingAgents.push({ agent: 'documentation-writer', context: docCtx });
-    }
-
-    const markAgentComplete = async (agent: AgentName): Promise<void> => {
-      completedAgents.add(agent);
+    const saveCursor = async (step: string): Promise<void> => {
       await this.savePhase6Cursor({
         completedAgents: Array.from(completedAgents),
-        lastSuccessfulStep: `completed-${agent}`,
+        completedSuites: Array.from(completedSuites),
+        lastSuccessfulStep: step,
       });
     };
 
-    if (this.isGitAutomationEnabled()) {
-      for (const pending of pendingAgents) {
-        const result = await this.launchAgentWithEvents(
-          this.buildInvocation(pending.agent, pending.context, 6),
-        );
-        results.push(result);
-        if (result.success) {
-          await this.commitForAgent(pending.agent, 6);
-          await markAgentComplete(pending.agent);
-        }
-      }
+    // ─── Stage 1: Invoke e2e-test-crafter in plan-only mode ───
+    if (completedAgents.has('e2e-test-crafter')) {
+      results.push(skipAsCompleted('e2e-test-crafter'));
     } else {
-      if (pendingAgents.length > 0) {
-        const parallel = new ParallelExecutor(
-          Math.min(2, pendingAgents.length),
-          (inv) => this.launchAgentWithEvents(inv),
-          this.logger,
-        );
+      const e2eCtx = await this.contextBuilder.buildContext(
+        'e2e-test-crafter', 6, undefined, { planOnly: true },
+      );
+      const crafterResult = await this.launchAgentWithEvents(
+        this.buildInvocation('e2e-test-crafter', e2eCtx, 6),
+      );
+      results.push(crafterResult);
+      this.recordTokens(crafterResult, 6);
 
-        const parallelResults = await parallel.executeAll(
-          pendingAgents.map((pending) => this.buildInvocation(pending.agent, pending.context, 6)),
-        );
-        this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
-        results.push(...parallelResults);
-        for (let i = 0; i < parallelResults.length; i++) {
-          const pending = pendingAgents[i]!;
-          if (parallelResults[i]!.success) {
-            await markAgentComplete(pending.agent);
-          }
+      if (crafterResult.success) {
+        if (this.isGitAutomationEnabled()) {
+          await this.commitForAgent('e2e-test-crafter', 6);
         }
+        completedAgents.add('e2e-test-crafter');
+        await saveCursor('completed-e2e-test-crafter');
+      } else {
+        return {
+          phase: 6,
+          name: 'E2E Testing & Documentation',
+          success: false,
+          outputPath: this.config.target.outputPath,
+          duration: Date.now() - start,
+          error: crafterResult.error ?? 'e2e-test-crafter failed',
+        };
       }
     }
 
-    for (const r of results) this.recordTokens(r, 6);
+    // ─── Stage 2: Parse e2e-test-plan.md into suites ───
+    const planPath = join(this.config.target.outputPath, 'e2e', 'e2e-test-plan.md');
+    let suites: E2eSuiteBrief[] = [];
+    if (await fileExists(planPath)) {
+      suites = await ResultParser.parseE2eTestPlan(planPath);
+    } else {
+      this.logger.warn('No e2e-test-plan.md found; skipping suite fan-out');
+    }
+
+    // ─── Stage 3: Fan out test-writer per suite ───
+    // When git is disabled, doc-writer runs in parallel with suite fan-out (Stage 3+4 combined).
+    // When git is enabled, doc-writer runs sequentially after suites (Stage 4).
+    let docWriterHandled = false;
+
+    if (suites.length === 0) {
+      this.logger.warn('E2E test plan contains zero suites — skipping test-writer fan-out');
+    } else {
+      const pendingSuites = suites.filter((s) => !completedSuites.has(s.id));
+
+      if (pendingSuites.length === 0) {
+        // All suites already done (resume scenario)
+        this.logger.info('All E2E suites already completed — skipping fan-out');
+      } else if (suites.length === 1) {
+        // Single suite: direct invocation (backwards compat, no ParallelExecutor overhead)
+        const suite = pendingSuites[0]!;
+        const suiteResult = await this.executeSuiteWithRetry(suite, completedAgents, completedSuites);
+        results.push(suiteResult);
+      } else if (this.isGitAutomationEnabled()) {
+        // Multi-suite with git: sequential to avoid concurrent git mutations
+        for (const suite of pendingSuites) {
+          if (this.isSuiteBudgetExceeded(suite.id)) break;
+          const suiteResult = await this.executeSuiteWithRetry(suite, completedAgents, completedSuites);
+          results.push(suiteResult);
+        }
+      } else {
+        // Multi-suite without git: parallel fan-out with doc-writer running concurrently
+        const suitePromise = this.executeParallelSuiteFanOut(
+          pendingSuites, suites, results, completedAgents, completedSuites,
+        );
+        const docPromise = this.executeDocumentationWriter(
+          completedAgents, results, skipAsCompleted, saveCursor,
+        );
+        await Promise.all([suitePromise, docPromise]);
+        docWriterHandled = true;
+      }
+    }
+
+    // ─── Stage 4: Documentation writer (sequential when git enabled or non-parallel paths) ───
+    if (!docWriterHandled) {
+      await this.executeDocumentationWriter(completedAgents, results, skipAsCompleted, saveCursor);
+    }
 
     const allSuccess = results.every((r) => r.success);
     const errors = results.filter((r) => !r.success).map((r) => r.error);
 
     if (allSuccess) {
-      await this.savePhase6Cursor({
-        completedAgents: Array.from(completedAgents),
-        lastSuccessfulStep: 'complete',
-      });
+      await saveCursor('complete');
     }
 
     return {
@@ -2582,6 +2615,150 @@ export class MigrationOrchestrator {
       duration: Date.now() - start,
       error: errors.length > 0 ? errors.join('; ') : undefined,
     };
+  }
+
+  /**
+   * Execute a single E2E test suite with retry and per-suite checkpointing.
+   * On success, commits (when git enabled), updates the cursor, and records tokens.
+   */
+  private async executeSuiteWithRetry(
+    suite: E2eSuiteBrief,
+    completedAgents: Set<string>,
+    completedSuites: Set<string>,
+  ): Promise<AgentResult> {
+    if (this.isSuiteBudgetExceeded(suite.id)) {
+      return {
+        agent: 'test-writer',
+        taskId: suite.id,
+        exitCode: 1,
+        success: false,
+        outputFiles: [],
+        duration: 0,
+        outputParsed: false,
+        error: `Token budget exceeded before suite ${suite.id}`,
+      };
+    }
+
+    const suiteCtx = await this.contextBuilder.buildContext(
+      'test-writer', 6, suite.id, { e2eSuiteBrief: suite },
+    );
+    const retryExec = new RetryExecutor(
+      (inv) => this.launchAgentWithEvents(inv),
+      this.logger,
+    );
+    const suiteResult = await retryExec.executeWithRetry(
+      this.buildInvocation('test-writer', suiteCtx, 6, suite.id),
+      { maxAttempts: this.config.options.maxRetriesPerTask },
+    );
+    this.recordTokens(suiteResult, 6);
+
+    if (suiteResult.success) {
+      if (this.isGitAutomationEnabled()) {
+        await this.commitForAgent('test-writer', 6, suite.id, suite.name);
+      }
+      completedSuites.add(suite.id);
+      await this.savePhase6Cursor({
+        completedAgents: Array.from(completedAgents),
+        completedSuites: Array.from(completedSuites),
+        lastSuccessfulStep: `completed-suite-${suite.id}`,
+      });
+    }
+
+    return suiteResult;
+  }
+
+  /** Check whether the token budget has been exceeded before launching a suite. */
+  private isSuiteBudgetExceeded(suiteId: string): boolean {
+    if (!this.config.options.tokenBudget) return false;
+    const threshold = this.tokenTracker.checkThreshold(this.config.options.tokenBudget);
+    if (threshold === 'exceeded') {
+      this.logger.warn(`Token budget exceeded before suite ${suiteId} — skipping remaining suites`);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Multi-suite parallel fan-out using ParallelExecutor with per-suite retry.
+   * Used when git automation is disabled, allowing concurrent execution.
+   */
+  private async executeParallelSuiteFanOut(
+    pendingSuites: E2eSuiteBrief[],
+    allSuites: E2eSuiteBrief[],
+    results: AgentResult[],
+    completedAgents: Set<string>,
+    completedSuites: Set<string>,
+  ): Promise<void> {
+    // Pre-flight budget check: skip suites that can't start
+    const budgetFilteredSuites = pendingSuites.filter((s) => !this.isSuiteBudgetExceeded(s.id));
+    if (budgetFilteredSuites.length === 0) return;
+
+    const invocations: AgentInvocation[] = [];
+    for (const suite of budgetFilteredSuites) {
+      const suiteCtx = await this.contextBuilder.buildContext(
+        'test-writer', 6, suite.id, { e2eSuiteBrief: suite },
+      );
+      invocations.push(this.buildInvocation('test-writer', suiteCtx, 6, suite.id));
+    }
+
+    const retryExec = new RetryExecutor(
+      (inv) => this.launchAgentWithEvents(inv),
+      this.logger,
+    );
+    const parallel = new ParallelExecutor(
+      Math.min(this.config.options.maxE2eSuiteConcurrency ?? this.config.options.maxParallelAgents, budgetFilteredSuites.length),
+      (inv) => retryExec.executeWithRetry(inv, {
+        maxAttempts: this.config.options.maxRetriesPerTask,
+      }),
+      this.logger,
+    );
+
+    const parallelResults = await parallel.executeAll(invocations);
+    this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
+
+    for (let i = 0; i < parallelResults.length; i++) {
+      const suite = budgetFilteredSuites[i]!;
+      const result = parallelResults[i]!;
+      results.push(result);
+      this.recordTokens(result, 6);
+      if (result.success) {
+        completedSuites.add(suite.id);
+      }
+    }
+
+    await this.savePhase6Cursor({
+      completedAgents: Array.from(completedAgents),
+      completedSuites: Array.from(completedSuites),
+      lastSuccessfulStep: completedSuites.size === allSuites.length
+        ? 'all-suites-complete'
+        : `completed-${completedSuites.size}-of-${allSuites.length}-suites`,
+    });
+  }
+
+  /** Run documentation-writer, recording tokens and committing if git enabled. */
+  private async executeDocumentationWriter(
+    completedAgents: Set<string>,
+    results: AgentResult[],
+    skipAsCompleted: (agent: AgentName) => AgentResult,
+    saveCursor: (step: string) => Promise<void>,
+  ): Promise<void> {
+    if (completedAgents.has('documentation-writer')) {
+      results.push(skipAsCompleted('documentation-writer'));
+      return;
+    }
+    const docCtx = await this.contextBuilder.buildContext('documentation-writer', 6);
+    const docResult = await this.launchAgentWithEvents(
+      this.buildInvocation('documentation-writer', docCtx, 6),
+    );
+    results.push(docResult);
+    this.recordTokens(docResult, 6);
+    if (docResult.success) {
+      if (this.isGitAutomationEnabled()) {
+        await this.commitForAgent('documentation-writer', 6);
+      }
+      completedAgents.add('documentation-writer');
+      await saveCursor('completed-documentation-writer');
+    }
   }
 
   // ─── Phase 7: Completion ─────────────────────────────────────────────

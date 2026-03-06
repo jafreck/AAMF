@@ -188,6 +188,30 @@ function withParityPassSidecar(
 }
 
 /**
+ * Write an e2e-test-plan.md fixture file to the target output e2e directory.
+ */
+async function writeE2eTestPlan(
+  outputPath: string,
+  suites: Array<{ id: string; name: string; purpose?: string; framework?: string; outputLocation?: string; scenarios?: string[] }>,
+): Promise<void> {
+  const e2eDir = join(outputPath, 'e2e');
+  await mkdir(e2eDir, { recursive: true });
+
+  let content = '# E2E Test Plan\n\n';
+  for (const suite of suites) {
+    content += `### Suite: ${suite.id} - ${suite.name}\n\n`;
+    content += `**Purpose:** ${suite.purpose ?? 'Test suite'}\n\n`;
+    content += `**Target Files:**\n- src/${suite.id}.ts\n\n`;
+    content += `**KB References:**\n- kb/${suite.id}.md\n\n`;
+    content += `**Framework:** ${suite.framework ?? 'vitest'}\n\n`;
+    content += `**Output Location:** ${suite.outputLocation ?? `tests/${suite.id}`}\n\n`;
+    const scenarios = suite.scenarios ?? ['basic test'];
+    content += `**Scenarios:**\n${scenarios.map(s => `- ${s}`).join('\n')}\n\n`;
+  }
+  await writeFile(join(e2eDir, 'e2e-test-plan.md'), content);
+}
+
+/**
  * Set up a complete orchestrator test environment.
  */
 async function setupOrchestrator(
@@ -6235,6 +6259,541 @@ describe('MigrationOrchestrator', () => {
       // At least two code-migrators should have been active concurrently
       const maxConcurrent = Math.max(...concurrentRuns);
       expect(maxConcurrent).toBeGreaterThan(1);
+    });
+  });
+
+  // ─── Phase 6: E2E Suite Fan-Out ───────────────────────────────────────
+
+  describe('Phase 6 suite fan-out', () => {
+    it('should fan out one test-writer per suite for multi-suite plans', async () => {
+      const launcherFn = createMockLauncher();
+      const targetOutput = join(tempDir, 'target-fanout');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput } },
+        6,
+      );
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Auth E2E' },
+        { id: 'suite-002', name: 'API E2E' },
+        { id: 'suite-003', name: 'UI E2E' },
+      ]);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
+      const crafterInvocations = phase6Invocations.filter((inv) => inv.agent === 'e2e-test-crafter');
+      const testWriterInvocations = phase6Invocations.filter((inv) => inv.agent === 'test-writer');
+      const docWriterInvocations = phase6Invocations.filter((inv) => inv.agent === 'documentation-writer');
+
+      expect(crafterInvocations).toHaveLength(1);
+      expect(testWriterInvocations).toHaveLength(3);
+      expect(docWriterInvocations).toHaveLength(1);
+
+      const suiteIds = testWriterInvocations.map((inv) => inv.taskId);
+      expect(suiteIds).toEqual(expect.arrayContaining(['suite-001', 'suite-002', 'suite-003']));
+    });
+
+    it('should invoke e2e-test-crafter with planOnly payload', async () => {
+      const contexts: Record<string, unknown>[] = [];
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'e2e-test-crafter') {
+          // Read the context file to verify planOnly
+          contexts.push({ agent: inv.agent, contextFile: inv.contextFile });
+        }
+        return {};
+      });
+      const targetOutput = join(tempDir, 'target-planonly');
+      await ensureDir(targetOutput);
+
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput } },
+        6,
+      );
+
+      await orchestrator.run();
+      expect(contexts).toHaveLength(1);
+      // The context file should exist and contain planOnly
+      const contextData = JSON.parse(await readFile(contexts[0]!.contextFile as string, 'utf-8'));
+      expect(contextData.payload?.planOnly).toBe(true);
+    });
+
+    it('should behave equivalently to single invocation for single-suite plans', async () => {
+      const launcherFn = createMockLauncher();
+      const targetOutput = join(tempDir, 'target-single');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput } },
+        6,
+      );
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Only Suite' },
+      ]);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
+      const testWriterInvocations = phase6Invocations.filter((inv) => inv.agent === 'test-writer');
+
+      expect(testWriterInvocations).toHaveLength(1);
+      expect(testWriterInvocations[0]!.taskId).toBe('suite-001');
+    });
+
+    it('should succeed with warning when plan yields zero suites', async () => {
+      const launcherFn = createMockLauncher();
+      const targetOutput = join(tempDir, 'target-zero');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput } },
+        6,
+      );
+
+      // No e2e-test-plan.md → zero suites
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const testWriterInvocations = mockLauncher.invocations.filter(
+        (inv) => inv.phase === 6 && inv.agent === 'test-writer',
+      );
+      expect(testWriterInvocations).toHaveLength(0);
+    });
+
+    it('should skip completed suites on checkpoint resume', async () => {
+      const launcherFn = createMockLauncher();
+      const targetOutput = join(tempDir, 'target-resume');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, checkpoint, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput } },
+        6,
+      );
+
+      // Mark crafter and suite-001 as already completed
+      const state = checkpoint.getState();
+      state.phaseCursors ??= {};
+      state.phaseCursors['6'] = {
+        completedAgents: ['e2e-test-crafter'],
+        completedSuites: ['suite-001'],
+        lastSuccessfulStep: 'completed-suite-suite-001',
+      };
+      await checkpoint.save(state);
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Auth E2E' },
+        { id: 'suite-002', name: 'API E2E' },
+        { id: 'suite-003', name: 'UI E2E' },
+      ]);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
+
+      // e2e-test-crafter should be skipped (already completed)
+      expect(phase6Invocations.filter((inv) => inv.agent === 'e2e-test-crafter')).toHaveLength(0);
+
+      // Only suite-002 and suite-003 should be launched
+      const suiteIds = phase6Invocations
+        .filter((inv) => inv.agent === 'test-writer')
+        .map((inv) => inv.taskId);
+      expect(suiteIds).not.toContain('suite-001');
+      expect(suiteIds).toEqual(expect.arrayContaining(['suite-002', 'suite-003']));
+
+      // Checkpoint should now include all three suites
+      const cursor = checkpoint.getState().phaseCursors?.['6'];
+      expect(cursor?.completedSuites).toEqual(
+        expect.arrayContaining(['suite-001', 'suite-002', 'suite-003']),
+      );
+    });
+
+    it('should create per-suite git commits when git is enabled', async () => {
+      const invocationOrder: string[] = [];
+      const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+        invocationOrder.push(`${inv.agent}${inv.taskId ? `:${inv.taskId}` : ''}`);
+        return {
+          agent: inv.agent,
+          taskId: inv.taskId,
+          exitCode: 0,
+          success: true,
+          outputFiles: [],
+          duration: 100,
+          tokenUsage: { prompt: 100, completion: 50, total: 150 },
+          outputParsed: false,
+        };
+      };
+
+      const targetOutput = join(tempDir, 'target-git-suites');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: { outputPath: targetOutput },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+        6,
+      );
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Auth E2E' },
+        { id: 'suite-002', name: 'API E2E' },
+      ]);
+
+      vi.spyOn(orchestrator as any, 'commitIfDirty').mockResolvedValue(undefined);
+      vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      // Suites should run sequentially when git is enabled
+      const suiteInvocations = invocationOrder.filter((o) => o.startsWith('test-writer:'));
+      expect(suiteInvocations).toEqual(['test-writer:suite-001', 'test-writer:suite-002']);
+
+      // e2e-test-crafter should come before any test-writer
+      const crafterIdx = invocationOrder.indexOf('e2e-test-crafter');
+      const firstSuiteIdx = invocationOrder.indexOf('test-writer:suite-001');
+      expect(crafterIdx).toBeLessThan(firstSuiteIdx);
+
+      // documentation-writer should come after all suites
+      const docIdx = invocationOrder.indexOf('documentation-writer');
+      const lastSuiteIdx = invocationOrder.indexOf('test-writer:suite-002');
+      expect(lastSuiteIdx).toBeLessThan(docIdx);
+
+      // commitIfDirty should have been called for each successful agent/suite
+      const commitSpy = vi.spyOn(orchestrator as any, 'commitIfDirty');
+      expect(commitSpy).toHaveBeenCalled();
+    });
+
+    it('should retry failed suites with RetryExecutor', async () => {
+      const suiteAttempts: Record<string, number> = {};
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'test-writer' && inv.taskId) {
+          suiteAttempts[inv.taskId] = (suiteAttempts[inv.taskId] ?? 0) + 1;
+          // Fail suite-001 on first attempt, succeed on retry
+          if (inv.taskId === 'suite-001' && suiteAttempts[inv.taskId]! < 2) {
+            return { exitCode: 1, success: false, error: 'flaky test failure' };
+          }
+        }
+        return {};
+      });
+
+      const targetOutput = join(tempDir, 'target-retry');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, mockLauncher, checkpoint } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: { outputPath: targetOutput },
+          options: { maxRetriesPerTask: 3 },
+        },
+        6,
+      );
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Flaky Suite' },
+        { id: 'suite-002', name: 'Stable Suite' },
+      ]);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      // suite-001 should have been invoked at least twice (initial + retry)
+      const suite001Invocations = mockLauncher.invocations.filter(
+        (inv) => inv.agent === 'test-writer' && inv.taskId === 'suite-001',
+      );
+      expect(suite001Invocations.length).toBeGreaterThanOrEqual(2);
+
+      // Both suites should end up completed
+      const cursor = checkpoint.getState().phaseCursors?.['6'];
+      expect(cursor?.completedSuites).toEqual(
+        expect.arrayContaining(['suite-001', 'suite-002']),
+      );
+    });
+
+    it('should record per-suite token usage via recordTokens', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'test-writer') {
+          return { tokenUsage: { prompt: 300, completion: 200, total: 500 } };
+        }
+        return { tokenUsage: { prompt: 100, completion: 50, total: 150 } };
+      });
+
+      const targetOutput = join(tempDir, 'target-tokens');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, checkpoint } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput } },
+        6,
+      );
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Suite A' },
+        { id: 'suite-002', name: 'Suite B' },
+      ]);
+
+      await orchestrator.run();
+
+      const tokenUsage = checkpoint.getState().tokenUsage;
+      // Should have tokens from crafter + 2 suites + doc-writer
+      expect(tokenUsage.total).toBeGreaterThan(0);
+      expect(tokenUsage.byPhase[6]).toBeGreaterThan(0);
+      expect(tokenUsage.byAgent['test-writer']).toBeGreaterThanOrEqual(1000); // 500 * 2 suites
+    });
+
+    it('should check token budget before launching each suite', async () => {
+      let launchCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'test-writer') launchCount++;
+        // Return massive token usage to exceed budget after first suite
+        return { tokenUsage: { prompt: 5000, completion: 5000, total: 10000 } };
+      });
+
+      const targetOutput = join(tempDir, 'target-budget');
+      await ensureDir(targetOutput);
+
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: { outputPath: targetOutput },
+          options: {
+            tokenBudget: 500,
+            git: { enabled: true, autoInit: false, commitByAgent: false, commitPerTask: false },
+          },
+        },
+        6,
+      );
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Suite A' },
+        { id: 'suite-002', name: 'Suite B' },
+        { id: 'suite-003', name: 'Suite C' },
+      ]);
+
+      await orchestrator.run();
+
+      // Budget should be exceeded after crafter; later suites may be skipped
+      // The exact behavior depends on when the budget check fires, but fewer
+      // than 3 suites should be launched once the budget is blown
+      expect(launchCount).toBeLessThan(3);
+    });
+
+    it('should return failure immediately when e2e-test-crafter fails', async () => {
+      const launcherFn = createFailingLauncher(['e2e-test-crafter'], 'crafter boom');
+      const targetOutput = join(tempDir, 'target-crafter-fail');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput } },
+        6,
+      );
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Suite A' },
+      ]);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(false);
+
+      // No test-writer or documentation-writer should have been launched
+      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
+      expect(phase6Invocations.filter((inv) => inv.agent === 'test-writer')).toHaveLength(0);
+      expect(phase6Invocations.filter((inv) => inv.agent === 'documentation-writer')).toHaveLength(0);
+    });
+
+    it('should still run documentation-writer when a suite permanently fails', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'test-writer' && inv.taskId === 'suite-002') {
+          return { exitCode: 1, success: false, error: 'permanently broken' };
+        }
+        return {};
+      });
+
+      const targetOutput = join(tempDir, 'target-partial-fail');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput }, options: { maxRetriesPerTask: 1 } },
+        6,
+      );
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Good Suite' },
+        { id: 'suite-002', name: 'Bad Suite' },
+      ]);
+
+      const result = await orchestrator.run();
+      // Overall should fail because one suite failed
+      expect(result.success).toBe(false);
+
+      // documentation-writer should still have been invoked
+      const docInvocations = mockLauncher.invocations.filter(
+        (inv) => inv.phase === 6 && inv.agent === 'documentation-writer',
+      );
+      expect(docInvocations).toHaveLength(1);
+    });
+
+    it('should handle legacy cursor format without completedSuites', async () => {
+      const launcherFn = createMockLauncher();
+      const targetOutput = join(tempDir, 'target-legacy-cursor');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, checkpoint, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput } },
+        6,
+      );
+
+      // Simulate a legacy cursor that lacks the completedSuites field
+      const state = checkpoint.getState();
+      state.phaseCursors ??= {};
+      state.phaseCursors['6'] = {
+        completedAgents: ['e2e-test-crafter'],
+        lastSuccessfulStep: 'completed-e2e-test-crafter',
+      };
+      await checkpoint.save(state);
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Suite A' },
+      ]);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      // The suite should be launched since completedSuites was missing (treated as empty)
+      const suiteInvocations = mockLauncher.invocations.filter(
+        (inv) => inv.phase === 6 && inv.agent === 'test-writer',
+      );
+      expect(suiteInvocations).toHaveLength(1);
+
+      // After run, completedSuites should now be populated
+      const cursor = checkpoint.getState().phaseCursors?.['6'];
+      expect(cursor?.completedSuites).toEqual(expect.arrayContaining(['suite-001']));
+    });
+
+    it('should skip fan-out entirely when all suites are already completed', async () => {
+      const launcherFn = createMockLauncher();
+      const targetOutput = join(tempDir, 'target-all-done');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, checkpoint, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        { target: { outputPath: targetOutput } },
+        6,
+      );
+
+      // Mark crafter and all suites as already completed
+      const state = checkpoint.getState();
+      state.phaseCursors ??= {};
+      state.phaseCursors['6'] = {
+        completedAgents: ['e2e-test-crafter'],
+        completedSuites: ['suite-001', 'suite-002'],
+        lastSuccessfulStep: 'all-suites-complete',
+      };
+      await checkpoint.save(state);
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Suite A' },
+        { id: 'suite-002', name: 'Suite B' },
+      ]);
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(true);
+
+      // No test-writer or e2e-test-crafter invocations
+      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
+      expect(phase6Invocations.filter((inv) => inv.agent === 'test-writer')).toHaveLength(0);
+      expect(phase6Invocations.filter((inv) => inv.agent === 'e2e-test-crafter')).toHaveLength(0);
+
+      // documentation-writer should still run (not in completedAgents)
+      expect(phase6Invocations.filter((inv) => inv.agent === 'documentation-writer')).toHaveLength(1);
+    });
+
+    it('should persist completedSuites in cursor after each successful suite with git', async () => {
+      const completedSuiteSnapshots: string[][] = [];
+      const launcherFn = createMockLauncher();
+      const targetOutput = join(tempDir, 'target-cursor-snapshots');
+      await ensureDir(targetOutput);
+
+      const { orchestrator, checkpoint } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: { outputPath: targetOutput },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+        6,
+      );
+
+      vi.spyOn(orchestrator as any, 'commitIfDirty').mockResolvedValue(undefined);
+      vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
+
+      // Spy on savePhase6Cursor to capture snapshots
+      const origSave = (orchestrator as any).savePhase6Cursor.bind(orchestrator);
+      vi.spyOn(orchestrator as any, 'savePhase6Cursor').mockImplementation(async (cursor: any) => {
+        if (cursor.completedSuites?.length > 0) {
+          completedSuiteSnapshots.push([...cursor.completedSuites]);
+        }
+        return origSave(cursor);
+      });
+
+      await writeE2eTestPlan(targetOutput, [
+        { id: 'suite-001', name: 'Suite A' },
+        { id: 'suite-002', name: 'Suite B' },
+      ]);
+
+      await orchestrator.run();
+
+      // With git enabled (sequential), suites complete one at a time
+      // First snapshot should have suite-001, second should have both
+      expect(completedSuiteSnapshots.length).toBeGreaterThanOrEqual(2);
+      expect(completedSuiteSnapshots[0]).toEqual(['suite-001']);
+      expect(completedSuiteSnapshots[1]).toEqual(expect.arrayContaining(['suite-001', 'suite-002']));
     });
   });
 });
