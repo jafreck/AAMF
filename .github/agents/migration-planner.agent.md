@@ -57,6 +57,11 @@ When these tools are available, prefer them for structural facts over exhaustive
   - Write `.aamf/migration/{projectName}/artifacts/planning/strategy.md` with the selected strategy guidance used by `task-decomposer`.
   - Do **not** emit per-task decomposition outputs (`tasks-<group>.json`) — those are produced by `task-decomposer` in runtime Step 3b.
 
+5. **Source-Library Dependency Constraint Propagation**
+  - Identify all dependencies from the source codebase that must **not** appear in the migrated target (e.g., source-library wrappers, FFI bindings to the source language, pre-existing third-party ports of the source library).
+  - Record these as explicit **prohibited-dependency constraints** in `strategy.md` under a dedicated section.
+  - Constraints must be concrete and actionable: list prohibited package names, module patterns, or dependency categories so that `code-migrator` can enforce them without ambiguity.
+
 ## Output
 
 Write these files:
@@ -129,6 +134,7 @@ Do not launch sub-agents directly from this agent. Runtime orchestrates `adjudic
 - Every source file must map to some module group.
 - Grouping should preserve acyclic dependency ordering where possible.
 - Group outputs must be deterministic for the same inputs.
+- Prohibited-dependency constraints defined in `strategy.md` must be propagated to every `code-migrator` invocation; `task-decomposer` and downstream agents must not omit or weaken them.
 
 ## Output Format
 
