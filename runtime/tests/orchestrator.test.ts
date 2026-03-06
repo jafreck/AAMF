@@ -3392,6 +3392,103 @@ describe('MigrationOrchestrator', () => {
       // MAX_LOOPBACK = 2 → initial + 2 loop-backs = max 3 parity checks
       expect(parityCheckCount).toBeLessThanOrEqual(3);
     });
+
+    it('should return success: false when fixes persist after exhausting MAX_LOOPBACK', async () => {
+      let parityCheckCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'final-parity-checker') {
+          parityCheckCount++;
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              fixes: [
+                {
+                  description: 'Persistent unresolved issue',
+                  sourceFile: 'src/main.py',
+                  targetFile: 'src/main.ts',
+                },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      const result = await orchestrator.run();
+
+      // Phase 5 is non-critical so run completes, but the phase itself should fail
+      const phase5 = result.phases.find((p) => p.phase === 5);
+      expect(phase5).toBeDefined();
+      expect(phase5!.success).toBe(false);
+      expect(phase5!.error).toContain('unresolved parity fix');
+      expect(phase5!.error).toContain('1');
+      // All MAX_LOOPBACK+1 iterations should have been run
+      expect(parityCheckCount).toBe(3);
+    });
+
+    it('should return success: true when zero fixes on first parity check', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'final-parity-checker') {
+          return {
+            outputParsed: true,
+            structuredOutput: { fixes: [] },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      const result = await orchestrator.run();
+
+      const phase5 = result.phases.find((p) => p.phase === 5);
+      expect(phase5).toBeDefined();
+      expect(phase5!.success).toBe(true);
+    });
+
+    it('should return success: true when fixes on iteration 0 are resolved by iteration 1', async () => {
+      let parityCallCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'final-parity-checker') {
+          parityCallCount++;
+          if (parityCallCount === 1) {
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                fixes: [
+                  {
+                    description: 'Fixable issue',
+                    sourceFile: 'src/utils.py',
+                    targetFile: 'src/utils.ts',
+                  },
+                ],
+              },
+            };
+          }
+          // Second call: fixes resolved
+          return {
+            outputParsed: true,
+            structuredOutput: { fixes: [] },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      await writeMigrationPlan(progressDir);
+
+      const result = await orchestrator.run();
+
+      const phase5 = result.phases.find((p) => p.phase === 5);
+      expect(phase5).toBeDefined();
+      expect(phase5!.success).toBe(true);
+      // Two parity checks: first found fixes, second found none
+      expect(parityCallCount).toBe(2);
+    });
   });
 
   // ─── Cumulative Duration ───────────────────────────────────────────
@@ -3851,6 +3948,64 @@ describe('MigrationOrchestrator', () => {
         .map((inv) => inv.taskId);
       expect(phase5FixTaskIds).toContain('fix-1-1');
       expect(phase5FixTaskIds).not.toContain('fix-1-0');
+    });
+
+    it('should return success: false when resuming phase 5 with hadUnresolvedFixes true', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        undefined,
+        5,
+      );
+      const state = checkpoint.getState();
+      state.phaseCursors ??= {};
+      state.phaseCursors['5'] = {
+        iteration: 3,
+        fixIndex: 0,
+        lastSuccessfulStep: 'complete',
+        hadUnresolvedFixes: true,
+      };
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      const phase5 = result.phases.find((p) => p.phase === 5);
+      expect(phase5).toBeDefined();
+      expect(phase5!.success).toBe(false);
+      expect(phase5!.error).toContain('unresolved parity fixes');
+      // No agents should have been launched for phase 5 since it was already complete
+      const phase5Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 5);
+      expect(phase5Invocations).toHaveLength(0);
+    });
+
+    it('should return success: true when resuming phase 5 with hadUnresolvedFixes false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, checkpoint, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        undefined,
+        5,
+      );
+      const state = checkpoint.getState();
+      state.phaseCursors ??= {};
+      state.phaseCursors['5'] = {
+        iteration: 3,
+        fixIndex: 0,
+        lastSuccessfulStep: 'complete',
+        hadUnresolvedFixes: false,
+      };
+      await checkpoint.save(state);
+
+      const result = await orchestrator.run();
+
+      const phase5 = result.phases.find((p) => p.phase === 5);
+      expect(phase5).toBeDefined();
+      expect(phase5!.success).toBe(true);
+      expect(phase5!.error).toBeUndefined();
+      // No agents should have been launched for phase 5 since it was already complete
+      const phase5Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 5);
+      expect(phase5Invocations).toHaveLength(0);
     });
 
     it('should skip completed phase 6 agents based on checkpoint cursor', async () => {
