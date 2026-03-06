@@ -8,7 +8,7 @@ import {
   AgentName,
   MigrationTask,
 } from '../../src/agents/types.js';
-import { MigrationConfig } from '../../src/config/schema.js';
+import { MigrationConfig, MigrationConfigSchema } from '../../src/config/schema.js';
 import { Logger } from '../../src/logging/logger.js';
 
 // ─── Mock Launcher Utilities ─────────────────────────────────────────────────
@@ -71,19 +71,25 @@ export class MockAgentLauncher {
 
 // ─── Mock Config ─────────────────────────────────────────────────────────────
 
-/** Returns a valid MigrationConfig object for testing. */
+/**
+ * Returns a valid MigrationConfig object for testing.
+ * Parses through MigrationConfigSchema to ensure runtime parity and
+ * exercise all Zod defaults/transforms.
+ */
 export function createMockConfig(overrides?: any): MigrationConfig {
-  const base: MigrationConfig = {
-    projectName: 'test-project',
+  const raw = {
+    projectName: overrides?.projectName ?? 'test-project',
     source: {
       path: '/tmp/source',
       language: 'python',
       excludePatterns: ['node_modules', '.git', 'dist', 'build', '__pycache__'],
+      ...(overrides?.source ?? {}),
     },
     target: {
       language: 'typescript',
       framework: 'express',
       outputPath: '/tmp/target',
+      ...(overrides?.target ?? {}),
     },
     options: {
       maxParallelAgents: 3,
@@ -108,43 +114,26 @@ export function createMockConfig(overrides?: any): MigrationConfig {
         commitPerTask: true,
         authorName: 'AAMF Migration Bot',
         authorEmail: 'aamf@local.invalid',
+        ...(overrides?.options?.git ?? {}),
       },
+      ...(overrides?.options ?? {}),
     },
     copilot: {
       cliCommand: 'copilot',
       agentDir: '.github/agents',
       timeout: 300_000,
+      ...(overrides?.copilot ?? {}),
     },
     environment: {
       inheritShellPath: false,
       extraPath: [],
-    },
-  };
-
-  return {
-    ...base,
-    ...overrides,
-    source: {
-      ...base.source,
-      ...(overrides?.source ?? {}),
-    },
-    target: {
-      ...base.target,
-      ...(overrides?.target ?? {}),
-    },
-    options: {
-      ...base.options,
-      ...(overrides?.options ?? {}),
-    },
-    copilot: {
-      ...base.copilot,
-      ...(overrides?.copilot ?? {}),
-    },
-    environment: {
-      ...base.environment,
       ...(overrides?.environment ?? {}),
     },
-  } as MigrationConfig;
+    ...(overrides?.agentRuntime ? { agentRuntime: overrides.agentRuntime } : {}),
+    ...(overrides?.claudeCode ? { claudeCode: overrides.claudeCode } : {}),
+  };
+
+  return MigrationConfigSchema.parse(raw);
 }
 
 // ─── Task Factory ────────────────────────────────────────────────────────────

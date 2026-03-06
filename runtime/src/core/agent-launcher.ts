@@ -5,50 +5,97 @@ import { AgentInvocation, AgentName, AgentResult } from '../agents/types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { spawnWithTimeout, resolveLoginPath } from '../util/process.js';
 import { ensureDir, atomicWrite, fileExists } from '../util/fs.js';
-import {
-  ResultParser,
-  MISSING_BLOCK_ERROR,
-  MigrationOrchestratorOutput,
-  ImpactAssessorOutput,
-  KnowledgeBuilderOutput,
-  MigrationPlannerOutput,
-  TaskDecomposerOutput,
-  AdjudicatorOutput,
-  CodeMigratorOutput,
-  ParityVerifierOutput,
-  TestWriterOutput,
-  FailureAdjudicatorOutput,
-  FinalParityCheckerOutput,
-  E2eTestCrafterOutput,
-  DocumentationWriterOutput,
-  MigrationRunnerOutput,
-  IdiomaticReviewerOutput,
-  IdiomaticRefactorerOutput,
-} from '../agents/result-parser.js';
+import { ResultParser, MISSING_BLOCK_ERROR } from '../agents/result-parser.js';
+import { getOutputSchema } from '../agents/registry.js';
 import { Logger } from '../logging/logger.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { z } from 'zod';
 import { buildRuntimePaths } from './runtime-paths.js';
 
-/** Map each known agent name to its Zod output schema. */
-const agentOutputSchemas: Record<AgentName, z.ZodTypeAny> = {
-  'migration-orchestrator': MigrationOrchestratorOutput,
-  'impact-assessor': ImpactAssessorOutput,
-  'knowledge-builder': KnowledgeBuilderOutput,
-  'migration-planner': MigrationPlannerOutput,
-  'task-decomposer': TaskDecomposerOutput,
-  'adjudicator': AdjudicatorOutput,
-  'code-migrator': CodeMigratorOutput,
-  'parity-verifier': ParityVerifierOutput,
-  'test-writer': TestWriterOutput,
-  'failure-adjudicator': FailureAdjudicatorOutput,
-  'final-parity-checker': FinalParityCheckerOutput,
-  'e2e-test-crafter': E2eTestCrafterOutput,
-  'documentation-writer': DocumentationWriterOutput,
-  'migration-runner': MigrationRunnerOutput,
-  'idiomatic-reviewer': IdiomaticReviewerOutput,
-  'idiomatic-refactorer': IdiomaticRefactorerOutput,
-};
+// ─── Backend Descriptor ───────────────────────────────────────────────────────
+
+/**
+ * Describes the differences between CLI agent backends (Copilot, Claude Code).
+ * The generic `CliAgentRunner` uses this to build args, resolve config, and
+ * select the correct token parser.
+ */
+interface CliBackendDescriptor {
+  /** Human-readable name for log messages. */
+  name: string;
+  /** The CLI command to invoke. */
+  cliCommand: string;
+  /** Default timeout in milliseconds. */
+  timeout: number;
+  /** The model to use (from config). */
+  model: string | undefined;
+  /** Token usage runtime identifier for `parseTokenUsage()`. */
+  tokenParserRuntime: string;
+  /** Build CLI args for a given invocation and prompt. */
+  buildArgs(invocation: AgentInvocation, prompt: string, model: string | undefined, config: MigrationConfig): string[];
+}
+
+/** Build a backend descriptor for the Copilot CLI. */
+function copilotDescriptor(config: MigrationConfig): CliBackendDescriptor {
+  return {
+    name: 'copilot-runner',
+    cliCommand: config.copilot.cliCommand,
+    timeout: config.copilot.timeout,
+    model: config.copilot.model,
+    tokenParserRuntime: 'copilot-cli',
+    buildArgs(invocation, prompt, model, cfg) {
+      const args = [
+        '--agent', invocation.agent,
+        '-p', prompt,
+        '--allow-all-tools',
+        '--allow-all-paths',
+        '--no-ask-user',
+      ];
+      if (model) args.push('--model', model);
+      if (cfg.source.path) args.push('--add-dir', cfg.source.path);
+      if (cfg.target.outputPath) args.push('--add-dir', cfg.target.outputPath);
+      args.push('--add-dir', invocation.progressDir);
+      if (invocation.additionalArgs) {
+        for (const [key, value] of Object.entries(invocation.additionalArgs)) {
+          args.push(`--${key}`, value);
+        }
+      }
+      if (invocation.mcpConfig) {
+        const mcpServersDef = {
+          mcpServers: { 'aamf-kb': { url: invocation.mcpConfig.url, type: 'http' } },
+        };
+        args.push('--additional-mcp-config', JSON.stringify(mcpServersDef));
+      }
+      return args;
+    },
+  };
+}
+
+/** Build a backend descriptor for the Claude Code CLI. */
+function claudeCodeDescriptor(config: MigrationConfig): CliBackendDescriptor {
+  return {
+    name: 'claude-code-runner',
+    cliCommand: config.claudeCode.cliCommand,
+    timeout: config.claudeCode.timeout,
+    model: config.claudeCode.model,
+    tokenParserRuntime: 'claude-code',
+    buildArgs(invocation, prompt, model, _cfg) {
+      const args = [
+        '--agent', invocation.agent,
+        '-p', prompt,
+      ];
+      if (model) args.push('--model', model);
+      if (invocation.mcpConfig) {
+        const mcpServersDef = {
+          mcpServers: { 'aamf-kb': { url: invocation.mcpConfig.url, type: 'http' } },
+        };
+        args.push('--mcp-config', JSON.stringify(mcpServersDef));
+      }
+      return args;
+    },
+  };
+}
+
+// ─── Shared Helpers ───────────────────────────────────────────────────────────
 
 /**
  * Strip VS Code / Electron IPC environment variables so that CLI
@@ -95,17 +142,6 @@ async function writeAgentLog(logDir: string, agent: string, taskId: string, stdo
 
 // ─── Live output streaming ────────────────────────────────────────────────────
 
-/**
- * Create a pair of callbacks that stream agent stdout/stderr line-by-line to:
- *  1. A live log file (`.live.log`) in the agent log directory
- *  2. The runtime logger as `agent-output-line` events (debug level)
- *
- * Chunks from the child process may not be line-aligned, so each callback
- * maintains a residual buffer and flushes complete lines only.
- *
- * Returns `{ onStdoutData, onStderrData, flush }`. Call `flush()` after the
- * process exits to write any remaining partial line.
- */
 function createLiveOutputCallbacks(
   logDir: string,
   agent: string,
@@ -121,7 +157,6 @@ function createLiveOutputCallbacks(
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const liveLogPath = join(targetDir, `${invocationId}-${timestamp}.live.log`);
 
-  // Serialise writes so they never interleave
   let writeChain: Promise<void> = ensureDir(targetDir);
 
   const enqueueWrite = (text: string): void => {
@@ -130,7 +165,6 @@ function createLiveOutputCallbacks(
       .catch(() => {/* best-effort */});
   };
 
-  // Per-stream residual buffers for incomplete lines
   let stdoutResidue = '';
   let stderrResidue = '';
 
@@ -141,7 +175,6 @@ function createLiveOutputCallbacks(
   ): string => {
     const text = residue + chunk.toString('utf-8');
     const lines = text.split('\n');
-    // Last element is either empty (if text ended with \n) or an incomplete line
     const remaining = lines.pop()!;
 
     for (const line of lines) {
@@ -168,7 +201,6 @@ function createLiveOutputCallbacks(
       stderrResidue = processChunk(chunk, stderrResidue, 'stderr');
     },
     flush: async () => {
-      // Flush any remaining partial lines
       if (stdoutResidue) {
         enqueueWrite(`[stdout] ${stdoutResidue}\n`);
         stdoutResidue = '';
@@ -230,7 +262,7 @@ function finaliseResult(
   prompt: string,
   logger: Logger,
 ): AgentResult {
-  const schema = agentOutputSchemas[agentResult.agent];
+  const schema = getOutputSchema(agentResult.agent);
   const parseResult = ResultParser.parseAamfOutput(stdout, schema);
   if (parseResult.parsed) {
     const parsedData = parseResult.data as Record<string, unknown> & {
@@ -238,23 +270,19 @@ function finaliseResult(
     };
     agentResult.structuredOutput = parsedData;
     agentResult.outputParsed = true;
-    // Prefer tokenUsage from structured output over regex-based parsing
     if (parsedData.tokenUsage) {
       agentResult.tokenUsage = parsedData.tokenUsage;
     }
   } else if (parseResult.error === MISSING_BLOCK_ERROR) {
-    // Block absent — warn but leave success unchanged
     logger.warn(`Agent ${agentResult.agent} did not emit an aamf-json block`);
     agentResult.outputParsed = false;
   } else {
-    // Block present but malformed or invalid — force failure
     agentResult.outputParsed = false;
     agentResult.parseError = parseResult.error;
     agentResult.success = false;
     agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
   }
 
-  // Fallback: if token usage is still unknown, estimate from prompt length
   if (!agentResult.tokenUsage) {
     const estimatedTotal = TokenTracker.estimateTokens(prompt);
     logger.warn(
@@ -282,13 +310,16 @@ export interface AgentRunner {
   getResolvedPath(): string | undefined;
 }
 
-// ─── CopilotRunner ────────────────────────────────────────────────────────────
+// ─── CliAgentRunner ───────────────────────────────────────────────────────────
 
 /**
- * Spawns `copilot --agent <name>` as a child process for each invocation.
- * Implements the existing CLI-mode behaviour.
+ * Generic CLI agent runner parameterized by a backend descriptor.
+ * Consolidates the shared behavior that was previously duplicated between
+ * CopilotRunner and ClaudeCodeRunner: PATH resolution, env setup, heartbeat
+ * timers, output polling, live log streaming, result shaping, and fallback
+ * token estimation.
  */
-export class CopilotRunner implements AgentRunner {
+export class CliAgentRunner implements AgentRunner {
   private resolvedPath: string | undefined;
   private readonly logDir: string;
 
@@ -296,6 +327,7 @@ export class CopilotRunner implements AgentRunner {
     private readonly config: MigrationConfig,
     private readonly projectRoot: string,
     private readonly logger: Logger,
+    private readonly backend: CliBackendDescriptor,
   ) {
     this.logDir = buildRuntimePaths(projectRoot, config.projectName).logsAgentsDir;
   }
@@ -310,58 +342,19 @@ export class CopilotRunner implements AgentRunner {
 
   async run(invocation: AgentInvocation): Promise<AgentResult> {
     const invocationId = invocation.invocationId ?? randomUUID();
-    const timeout = invocation.timeout ?? this.config.copilot.timeout;
-    const cliCommand = this.config.copilot.cliCommand;
+    const timeout = invocation.timeout ?? this.backend.timeout;
+    const cliCommand = this.backend.cliCommand;
 
-    // Child logger with invocationId context for correlation
-    const invLogger = this.logger.child('copilot-runner');
+    const invLogger = this.logger.child(this.backend.name);
     invLogger.setInvocationId(invocationId);
     invLogger.setAgent(invocation.agent);
     if (invocation.taskId) invLogger.setTaskId(invocation.taskId);
     if (invocation.phase !== undefined) invLogger.setPhase(invocation.phase);
 
-    // Build the prompt that instructs the agent to read its context file
     const prompt = `Read your context file at: ${invocation.contextFile}\nExecute the task described in the context. Write all output files to the paths specified in the context.`;
 
-    const args = [
-      '--agent', invocation.agent,
-      '-p', prompt,
-      '--allow-all-tools',
-      '--allow-all-paths',
-      '--no-ask-user',
-    ];
-
-    const model = invocation.modelOverride ?? this.config.copilot.model;
-    if (model) {
-      args.push('--model', model);
-    }
-
-    // Grant access to source and output directories
-    if (this.config.source.path) {
-      args.push('--add-dir', this.config.source.path);
-    }
-    if (this.config.target.outputPath) {
-      args.push('--add-dir', this.config.target.outputPath);
-    }
-    args.push('--add-dir', invocation.progressDir);
-
-    // Add additional args
-    if (invocation.additionalArgs) {
-      for (const [key, value] of Object.entries(invocation.additionalArgs)) {
-        args.push(`--${key}`, value);
-      }
-    }
-
-    // Inject MCP config for KB server access
-    // Copilot CLI uses --additional-mcp-config with { mcpServers: { name: { url } } } format
-    if (invocation.mcpConfig) {
-      const mcpServersDef = {
-        mcpServers: {
-          'aamf-kb': { url: invocation.mcpConfig.url, type: 'http' },
-        },
-      };
-      args.push('--additional-mcp-config', JSON.stringify(mcpServersDef));
-    }
+    const model = invocation.modelOverride ?? this.backend.model;
+    const args = this.backend.buildArgs(invocation, prompt, model, this.config);
 
     const env: NodeJS.ProcessEnv = {
       ...stripVSCodeEnv(process.env),
@@ -381,7 +374,6 @@ export class CopilotRunner implements AgentRunner {
     const HEARTBEAT_INTERVAL_MS = 30_000;
     const OUTPUT_POLL_INTERVAL_MS = 10_000;
     const agentName = invocation.agent;
-    // Seed with files that already exist so only truly new files are reported.
     const seenFiles = new Set<string>();
     try {
       const ctx = JSON.parse(await readFile(invocation.contextFile, 'utf-8')) as { outputPath?: string };
@@ -428,14 +420,12 @@ export class CopilotRunner implements AgentRunner {
       clearInterval(heartbeatTimer);
       clearInterval(outputPollTimer);
     };
-    // ────────────────────────────────────────────────────────────────
 
     // ── Live output streaming ────────────────────────────────────────
     const liveTaskId = invocation.taskId ?? 'main';
     const liveCallbacks = createLiveOutputCallbacks(
       this.logDir, invocation.agent, liveTaskId, invocationId, invLogger,
     );
-    // ────────────────────────────────────────────────────────────────
 
     try {
       const result = await spawnWithTimeout(cliCommand, args, {
@@ -454,7 +444,10 @@ export class CopilotRunner implements AgentRunner {
       await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId);
 
       const outputFiles = await detectOutputFiles(invocation);
-      const tokenUsage = ResultParser.parseTokenUsage(result.stdout + '\n' + result.stderr, 'copilot-cli');
+      const tokenUsage = ResultParser.parseTokenUsage(
+        result.stdout + '\n' + result.stderr,
+        this.backend.tokenParserRuntime,
+      );
 
       const agentResult: AgentResult = {
         agent: invocation.agent,
@@ -504,212 +497,19 @@ export class CopilotRunner implements AgentRunner {
   }
 }
 
-// ─── ClaudeCodeRunner ─────────────────────────────────────────────────────────
+// ─── Legacy wrappers (backward-compatible) ────────────────────────────────────
 
-/**
- * Spawns `claude --agent <name> -p <prompt>` as a child process for each invocation.
- * Uses Claude's JSON-based token usage format for accurate accounting.
- */
-export class ClaudeCodeRunner implements AgentRunner {
-  private resolvedPath: string | undefined;
-  private readonly logDir: string;
-
-  constructor(
-    private readonly config: MigrationConfig,
-    private readonly projectRoot: string,
-    private readonly logger: Logger,
-  ) {
-    this.logDir = buildRuntimePaths(projectRoot, config.projectName).logsAgentsDir;
+/** @deprecated Use CliAgentRunner with copilotDescriptor. Kept for backward compatibility. */
+export class CopilotRunner extends CliAgentRunner {
+  constructor(config: MigrationConfig, projectRoot: string, logger: Logger) {
+    super(config, projectRoot, logger, copilotDescriptor(config));
   }
+}
 
-  getResolvedPath(): string | undefined {
-    return this.resolvedPath;
-  }
-
-  async init(): Promise<void> {
-    this.resolvedPath = await resolveRunnerPath(this.config.environment, this.logger);
-  }
-
-  async run(invocation: AgentInvocation): Promise<AgentResult> {
-    const invocationId = invocation.invocationId ?? randomUUID();
-    const timeout = invocation.timeout ?? this.config.claudeCode.timeout;
-    const cliCommand = this.config.claudeCode.cliCommand;
-    const agentDir = this.config.claudeCode.agentDir;
-
-    // Child logger with invocationId context for correlation
-    const invLogger = this.logger.child('claude-code-runner');
-    invLogger.setInvocationId(invocationId);
-    invLogger.setAgent(invocation.agent);
-    if (invocation.taskId) invLogger.setTaskId(invocation.taskId);
-    if (invocation.phase !== undefined) invLogger.setPhase(invocation.phase);
-
-    // Build the prompt that instructs the agent to read its context file
-    const prompt = `Read your context file at: ${invocation.contextFile}\nExecute the task described in the context. Write all output files to the paths specified in the context.`;
-
-    // Log the agent definition file path for observability
-    const agentFilePath = join(this.projectRoot, agentDir, `${invocation.agent}.md`);
-    invLogger.debug(`Claude agent definition: ${agentFilePath}`);
-
-    const args = [
-      '--agent', invocation.agent,
-      '-p', prompt,
-    ];
-
-    const model = invocation.modelOverride ?? this.config.claudeCode.model;
-    if (model) {
-      args.push('--model', model);
-    }
-
-    // Inject MCP config for KB server access
-    // Claude Code uses --mcp-config with a JSON string containing the server definition
-    if (invocation.mcpConfig) {
-      const mcpServersDef = {
-        mcpServers: {
-          'aamf-kb': { url: invocation.mcpConfig.url, type: 'http' },
-        },
-      };
-      args.push('--mcp-config', JSON.stringify(mcpServersDef));
-    }
-
-    const env: NodeJS.ProcessEnv = {
-      ...stripVSCodeEnv(process.env),
-      ...(this.resolvedPath ? { PATH: this.resolvedPath } : {}),
-      AAMF_PROGRESS_DIR: invocation.progressDir,
-      AAMF_CONTEXT_FILE: invocation.contextFile,
-      ...(invocation.kbDbPath ? { KB_DB_PATH: invocation.kbDbPath } : {}),
-    };
-    if (invocation.phase !== undefined) env.AAMF_PHASE = String(invocation.phase);
-    if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
-
-    const startTime = Date.now();
-    invLogger.info(`Launching Claude Code agent: ${cliCommand} --agent ${invocation.agent}`);
-    invLogger.debug(`Full CLI command: ${cliCommand} ${args.join(' ')}`);
-
-    // ── Heartbeat & output-directory watcher ─────────────────────────
-    const HEARTBEAT_INTERVAL_MS = 30_000;
-    const OUTPUT_POLL_INTERVAL_MS = 10_000;
-    const agentName = invocation.agent;
-    // Seed with files that already exist so only truly new files are reported.
-    const seenFiles = new Set<string>();
-    try {
-      const ctx = JSON.parse(await readFile(invocation.contextFile, 'utf-8')) as { outputPath?: string };
-      if (ctx.outputPath && await fileExists(ctx.outputPath)) {
-        const s = await stat(ctx.outputPath);
-        if (s.isDirectory()) {
-          for (const f of await readdir(ctx.outputPath)) seenFiles.add(f);
-        }
-      }
-    } catch { /* context file may not exist yet */ }
-    let firstOutputDetectedAt: number | undefined;
-
-    const heartbeatTimer = setInterval(() => {
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      invLogger.debug(`Agent ${agentName} still running (${elapsed}s elapsed)`);
-    }, HEARTBEAT_INTERVAL_MS);
-
-    const outputPollTimer = setInterval(async () => {
-      try {
-        const context = JSON.parse(await readFile(invocation.contextFile, 'utf-8')) as { outputPath?: string };
-        if (context.outputPath && await fileExists(context.outputPath)) {
-          const s = await stat(context.outputPath);
-          if (s.isDirectory()) {
-            const files = await readdir(context.outputPath);
-            const newFiles: string[] = [];
-            for (const f of files) {
-              if (!seenFiles.has(f)) {
-                seenFiles.add(f);
-                if (firstOutputDetectedAt === undefined) firstOutputDetectedAt = Date.now();
-                newFiles.push(f);
-              }
-            }
-            if (newFiles.length > 0) {
-              invLogger.debug(`Agent ${agentName} produced ${newFiles.length} new file(s): ${newFiles.join(', ')}`);
-            }
-          }
-        }
-      } catch {
-        // Ignore polling errors — context file may not exist yet
-      }
-    }, OUTPUT_POLL_INTERVAL_MS);
-
-    const stopTimers = () => {
-      clearInterval(heartbeatTimer);
-      clearInterval(outputPollTimer);
-    };
-    // ────────────────────────────────────────────────────────────────
-
-    // ── Live output streaming ────────────────────────────────────────
-    const liveTaskId = invocation.taskId ?? 'main';
-    const liveCallbacks = createLiveOutputCallbacks(
-      this.logDir, invocation.agent, liveTaskId, invocationId, invLogger,
-    );
-    // ────────────────────────────────────────────────────────────────
-
-    try {
-      const result = await spawnWithTimeout(cliCommand, args, {
-        cwd: this.projectRoot,
-        env,
-        timeout,
-        onStdoutData: liveCallbacks.onStdoutData,
-        onStderrData: liveCallbacks.onStderrData,
-      });
-
-      stopTimers();
-      await liveCallbacks.flush();
-      const duration = Date.now() - startTime;
-
-      const taskId = invocation.taskId ?? 'main';
-      await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId);
-
-      const outputFiles = await detectOutputFiles(invocation);
-      // Use claude-code runtime to parse Claude's JSON token usage format
-      const tokenUsage = ResultParser.parseTokenUsage(result.stdout + '\n' + result.stderr, 'claude-code');
-
-      const agentResult: AgentResult = {
-        agent: invocation.agent,
-        taskId: invocation.taskId,
-        invocationId,
-        exitCode: result.exitCode,
-        success: result.exitCode === 0 && !result.killed,
-        outputFiles,
-        duration,
-        tokenUsage,
-        outputParsed: false,
-        spawnToFirstOutput: firstOutputDetectedAt !== undefined ? firstOutputDetectedAt - startTime : undefined,
-        error: result.killed
-          ? `Agent timed out after ${timeout}ms`
-          : result.exitCode !== 0
-            ? result.stderr || `Exit code ${result.exitCode}`
-            : undefined,
-        stderr: (result.killed || result.exitCode !== 0) ? result.stderr : undefined,
-      };
-
-      return finaliseResult(agentResult, result.stdout, prompt, invLogger);
-    } catch (err) {
-      stopTimers();
-      await liveCallbacks.flush().catch(() => {});
-      const duration = Date.now() - startTime;
-      const estimatedTotal = TokenTracker.estimateTokens(prompt);
-      invLogger.warn(
-        `Token usage unavailable for ${invocation.agent} due to runner error; falling back to prompt-length estimate`,
-        {
-          estimatedPromptTokens: estimatedTotal,
-          error: err instanceof Error ? err.message : String(err),
-        },
-      );
-      return {
-        agent: invocation.agent,
-        taskId: invocation.taskId,
-        invocationId,
-        exitCode: 1,
-        success: false,
-        outputFiles: [],
-        duration,
-        tokenUsage: { prompt: estimatedTotal, completion: 0, total: estimatedTotal },
-        outputParsed: false,
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
+/** @deprecated Use CliAgentRunner with claudeCodeDescriptor. Kept for backward compatibility. */
+export class ClaudeCodeRunner extends CliAgentRunner {
+  constructor(config: MigrationConfig, projectRoot: string, logger: Logger) {
+    super(config, projectRoot, logger, claudeCodeDescriptor(config));
   }
 }
 

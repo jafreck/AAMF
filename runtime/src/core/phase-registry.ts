@@ -1,4 +1,5 @@
 import { AgentName } from '../agents/types.js';
+import { getAgentsForPhase } from '../agents/registry.js';
 
 /** Defines a single phase in the migration pipeline */
 export interface PhaseDefinition {
@@ -15,13 +16,13 @@ export interface PhaseDefinition {
   optional?: boolean;
 }
 
-/** The 7 ordered migration phases */
+/** The 7 ordered migration phases (agent lists derived from AGENT_REGISTRY). */
 export const PHASES: readonly PhaseDefinition[] = [
   {
     id: 0,
     name: 'KB Indexing',
     description: 'Build a local knowledge-base index of the source codebase for use by subsequent agents',
-    agents: [],
+    agents: getAgentsForPhase(0),
     critical: true,
     parallel: false,
     optional: true,
@@ -30,7 +31,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 1,
     name: 'Impact Assessment',
     description: 'Analyze source codebase to determine migration scope, complexity, and risks',
-    agents: ['impact-assessor'],
+    agents: getAgentsForPhase(1),
     critical: true,
     parallel: false,
   },
@@ -38,7 +39,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 2,
     name: 'Knowledge Base Construction',
     description: 'Build high-level architecture, risk, and integration documentation for migration planning',
-    agents: ['knowledge-builder'],
+    agents: getAgentsForPhase(2),
     critical: true,
     parallel: false,
   },
@@ -46,7 +47,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 3,
     name: 'Migration Planning',
     description: 'Create detailed migration plan with task breakdown, dependencies, and ordering',
-    agents: ['migration-planner', 'task-decomposer', 'adjudicator'],
+    agents: getAgentsForPhase(3),
     critical: true,
     parallel: false,
   },
@@ -54,7 +55,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 4,
     name: 'Iterative Migration',
     description: 'Execute migration tasks: code migration, parity verification, and test writing in per-task or wave-barrier mode',
-    agents: ['code-migrator', 'parity-verifier', 'test-writer', 'failure-adjudicator'],
+    agents: getAgentsForPhase(4),
     critical: true,
     parallel: false,  // tasks are serial but sub-tasks (parity+test) can overlap
   },
@@ -62,7 +63,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 5,
     name: 'Final Parity Verification',
     description: 'Comprehensive parity check across the entire migrated codebase',
-    agents: ['final-parity-checker'],
+    agents: getAgentsForPhase(5),
     critical: false,  // issues trigger loop-back, not abort
     parallel: false,
   },
@@ -70,7 +71,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 6,
     name: 'E2E Testing & Documentation',
     description: 'Create end-to-end tests and comprehensive migration documentation',
-    agents: ['e2e-test-crafter', 'documentation-writer'],
+    agents: getAgentsForPhase(6),
     critical: false,
     parallel: true,  // e2e tests and docs can be written in parallel
   },
@@ -78,7 +79,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 8,
     name: 'Idiomatic Refactor',
     description: 'Review and refactor migrated code to use idiomatic patterns for the target language',
-    agents: ['idiomatic-reviewer', 'idiomatic-refactorer'],
+    agents: getAgentsForPhase(8),
     critical: false,
     parallel: false,
     optional: true,
@@ -87,7 +88,7 @@ export const PHASES: readonly PhaseDefinition[] = [
     id: 7,
     name: 'Completion',
     description: 'Final summary and migration report',
-    agents: [],
+    agents: getAgentsForPhase(7),
     critical: false,
     parallel: false,
   },
