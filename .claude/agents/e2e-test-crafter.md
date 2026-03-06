@@ -52,15 +52,53 @@ The context JSON contains:
   - Both happy paths and critical failure paths
 - Write all suite briefs to `.aamf/migration/{projectName}/e2e-test-plan.md`
 
-### 3. Delegate Suite Writing
+### 3. Check for Plan-Only Mode
+
+Check `payload.planOnly` in your context JSON. If `planOnly` is `true`, follow the **Plan-Only Mode** instructions below instead of Steps 3–4.
+
+### 4. Delegate Suite Writing (standard mode only)
 - For each suite in the plan, launch a `test-writer` agent with the suite brief and context
 - Suites testing independent features may be launched in **parallel**
 - Suites testing cross-module workflows should run after their component modules' suites pass
 
-### 4. Aggregate Results
+### 5. Aggregate Results (standard mode only)
 - After all `test-writer` invocations complete, collect their results
 - Run the full E2E test suite to verify tests work together
 - Report any application-level failures as migration issues for `failure-adjudicator`
+
+## Plan-Only Mode
+
+When `payload.planOnly` is `true`, you operate in **plan-only mode**:
+
+1. **Emit only the test plan** — Write the structured `e2e-test-plan.md` file containing all suite briefs. This is your sole deliverable.
+2. **Do NOT delegate** — Do **not** launch any `test-writer` sub-agents. Do **not** run any tests. The runtime will handle fan-out of individual suites.
+3. **Use the exact suite brief format** below so the runtime parser can extract each suite:
+
+Each suite in the plan **must** use the `### Suite:` header format:
+
+```markdown
+### Suite: suite-001 - {Suite Name}
+
+- **Purpose**: {what this suite validates}
+- **Target Files**: {comma-separated or bulleted list of migrated file paths under test}
+- **KB References**: {comma-separated or bulleted list of knowledge base document paths}
+- **Framework**: {testing framework to use, e.g. vitest, jest, pytest}
+- **Output Location**: {directory where test files should be written}
+
+#### Scenarios
+1. **{scenario name}**
+   - Preconditions: {setup required}
+   - Action: {what to do}
+   - Expected: {what should happen}
+
+#### Notes
+- {any special considerations, mocks needed, etc.}
+```
+
+Suite IDs must be sequential: `suite-001`, `suite-002`, etc.
+
+4. **Include all required fields** in every suite brief: name, purpose, target files, KB references, framework, output location, and at least one scenario.
+5. **Report results** using the standard `aamf-json` block with `suitesCompleted: 0` (since no suites were written yet).
 
 ## Suite Brief Format
 
