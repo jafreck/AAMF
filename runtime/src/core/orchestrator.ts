@@ -1356,15 +1356,16 @@ export class MigrationOrchestrator {
     await this.checkpoint.save(this.checkpoint.getState());
   }
 
-  private getPhase5Cursor(): { iteration: number; fixIndex: number; lastSuccessfulStep?: string } {
+  private getPhase5Cursor(): { iteration: number; fixIndex: number; lastSuccessfulStep?: string; hadUnresolvedFixes?: boolean } {
     const phaseCursors = this.getPhaseCursors();
     phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };
     phaseCursors['5'].iteration ??= 0;
     phaseCursors['5'].fixIndex ??= 0;
+    phaseCursors['5'].hadUnresolvedFixes ??= false;
     return phaseCursors['5'];
   }
 
-  private async savePhase5Cursor(cursor: { iteration: number; fixIndex: number; lastSuccessfulStep?: string }): Promise<void> {
+  private async savePhase5Cursor(cursor: { iteration: number; fixIndex: number; lastSuccessfulStep?: string; hadUnresolvedFixes?: boolean }): Promise<void> {
     const phaseCursors = this.getPhaseCursors();
     phaseCursors['5'] = cursor;
     await this.checkpoint.save(this.checkpoint.getState());
@@ -2327,6 +2328,16 @@ export class MigrationOrchestrator {
     const phase5Cursor = this.getPhase5Cursor();
     if (phase5Cursor.lastSuccessfulStep === 'complete' || phase5Cursor.iteration > MAX_LOOPBACK) {
       const outputPath = join(this.paths.artifactsParityDir, 'final-parity-report.md');
+      if (phase5Cursor.hadUnresolvedFixes) {
+        return {
+          phase: 5,
+          name: 'Final Parity Verification',
+          success: false,
+          outputPath,
+          duration: Date.now() - start,
+          error: 'Phase 5 previously completed with unresolved parity fixes',
+        };
+      }
       return {
         phase: 5,
         name: 'Final Parity Verification',
@@ -2336,6 +2347,8 @@ export class MigrationOrchestrator {
       };
     }
     const startIteration = Math.min(phase5Cursor.iteration, MAX_LOOPBACK);
+    let lastIterationFixes: Array<{ description: string; sourceFile: string; targetFile: string }> = [];
+    let loopBrokeEarly = false;
 
     for (let iteration = startIteration; iteration <= MAX_LOOPBACK; iteration++) {
       if (iteration !== phase5Cursor.iteration) {
@@ -2374,6 +2387,8 @@ export class MigrationOrchestrator {
         fixes = await ResultParser.parseFinalParityReport(reportToRead);
       }
       if (fixes.length === 0) {
+        lastIterationFixes = fixes;
+        loopBrokeEarly = true;
         await this.savePhase5Cursor({
           iteration: iteration + 1,
           fixIndex: 0,
@@ -2381,6 +2396,7 @@ export class MigrationOrchestrator {
         });
         break;
       }
+      lastIterationFixes = fixes;
 
       if (iteration < MAX_LOOPBACK) {
         this.logger.info(
@@ -2434,13 +2450,32 @@ export class MigrationOrchestrator {
       }
     }
 
+    const hadUnresolvedFixes = !loopBrokeEarly && lastIterationFixes.length > 0;
+
     await this.savePhase5Cursor({
       iteration: MAX_LOOPBACK + 1,
       fixIndex: 0,
       lastSuccessfulStep: 'complete',
+      hadUnresolvedFixes,
     });
 
     const outputPath = join(this.paths.artifactsParityDir, 'final-parity-report.md');
+
+    if (hadUnresolvedFixes) {
+      const summary = lastIterationFixes
+        .slice(0, 5)
+        .map((f) => f.description)
+        .join('; ');
+      return {
+        phase: 5,
+        name: 'Final Parity Verification',
+        success: false,
+        outputPath,
+        duration: Date.now() - start,
+        error: `${lastIterationFixes.length} unresolved parity fix(es) after ${MAX_LOOPBACK + 1} iterations: ${summary}`,
+      };
+    }
+
     return {
       phase: 5,
       name: 'Final Parity Verification',
