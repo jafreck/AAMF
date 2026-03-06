@@ -97,7 +97,8 @@ export function createMockConfig(overrides?: any): MigrationConfig {
       maxBlockedTasks: 0,
       qualityPolicy: 'strict',
       maxInfraRetries: 3,
-      avgTokensPerTask: 5000,
+      avgTokensPerTask: 100000,
+      retryOverheadMultiplier: 1.25,
       contextWindowStrategy: 'per-invocation',
       keepArtifacts: false,
       git: {

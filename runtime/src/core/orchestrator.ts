@@ -1151,14 +1151,15 @@ export class MigrationOrchestrator {
     // 1c. Cost projection
     const taskCount = tasks.length;
     const agentMultiplier = this.config.target.testCommand ? 3 : 2; // migrator + parity (+ test-writer if testCommand set)
-    const estimatedTotalTokens = taskCount * this.config.options.avgTokensPerTask * agentMultiplier;
+    const retryMultiplier = this.config.options.retryOverheadMultiplier;
+    const estimatedTotalTokens = taskCount * this.config.options.avgTokensPerTask * agentMultiplier * retryMultiplier;
     const model = this.config.copilot.model ?? 'claude-sonnet-4';
     const estimator = new CostEstimator(this.config.copilot.costOverrides);
     const projected = estimator.estimateFromTotal(model, estimatedTotalTokens);
 
     this.logger.info(
       `Phase 4: ${taskCount} tasks, estimated ~${estimatedTotalTokens.toLocaleString()} tokens, ` +
-      `projected cost: ${CostEstimator.formatCost(projected.total)} (${model})`,
+      `projected cost: ${CostEstimator.formatCost(projected.total)} (${model}, retry overhead: ${retryMultiplier}x)`,
     );
     await this.progress.appendEvent(
       `Phase 4 projection: ${taskCount} tasks, ~${CostEstimator.formatCost(projected.total)} estimated`,
@@ -1855,7 +1856,7 @@ export class MigrationOrchestrator {
                     this._routedTaskIds.add(task.id);
                   }
                   const defaultModel = this.getDefaultRoutingModel();
-                  const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
+                  const avgTokens = this.config.options.avgTokensPerTask;
                   const projectedCost = this.costEstimatorInstance.projectCost(retryDecision.selectedModel, avgTokens).total;
                   const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
                   this._escalationCostUsd += Math.max(0, projectedCost - baseCost);
@@ -3430,7 +3431,7 @@ export class MigrationOrchestrator {
 
     // Enforce maxEscalationCostUsd cap
     if (routing.maxEscalationCostUsd > 0) {
-      const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
+      const avgTokens = this.config.options.avgTokensPerTask;
       const projectedCost = this.costEstimatorInstance.projectCost(decision.selectedModel, avgTokens).total;
       const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
       const incrementalCost = Math.max(0, projectedCost - baseCost);
@@ -3512,7 +3513,7 @@ export class MigrationOrchestrator {
           this._routedTaskIds.add(taskId);
         }
         const defaultModel = this.getDefaultRoutingModel();
-        const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
+        const avgTokens = this.config.options.avgTokensPerTask;
         const projectedCost = this.costEstimatorInstance.projectCost(decision.selectedModel, avgTokens).total;
         const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
         this._escalationCostUsd += Math.max(0, projectedCost - baseCost);
@@ -3624,7 +3625,7 @@ export class MigrationOrchestrator {
     const routingDecision = this.config.options.modelRouting?.enabled && invocation.routingTier
       ? (() => {
           const defaultModel = this.config.options.modelRouting!.defaultModel ?? configModel;
-          const avgTokens = this.config.options.avgTokensPerTask ?? 5000;
+          const avgTokens = this.config.options.avgTokensPerTask;
           const projectedCost = this.costEstimatorInstance.projectCost(model, avgTokens).total;
           const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
           return { incrementalCost: Math.max(0, projectedCost - baseCost) };
