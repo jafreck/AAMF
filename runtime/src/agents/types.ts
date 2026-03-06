@@ -282,6 +282,39 @@ export type TerminalReasonCode =
   | 'parity-non-minor-exhausted'
   | 'command-recovery-exhausted';
 
+// ─── E2E Suite Briefs ────────────────────────────────────────────────────────
+
+/**
+ * A discrete E2E test suite definition extracted from the e2e-test-crafter's
+ * plan output.  Each brief describes one test suite that will be handed to
+ * an independent `test-writer` agent invocation during Phase 6 fan-out.
+ */
+export interface E2eSuiteBrief {
+  /** Unique suite identifier, e.g. `"suite-001"`. */
+  id: string;
+
+  /** Human-readable name for the suite. */
+  name: string;
+
+  /** Brief description of the suite's testing purpose. */
+  purpose: string;
+
+  /** Target files/modules the suite exercises. */
+  targetFiles: string[];
+
+  /** Knowledge-base reference keys relevant to this suite. */
+  kbReferences: string[];
+
+  /** Test framework to use (e.g. `"vitest"`, `"jest"`, `"pytest"`). */
+  framework: string;
+
+  /** Directory or file path where the suite's test files should be written. */
+  outputLocation: string;
+
+  /** High-level scenario descriptions that the suite must cover. */
+  scenarios: string[];
+}
+
 // ─── Migration Tasks ─────────────────────────────────────────────────────────
 
 /**

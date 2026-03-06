@@ -414,6 +414,137 @@ describe('ContextBuilder', () => {
       expect(context.payload?.testType).toBe('unit');
     });
 
+    it('should route Phase 6 per-suite test-writer with e2eSuiteBrief payload', async () => {
+      const suiteBrief = {
+        id: 'suite-001',
+        name: 'Auth E2E',
+        purpose: 'Validate authentication workflows end-to-end',
+        targetFiles: ['/tmp/target/src/auth.ts', '/tmp/target/src/session.ts'],
+        kbReferences: ['kb/auth.md', 'kb/session.md'],
+        framework: 'vitest',
+        outputLocation: '/tmp/target/tests/e2e/auth',
+        scenarios: ['Login flow', 'Token refresh', 'Logout'],
+      };
+      const contextPath = await builder.buildContext('test-writer', 6, 'suite-001', {
+        e2eSuiteBrief: suiteBrief,
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).toContain('/tmp/target/src/auth.ts');
+      expect(context.inputFiles).toContain('/tmp/target/src/session.ts');
+      expect(context.inputFiles).toContain('kb/auth.md');
+      expect(context.inputFiles).toContain('kb/session.md');
+      expect(context.outputPath).toBe('/tmp/target/tests/e2e/auth');
+      expect(context.payload?.testType).toBe('e2e');
+      expect(context.payload?.e2eSuiteBrief).toBeDefined();
+      expect((context.payload?.e2eSuiteBrief as Record<string, unknown>).name).toBe('Auth E2E');
+      expect((context.payload?.e2eSuiteBrief as Record<string, unknown>).scenarios).toEqual([
+        'Login flow', 'Token refresh', 'Logout',
+      ]);
+    });
+
+    it('should fall back to target outputPath when e2eSuiteBrief has no outputLocation', async () => {
+      const suiteBrief = {
+        id: 'suite-002',
+        name: 'Payments E2E',
+        purpose: 'Validate payment processing',
+        targetFiles: ['/tmp/target/src/payments.ts'],
+        kbReferences: [],
+        framework: 'vitest',
+        outputLocation: '',
+        scenarios: ['Charge card'],
+      };
+      const contextPath = await builder.buildContext('test-writer', 6, 'suite-002', {
+        e2eSuiteBrief: suiteBrief,
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      // Empty outputLocation falls back to target outputPath
+      expect(context.outputPath).toBe('/tmp/target');
+    });
+
+    it('should not change Phase 4 test-writer context when e2eSuiteBrief is absent', async () => {
+      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+        targetFile: 'src/auth.ts',
+        kbEntry: 'kb/auth.md',
+        testType: 'unit',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).toContain('src/auth.ts');
+      expect(context.inputFiles).toContain('kb/auth.md');
+      expect(context.payload?.testType).toBe('unit');
+      expect(context.payload?.e2eSuiteBrief).toBeUndefined();
+    });
+
+    it('should default to empty inputFiles when e2eSuiteBrief has non-array targetFiles and kbReferences', async () => {
+      const suiteBrief = {
+        id: 'suite-bad',
+        name: 'Bad Brief',
+        targetFiles: 'not-an-array',
+        kbReferences: 42,
+        outputLocation: '/tmp/target/tests/e2e/bad',
+      };
+      const contextPath = await builder.buildContext('test-writer', 6, 'suite-bad', {
+        e2eSuiteBrief: suiteBrief,
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).toEqual([]);
+      expect(context.payload?.testType).toBe('e2e');
+      expect(context.outputPath).toBe('/tmp/target/tests/e2e/bad');
+    });
+
+    it('should fall through to Phase 4 path when e2eSuiteBrief is not a record', async () => {
+      const contextPath = await builder.buildContext('test-writer', 6, 'suite-str', {
+        e2eSuiteBrief: 'not-an-object',
+        targetFile: 'src/payments.ts',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      // Falls through to the Phase 4 unit-test path
+      expect(context.inputFiles).toContain('src/payments.ts');
+      expect(context.payload?.testType).toBe('unit');
+      expect(context.payload?.e2eSuiteBrief).toBeUndefined();
+    });
+
+    it('should propagate taskId in e2e suite brief payload', async () => {
+      const suiteBrief = {
+        id: 'suite-tid',
+        name: 'TaskId Test',
+        targetFiles: ['/tmp/target/src/app.ts'],
+        kbReferences: [],
+        outputLocation: '/tmp/target/tests/e2e/app',
+        scenarios: ['Boot'],
+      };
+      const contextPath = await builder.buildContext('test-writer', 6, 'suite-tid', {
+        e2eSuiteBrief: suiteBrief,
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.payload?.taskId).toBe('suite-tid');
+      expect(context.taskId).toBe('suite-tid');
+    });
+
+    it('should produce empty inputFiles when e2eSuiteBrief has empty targetFiles and kbReferences', async () => {
+      const suiteBrief = {
+        id: 'suite-empty',
+        name: 'Empty Arrays',
+        targetFiles: [],
+        kbReferences: [],
+        outputLocation: '/tmp/target/tests/e2e/empty',
+        scenarios: [],
+      };
+      const contextPath = await builder.buildContext('test-writer', 6, 'suite-empty', {
+        e2eSuiteBrief: suiteBrief,
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.inputFiles).toEqual([]);
+      expect(context.outputPath).toBe('/tmp/target/tests/e2e/empty');
+      expect(context.payload?.testType).toBe('e2e');
+    });
+
     it('should route failure-adjudicator to failure report + source/target', async () => {
       const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
