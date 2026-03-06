@@ -254,6 +254,27 @@ export class MigrationOrchestrator {
    */
   private _deferGitCommits = false;
 
+  private getConfiguredRuntimeModel(): string {
+    if (this.config.agentRuntime === 'claude-code') {
+      return this.config.claudeCode?.model ?? 'unknown';
+    }
+    return this.config.copilot.model ?? 'claude-sonnet-4';
+  }
+
+  private getRuntimeTimeout(): number {
+    if (this.config.agentRuntime === 'claude-code') {
+      return this.config.claudeCode?.timeout ?? this.config.copilot.timeout;
+    }
+    return this.config.copilot.timeout;
+  }
+
+  private getPhaseTimeout(phase: number): number {
+    const phaseTimeouts = this.config.agentRuntime === 'claude-code'
+      ? this.config.claudeCode?.phaseTimeouts
+      : this.config.copilot.phaseTimeouts;
+    return phaseTimeouts?.[phase] ?? this.getRuntimeTimeout();
+  }
+
   constructor(
     private readonly config: MigrationConfig,
     private readonly checkpoint: CheckpointManager,
@@ -1144,9 +1165,8 @@ export class MigrationOrchestrator {
     const agentMultiplier = this.config.target.testCommand ? 3 : 2; // migrator + parity (+ test-writer if testCommand set)
     const retryMultiplier = this.config.options.retryOverheadMultiplier;
     const estimatedTotalTokens = taskCount * this.config.options.avgTokensPerTask * agentMultiplier * retryMultiplier;
-    const model = this.config.copilot.model ?? 'claude-sonnet-4';
-    const estimator = new CostEstimator(this.config.copilot.costOverrides);
-    const projected = estimator.estimateFromTotal(model, estimatedTotalTokens);
+    const model = this.getConfiguredRuntimeModel();
+    const projected = this.costEstimatorInstance.estimateFromTotal(model, estimatedTotalTokens);
 
     this.logger.info(
       `Phase 4: ${taskCount} tasks, estimated ~${estimatedTotalTokens.toLocaleString()} tokens, ` +
@@ -2910,7 +2930,7 @@ export class MigrationOrchestrator {
       if (label === 'test') this.phase4Snapshot.testCommandRuns++;
     }
     return this.buildLimiter(async () => {
-      const timeout = this.config.copilot.timeout;
+      const timeout = this.getRuntimeTimeout();
       this.logger.info(`Running ${label} command for task ${taskId}: ${command}`);
 
       try {
@@ -3477,7 +3497,7 @@ export class MigrationOrchestrator {
       const resolvedPath = this.launcher.getResolvedPath();
       const result = await spawnWithTimeout('git', args, {
         cwd: this.config.target.outputPath,
-        timeout: this.config.copilot.timeout,
+        timeout: this.getRuntimeTimeout(),
         env: {
           ...process.env,
           ...(resolvedPath ? { PATH: resolvedPath } : {}),
@@ -3620,8 +3640,7 @@ export class MigrationOrchestrator {
     taskId?: string,
     task?: MigrationTask,
   ): AgentInvocation {
-    const phaseTimeouts = this.config.copilot.phaseTimeouts;
-    const timeout = phaseTimeouts?.[phase] ?? this.config.copilot.timeout;
+    const timeout = this.getPhaseTimeout(phase);
 
     // Agents that benefit from KB access when the KB server is running.
     // Essentially every agent that analyses or transforms source code.

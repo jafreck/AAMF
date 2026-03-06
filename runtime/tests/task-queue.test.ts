@@ -42,13 +42,12 @@ describe('TaskQueue', () => {
     expect(queue.isComplete()).toBe(true);
   });
 
-  it('should handle blocked tasks', () => {
+  it('should not release dependent tasks when an upstream dependency is blocked', () => {
     const queue = new TaskQueue([makeTask('a'), makeTask('b', ['a'])]);
     queue.markBlocked('a');
-    
-    // b should become ready since blocked deps count as resolved
+
     const ready = queue.getReady();
-    expect(ready.map(t => t.id)).toEqual(['b']);
+    expect(ready).toEqual([]);
   });
 
   it('should report correct progress', () => {
