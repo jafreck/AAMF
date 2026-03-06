@@ -76,6 +76,32 @@ export class MigrationRuntime {
   private phase?: number;
   private runId!: string;
 
+  private getActiveRuntimeSettings(): {
+    agentDir: string;
+    model?: string;
+    costOverrides?: MigrationConfig['copilot']['costOverrides'];
+    agentFileSuffix: '.agent.md' | '.md';
+    validateSchemaContract: boolean;
+  } {
+    if (this.config.agentRuntime === 'claude-code') {
+      return {
+        agentDir: this.config.claudeCode.agentDir,
+        model: this.config.claudeCode.model,
+        costOverrides: this.config.claudeCode.costOverrides,
+        agentFileSuffix: '.md',
+        validateSchemaContract: false,
+      };
+    }
+
+    return {
+      agentDir: this.config.copilot.agentDir,
+      model: this.config.copilot.model,
+      costOverrides: this.config.copilot.costOverrides,
+      agentFileSuffix: '.agent.md',
+      validateSchemaContract: true,
+    };
+  }
+
   async initialize(options: RuntimeOptions): Promise<void> {
     // 1. Load config
     const rawConfig = await loadConfig(options.configPath);
@@ -231,8 +257,9 @@ export class MigrationRuntime {
     }
     console.log(`Token Usage: ${result.tokenUsage.total.toLocaleString()}`);
     
-    const model = this.config.copilot.model ?? 'claude-sonnet-4';
-    const estimator = new CostEstimator(this.config.copilot.costOverrides);
+    const runtimeSettings = this.getActiveRuntimeSettings();
+    const model = runtimeSettings.model ?? 'claude-sonnet-4';
+    const estimator = new CostEstimator(runtimeSettings.costOverrides);
     const cost = estimator.estimateFromTotal(model, result.tokenUsage.total);
     console.log(`Estimated Cost: ${CostEstimator.formatCost(cost.total)}`);
 
@@ -261,13 +288,14 @@ export class MigrationRuntime {
   }
 
   private async validateAgentFiles(): Promise<void> {
-    const agentDir = this.config.copilot.agentDir;
+    const runtimeSettings = this.getActiveRuntimeSettings();
+    const { agentDir, agentFileSuffix, validateSchemaContract } = runtimeSettings;
     const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
     const missing: string[] = [];
     const invalid: string[] = [];
 
     for (const agent of allAgents) {
-      const agentPath = join(agentDir, `${agent}.agent.md`);
+      const agentPath = join(agentDir, `${agent}${agentFileSuffix}`);
       if (!(await fileExists(agentPath))) {
         missing.push(agentPath);
       }
@@ -279,22 +307,24 @@ export class MigrationRuntime {
       );
     }
 
-    const entries = await readdir(agentDir, { withFileTypes: true });
-    const agentFiles = entries
-      .filter(e => e.isFile() && e.name.endsWith('.agent.md'))
-      .map(e => join(agentDir, e.name));
+    if (validateSchemaContract) {
+      const entries = await readdir(agentDir, { withFileTypes: true });
+      const agentFiles = entries
+        .filter(e => e.isFile() && e.name.endsWith(agentFileSuffix))
+        .map(e => join(agentDir, e.name));
 
-    for (const agentPath of agentFiles) {
-      const content = await readFile(agentPath, 'utf-8');
-      const contractError = this.validateSchemaContract(content);
-      if (contractError) {
-        invalid.push(`${agentPath}: ${contractError}`);
+      for (const agentPath of agentFiles) {
+        const content = await readFile(agentPath, 'utf-8');
+        const contractError = this.validateSchemaContract(content);
+        if (contractError) {
+          invalid.push(`${agentPath}: ${contractError}`);
+        }
       }
     }
 
     if (invalid.length > 0) {
       throw new Error(
-        `Invalid agent schema contract(s) — each .agent.md must define required input/output schemas:\n${invalid.map(p => `  - ${p}`).join('\n')}`,
+        `Invalid agent schema contract(s) — each ${agentFileSuffix} file must define required input/output schemas:\n${invalid.map(p => `  - ${p}`).join('\n')}`,
       );
     }
   }

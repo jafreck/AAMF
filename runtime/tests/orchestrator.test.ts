@@ -4203,6 +4203,26 @@ describe('MigrationOrchestrator', () => {
       expect(phase1Invocation).toBeDefined();
       expect(phase1Invocation!.timeout).toBe(300_000);
     });
+
+    it('should use claudeCode phaseTimeouts and timeout when agentRuntime is claude-code', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
+        agentRuntime: 'claude-code',
+        claudeCode: {
+          cliCommand: 'claude',
+          agentDir: '.claude/agents',
+          timeout: 120_000,
+          phaseTimeouts: { 1: 45_000 },
+        },
+      });
+
+      await orchestrator.run();
+
+      const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'impact-assessor');
+      expect(phase1Invocation).toBeDefined();
+      expect(phase1Invocation!.timeout).toBe(45_000);
+      expect((orchestrator as any).getRuntimeTimeout()).toBe(120_000);
+    });
   });
 
   // ─── Phase 8: Idiomatic Refactor ──────────────────────────────────
