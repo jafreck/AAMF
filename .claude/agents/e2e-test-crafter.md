@@ -54,7 +54,7 @@ The context JSON contains:
 
 ### 3. Check for Plan-Only Mode
 
-Check `payload.planOnly` in your context JSON. If `planOnly` is `true`, follow the **Plan-Only Mode** instructions below instead of Steps 3–4.
+Check `payload.planOnly` in your context JSON. If `planOnly` is `true`, follow the **Plan-Only Mode** instructions below instead of Steps 4–5.
 
 ### 4. Delegate Suite Writing (standard mode only)
 - For each suite in the plan, launch a `test-writer` agent with the suite brief and context
