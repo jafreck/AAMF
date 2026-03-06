@@ -2666,7 +2666,7 @@ export class MigrationOrchestrator {
       this.logger,
     );
     const parallel = new ParallelExecutor(
-      Math.min(this.config.options.maxParallelAgents, budgetFilteredSuites.length),
+      Math.min(this.config.options.maxE2eSuiteConcurrency ?? this.config.options.maxParallelAgents, budgetFilteredSuites.length),
       (inv) => retryExec.executeWithRetry(inv, {
         maxAttempts: this.config.options.maxRetriesPerTask,
       }),
