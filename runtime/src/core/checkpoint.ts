@@ -28,6 +28,7 @@ export interface Phase5Cursor {
 
 export interface Phase6Cursor {
   completedAgents: string[];
+  completedSuites?: string[];
   lastSuccessfulStep?: string;
 }
 
@@ -386,6 +387,7 @@ export class CheckpointManager {
     state.phaseCursors['8'] ??= { iteration: 0, issueIndex: 0 };
     state.phaseCursors['4'].tasks ??= {};
     state.phaseCursors['6'].completedAgents ??= [];
+    state.phaseCursors['6'].completedSuites ??= [];
   }
 
   private async resolveCheckpointReadPath(): Promise<string | undefined> {

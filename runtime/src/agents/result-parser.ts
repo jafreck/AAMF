@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { MigrationTask } from './types.js';
+import { MigrationTask, E2eSuiteBrief } from './types.js';
 import { fileExists, readJson } from '../util/fs.js';
 
 export const MISSING_BLOCK_ERROR = 'missing aamf-json block';
@@ -635,5 +635,91 @@ export class ResultParser {
       }
     }
     return fixes;
+  }
+
+  // ─── E2E Test Plan Parsing ────────────────────────────────────────────────
+
+  /**
+   * Parse an e2e-test-plan.md file into an array of {@link E2eSuiteBrief}.
+   * @param planPath - Absolute path to the e2e test plan markdown file.
+   */
+  static async parseE2eTestPlan(planPath: string): Promise<E2eSuiteBrief[]> {
+    const content = await readFile(planPath, 'utf-8');
+    return ResultParser.parseE2eTestPlanContent(content);
+  }
+
+  /**
+   * Parse raw e2e-test-plan markdown content into {@link E2eSuiteBrief}[].
+   * Splits on `### Suite:` headers and extracts structured fields from each block.
+   * @param content - The full markdown string of the e2e test plan.
+   * @param log - Optional logger callback for warnings (defaults to console).
+   */
+  static parseE2eTestPlanContent(
+    content: string,
+    log?: { warn: (msg: string) => void; error: (msg: string) => void; info: (msg: string) => void },
+  ): E2eSuiteBrief[] {
+    const logger = log ?? { warn: console.warn, error: console.error, info: console.info };
+
+    if (!content.trim()) return [];
+
+    const suites: E2eSuiteBrief[] = [];
+    // Split on "### Suite:" headers, keeping the header text in the block
+    const blocks = content.split(/^(?=###\s+Suite:)/mi).filter(b => /^###\s+Suite:/mi.test(b));
+
+    for (const block of blocks) {
+      try {
+        const suite = ResultParser.parseSuiteBlock(block);
+        if (suite) {
+          suites.push(suite);
+        } else {
+          const headerLine = block.split('\n')[0]?.trim() ?? '(unknown)';
+          logger.warn(`Skipping malformed suite block: ${headerLine}`);
+        }
+      } catch (err) {
+        const headerLine = block.split('\n')[0]?.trim() ?? '(unknown)';
+        logger.warn(`Skipping malformed suite block: ${headerLine} — ${(err as Error).message}`);
+      }
+    }
+
+    return suites;
+  }
+
+  /**
+   * Parse a single suite block into an {@link E2eSuiteBrief}, or `null`
+   * if required fields are missing.
+   */
+  private static parseSuiteBlock(block: string): E2eSuiteBrief | null {
+    // Header: "### Suite: suite-001 - Suite Name" or "### Suite: suite-001: Suite Name"
+    const headerMatch = block.match(/^###\s+Suite:\s*(suite-\d+)\s*[-:]\s*(.+)/mi);
+    if (!headerMatch) return null;
+
+    const id = headerMatch[1]!.trim();
+    const name = headerMatch[2]!.trim();
+
+    if (!id || !name) return null;
+
+    // Purpose
+    const purposeMatch = block.match(/\*\*Purpose\*\*:?\s*(.+)/i) ?? block.match(/Purpose:?\s*(.+)/i);
+    const purpose = purposeMatch?.[1]?.trim() ?? '';
+
+    // Target files
+    const targetFiles = ResultParser.extractListItems(block, /target\s*files?/i);
+
+    // KB references
+    const kbReferences = ResultParser.extractListItems(block, /kb[\s-]*references?/i);
+
+    // Framework
+    const frameworkMatch = block.match(/\*\*Framework\*\*:?\s*(.+)/i) ?? block.match(/Framework:?\s*(.+)/i);
+    const framework = frameworkMatch?.[1]?.trim() ?? '';
+
+    // Output location
+    const outputMatch = block.match(/\*\*Output\s*Location\*\*:?\s*(.+)/i)
+      ?? block.match(/Output\s*Location:?\s*(.+)/i);
+    const outputLocation = outputMatch?.[1]?.trim() ?? '';
+
+    // Scenarios
+    const scenarios = ResultParser.extractListItems(block, /scenarios?/i);
+
+    return { id, name, purpose, targetFiles, kbReferences, framework, outputLocation, scenarios };
   }
 }

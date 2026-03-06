@@ -38,6 +38,13 @@ export const MigrationConfigSchema = z.object({
      */
     buildConcurrency: z.number().int().min(0).max(10).default(1),
     /**
+     * Maximum number of concurrent test-writer suites in Phase 6 fan-out.
+     * Controls how many E2E test suites can be generated in parallel,
+     * separate from the general Phase 4 parallelism (`maxParallelAgents`).
+     * When omitted, defaults to the value of `maxParallelAgents`.
+     */
+    maxE2eSuiteConcurrency: z.number().int().min(1).max(10).optional(),
+    /**
      * Phase 4 execution strategy.
      * - `per-task`: existing behavior (migrate + validate task-by-task).
      * - `wave-barrier`: migrate in waves, then validate between waves.
