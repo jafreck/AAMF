@@ -2,14 +2,10 @@ import { join } from 'node:path';
 import { atomicWrite, ensureDir } from '../util/fs.js';
 import { MigrationConfig } from '../config/schema.js';
 import type { AdjudicationEventRecord, CheckpointState, TerminalExhaustionState } from './checkpoint.js';
+import type { TaskDetails } from '../agents/types.js';
+import { formatDuration } from '../util/format.js';
 
-export interface TaskDetails {
-  sourceFiles?: string[];
-  targetFiles?: string[];
-  parityScore?: number;
-  testsGenerated?: number;
-  error?: string;
-}
+export type { TaskDetails };
 
 export interface WaveLifecycleEvent {
   wave: number;
@@ -213,14 +209,14 @@ export class ProgressWriter {
   }
 
   private async write(projectName: string): Promise<void> {
-    const elapsed = this.formatDuration(Date.now() - this.startTime.getTime());
+    const elapsed = formatDuration(Date.now() - this.startTime.getTime());
     const completedTasks = [...this.tasks.values()].filter(t => t.status === 'completed').length;
 
     let md = `# Migration Progress: ${projectName}\n\n`;
     md += `**Started:** ${this.startTime.toISOString()}\n`;
     md += `**Elapsed:** ${elapsed}\n`;
     if (this.cumulativeDurationMs > Date.now() - this.startTime.getTime()) {
-      md += `**Total Cumulative Duration:** ${this.formatDuration(this.cumulativeDurationMs)}\n`;
+      md += `**Total Cumulative Duration:** ${formatDuration(this.cumulativeDurationMs)}\n`;
     }
     md += `**Token Usage:** ${this.tokenUsage.total.toLocaleString()} tokens\n\n`;
 
@@ -367,12 +363,4 @@ export class ProgressWriter {
     await atomicWrite(this.filePath, md);
   }
 
-  private formatDuration(ms: number): string {
-    const seconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    if (hours > 0) return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
-    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
-    return `${seconds}s`;
-  }
 }

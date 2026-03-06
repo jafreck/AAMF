@@ -68,6 +68,9 @@ export interface CostOverride {
   output: number;
 }
 
+/** Callback used by CostEstimator to emit warnings (defaults to console.warn). */
+export type WarnFn = (message: string) => void;
+
 /**
  * Estimates the monetary cost of LLM API calls based on token counts
  * and per-model pricing tables.
@@ -80,9 +83,11 @@ export interface CostOverride {
 export class CostEstimator {
   private readonly overrides: Record<string, CostOverride>;
   private readonly warnedModels = new Set<string>();
+  private readonly warn: WarnFn;
 
-  constructor(costOverrides?: Record<string, CostOverride>) {
+  constructor(costOverrides?: Record<string, CostOverride>, warn?: WarnFn) {
     this.overrides = costOverrides ?? {};
+    this.warn = warn ?? console.warn.bind(console);
   }
 
   /**
@@ -96,7 +101,7 @@ export class CostEstimator {
     // 3. Fall back to default and warn once
     if (!this.warnedModels.has(model)) {
       this.warnedModels.add(model);
-      console.warn(
+      this.warn(
         `[CostEstimator] Unknown model "${model}" — using default pricing ($${DEFAULT_PRICING.input}/$${DEFAULT_PRICING.output} per 1M tokens). ` +
         `Consider adding costOverrides for this model in your config.`,
       );

@@ -7,6 +7,7 @@ import type { MigrationResult } from '../src/agents/types.js';
 import { Logger } from '../src/logging/logger.js';
 import { PHASES } from '../src/core/phase-registry.js';
 import { MigrationOrchestrator } from '../src/core/orchestrator.js';
+import { formatDuration } from '../src/util/format.js';
 
 /** Build a minimal MigrationResult for printSummary tests. */
 function makeResult(overrides: Partial<MigrationResult> = {}): MigrationResult {
@@ -427,10 +428,9 @@ describe('MigrationRuntime', () => {
 
   describe('internal helpers', () => {
     it('formats durations across seconds, minutes, and hours', () => {
-      const runtime = new MigrationRuntime() as any;
-      expect(runtime.formatDuration(5_000)).toBe('5s');
-      expect(runtime.formatDuration(65_000)).toBe('1m 5s');
-      expect(runtime.formatDuration(3_723_000)).toBe('1h 2m 3s');
+      expect(formatDuration(5_000)).toBe('5s');
+      expect(formatDuration(65_000)).toBe('1m 5s');
+      expect(formatDuration(3_723_000)).toBe('1h 2m 3s');
     });
 
     it('validateAgentFiles succeeds when all phase agents exist', async () => {
