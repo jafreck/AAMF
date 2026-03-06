@@ -9,23 +9,13 @@ import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ALL_AGENT_NAMES } from '../src/agents/registry.js';
 
-// All AgentName values from runtime/src/agents/types.ts
-const EXPECTED_AGENTS = [
-  'migration-orchestrator',
-  'impact-assessor',
-  'knowledge-builder',
-  'migration-planner',
-  'adjudicator',
-  'code-migrator',
-  'parity-verifier',
-  'test-writer',
-  'failure-adjudicator',
-  'final-parity-checker',
-  'e2e-test-crafter',
-  'documentation-writer',
-  'migration-runner',
-] as const;
+// Agents that have Claude Code agent definition files (.claude/agents/*.md).
+// Some agents don't have agent files: task-decomposer (invoked programmatically),
+// idiomatic-reviewer/idiomatic-refactorer (optional phase, not yet scaffolded).
+const AGENTS_WITHOUT_FILES = new Set(['task-decomposer', 'idiomatic-reviewer', 'idiomatic-refactorer']);
+const EXPECTED_AGENTS = ALL_AGENT_NAMES.filter(name => !AGENTS_WITHOUT_FILES.has(name));
 
 // Resolve `.claude/agents/` relative to the repo root (one level above `runtime/`)
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));

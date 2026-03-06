@@ -2708,12 +2708,16 @@ describe('MigrationOrchestrator', () => {
       });
 
       it('should return skip gate mode for unknown qualityPolicy values', async () => {
+        // Bypass schema validation to test the runtime defensive fallback
+        // for unrecognised qualityPolicy values (schema normally prevents this).
         const launcherFn = createMockLauncher();
-        const unknown = await setupOrchestrator(tempDir, launcherFn, {
-          options: { qualityPolicy: 'some-future-policy' as any },
-        });
+        const valid = await setupOrchestrator(tempDir, launcherFn, {});
+        (valid.orchestrator as any).config = {
+          ...valid.orchestrator['config'],
+          options: { ...valid.orchestrator['config'].options, qualityPolicy: 'some-future-policy' },
+        };
 
-        expect((unknown.orchestrator as any).getPhase4QualityGateMode()).toBe('skip');
+        expect((valid.orchestrator as any).getPhase4QualityGateMode()).toBe('skip');
       });
 
       it('should skip parity evaluation in deferred-strict when waveTasks is empty', async () => {
