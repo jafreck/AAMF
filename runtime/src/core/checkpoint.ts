@@ -24,6 +24,7 @@ export interface Phase5Cursor {
   iteration: number;
   fixIndex: number;
   lastSuccessfulStep?: string;
+  hadUnresolvedFixes?: boolean;
 }
 
 export interface Phase6Cursor {
