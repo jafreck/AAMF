@@ -81,6 +81,8 @@ export interface CheckpointState {
   adjudicationWaivers?: AdjudicationWaiverRecord[];
   /** Auditable adjudication event history across retries/resume. */
   adjudicationEvents?: AdjudicationEventRecord[];
+  /** Replanning events tracking parent→sub-task decomposition history. */
+  replanningEvents?: ReplanningEventRecord[];
   /** Per-phase deterministic resume cursors for mid-stage checkpointing. */
   phaseCursors?: PhaseCursorMap;
 }
@@ -98,6 +100,13 @@ export interface AdjudicationWaiverRecord {
   scope?: string;
   expiresAt?: string;
   taskId?: string;
+  createdAt: string;
+}
+
+export interface ReplanningEventRecord {
+  parentTaskId: string;
+  subtaskIds: string[];
+  reason: string;
   createdAt: string;
 }
 
@@ -274,6 +283,17 @@ export class CheckpointManager {
     await this.save(state);
   }
 
+  /** Record a replanning event (parent task decomposed into sub-tasks). */
+  async recordReplanningEvent(event: Omit<ReplanningEventRecord, 'createdAt'> & { createdAt?: string }): Promise<void> {
+    const state = this.getState();
+    state.replanningEvents ??= [];
+    state.replanningEvents.push({
+      ...event,
+      createdAt: event.createdAt ?? new Date().toISOString(),
+    });
+    await this.save(state);
+  }
+
   /** Block a task (max retries exceeded) */
   async blockTask(taskId: string): Promise<void> {
     const state = this.getState();
@@ -367,6 +387,7 @@ export class CheckpointManager {
       terminalExhaustion: undefined,
       adjudicationWaivers: [],
       adjudicationEvents: [],
+      replanningEvents: [],
       phaseCursors: {},
     };
   }
@@ -381,6 +402,7 @@ export class CheckpointManager {
     state.terminalExhaustion ??= undefined;
     state.adjudicationWaivers ??= [];
     state.adjudicationEvents ??= [];
+    state.replanningEvents ??= [];
     state.phaseCursors ??= {};
     state.phaseCursors['4'] ??= { tasks: {} };
     state.phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };

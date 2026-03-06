@@ -47,4 +47,6 @@ export type RuntimeEvent =
   | { type: 'migration-interrupted'; reason: string }
   | { type: 'metric-recorded'; invocationId: string }
   | { type: 'model-routing-decision'; taskId: string; tier: ModelTier; selectedModel: string; reason: string; score: number }
+  | { type: 'task-replanned'; taskId: string; subtaskIds: string[] }
+  | { type: 'subtasks-injected'; parentTaskId: string; subtaskIds: string[]; reason: string }
   | { type: 'report-generated'; path: string };

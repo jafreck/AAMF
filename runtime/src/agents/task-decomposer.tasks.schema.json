@@ -21,7 +21,7 @@
     "properties": {
       "id": {
         "type": "string",
-        "pattern": "^task-[0-9]+$"
+        "pattern": "^task-[0-9]+[a-z]?$"
       },
       "name": {
         "type": "string",
@@ -45,7 +45,7 @@
         "type": "array",
         "items": {
           "type": "string",
-          "pattern": "^task-[0-9]+$"
+          "pattern": "^task-[0-9]+[a-z]?$"
         }
       },
       "complexity": {

@@ -6796,4 +6796,815 @@ describe('MigrationOrchestrator', () => {
       expect(completedSuiteSnapshots[1]).toEqual(expect.arrayContaining(['suite-001', 'suite-002']));
     });
   });
+
+  // ─── Replanning (session-002) ─────────────────────────────────────────────
+
+  describe('computeIssueOverlap', () => {
+    it('should return 0 when previous array is empty', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const overlap = (orchestrator as any).computeIssueOverlap([], ['issue-a']);
+      expect(overlap).toBe(0);
+    });
+
+    it('should return 1 when both arrays are identical', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const issues = ['Missing error handling', 'Type mismatch in auth'];
+      const overlap = (orchestrator as any).computeIssueOverlap(issues, [...issues]);
+      expect(overlap).toBe(1);
+    });
+
+    it('should return 0 when arrays have no overlap', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const overlap = (orchestrator as any).computeIssueOverlap(
+        ['issue-a', 'issue-b'],
+        ['issue-c', 'issue-d'],
+      );
+      expect(overlap).toBe(0);
+    });
+
+    it('should return intersection ratio |A ∩ B| / |A|', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const overlap = (orchestrator as any).computeIssueOverlap(
+        ['a', 'b', 'c', 'd'],
+        ['b', 'c', 'e'],
+      );
+      expect(overlap).toBe(0.5); // 2/4
+    });
+
+    it('should use exact string matching for issue comparison', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const overlap = (orchestrator as any).computeIssueOverlap(
+        ['Missing error handling'],
+        ['missing error handling'], // different case
+      );
+      expect(overlap).toBe(0);
+    });
+
+    it('should return 0 when both arrays are empty', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const overlap = (orchestrator as any).computeIssueOverlap([], []);
+      expect(overlap).toBe(0);
+    });
+  });
+
+  describe('Replanning Trigger Detection', () => {
+    it('should not trigger replanning when replanning.enabled is false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            // replanning not configured (default: disabled)
+          },
+        },
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      // Write persistent failing parity result
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'major', description: 'Missing error handling' },
+          ],
+        }),
+      );
+
+      await orchestrator.run();
+
+      // task-decomposer should NOT have been invoked for replanning
+      const decomposerInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'task-decomposer' && i.phase === 4,
+      );
+      expect(decomposerInvocations).toHaveLength(0);
+    });
+
+    it('should trigger replanning when overlap threshold is met and conditions are satisfied', async () => {
+      let parityCallCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'task-decomposer' && inv.phase === 4) {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              tasks: [
+                {
+                  id: 'task-001a',
+                  name: 'Auth Module Part A',
+                  sourceFiles: ['src/auth.py'],
+                  targetFiles: ['src/auth-a.ts'],
+                  dependencies: [],
+                  complexity: 'simple',
+                  description: 'Migrate auth part A',
+                  acceptanceCriteria: ['works'],
+                  parityChecks: ['matches'],
+                },
+                {
+                  id: 'task-001b',
+                  name: 'Auth Module Part B',
+                  sourceFiles: ['src/auth.py'],
+                  targetFiles: ['src/auth-b.ts'],
+                  dependencies: [],
+                  complexity: 'simple',
+                  description: 'Migrate auth part B',
+                  acceptanceCriteria: ['works'],
+                  parityChecks: ['matches'],
+                },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher, checkpoint } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 4,
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      // Write persistent failing parity result with repeating issues
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'major', description: 'Missing error handling in auth flow' },
+            { severity: 'major', description: 'Type mismatch in validation' },
+          ],
+        }),
+      );
+
+      const result = await orchestrator.run();
+
+      // task-decomposer should have been invoked in phase 4
+      const decomposerInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'task-decomposer' && i.phase === 4,
+      );
+      expect(decomposerInvocations.length).toBeGreaterThan(0);
+
+      // Replanning event should be recorded in checkpoint
+      const state = checkpoint.getState();
+      expect(state.replanningEvents).toBeDefined();
+      expect(state.replanningEvents!.length).toBeGreaterThan(0);
+      expect(state.replanningEvents![0]!.parentTaskId).toBe('task-001');
+      expect(state.replanningEvents![0]!.subtaskIds).toEqual(['task-001a', 'task-001b']);
+    });
+
+    it('should not trigger replanning for sub-tasks (depth-1 guard)', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'task-decomposer' && inv.phase === 4) {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              tasks: [
+                {
+                  id: 'task-001a-sub',
+                  name: 'Sub Part',
+                  sourceFiles: ['src/auth.py'],
+                  targetFiles: ['src/auth-sub.ts'],
+                  dependencies: [],
+                  complexity: 'simple',
+                  description: 'Sub-sub task',
+                  acceptanceCriteria: ['works'],
+                  parityChecks: ['matches'],
+                },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+
+      // Create a task that already has parentTaskId (is a sub-task)
+      const subTask: MigrationTask = {
+        ...SINGLE_AUTH_TASK,
+        id: 'task-001a',
+        parentTaskId: 'task-001',
+      };
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 4,
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001a - Auth Sub-Task\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [subTask]);
+
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001a.result.json'),
+        JSON.stringify({
+          taskId: 'task-001a',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'major', description: 'Missing error handling' },
+          ],
+        }),
+      );
+
+      await orchestrator.run();
+
+      // task-decomposer should NOT have been invoked for the sub-task
+      const decomposerInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'task-decomposer' && i.phase === 4,
+      );
+      expect(decomposerInvocations).toHaveLength(0);
+    });
+  });
+
+  describe('Replanning Sub-task Generation', () => {
+    it('should generate deterministic sub-task IDs with letter suffixes', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'task-decomposer' && inv.phase === 4) {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              tasks: [
+                {
+                  id: 'ignored-id-1',
+                  name: 'Part A',
+                  sourceFiles: ['src/auth.py'],
+                  targetFiles: ['src/auth-a.ts'],
+                  dependencies: [],
+                  complexity: 'simple',
+                  description: 'Part A',
+                  acceptanceCriteria: ['works'],
+                  parityChecks: ['matches'],
+                },
+                {
+                  id: 'ignored-id-2',
+                  name: 'Part B',
+                  sourceFiles: ['src/auth.py'],
+                  targetFiles: ['src/auth-b.ts'],
+                  dependencies: [],
+                  complexity: 'simple',
+                  description: 'Part B',
+                  acceptanceCriteria: ['works'],
+                  parityChecks: ['matches'],
+                },
+                {
+                  id: 'ignored-id-3',
+                  name: 'Part C',
+                  sourceFiles: ['src/auth.py'],
+                  targetFiles: ['src/auth-c.ts'],
+                  dependencies: [],
+                  complexity: 'simple',
+                  description: 'Part C',
+                  acceptanceCriteria: ['works'],
+                  parityChecks: ['matches'],
+                },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, checkpoint } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 4,
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'major', description: 'Missing error handling' },
+          ],
+        }),
+      );
+
+      await orchestrator.run();
+
+      const state = checkpoint.getState();
+      expect(state.replanningEvents).toBeDefined();
+      expect(state.replanningEvents!.length).toBe(1);
+      // IDs should be task-001a, task-001b, task-001c (deterministic letter suffixes)
+      expect(state.replanningEvents![0]!.subtaskIds).toEqual([
+        'task-001a',
+        'task-001b',
+        'task-001c',
+      ]);
+    });
+
+    it('should enforce maxSubtasks limit on task-decomposer output', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'task-decomposer' && inv.phase === 4) {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              tasks: [
+                { id: 'x1', name: 'A', sourceFiles: ['src/auth.py'], targetFiles: ['a.ts'], dependencies: [], complexity: 'simple', description: 'A', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
+                { id: 'x2', name: 'B', sourceFiles: ['src/auth.py'], targetFiles: ['b.ts'], dependencies: [], complexity: 'simple', description: 'B', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
+                { id: 'x3', name: 'C', sourceFiles: ['src/auth.py'], targetFiles: ['c.ts'], dependencies: [], complexity: 'simple', description: 'C', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
+                { id: 'x4', name: 'D', sourceFiles: ['src/auth.py'], targetFiles: ['d.ts'], dependencies: [], complexity: 'simple', description: 'D', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
+                { id: 'x5', name: 'E', sourceFiles: ['src/auth.py'], targetFiles: ['e.ts'], dependencies: [], complexity: 'simple', description: 'E', acceptanceCriteria: ['works'], parityChecks: ['matches'] },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, checkpoint } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 2, // Only allow 2 sub-tasks
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'major', description: 'Missing error handling' },
+          ],
+        }),
+      );
+
+      await orchestrator.run();
+
+      const state = checkpoint.getState();
+      expect(state.replanningEvents).toBeDefined();
+      expect(state.replanningEvents!.length).toBe(1);
+      // Only first 2 sub-tasks should be kept
+      expect(state.replanningEvents![0]!.subtaskIds).toHaveLength(2);
+      expect(state.replanningEvents![0]!.subtaskIds).toEqual(['task-001a', 'task-001b']);
+    });
+
+    it('should fall through to terminal exhaustion when task-decomposer fails', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'task-decomposer' && inv.phase === 4) {
+          return {
+            exitCode: 1,
+            success: false,
+            error: 'Task decomposer failed',
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, checkpoint } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 4,
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'major', description: 'Missing error handling' },
+          ],
+        }),
+      );
+
+      const result = await orchestrator.run();
+
+      // Should fall back to terminal exhaustion
+      expect(result.success).toBe(false);
+      const phase4 = result.phases.find((p) => p.phase === 4);
+      expect(phase4?.error).toContain('parity-non-minor-exhausted');
+
+      // No replanning events should be recorded
+      const state = checkpoint.getState();
+      expect(state.replanningEvents?.length ?? 0).toBe(0);
+    });
+
+    it('should fall through to terminal exhaustion when task-decomposer returns no sub-tasks', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'task-decomposer' && inv.phase === 4) {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              tasks: [],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 4,
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'major', description: 'Missing error handling' },
+          ],
+        }),
+      );
+
+      const result = await orchestrator.run();
+      expect(result.success).toBe(false);
+      const phase4 = result.phases.find((p) => p.phase === 4);
+      expect(phase4?.error).toContain('parity-non-minor-exhausted');
+    });
+
+    it('should set parentTaskId on each generated sub-task', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'task-decomposer' && inv.phase === 4) {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              tasks: [
+                {
+                  id: 'x1',
+                  name: 'Part A',
+                  sourceFiles: ['src/auth.py'],
+                  targetFiles: ['src/auth-a.ts'],
+                  dependencies: [],
+                  complexity: 'simple',
+                  description: 'Part A',
+                  acceptanceCriteria: ['works'],
+                  parityChecks: ['matches'],
+                },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, checkpoint } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 4,
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'major', description: 'Missing error handling' },
+          ],
+        }),
+      );
+
+      await orchestrator.run();
+
+      const state = checkpoint.getState();
+      expect(state.replanningEvents!.length).toBe(1);
+      expect(state.replanningEvents![0]!.subtaskIds).toEqual(['task-001a']);
+      // Parent should be blocked
+      expect(state.blockedTasks).toContain('task-001');
+    });
+
+    it('should record replanning event reason with attempt count and issue count', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'task-decomposer' && inv.phase === 4) {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              tasks: [
+                {
+                  id: 'x1',
+                  name: 'Part A',
+                  sourceFiles: ['src/auth.py'],
+                  targetFiles: ['src/auth-a.ts'],
+                  dependencies: [],
+                  complexity: 'simple',
+                  description: 'Part A',
+                  acceptanceCriteria: ['works'],
+                  parityChecks: ['matches'],
+                },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, checkpoint } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 4,
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await ensureDir(join(progressDir, 'artifacts', 'results'));
+      await writeFile(
+        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
+        JSON.stringify({
+          taskId: 'task-001',
+          agent: 'parity-verifier',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'fail',
+          issues: [
+            { severity: 'major', description: 'Missing error handling' },
+            { severity: 'major', description: 'Type mismatch' },
+          ],
+        }),
+      );
+
+      await orchestrator.run();
+
+      const state = checkpoint.getState();
+      const event = state.replanningEvents![0]!;
+      expect(event.reason).toContain('overlap threshold met');
+      expect(event.reason).toContain('unresolved non-minor issue');
+      expect(event.createdAt).toBeDefined();
+    });
+  });
+
+  describe('Checkpoint Resume After Replanning', () => {
+    it('should restore sub-tasks from checkpoint replanning events and skip task-decomposer', async () => {
+      // Simulate a resume scenario by pre-populating checkpoint with a replanning event
+      const resumeLauncherFn = createMockLauncher();
+      const { orchestrator, progressDir, checkpoint, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        resumeLauncherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            resume: true,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 4,
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+        4, // single phase
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      // Pre-populate checkpoint: task-001 was replanned into task-001a and task-001b
+      await checkpoint.recordReplanningEvent({
+        parentTaskId: 'task-001',
+        subtaskIds: ['task-001a', 'task-001b'],
+        reason: 'Issue overlap threshold met after 2 attempt(s); 1 unresolved non-minor issue(s)',
+      });
+      await checkpoint.blockTask('task-001');
+
+      const result = await orchestrator.run();
+      const phase4 = result.phases.find((p) => p.phase === 4);
+      expect(phase4).toBeDefined();
+
+      // task-decomposer should NOT be re-invoked for already-replanned tasks
+      const decomposerInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'task-decomposer' && i.phase === 4,
+      );
+      expect(decomposerInvocations).toHaveLength(0);
+
+      // code-migrator should be invoked for the restored sub-tasks
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      // Sub-tasks task-001a and task-001b should have been processed
+      const migratorTaskIds = migratorInvocations.map((i) => i.taskId);
+      expect(migratorTaskIds).toContain('task-001a');
+      expect(migratorTaskIds).toContain('task-001b');
+    });
+
+    it('should skip already-completed sub-tasks from prior replanning on resume', async () => {
+      const resumeLauncherFn = createMockLauncher();
+      const { orchestrator, progressDir, checkpoint, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        resumeLauncherFn,
+        {
+          options: {
+            maxRetriesPerTask: 3,
+            resume: true,
+            replanning: {
+              enabled: true,
+              triggerAttempts: 2,
+              maxSubtasks: 4,
+              minIssueOverlapForTrigger: 0.5,
+            },
+          },
+        },
+        4,
+      );
+
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(
+        join(progressDir, 'artifacts', 'planning', 'migration-plan.md'),
+        `# Migration Plan\n\n## Task: task-001 - Auth Module\n\n**Description:** Migrate auth\n**Complexity:** simple\n**Knowledge Base Reference:** kb/auth.md\n\n**Source Files:**\n- src/auth.py\n\n**Target Files:**\n- src/auth.ts\n\n**Dependencies:** none\n\n**Acceptance Criteria:**\n- works\n\n**Parity Checks:**\n- matches\n`,
+      );
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      // Pre-populate checkpoint: replanning happened, task-001a already completed
+      await checkpoint.recordReplanningEvent({
+        parentTaskId: 'task-001',
+        subtaskIds: ['task-001a', 'task-001b'],
+        reason: 'overlap threshold',
+      });
+      await checkpoint.blockTask('task-001');
+      await checkpoint.completeTask('task-001a');
+
+      const result = await orchestrator.run();
+
+      // code-migrator should only be invoked for task-001b (task-001a already completed)
+      const migratorInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      const migratorTaskIds = migratorInvocations.map((i) => i.taskId);
+      expect(migratorTaskIds).not.toContain('task-001a');
+      expect(migratorTaskIds).toContain('task-001b');
+    });
+  });
 });

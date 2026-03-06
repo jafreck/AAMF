@@ -542,6 +542,103 @@ describe('MigrationConfigSchema', () => {
 
     });
 
+    describe('replanning option', () => {
+      it('should leave replanning undefined when omitted', () => {
+        const result = MigrationConfigSchema.parse(validConfig);
+        expect(result.options.replanning).toBeUndefined();
+      });
+
+      it('should default enabled to false and apply all defaults when replanning is {}', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { replanning: {} },
+        });
+        expect(result.options.replanning?.enabled).toBe(false);
+        expect(result.options.replanning?.triggerAttempts).toBe(2);
+        expect(result.options.replanning?.maxSubtasks).toBe(4);
+        expect(result.options.replanning?.minIssueOverlapForTrigger).toBe(0.5);
+      });
+
+      it('should accept replanning: { enabled: true }', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { replanning: { enabled: true } },
+        });
+        expect(result.options.replanning?.enabled).toBe(true);
+      });
+
+      it('should accept custom triggerAttempts', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { replanning: { triggerAttempts: 4 } },
+        });
+        expect(result.options.replanning?.triggerAttempts).toBe(4);
+      });
+
+      it('should reject triggerAttempts of 0', () => {
+        const result = MigrationConfigSchema.safeParse({
+          ...validConfig,
+          options: { replanning: { triggerAttempts: 0 } },
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should accept maxSubtasks between 2 and 10', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { replanning: { maxSubtasks: 8 } },
+        });
+        expect(result.options.replanning?.maxSubtasks).toBe(8);
+      });
+
+      it('should reject maxSubtasks below 2', () => {
+        const result = MigrationConfigSchema.safeParse({
+          ...validConfig,
+          options: { replanning: { maxSubtasks: 1 } },
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject maxSubtasks above 10', () => {
+        const result = MigrationConfigSchema.safeParse({
+          ...validConfig,
+          options: { replanning: { maxSubtasks: 11 } },
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should accept minIssueOverlapForTrigger between 0 and 1', () => {
+        for (const v of [0, 0.3, 0.5, 1]) {
+          const result = MigrationConfigSchema.parse({
+            ...validConfig,
+            options: { replanning: { minIssueOverlapForTrigger: v } },
+          });
+          expect(result.options.replanning?.minIssueOverlapForTrigger).toBe(v);
+        }
+      });
+
+      it('should reject minIssueOverlapForTrigger above 1', () => {
+        const result = MigrationConfigSchema.safeParse({
+          ...validConfig,
+          options: { replanning: { minIssueOverlapForTrigger: 1.1 } },
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject minIssueOverlapForTrigger below 0', () => {
+        const result = MigrationConfigSchema.safeParse({
+          ...validConfig,
+          options: { replanning: { minIssueOverlapForTrigger: -0.1 } },
+        });
+        expect(result.success).toBe(false);
+      });
+
+      it('should not affect existing config validation when replanning is omitted', () => {
+        const result = MigrationConfigSchema.safeParse(validConfig);
+        expect(result.success).toBe(true);
+      });
+    });
+
     describe('kbIndex option', () => {
       it('should leave kbIndex undefined when omitted', () => {
         const result = MigrationConfigSchema.parse(validConfig);

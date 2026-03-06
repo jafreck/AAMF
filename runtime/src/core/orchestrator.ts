@@ -1182,8 +1182,44 @@ export class MigrationOrchestrator {
     // 3. Build queue, apply checkpoint
     const queue = new TaskQueue(sortedTasks);
     const checkpointState = this.checkpoint.getState();
+
+    // 3b. Replay prior replanning events from checkpoint on resume.
+    // For each replanning event, replace the parent task with its sub-tasks
+    // in the queue and mark the parent as blocked, unless already done.
+    const replanningEvents = checkpointState.replanningEvents ?? [];
+    for (const event of replanningEvents) {
+      const parentInQueue = queue.getTask(event.parentTaskId);
+      if (!parentInQueue) continue; // already removed or never loaded
+      // Reconstruct sub-task stubs from checkpoint state; the original plan
+      // doesn't include sub-tasks, so we build minimal MigrationTask entries
+      // from the parent's metadata.
+      const subtasks: MigrationTask[] = event.subtaskIds.map(id => ({
+        id,
+        name: `${parentInQueue.name} (sub-task ${id.slice(parentInQueue.id.length)})`,
+        sourceFiles: [...parentInQueue.sourceFiles],
+        targetFiles: [...parentInQueue.targetFiles],
+        knowledgeBaseRef: parentInQueue.knowledgeBaseRef,
+        dependencies: [],
+        complexity: parentInQueue.complexity,
+        description: `Sub-task of ${parentInQueue.id}`,
+        acceptanceCriteria: [...parentInQueue.acceptanceCriteria],
+        parityChecks: [...parentInQueue.parityChecks],
+        lineRange: parentInQueue.lineRange,
+        parentTaskId: event.parentTaskId,
+      }));
+      queue.replaceWithSubtasks(event.parentTaskId, subtasks);
+      this.logger.info(
+        `Resumed replanning for ${event.parentTaskId}: restored sub-tasks ${event.subtaskIds.join(', ')}`,
+      );
+    }
+
     queue.markCompleted(checkpointState.completedTasks);
-    this.progress.setTotalTasks(sortedTasks.length);
+    const replannedParentIds = new Set(replanningEvents.map(e => e.parentTaskId));
+    for (const blockedId of checkpointState.blockedTasks) {
+      if (replannedParentIds.has(blockedId)) continue;
+      queue.markBlocked(blockedId);
+    }
+    this.progress.setTotalTasks(queue.getProgress().total);
     const completedDurationsMs: number[] = [...checkpointState.completedTaskDurationsMs];
 
     // 4. Process tasks
@@ -1991,6 +2027,9 @@ export class MigrationOrchestrator {
 
       if (!parityPassed && gateMode === 'enforce') {
         const priorAttempts: Array<{ attempt: number; issueCount: number; unresolvedIssues: string[] }> = [];
+        const replanningConfig = this.config.options.replanning;
+        const replanningEnabled = replanningConfig?.enabled === true && !task.parentTaskId;
+        let replanningTriggered = false;
 
         for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
           // Launch failure-adjudicator with parity report
@@ -2113,10 +2152,48 @@ export class MigrationOrchestrator {
             issueCount: attemptResult?.issues?.length ?? 0,
             unresolvedIssues,
           });
+
+          // Check replanning trigger criteria
+          if (replanningEnabled && replanningConfig) {
+            const triggerAttempts = replanningConfig.triggerAttempts;
+            const minOverlap = replanningConfig.minIssueOverlapForTrigger;
+            if (
+              attempt >= triggerAttempts &&
+              unresolvedIssues.length > 0
+            ) {
+              // When only one attempt exists, there's no prior attempt to compare
+              // overlap against — treat as 100% overlap so triggerAttempts:1 works.
+              const overlap = priorAttempts.length >= 2
+                ? this.computeIssueOverlap(
+                    priorAttempts[priorAttempts.length - 2]?.unresolvedIssues ?? [],
+                    unresolvedIssues,
+                  )
+                : 1.0;
+              if (overlap >= minOverlap) {
+                this.logger.warn(
+                  `Replanning triggered for ${task.id}: attempt ${attempt}, ` +
+                  `overlap=${(overlap * 100).toFixed(0)}% (threshold=${(minOverlap * 100).toFixed(0)}%), ` +
+                  `${unresolvedIssues.length} unresolved issue(s)`,
+                );
+                replanningTriggered = true;
+                break;
+              }
+            }
+          }
         }
 
         // After exhausting retries, check if only minor issues remain
         if (!parityPassed) {
+          if (replanningTriggered) {
+            // Invoke replanning: decompose the failing task into sub-tasks
+            const subtasks = await this.replanTask(task, priorAttempts, queue);
+            if (subtasks) {
+              return { migrated: false };
+            }
+            // If replanning failed (e.g. task-decomposer returned nothing),
+            // fall through to the normal terminal exhaustion path.
+          }
+
           const hasBlockingIssues = await this.hasNonMinorParityIssues(task.id);
           if (hasBlockingIssues) {
             await this.raiseTerminalExhaustion({
@@ -2188,6 +2265,120 @@ export class MigrationOrchestrator {
     const durationMs = Date.now() - taskStartMs;
     await this.completePhase4Task(task, queue, completedDurationsMs, durationMs, completionEventDurationMs);
     return { migrated: true, durationMs };
+  }
+
+  /**
+   * Decompose a failing task into smaller sub-tasks via the task-decomposer agent.
+   * Returns the generated sub-tasks, or `undefined` if replanning failed.
+   */
+  private async replanTask(
+    task: MigrationTask,
+    priorAttempts: Array<{ attempt: number; issueCount: number; unresolvedIssues: string[] }>,
+    queue: TaskQueue,
+  ): Promise<MigrationTask[] | undefined> {
+    const replanningConfig = this.config.options.replanning!;
+    const maxSubtasks = replanningConfig.maxSubtasks;
+    const lastAttempt = priorAttempts[priorAttempts.length - 1];
+    const unresolvedIssues = lastAttempt?.unresolvedIssues ?? [];
+
+    // Invoke task-decomposer with the failing task's context
+    const decomposerCtx = await this.contextBuilder.buildContext(
+      'task-decomposer',
+      4,
+      task.id,
+      {
+        sourceFiles: task.sourceFiles,
+        targetFiles: task.targetFiles,
+        kbEntry: task.knowledgeBaseRef,
+        parityIssues: unresolvedIssues,
+        lineRange: task.lineRange,
+        parentTaskId: task.id,
+      },
+    );
+    const decomposerInv = this.buildInvocation('task-decomposer', decomposerCtx, 4, task.id);
+    const decomposerResult = await this.launchAgentWithEvents(decomposerInv);
+    this.recordTokens(decomposerResult, 4);
+
+    if (!decomposerResult.success) {
+      this.logger.error(`Task-decomposer failed for replanning of ${task.id}`);
+      return undefined;
+    }
+
+    // Parse sub-tasks from structured output
+    let rawSubtasks: MigrationTask[] | undefined;
+    if (decomposerResult.outputParsed && Array.isArray(decomposerResult.structuredOutput?.['tasks'])) {
+      rawSubtasks = decomposerResult.structuredOutput['tasks'] as MigrationTask[];
+    }
+
+    if (!rawSubtasks || rawSubtasks.length === 0) {
+      this.logger.warn(`Task-decomposer returned no sub-tasks for ${task.id}`);
+      return undefined;
+    }
+
+    // Enforce maxSubtasks limit
+    if (rawSubtasks.length > maxSubtasks) {
+      this.logger.info(
+        `Task-decomposer returned ${rawSubtasks.length} sub-tasks, trimming to maxSubtasks=${maxSubtasks}`,
+      );
+      rawSubtasks = rawSubtasks.slice(0, maxSubtasks);
+    }
+
+    // Generate deterministic sub-task IDs with letter suffixes
+    const subtasks: MigrationTask[] = rawSubtasks.map((raw, i) => ({
+      ...raw,
+      id: `${task.id}${String.fromCharCode(97 + i)}`, // a, b, c, ...
+      parentTaskId: task.id,
+      dependencies: raw.dependencies ?? [],
+    }));
+
+    const subtaskIds = subtasks.map(s => s.id);
+
+    // Inject sub-tasks into the queue, rewiring dependencies
+    queue.replaceWithSubtasks(task.id, subtasks);
+
+    // Record replanning event in checkpoint
+    const reason = `Issue overlap threshold met after ${priorAttempts.length} attempt(s); ` +
+      `${unresolvedIssues.length} unresolved non-minor issue(s)`;
+    await this.checkpoint.recordReplanningEvent({
+      parentTaskId: task.id,
+      subtaskIds,
+      reason,
+    });
+
+    // Mark parent as blocked with replanned reason
+    await this.checkpoint.blockTask(task.id);
+
+    // Emit events
+    this.logger.event({
+      type: 'task-replanned',
+      taskId: task.id,
+      subtaskIds,
+    });
+    this.logger.event({
+      type: 'subtasks-injected',
+      parentTaskId: task.id,
+      subtaskIds,
+      reason,
+    });
+
+    // Update progress with new total task count
+    const progress = queue.getProgress();
+    this.progress.setTotalTasks(progress.total);
+
+    this.logger.info(
+      `Replanned ${task.id} into ${subtaskIds.length} sub-task(s): ${subtaskIds.join(', ')}`,
+    );
+    await this.progress.appendEvent(
+      `Task ${task.id} replanned into sub-tasks: ${subtaskIds.join(', ')}`,
+    );
+    await this.progress.appendReplanningEvent({
+      parentTaskId: task.id,
+      subtaskIds,
+      reason,
+      createdAt: new Date().toISOString(),
+    });
+
+    return subtasks;
   }
 
   private buildWaveRecoveryTask(wave: number, waveCandidates: MigrationTask[]): MigrationTask {
@@ -3144,6 +3335,18 @@ export class MigrationOrchestrator {
       summary: cmdResult.error ?? `${label} command failed after ${maxAttempts} recovery attempts`,
     });
     return false;
+  }
+
+  /**
+   * Compute issue-set overlap ratio between consecutive parity recovery attempts.
+   * Returns `|A ∩ B| / |A|` where A=previous, B=current.
+   * Returns 0 when previous is empty.
+   */
+  private computeIssueOverlap(previous: string[], current: string[]): number {
+    if (previous.length === 0) return 0;
+    const currentSet = new Set(current);
+    const intersection = previous.filter(issue => currentSet.has(issue));
+    return intersection.length / previous.length;
   }
 
   private getPhase4QualityGateMode(): Phase4QualityGateMode {

@@ -280,7 +280,8 @@ export type TerminalReasonCode =
   | 'wave-convergence-exhausted'
   | 'task-retries-exhausted'
   | 'parity-non-minor-exhausted'
-  | 'command-recovery-exhausted';
+  | 'command-recovery-exhausted'
+  | 'replanned';
 
 // ─── E2E Suite Briefs ────────────────────────────────────────────────────────
 
@@ -356,6 +357,9 @@ export interface MigrationTask {
 
   /** Optional line range in the source file to scope the migration. */
   lineRange?: { start: number; end: number };
+
+  /** ID of the parent task when this task was created via replanning. */
+  parentTaskId?: string;
 }
 
 // ─── Module Groups ──────────────────────────────────────────────────────────

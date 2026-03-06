@@ -95,6 +95,21 @@ export const MigrationConfigSchema = z.object({
      */
     retryOverheadMultiplier: z.number().min(1).max(3).default(1.25),
     /**
+     * Options for the optional replanning phase.
+     * When enabled, tasks that fail repeatedly with the same unresolved issues
+     * are decomposed into smaller sub-tasks instead of being blocked.
+     */
+    replanning: z.object({
+      /** Enable automatic replanning of stuck tasks. */
+      enabled: z.boolean().default(false),
+      /** Number of recovery attempts before replanning triggers. */
+      triggerAttempts: z.number().int().min(1).default(2),
+      /** Maximum number of sub-tasks a replanning step may create. */
+      maxSubtasks: z.number().int().min(2).max(10).default(4),
+      /** Minimum issue-set overlap ratio (0–1) across consecutive attempts to trigger replanning. */
+      minIssueOverlapForTrigger: z.number().min(0).max(1).default(0.5),
+    }).optional(),
+    /**
      * Options for the optional idiomatic refactor phase (Phase 8).
      * When enabled, the idiomatic-reviewer and idiomatic-refactorer agents
      * run after Phase 6 to improve code idiomaticness.

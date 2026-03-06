@@ -579,4 +579,132 @@ describe('CheckpointManager', () => {
     expect(loaded.adjudicationWaivers).toEqual([]);
     expect(loaded.adjudicationEvents).toEqual([]);
   });
+
+  // ─── replanningEvents ──────────────────────────────────────────────
+
+  it('should initialize replanningEvents to empty array on fresh state', async () => {
+    const state = await manager.load('test-project');
+    expect(state.replanningEvents).toEqual([]);
+  });
+
+  it('should record a replanning event and persist it', async () => {
+    await manager.load('test-project');
+    await manager.recordReplanningEvent({
+      parentTaskId: 'task-003',
+      subtaskIds: ['task-003a', 'task-003b'],
+      reason: 'Repeated parity failures with 60% issue overlap',
+    });
+
+    const state = manager.getState();
+    expect(state.replanningEvents).toHaveLength(1);
+    expect(state.replanningEvents?.[0]?.parentTaskId).toBe('task-003');
+    expect(state.replanningEvents?.[0]?.subtaskIds).toEqual(['task-003a', 'task-003b']);
+    expect(state.replanningEvents?.[0]?.reason).toBe('Repeated parity failures with 60% issue overlap');
+    expect(state.replanningEvents?.[0]?.createdAt).toBeDefined();
+  });
+
+  it('should assign createdAt when replanning event omits it', async () => {
+    await manager.load('test-project');
+    await manager.recordReplanningEvent({
+      parentTaskId: 'task-005',
+      subtaskIds: ['task-005a'],
+      reason: 'stuck',
+    });
+
+    const state = manager.getState();
+    const ts = state.replanningEvents?.[0]?.createdAt ?? '';
+    expect(new Date(ts).toString()).not.toBe('Invalid Date');
+  });
+
+  it('should preserve explicit createdAt on replanning events', async () => {
+    await manager.load('test-project');
+    const explicit = '2026-01-15T12:00:00.000Z';
+    await manager.recordReplanningEvent({
+      parentTaskId: 'task-007',
+      subtaskIds: ['task-007a'],
+      reason: 'manual',
+      createdAt: explicit,
+    });
+
+    const state = manager.getState();
+    expect(state.replanningEvents?.[0]?.createdAt).toBe(explicit);
+  });
+
+  it('should append multiple replanning events', async () => {
+    await manager.load('test-project');
+    await manager.recordReplanningEvent({
+      parentTaskId: 'task-001',
+      subtaskIds: ['task-001a', 'task-001b'],
+      reason: 'first replan',
+    });
+    await manager.recordReplanningEvent({
+      parentTaskId: 'task-002',
+      subtaskIds: ['task-002a'],
+      reason: 'second replan',
+    });
+
+    const state = manager.getState();
+    expect(state.replanningEvents).toHaveLength(2);
+    expect(state.replanningEvents?.[0]?.parentTaskId).toBe('task-001');
+    expect(state.replanningEvents?.[1]?.parentTaskId).toBe('task-002');
+  });
+
+  it('should persist replanning events across save and reload', async () => {
+    await manager.load('test-project');
+    await manager.recordReplanningEvent({
+      parentTaskId: 'task-010',
+      subtaskIds: ['task-010a', 'task-010b'],
+      reason: 'persistent replanning',
+    });
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.replanningEvents).toHaveLength(1);
+    expect(reloaded.replanningEvents?.[0]?.parentTaskId).toBe('task-010');
+    expect(reloaded.replanningEvents?.[0]?.subtaskIds).toEqual(['task-010a', 'task-010b']);
+  });
+
+  it('should default replanningEvents to [] for old checkpoints (backward compat)', async () => {
+    const { writeJson } = await import('../src/util/fs.js');
+    const oldState = {
+      projectName: 'old-project',
+      version: 1,
+      currentPhase: 2,
+      currentTask: null,
+      completedPhases: [1],
+      completedTasks: ['task-001'],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 1,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      metricsCount: 0,
+      // replanningEvents intentionally omitted
+    };
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), oldState);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const loaded = await manager3.load('old-project');
+    expect(loaded.replanningEvents).toEqual([]);
+  });
+
+  it('should allow resumed runs to identify already-replanned parent tasks', async () => {
+    await manager.load('test-project');
+    await manager.recordReplanningEvent({
+      parentTaskId: 'task-020',
+      subtaskIds: ['task-020a', 'task-020b'],
+      reason: 'stuck task decomposed',
+    });
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    const replannedParents = new Set(reloaded.replanningEvents?.map(e => e.parentTaskId));
+    expect(replannedParents.has('task-020')).toBe(true);
+    expect(replannedParents.has('task-999')).toBe(false);
+  });
 });

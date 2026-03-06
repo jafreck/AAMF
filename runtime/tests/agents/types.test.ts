@@ -371,6 +371,24 @@ describe('MigrationTask', () => {
     expect(task.id).toBe('task-001');
     expect(task.complexity).toBe('moderate');
     expect(task.lineRange).toBeUndefined();
+    expect(task.parentTaskId).toBeUndefined();
+  });
+
+  it('should support optional parentTaskId field', () => {
+    const task: MigrationTask = {
+      id: 'task-001a',
+      name: 'Sub-task of auth module',
+      sourceFiles: ['src/auth.py'],
+      targetFiles: ['src/auth.ts'],
+      knowledgeBaseRef: 'kb/auth.md',
+      dependencies: [],
+      complexity: 'simple',
+      description: 'Sub-task created via replanning',
+      acceptanceCriteria: ['tests pass'],
+      parityChecks: ['check-auth'],
+      parentTaskId: 'task-001',
+    };
+    expect(task.parentTaskId).toBe('task-001');
   });
 
   it('should accept all complexity values', () => {
@@ -647,12 +665,14 @@ describe('TerminalReasonCode', () => {
       'task-retries-exhausted',
       'parity-non-minor-exhausted',
       'command-recovery-exhausted',
+      'replanned',
     ];
     expect(codes).toEqual([
       'wave-convergence-exhausted',
       'task-retries-exhausted',
       'parity-non-minor-exhausted',
       'command-recovery-exhausted',
+      'replanned',
     ]);
   });
 });

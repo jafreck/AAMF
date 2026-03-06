@@ -228,6 +228,87 @@ describe('ProgressWriter', () => {
     expect(content).toContain('1m 0s');
   });
 
+  describe('Replanning Events', () => {
+    it('should render replanning events section when events exist', async () => {
+      await writer.initialize(config);
+      await writer.appendReplanningEvent({
+        parentTaskId: 'task-005',
+        subtaskIds: ['task-005a', 'task-005b', 'task-005c'],
+        reason: 'scope too broad for single agent',
+        createdAt: '2026-03-01T10:00:00.000Z',
+      });
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('## Replanning Events');
+      expect(content).toContain('| Time | Parent Task | Sub-Tasks | Reason |');
+      expect(content).toContain('| 2026-03-01T10:00:00.000Z | task-005 | task-005a, task-005b, task-005c | scope too broad for single agent |');
+    });
+
+    it('should render multiple replanning events in order', async () => {
+      await writer.initialize(config);
+      await writer.appendReplanningEvent({
+        parentTaskId: 'task-001',
+        subtaskIds: ['task-001a', 'task-001b'],
+        reason: 'first decomposition',
+        createdAt: '2026-03-01T10:00:00.000Z',
+      });
+      await writer.appendReplanningEvent({
+        parentTaskId: 'task-002',
+        subtaskIds: ['task-002a'],
+        reason: 'second decomposition',
+        createdAt: '2026-03-01T11:00:00.000Z',
+      });
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('task-001');
+      expect(content).toContain('task-002');
+      // Both events present
+      expect(content).toContain('first decomposition');
+      expect(content).toContain('second decomposition');
+      // Verify ordering: task-001 row appears before task-002 row
+      const idx1 = content.indexOf('first decomposition');
+      const idx2 = content.indexOf('second decomposition');
+      expect(idx1).toBeLessThan(idx2);
+    });
+
+    it('should render replanning event with a single sub-task', async () => {
+      await writer.initialize(config);
+      await writer.appendReplanningEvent({
+        parentTaskId: 'task-099',
+        subtaskIds: ['task-099a'],
+        reason: 'narrowing scope',
+        createdAt: '2026-03-02T08:00:00.000Z',
+      });
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('| 2026-03-02T08:00:00.000Z | task-099 | task-099a | narrowing scope |');
+    });
+
+    it('should omit replanning events section when no events exist', async () => {
+      await writer.initialize(config);
+      await writer.appendEvent('some event');
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).not.toContain('Replanning Events');
+    });
+
+    it('should clear replanning events on re-initialization', async () => {
+      await writer.initialize(config);
+      await writer.appendReplanningEvent({
+        parentTaskId: 'task-old',
+        subtaskIds: ['task-old-a'],
+        reason: 'stale event',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      });
+
+      await writer.initialize(config);
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).not.toContain('Replanning Events');
+      expect(content).not.toContain('task-old');
+    });
+  });
+
   describe('Resume & Edge Cases', () => {
     it('should rewrite all phases to pending on re-initialization', async () => {
       await writer.initialize(config);
@@ -469,6 +550,46 @@ describe('ProgressWriter', () => {
       expect(content).toContain('Adjudication Events');
       expect(content).toContain('fp-xyz');
       expect(content).toContain('task-007');
+    });
+
+    it('should restore and render replanning events from checkpoint state', async () => {
+      await writer.initialize(config);
+      const state = {
+        projectName: 'test-project',
+        version: 1,
+        currentPhase: 4,
+        currentTask: null,
+        completedPhases: [1, 2, 3],
+        completedTasks: ['task-001'],
+        failedTasks: [],
+        blockedTasks: [],
+        phaseOutputs: {},
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        startedAt: new Date().toISOString(),
+        lastCheckpoint: new Date().toISOString(),
+        resumeCount: 1,
+        cumulativeDurationMs: 0,
+        completedTaskDurationsMs: [],
+        metricsCount: 0,
+        replanningEvents: [
+          {
+            parentTaskId: 'task-010',
+            subtaskIds: ['task-010a', 'task-010b'],
+            reason: 'task was too complex',
+            createdAt: '2026-02-15T12:00:00.000Z',
+          },
+        ],
+      };
+
+      writer.reconstructFromCheckpoint(state);
+      await writer.appendEvent('resumed');
+
+      const content = await readFile(progressFile, 'utf-8');
+      expect(content).toContain('Replanning Events');
+      expect(content).toContain('task-010');
+      expect(content).toContain('task-010a, task-010b');
+      expect(content).toContain('task was too complex');
+      expect(content).toContain('2026-02-15T12:00:00.000Z');
     });
 
     it('should restore terminal exhaustion metadata from checkpoint state', async () => {

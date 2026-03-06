@@ -520,3 +520,54 @@ describe('RuntimeEvent — model-routing-decision', () => {
     expect(event.score).toBe(55);
   });
 });
+
+// ─── task-replanned ──────────────────────────────────────────────────────────
+
+describe('RuntimeEvent — task-replanned', () => {
+  it('should construct with taskId and subtaskIds', () => {
+    const event: RuntimeEvent = {
+      type: 'task-replanned',
+      taskId: 'task-003',
+      subtaskIds: ['task-003a', 'task-003b'],
+    };
+    expect(event.type).toBe('task-replanned');
+    expect(event.taskId).toBe('task-003');
+    expect(event.subtaskIds).toEqual(['task-003a', 'task-003b']);
+  });
+
+  it('should support a single subtask', () => {
+    const event: RuntimeEvent = {
+      type: 'task-replanned',
+      taskId: 'task-010',
+      subtaskIds: ['task-010a'],
+    };
+    expect(event.subtaskIds).toHaveLength(1);
+  });
+});
+
+// ─── subtasks-injected ───────────────────────────────────────────────────────
+
+describe('RuntimeEvent — subtasks-injected', () => {
+  it('should construct with parentTaskId, subtaskIds, and reason', () => {
+    const event: RuntimeEvent = {
+      type: 'subtasks-injected',
+      parentTaskId: 'task-005',
+      subtaskIds: ['task-005a', 'task-005b', 'task-005c'],
+      reason: 'Repeated failures with overlapping issues',
+    };
+    expect(event.type).toBe('subtasks-injected');
+    expect(event.parentTaskId).toBe('task-005');
+    expect(event.subtaskIds).toEqual(['task-005a', 'task-005b', 'task-005c']);
+    expect(event.reason).toBe('Repeated failures with overlapping issues');
+  });
+
+  it('should support an empty reason string', () => {
+    const event: RuntimeEvent = {
+      type: 'subtasks-injected',
+      parentTaskId: 'task-001',
+      subtaskIds: ['task-001a'],
+      reason: '',
+    };
+    expect(event.reason).toBe('');
+  });
+});
