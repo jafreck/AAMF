@@ -262,6 +262,13 @@ describe('Logger', () => {
     expect(entry.taskId).toBe('task-007');
   });
 
+  it('should share a single write queue between parent and child loggers', () => {
+    const logger = new Logger({ logDir, level: 'info', console: false }) as any;
+    const child = logger.child('child-source') as any;
+
+    expect(child.writeState).toBe(logger.writeState);
+  });
+
   // ─── Console correlation tags ──────────────────────────────────────────────
 
   it('should include correlation tags in console output when fields are set', async () => {

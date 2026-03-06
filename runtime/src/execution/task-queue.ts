@@ -56,7 +56,7 @@ export class TaskQueue {
     const ready: MigrationTask[] = [];
     for (const [id, task] of this.tasks) {
       if (this.completed.has(id) || this.blocked.has(id)) continue;
-      const depsOk = task.dependencies.every(dep => this.completed.has(dep) || this.blocked.has(dep));
+      const depsOk = task.dependencies.every(dep => this.completed.has(dep));
       if (depsOk) ready.push(task);
     }
     return ready;
