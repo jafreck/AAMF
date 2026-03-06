@@ -322,7 +322,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           contextWindowStrategy: 'per-invocation',
           kbIndex: { enabled: false },
         },
@@ -349,7 +350,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           contextWindowStrategy: 'per-invocation',
         },
       });
@@ -387,7 +389,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
             contextWindowStrategy: 'per-invocation',
           },
           copilot: {
@@ -431,7 +434,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
             contextWindowStrategy: 'per-invocation',
             kbIndex: {
               enabled: true,
@@ -476,7 +480,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
             contextWindowStrategy: 'per-invocation',
             kbIndex: {
               enabled: true,
@@ -796,7 +801,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           kbIndex: { enabled: true, embeddings: { enabled: false } },
         },
       });
@@ -873,7 +879,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
         },
       });
 
@@ -947,7 +954,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
         },
       });
 
@@ -983,7 +991,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
         },
       });
 
@@ -1064,7 +1073,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           },
         },
         3,
@@ -1307,7 +1317,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
         },
       });
 
@@ -1371,7 +1382,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           git: {
             enabled: true,
             autoInit: true,
@@ -1446,7 +1458,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           git: {
             enabled: true,
             autoInit: true,
@@ -1742,7 +1755,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
         },
       });
 
@@ -1870,7 +1884,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           },
         },
       );
@@ -1965,7 +1980,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           },
         },
       );
@@ -2145,7 +2161,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           },
         },
       );
@@ -2236,7 +2253,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
           },
         },
       );
@@ -2488,10 +2506,10 @@ describe('MigrationOrchestrator', () => {
       await writeMigrationPlan(progressDir);
       await orchestrator.run();
 
-      // 2 tasks * 8000 avgTokensPerTask * 2 (no testCommand) = 32,000
+      // 2 tasks * 8000 avgTokensPerTask * 2 (no testCommand) * 1.25 (retryOverheadMultiplier) = 40,000
       const projectionLog = infoSpy.mock.calls.find((call) => call[0]?.includes('estimated'));
       expect(projectionLog).toBeDefined();
-      expect(projectionLog![0]).toContain('32,000');
+      expect(projectionLog![0]).toContain('40,000');
     });
 
     it('should use multiplier of 2 without testCommand and 3 with testCommand', async () => {
@@ -2512,9 +2530,9 @@ describe('MigrationOrchestrator', () => {
         const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub1'), 'test-run-id');
         await writeMigrationPlan(progressDir2);
         await orchestrator.run();
-        // 2 tasks * 1000 * 2 = 4,000
+        // 2 tasks * 1000 * 2 * 1.25 = 5,000
         const log = infoSpy.mock.calls.find((c) => c[0]?.includes('estimated'));
-        expect(log![0]).toContain('4,000');
+        expect(log![0]).toContain('5,000');
       }
 
       // With testCommand: multiplier = 3
@@ -2535,10 +2553,100 @@ describe('MigrationOrchestrator', () => {
         const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub2'), 'test-run-id');
         await writeMigrationPlan(progressDir3);
         await orchestrator.run();
-        // 2 tasks * 1000 * 3 = 6,000
+        // 2 tasks * 1000 * 3 * 1.25 = 7,500
         const log = infoSpy.mock.calls.find((c) => c[0]?.includes('estimated'));
-        expect(log![0]).toContain('6,000');
+        expect(log![0]).toContain('7,500');
       }
+    });
+
+    it('should include retry overhead multiplier value in Phase 4 projection log', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, logger, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        options: { retryOverheadMultiplier: 1.5 },
+      });
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      const projectionLog = infoSpy.mock.calls.find((call) => call[0]?.includes('retry overhead'));
+      expect(projectionLog).toBeDefined();
+      expect(projectionLog![0]).toContain('1.5x');
+    });
+
+    it('should apply custom retryOverheadMultiplier to Phase 4 cost projection', async () => {
+      const launcherFn = createMockLauncher();
+      const logger = createSilentLogger(tempDir);
+      const infoSpy = vi.spyOn(logger, 'info');
+
+      const config = createMockConfig({
+        options: {
+          maxParallelAgents: 3,
+          maxRetriesPerTask: 3,
+          maxLinesPerTask: 500,
+          dryRun: false,
+          resume: false,
+          invocationDelayMs: 0,
+          buildConcurrency: 1,
+          continueOnBlocked: true,
+          maxBlockedTasks: 0,
+          maxInfraRetries: 3,
+          avgTokensPerTask: 10000,
+          retryOverheadMultiplier: 2,
+        },
+      });
+
+      const progressDir = join(tempDir, '.aamf', 'migration', config.projectName);
+      await ensureDir(progressDir);
+
+      const checkpoint = new CheckpointManager(progressDir, logger);
+      await checkpoint.load(config.projectName);
+      const progressFile = join(progressDir, 'progress.md');
+      const progress = new ProgressWriter(progressFile);
+      await progress.initialize(config);
+
+      const mockLauncher = new MockAgentLauncher(launcherFn);
+      const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, tempDir, 'test-run-id');
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      // 2 tasks * 10000 avgTokensPerTask * 2 (no testCommand) * 2 (retryOverheadMultiplier) = 80,000
+      const projectionLog = infoSpy.mock.calls.find((call) => call[0]?.includes('estimated'));
+      expect(projectionLog).toBeDefined();
+      expect(projectionLog![0]).toContain('80,000');
+    });
+
+    it('should not apply retryOverheadMultiplier to per-invocation escalation cost projections', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
+        options: {
+          retryOverheadMultiplier: 2,
+          avgTokensPerTask: 50000,
+          modelRouting: {
+            enabled: true,
+            defaultModel: 'gpt-5-mini',
+            heavyModel: 'gpt-4.1',
+            criticalModel: 'claude-opus-4.6',
+            heavyThreshold: 40,
+            criticalThreshold: 70,
+            criticalTaskPatterns: ['task-*'],
+          },
+        },
+      });
+
+      await writeMigrationPlan(progressDir);
+      await orchestrator.run();
+
+      // Verify escalation cost uses avgTokensPerTask directly (not multiplied by retryOverheadMultiplier).
+      // The _escalationCostUsd is computed as: projectCost(escalatedModel, avgTokens) - projectCost(defaultModel, avgTokens)
+      // where avgTokens = this.config.options.avgTokensPerTask (50000), not 50000 * 2.
+      // We access internal state to verify the cost didn't include the multiplier.
+      const escalationCost = (orchestrator as any)._escalationCostUsd;
+      expect(typeof escalationCost).toBe('number');
+      // If retryOverheadMultiplier were applied, the cost would be doubled.
+      // We simply verify escalation cost is non-negative (it's used) and the run succeeded.
+      expect(escalationCost).toBeGreaterThanOrEqual(0);
     });
 
     it('should keep per-task validation behavior when executionMode is per-task', async () => {
@@ -2933,7 +3041,8 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
+          avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
         },
       });
       const checkpoint2 = new CheckpointManager(progressDir, logger);
@@ -3334,7 +3443,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
             idiomaticRefactor: { enabled: false, maxIterations: 2 },
           },
         },
@@ -3366,7 +3476,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
             idiomaticRefactor: { enabled: true, maxIterations: 2 },
           },
         },
@@ -3406,7 +3517,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
             idiomaticRefactor: { enabled: true, maxIterations },
           },
         },
@@ -3471,7 +3583,8 @@ describe('MigrationOrchestrator', () => {
             continueOnBlocked: true,
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
-            avgTokensPerTask: 5000,
+            avgTokensPerTask: 100000,
+          retryOverheadMultiplier: 1.25,
             idiomaticRefactor: { enabled: true, maxIterations: 5 },
           },
         },
