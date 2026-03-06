@@ -26,7 +26,8 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.maxBlockedTasks).toBe(0);
     expect(result.options.qualityPolicy).toBe('strict');
     expect(result.options.maxInfraRetries).toBe(3);
-    expect(result.options.avgTokensPerTask).toBe(5000);
+    expect(result.options.avgTokensPerTask).toBe(100000);
+    expect(result.options.retryOverheadMultiplier).toBe(1.25);
     expect(result.options.git?.enabled).toBe(true);
     expect(result.options.git?.autoInit).toBe(true);
     expect(result.options.git?.commitByAgent).toBe(true);
@@ -288,9 +289,9 @@ describe('MigrationConfigSchema', () => {
       expect(result.options.keepArtifacts).toBe(false);
     });
 
-    it('should default avgTokensPerTask to 5000 when omitted', () => {
+    it('should default avgTokensPerTask to 100000 when omitted', () => {
       const result = MigrationConfigSchema.parse(validConfig);
-      expect(result.options.avgTokensPerTask).toBe(5000);
+      expect(result.options.avgTokensPerTask).toBe(100000);
     });
 
     it('should accept a custom avgTokensPerTask value', () => {
@@ -299,6 +300,49 @@ describe('MigrationConfigSchema', () => {
         options: { avgTokensPerTask: 8000 },
       });
       expect(result.options.avgTokensPerTask).toBe(8000);
+    });
+
+    it('should default retryOverheadMultiplier to 1.25 when omitted', () => {
+      const result = MigrationConfigSchema.parse(validConfig);
+      expect(result.options.retryOverheadMultiplier).toBe(1.25);
+    });
+
+    it('should accept a custom retryOverheadMultiplier value', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { retryOverheadMultiplier: 1.5 },
+      });
+      expect(result.options.retryOverheadMultiplier).toBe(1.5);
+    });
+
+    it('should reject retryOverheadMultiplier below 1', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { retryOverheadMultiplier: 0.9 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject retryOverheadMultiplier above 3', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { retryOverheadMultiplier: 3.1 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept retryOverheadMultiplier at boundary values (1 and 3)', () => {
+      const resultMin = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { retryOverheadMultiplier: 1 },
+      });
+      expect(resultMin.options.retryOverheadMultiplier).toBe(1);
+
+      const resultMax = MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { retryOverheadMultiplier: 3 },
+      });
+      expect(resultMax.options.retryOverheadMultiplier).toBe(3);
     });
 
     describe('idiomaticRefactor option', () => {
