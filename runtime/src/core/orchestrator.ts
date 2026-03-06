@@ -2518,6 +2518,10 @@ export class MigrationOrchestrator {
     }
 
     // ─── Stage 3: Fan out test-writer per suite ───
+    // When git is disabled, doc-writer runs in parallel with suite fan-out (Stage 3+4 combined).
+    // When git is enabled, doc-writer runs sequentially after suites (Stage 4).
+    let docWriterHandled = false;
+
     if (suites.length === 0) {
       this.logger.warn('E2E test plan contains zero suites — skipping test-writer fan-out');
     } else {
@@ -2539,28 +2543,21 @@ export class MigrationOrchestrator {
           results.push(suiteResult);
         }
       } else {
-        // Multi-suite without git: parallel fan-out
-        await this.executeParallelSuiteFanOut(pendingSuites, suites, results, completedAgents, completedSuites);
+        // Multi-suite without git: parallel fan-out with doc-writer running concurrently
+        const suitePromise = this.executeParallelSuiteFanOut(
+          pendingSuites, suites, results, completedAgents, completedSuites,
+        );
+        const docPromise = this.executeDocumentationWriter(
+          completedAgents, results, skipAsCompleted, saveCursor,
+        );
+        await Promise.all([suitePromise, docPromise]);
+        docWriterHandled = true;
       }
     }
 
-    // ─── Stage 4: Documentation writer ───
-    if (completedAgents.has('documentation-writer')) {
-      results.push(skipAsCompleted('documentation-writer'));
-    } else {
-      const docCtx = await this.contextBuilder.buildContext('documentation-writer', 6);
-      const docResult = await this.launchAgentWithEvents(
-        this.buildInvocation('documentation-writer', docCtx, 6),
-      );
-      results.push(docResult);
-      this.recordTokens(docResult, 6);
-      if (docResult.success) {
-        if (this.isGitAutomationEnabled()) {
-          await this.commitForAgent('documentation-writer', 6);
-        }
-        completedAgents.add('documentation-writer');
-        await saveCursor('completed-documentation-writer');
-      }
+    // ─── Stage 4: Documentation writer (sequential when git enabled or non-parallel paths) ───
+    if (!docWriterHandled) {
+      await this.executeDocumentationWriter(completedAgents, results, skipAsCompleted, saveCursor);
     }
 
     const allSuccess = results.every((r) => r.success);
@@ -2652,8 +2649,12 @@ export class MigrationOrchestrator {
     completedAgents: Set<string>,
     completedSuites: Set<string>,
   ): Promise<void> {
+    // Pre-flight budget check: skip suites that can't start
+    const budgetFilteredSuites = pendingSuites.filter((s) => !this.isSuiteBudgetExceeded(s.id));
+    if (budgetFilteredSuites.length === 0) return;
+
     const invocations: AgentInvocation[] = [];
-    for (const suite of pendingSuites) {
+    for (const suite of budgetFilteredSuites) {
       const suiteCtx = await this.contextBuilder.buildContext(
         'test-writer', 6, suite.id, { e2eSuiteBrief: suite },
       );
@@ -2665,7 +2666,7 @@ export class MigrationOrchestrator {
       this.logger,
     );
     const parallel = new ParallelExecutor(
-      Math.min(this.config.options.maxParallelAgents, pendingSuites.length),
+      Math.min(this.config.options.maxParallelAgents, budgetFilteredSuites.length),
       (inv) => retryExec.executeWithRetry(inv, {
         maxAttempts: this.config.options.maxRetriesPerTask,
       }),
@@ -2676,7 +2677,7 @@ export class MigrationOrchestrator {
     this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
 
     for (let i = 0; i < parallelResults.length; i++) {
-      const suite = pendingSuites[i]!;
+      const suite = budgetFilteredSuites[i]!;
       const result = parallelResults[i]!;
       results.push(result);
       this.recordTokens(result, 6);
@@ -2692,6 +2693,32 @@ export class MigrationOrchestrator {
         ? 'all-suites-complete'
         : `completed-${completedSuites.size}-of-${allSuites.length}-suites`,
     });
+  }
+
+  /** Run documentation-writer, recording tokens and committing if git enabled. */
+  private async executeDocumentationWriter(
+    completedAgents: Set<string>,
+    results: AgentResult[],
+    skipAsCompleted: (agent: AgentName) => AgentResult,
+    saveCursor: (step: string) => Promise<void>,
+  ): Promise<void> {
+    if (completedAgents.has('documentation-writer')) {
+      results.push(skipAsCompleted('documentation-writer'));
+      return;
+    }
+    const docCtx = await this.contextBuilder.buildContext('documentation-writer', 6);
+    const docResult = await this.launchAgentWithEvents(
+      this.buildInvocation('documentation-writer', docCtx, 6),
+    );
+    results.push(docResult);
+    this.recordTokens(docResult, 6);
+    if (docResult.success) {
+      if (this.isGitAutomationEnabled()) {
+        await this.commitForAgent('documentation-writer', 6);
+      }
+      completedAgents.add('documentation-writer');
+      await saveCursor('completed-documentation-writer');
+    }
   }
 
   // ─── Phase 7: Completion ─────────────────────────────────────────────
