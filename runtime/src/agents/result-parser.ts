@@ -698,8 +698,8 @@ export class ResultParser {
 
     if (!id || !name) return null;
 
-    // Purpose
-    const purposeMatch = block.match(/\*\*Purpose\*\*:?\s*(.+)/i) ?? block.match(/Purpose:?\s*(.+)/i);
+    // Purpose — handles both **Purpose:** and **Purpose**:
+    const purposeMatch = block.match(/\*\*Purpose:?\*\*:?\s*(.+)/i) ?? block.match(/Purpose:?\s*(.+)/i);
     const purpose = purposeMatch?.[1]?.trim() ?? '';
 
     // Target files
@@ -708,12 +708,12 @@ export class ResultParser {
     // KB references
     const kbReferences = ResultParser.extractListItems(block, /kb[\s-]*references?/i);
 
-    // Framework
-    const frameworkMatch = block.match(/\*\*Framework\*\*:?\s*(.+)/i) ?? block.match(/Framework:?\s*(.+)/i);
+    // Framework — handles both **Framework:** and **Framework**:
+    const frameworkMatch = block.match(/\*\*Framework:?\*\*:?\s*(.+)/i) ?? block.match(/Framework:?\s*(.+)/i);
     const framework = frameworkMatch?.[1]?.trim() ?? '';
 
-    // Output location
-    const outputMatch = block.match(/\*\*Output\s*Location\*\*:?\s*(.+)/i)
+    // Output location — handles both **Output Location:** and **Output Location**:
+    const outputMatch = block.match(/\*\*Output\s*Location:?\*\*:?\s*(.+)/i)
       ?? block.match(/Output\s*Location:?\s*(.+)/i);
     const outputLocation = outputMatch?.[1]?.trim() ?? '';
 
