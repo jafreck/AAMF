@@ -53,6 +53,32 @@ When these tools are available, prefer them for structural facts over exhaustive
    - Run linter on the target code
    - Check for unused imports or dead code in the target
 
+6. **Execution-Path Reachability** (severity guidance: `major`)
+   - For each module's public API entry points, verify that the internal functions/methods the source code calls are also called (directly or transitively) in the target
+   - Flag any function that exists in the target but is unreachable from the module's public API — especially when the equivalent source function IS reachable
+   - This detects "dead dispatch" where strategy selection, codec dispatch, or algorithm routing functions are defined but never wired into the call chain
+
+7. **Semantic Effectiveness** (severity guidance: `critical`)
+   - For modules performing data transformation (compression, encryption, encoding, hashing, serialization, format conversion, etc.), verify that the transformation is non-trivial
+   - The output should differ structurally from the input (not just a header/footer wrapper around the original data)
+   - If the source implementation achieves a measurable property (size reduction for compression, fixed-size output for hashing, format compliance for serialization), the target should achieve the same property
+   - Flag any path where the "transformation" is effectively a pass-through (copy with framing) when the source performs actual computation
+
+8. **FFI Delegation Detection** (severity guidance: `critical`)
+   - Check whether the target function implements the algorithm natively or delegates to an external binding/wrapper of the source library
+   - If the target calls into a package that wraps or binds to the source library via FFI, flag as `critical` — the migration has not actually re-implemented the logic
+   - If the target imports or links against the source library's compiled artifacts, flag as `critical`
+   - Compare the target function's implementation depth against the source: a source function with substantial algorithm logic should not map to a short target function that delegates to a library call
+
+9. **Hollow Implementation Detection** (severity guidance: `critical`)
+   - Detect functions that have a syntactically complete body but produce semantically empty or default output. Indicators:
+     - Output buffers/arrays/collections initialized to zeros/defaults and never populated with computed values
+     - Return values that are always trivial (e.g., success-with-no-data, zero, null, empty string, empty collection) regardless of input
+     - Functions that accept parameters but never read or branch on them
+     - Intermediate computation results that are computed but never written to the output
+     - Functions where the output size/value is independent of the input (when the source function's output varies with input)
+   - These are distinct from syntactic stubs (which have explicit todo/unimplemented/placeholder markers) — hollow implementations compile and run but produce wrong results because critical algorithm internals are missing
+
 ## Output
 
 Write to `.aamf/migration/{projectName}/artifacts/parity/task-{taskId}.md`:
