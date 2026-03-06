@@ -77,9 +77,16 @@ export const MigrationConfigSchema = z.object({
     maxInfraRetries: z.number().int().min(0).max(10).default(3),
     /**
      * Estimated average number of tokens consumed per migration task.
-     * Used for Phase 4 cost projection. Default: 5000.
+     * Used for Phase 4 cost projection. Default: 100000.
      */
-    avgTokensPerTask: z.number().int().min(1).default(5000),
+    avgTokensPerTask: z.number().int().min(1).default(100000),
+    /**
+     * Multiplier applied to the Phase 4 aggregate cost projection to account
+     * for retry and convergence overhead (failure-adjudicator invocations,
+     * wave convergence iterations, and code-migrator retries).
+     * Must be between 1 and 3. Default: 1.25.
+     */
+    retryOverheadMultiplier: z.number().min(1).max(3).default(1.25),
     /**
      * Options for the optional idiomatic refactor phase (Phase 8).
      * When enabled, the idiomatic-reviewer and idiomatic-refactorer agents
@@ -193,7 +200,8 @@ export const MigrationConfigSchema = z.object({
     maxBlockedTasks: 0,
     qualityPolicy: 'strict',
     maxInfraRetries: 3,
-    avgTokensPerTask: 5000,
+    avgTokensPerTask: 100000,
+    retryOverheadMultiplier: 1.25,
     keepArtifacts: false,
     git: {
       enabled: true,
