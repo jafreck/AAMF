@@ -245,7 +245,19 @@ export class ContextBuilder {
           agentPayload: { taskId },
         };
 
-      case 'test-writer':
+      case 'test-writer': {
+        // Phase 6 per-suite E2E path: payload carries a full suite brief
+        if (this.isRecord(payload?.e2eSuiteBrief)) {
+          const brief = payload!.e2eSuiteBrief as Record<string, unknown>;
+          const targetFiles = Array.isArray(brief.targetFiles) ? (brief.targetFiles as string[]) : [];
+          const kbRefs = Array.isArray(brief.kbReferences) ? (brief.kbReferences as string[]) : [];
+          return {
+            inputFiles: [...targetFiles, ...kbRefs],
+            outputPath: brief.outputLocation && typeof brief.outputLocation === 'string' ? brief.outputLocation : out,
+            agentPayload: { taskId, testType: 'e2e', e2eSuiteBrief: brief },
+          };
+        }
+        // Phase 4 unit-test path (unchanged)
         return {
           inputFiles: [
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
@@ -255,6 +267,7 @@ export class ContextBuilder {
           outputPath: out,
           agentPayload: { taskId, testType: payload?.testType ?? 'unit' },
         };
+      }
 
       case 'failure-adjudicator':
         {
