@@ -1,10 +1,5 @@
-import { AgentInvocation, AgentResult } from '../agents/types.js';
+import { AgentInvocation, AgentResult, AgentLauncherFn } from '../agents/types.js';
 import { Logger } from '../logging/logger.js';
-
-/** Function signature for launching an agent invocation and returning its result. */
-export interface AgentLauncherFn {
-  (invocation: AgentInvocation): Promise<AgentResult>;
-}
 
 /** Executes agent invocations sequentially, one at a time, preserving order. */
 export class SerialExecutor {

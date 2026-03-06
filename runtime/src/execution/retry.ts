@@ -1,4 +1,4 @@
-import { AgentInvocation, AgentResult } from '../agents/types.js';
+import { AgentInvocation, AgentResult, AgentLauncherFn } from '../agents/types.js';
 import { Logger } from '../logging/logger.js';
 
 /** Configuration options for retry behaviour. */
@@ -16,11 +16,6 @@ export interface RetryOptions {
    * If it returns a new invocation, that invocation is tried as a recovery attempt.
    */
   onExhausted?: (taskId: string, lastError: string) => Promise<AgentInvocation | null>;
-}
-
-/** Function signature for launching an agent invocation and returning its result. */
-export interface AgentLauncherFn {
-  (invocation: AgentInvocation): Promise<AgentResult>;
 }
 
 /** Result of a retried execution, augmented with attempt metadata. */

@@ -1,12 +1,7 @@
 import pLimit from 'p-limit';
-import { AgentInvocation, AgentResult } from '../agents/types.js';
+import { AgentInvocation, AgentResult, AgentLauncherFn } from '../agents/types.js';
 import { Logger } from '../logging/logger.js';
 import { MigrationConfig } from '../config/schema.js';
-
-/** Function signature for launching an agent invocation and returning its result. */
-export interface AgentLauncherFn {
-  (invocation: AgentInvocation): Promise<AgentResult>;
-}
 
 /** Executes agent invocations in parallel with configurable concurrency via p-limit. */
 export class ParallelExecutor {

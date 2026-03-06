@@ -12,6 +12,7 @@ import { Logger } from '../logging/logger.js';
 import { MigrationResult } from '../agents/types.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
 import { fileExists } from '../util/fs.js';
+import { formatDuration } from '../util/format.js';
 import { buildRuntimePaths } from './runtime-paths.js';
 
 export interface RuntimeOptions {
@@ -225,9 +226,9 @@ export class MigrationRuntime {
     console.log(result.success ? '✅ Migration Complete' : '❌ Migration Failed');
     console.log('='.repeat(60));
     console.log(`Project: ${result.projectName}`);
-    console.log(`Duration: ${this.formatDuration(result.totalDuration)}`);
+    console.log(`Duration: ${formatDuration(result.totalDuration)}`);
     if (result.cumulativeDuration !== undefined && result.cumulativeDuration > result.totalDuration) {
-      console.log(`Total (all runs): ${this.formatDuration(result.cumulativeDuration)}`);
+      console.log(`Total (all runs): ${formatDuration(result.cumulativeDuration)}`);
     }
     console.log(`Token Usage: ${result.tokenUsage.total.toLocaleString()}`);
     
@@ -239,7 +240,7 @@ export class MigrationRuntime {
     console.log('\nPhases:');
     for (const phase of result.phases) {
       const icon = phase.success ? '✅' : '❌';
-      console.log(`  ${icon} Phase ${phase.phase}: ${phase.name} (${this.formatDuration(phase.duration)})`);
+      console.log(`  ${icon} Phase ${phase.phase}: ${phase.name} (${formatDuration(phase.duration)})`);
     }
 
     if (result.failedTasks.length > 0) {
@@ -251,14 +252,7 @@ export class MigrationRuntime {
     console.log('='.repeat(60) + '\n');
   }
 
-  private formatDuration(ms: number): string {
-    const s = Math.floor(ms / 1000);
-    const m = Math.floor(s / 60);
-    const h = Math.floor(m / 60);
-    if (h > 0) return `${h}h ${m % 60}m ${s % 60}s`;
-    if (m > 0) return `${m}m ${s % 60}s`;
-    return `${s}s`;
-  }
+
 
   private async validateAgentFiles(): Promise<void> {
     const agentDir = this.config.copilot.agentDir;

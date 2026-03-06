@@ -574,3 +574,10 @@ export interface TaskDetails {
   /** Error message if the task encountered a failure. */
   error?: string;
 }
+
+// ─── Agent Launcher ──────────────────────────────────────────────────────────
+
+/** Function signature for launching an agent invocation and returning its result. */
+export interface AgentLauncherFn {
+  (invocation: AgentInvocation): Promise<AgentResult>;
+}
