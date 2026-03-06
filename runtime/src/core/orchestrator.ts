@@ -2963,7 +2963,7 @@ export class MigrationOrchestrator {
 
   /**
    * Check if the parity-verifier sidecar result indicates a pass.
-   * Returns `true` if parity is 'pass', or if no sidecar file exists (assume pass).
+   * Returns `false` (fail-closed) if no sidecar file exists.
    */
   private async checkParityResult(taskId: string): Promise<boolean> {
     const result = await ResultParser.readTaskResultJson(
@@ -2971,7 +2971,10 @@ export class MigrationOrchestrator {
       'parity-verifier',
       taskId,
     );
-    if (!result) return true; // No sidecar → assume pass
+    if (!result) {
+      this.logger.warn(`Parity sidecar missing for ${taskId} — treating as failed (fail-closed)`);
+      return false;
+    }
     if (result.parity === 'pass') return true;
     if (result.parity === 'partial') {
       // Partial is a pass if all issues are minor
@@ -2982,7 +2985,7 @@ export class MigrationOrchestrator {
 
   /**
    * Check if the parity sidecar has any non-minor (critical/major) issues.
-   * Returns `false` if no sidecar exists or all issues are minor.
+   * Returns `true` (fail-closed) if no sidecar exists, assuming blocking issues.
    */
   private async hasNonMinorParityIssues(taskId: string): Promise<boolean> {
     const result = await ResultParser.readTaskResultJson(
@@ -2990,7 +2993,10 @@ export class MigrationOrchestrator {
       'parity-verifier',
       taskId,
     );
-    if (!result) return false;
+    if (!result) {
+      this.logger.warn(`Parity sidecar missing for ${taskId} — assuming blocking issues (fail-closed)`);
+      return true;
+    }
     return result.issues.some((i) => i.severity !== 'minor');
   }
 

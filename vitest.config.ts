@@ -1,0 +1,23 @@
+import { configDefaults, defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    root: 'runtime',
+    exclude: [
+      ...configDefaults.exclude,
+      'tests/indexer.test.ts',
+      'tests/indexer/**/*.test.ts',
+      'tests/ensure-python-deps.test.ts',
+    ],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      thresholds: {
+        lines: 88,
+        branches: 74,
+        functions: 88,
+        statements: 88,
+      },
+    },
+  },
+});
