@@ -56,6 +56,7 @@ export interface CheckpointState {
   completedTasks: string[];
   failedTasks: CheckpointFailedTask[];
   blockedTasks: string[];                   // tasks that hit max retries
+  replannedTasks: string[];                  // tasks decomposed into sub-tasks
   phaseOutputs: Record<number, string>;     // phase → output file path
   tokenUsage: {
     total: number;
@@ -303,6 +304,19 @@ export class CheckpointManager {
     await this.save(state);
   }
 
+  /** Mark a task as replanned (decomposed into sub-tasks). */
+  async replanTask(taskId: string): Promise<void> {
+    const state = this.getState();
+    state.replannedTasks ??= [];
+    if (!state.replannedTasks.includes(taskId)) {
+      state.replannedTasks.push(taskId);
+    }
+    // Remove from failed/blocked if present — replanning supersedes both.
+    state.failedTasks = state.failedTasks.filter(f => f.taskId !== taskId);
+    state.blockedTasks = state.blockedTasks.filter(id => id !== taskId);
+    await this.save(state);
+  }
+
   /** Set current task being worked on */
   async setCurrentTask(taskId: string): Promise<void> {
     const state = this.getState();
@@ -374,6 +388,7 @@ export class CheckpointManager {
       completedTasks: [],
       failedTasks: [],
       blockedTasks: [],
+      replannedTasks: [],
       phaseOutputs: {},
       tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
       startedAt: new Date().toISOString(),
@@ -403,6 +418,7 @@ export class CheckpointManager {
     state.adjudicationWaivers ??= [];
     state.adjudicationEvents ??= [];
     state.replanningEvents ??= [];
+    state.replannedTasks ??= [];
     state.phaseCursors ??= {};
     state.phaseCursors['4'] ??= { tasks: {} };
     state.phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };

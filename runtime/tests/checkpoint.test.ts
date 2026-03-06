@@ -707,4 +707,84 @@ describe('CheckpointManager', () => {
     expect(replannedParents.has('task-020')).toBe(true);
     expect(replannedParents.has('task-999')).toBe(false);
   });
+
+  // ─── replannedTasks ────────────────────────────────────────────────
+
+  it('should initialize replannedTasks to empty array on fresh state', async () => {
+    const state = await manager.load('test-project');
+    expect(state.replannedTasks).toEqual([]);
+  });
+
+  it('should add task to replannedTasks via replanTask()', async () => {
+    await manager.load('test-project');
+    await manager.replanTask('task-003');
+
+    const state = manager.getState();
+    expect(state.replannedTasks).toContain('task-003');
+  });
+
+  it('should not duplicate task in replannedTasks', async () => {
+    await manager.load('test-project');
+    await manager.replanTask('task-003');
+    await manager.replanTask('task-003');
+
+    const state = manager.getState();
+    expect(state.replannedTasks.filter(id => id === 'task-003')).toHaveLength(1);
+  });
+
+  it('should remove task from failedTasks and blockedTasks when replanned', async () => {
+    await manager.load('test-project');
+    await manager.failTask('task-003', 'parity failed', 2, true);
+    await manager.blockTask('task-003');
+
+    // Verify it's in both lists
+    let state = manager.getState();
+    expect(state.failedTasks.some(f => f.taskId === 'task-003')).toBe(true);
+    expect(state.blockedTasks).toContain('task-003');
+
+    await manager.replanTask('task-003');
+
+    state = manager.getState();
+    expect(state.replannedTasks).toContain('task-003');
+    expect(state.failedTasks.some(f => f.taskId === 'task-003')).toBe(false);
+    expect(state.blockedTasks).not.toContain('task-003');
+  });
+
+  it('should persist replannedTasks across save and reload', async () => {
+    await manager.load('test-project');
+    await manager.replanTask('task-010');
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.replannedTasks).toContain('task-010');
+  });
+
+  it('should default replannedTasks to [] for old checkpoints (backward compat)', async () => {
+    const { writeJson } = await import('../src/util/fs.js');
+    const oldState = {
+      projectName: 'old-project',
+      version: 1,
+      currentPhase: 2,
+      currentTask: null,
+      completedPhases: [1],
+      completedTasks: ['task-001'],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 1,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      metricsCount: 0,
+      // replannedTasks intentionally omitted
+    };
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), oldState);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const loaded = await manager3.load('old-project');
+    expect(loaded.replannedTasks ?? []).toEqual([]);
+  });
 });

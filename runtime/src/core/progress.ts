@@ -96,6 +96,11 @@ export class ProgressWriter {
       this.tasks.set(taskId, { status: 'blocked' });
     }
 
+    // Mark replanned tasks
+    for (const taskId of (state.replannedTasks ?? [])) {
+      this.tasks.set(taskId, { status: 'replanned' });
+    }
+
     // Mark failed tasks
     for (const failed of state.failedTasks) {
       this.tasks.set(failed.taskId, { status: 'failed', details: { error: failed.lastError } });
@@ -109,7 +114,7 @@ export class ProgressWriter {
     };
 
     // Set total tasks count from checkpoint data
-    this.totalTasks = state.completedTasks.length + state.blockedTasks.length + state.failedTasks.length;
+    this.totalTasks = state.completedTasks.length + state.blockedTasks.length + (state.replannedTasks ?? []).length + state.failedTasks.length;
 
     // Add resume event
     this.events.push(`[${new Date().toISOString()}] Resumed from checkpoint (resume #${state.resumeCount})`);

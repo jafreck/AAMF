@@ -5,20 +5,24 @@ export interface TaskProgress {
   total: number;
   completed: number;
   blocked: number;
+  replanned: number;
   remaining: number;
 }
 
 /**
  * Dependency-aware task queue for Phase 4 execution.
  *
- * Tracks task completion and blocked status, and determines which tasks
- * are ready based on dependency satisfaction. Supports checkpoint resume
- * and topological sorting with cycle detection.
+ * Tracks task completion, blocked status, and replanned status, and
+ * determines which tasks are ready based on dependency satisfaction.
+ * Supports checkpoint resume and topological sorting with cycle detection.
  */
 export class TaskQueue {
   private tasks: Map<string, MigrationTask> = new Map();
   private completed: Set<string> = new Set();
   private blocked: Set<string> = new Set();
+  private replanned: Set<string> = new Set();
+  /** Maps a replanned parent ID to the IDs of its replacement sub-tasks. */
+  private subtaskMap: Map<string, string[]> = new Map();
 
   constructor(tasks: MigrationTask[]) {
     for (const task of tasks) {
@@ -36,6 +40,11 @@ export class TaskQueue {
     this.blocked.add(taskId);
   }
 
+  /** Mark a task as replanned (from checkpoint resume). */
+  markReplanned(taskId: string): void {
+    this.replanned.add(taskId);
+  }
+
   /** Mark a task as completed. */
   complete(taskId: string): void {
     this.completed.add(taskId);
@@ -51,21 +60,45 @@ export class TaskQueue {
     return this.blocked.has(taskId);
   }
 
+  /** Check whether a task has been replanned into sub-tasks. */
+  isTaskReplanned(taskId: string): boolean {
+    return this.replanned.has(taskId);
+  }
+
+  /**
+   * Check whether a dependency is satisfied.
+   *
+   * A completed or blocked dependency is satisfied immediately.
+   * A replanned dependency is satisfied only when ALL of its replacement
+   * sub-tasks have completed (or been blocked).
+   */
+  private isDepSatisfied(depId: string): boolean {
+    if (this.completed.has(depId) || this.blocked.has(depId)) return true;
+    if (this.replanned.has(depId)) {
+      const subtaskIds = this.subtaskMap.get(depId);
+      if (!subtaskIds || subtaskIds.length === 0) return true;
+      return subtaskIds.every(id => this.completed.has(id) || this.blocked.has(id));
+    }
+    return false;
+  }
+
   /** Get tasks that are ready to execute (all dependencies satisfied). */
   getReady(): MigrationTask[] {
     const ready: MigrationTask[] = [];
     for (const [id, task] of this.tasks) {
-      if (this.completed.has(id) || this.blocked.has(id)) continue;
-      const depsOk = task.dependencies.every(dep => this.completed.has(dep) || this.blocked.has(dep));
+      if (this.completed.has(id) || this.blocked.has(id) || this.replanned.has(id)) continue;
+      const depsOk = task.dependencies.every(dep => this.isDepSatisfied(dep));
       if (depsOk) ready.push(task);
     }
     return ready;
   }
 
-  /** Check if all tasks are done (completed or blocked). */
+  /** Check if all tasks are done (completed, blocked, or fully-replanned). */
   isComplete(): boolean {
     for (const id of this.tasks.keys()) {
-      if (!this.completed.has(id) && !this.blocked.has(id)) return false;
+      if (this.completed.has(id) || this.blocked.has(id)) continue;
+      if (this.replanned.has(id)) continue; // parent itself is terminal
+      return false;
     }
     return true;
   }
@@ -75,7 +108,8 @@ export class TaskQueue {
     const total = this.tasks.size;
     const completed = this.completed.size;
     const blocked = this.blocked.size;
-    return { total, completed, blocked, remaining: total - completed - blocked };
+    const replanned = this.replanned.size;
+    return { total, completed, blocked, replanned, remaining: total - completed - blocked - replanned };
   }
 
   /**
@@ -146,15 +180,20 @@ export class TaskQueue {
   /**
    * Replace a parent task with sub-tasks during replanning.
    *
-   * The parent is marked as completed (its work is now represented by the
-   * sub-tasks, and downstream tasks that depend on it remain unblocked)
-   * and the sub-tasks are injected into the active task map.
+   * The parent is marked as replanned (skipped by `getReady()`, treated
+   * as terminal by `isComplete()`). Dependency satisfaction for the parent
+   * is deferred until ALL sub-tasks are completed or blocked.
+   *
+   * The sub-tasks are injected into the active task map.
    */
   replaceWithSubtasks(parentId: string, subtasks: MigrationTask[]): void {
-    this.completed.add(parentId);
+    this.replanned.add(parentId);
+    const subtaskIds: string[] = [];
     for (const subtask of subtasks) {
       this.tasks.set(subtask.id, subtask);
+      subtaskIds.push(subtask.id);
     }
+    this.subtaskMap.set(parentId, subtaskIds);
   }
 
   /** Get all task IDs. */
