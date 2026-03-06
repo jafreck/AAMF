@@ -129,7 +129,9 @@ describe('MigrationRuntime', () => {
       // Inject a minimal config so formatDuration and CostEstimator work
       (runtime as any).config = {
         projectName: 'test-project',
+        agentRuntime: 'copilot',
         copilot: { model: 'claude-sonnet-4', costOverrides: undefined },
+        claudeCode: { model: undefined, costOverrides: undefined },
       };
       consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     });
@@ -189,6 +191,25 @@ describe('MigrationRuntime', () => {
       const output = consoleSpy.mock.calls.flat().join('\n');
       expect(output).toContain('Failed Tasks: task-a');
       expect(output).toContain('Blocked Tasks: task-b');
+    });
+
+    it('should use claudeCode model and cost overrides when runtime is claude-code', () => {
+      (runtime as any).config = {
+        projectName: 'test-project',
+        agentRuntime: 'claude-code',
+        copilot: { model: 'claude-opus-4.6', costOverrides: undefined },
+        claudeCode: {
+          model: 'claude-test-model',
+          costOverrides: {
+            'claude-test-model': { input: 10, output: 10 },
+          },
+        },
+      };
+
+      (runtime as any).printSummary(makeResult({ totalDuration: 5_000, tokenUsage: { total: 1_000_000, byPhase: {}, byAgent: {} } }));
+
+      const output = consoleSpy.mock.calls.flat().join('\n');
+      expect(output).toContain('Estimated Cost: $10.0000');
     });
   });
 
@@ -415,7 +436,7 @@ describe('MigrationRuntime', () => {
     it('validateAgentFiles succeeds when all phase agents exist', async () => {
       const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-'));
       const runtime = new MigrationRuntime() as any;
-      runtime.config = { copilot: { agentDir: root } };
+      runtime.config = { agentRuntime: 'copilot', copilot: { agentDir: root } };
 
       const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
       await Promise.all(
@@ -429,7 +450,7 @@ describe('MigrationRuntime', () => {
       it('validateAgentFiles throws when schema sections are missing', async () => {
         const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-invalid-'));
         const runtime = new MigrationRuntime() as any;
-        runtime.config = { copilot: { agentDir: root } };
+        runtime.config = { agentRuntime: 'copilot', copilot: { agentDir: root } };
 
         const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
         await Promise.all(
@@ -470,9 +491,27 @@ describe('MigrationRuntime', () => {
     it('validateAgentFiles throws with missing file list', async () => {
       const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-missing-'));
       const runtime = new MigrationRuntime() as any;
-      runtime.config = { copilot: { agentDir: root } };
+      runtime.config = { agentRuntime: 'copilot', copilot: { agentDir: root } };
 
       await expect(runtime.validateAgentFiles()).rejects.toThrow('Missing agent file(s)');
+      await rm(root, { recursive: true, force: true });
+    });
+
+    it('validateAgentFiles succeeds for claude-code runtime using .md agent files', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'aamf-claude-agent-files-'));
+      const runtime = new MigrationRuntime() as any;
+      runtime.config = {
+        agentRuntime: 'claude-code',
+        copilot: { agentDir: '/unused' },
+        claudeCode: { agentDir: root },
+      };
+
+      const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
+      await Promise.all(
+        allAgents.map(agent => writeFile(join(root, `${agent}.md`), '# Claude agent\n', 'utf-8')),
+      );
+
+      await expect(runtime.validateAgentFiles()).resolves.toBeUndefined();
       await rm(root, { recursive: true, force: true });
     });
 

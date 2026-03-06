@@ -24,6 +24,10 @@ export interface LoggerOptions {
   console: boolean;
 }
 
+interface LoggerWriteState {
+  chain: Promise<void>;
+}
+
 export class Logger {
   private readonly logDir: string;
   private readonly minLevel: number;
@@ -41,7 +45,7 @@ export class Logger {
    * Write queue — serializes appendFile calls so they never interleave
    * and tracks pending writes so they can be awaited on shutdown.
    */
-  private writeChain: Promise<void> = Promise.resolve();
+  private readonly writeState: LoggerWriteState;
 
   constructor(opts: LoggerOptions);
   constructor(parent: Logger, source: string);
@@ -59,12 +63,13 @@ export class Logger {
       this.attempt = optsOrParent.attempt;
       this.phase = optsOrParent.phase;
       this.taskId = optsOrParent.taskId;
-      // Share the write chain with parent so all children serialize through one queue
-      this.writeChain = optsOrParent.writeChain;
+      // Share the write state with parent so all children serialize through one queue.
+      this.writeState = optsOrParent.writeState;
     } else {
       this.logDir = optsOrParent.logDir;
       this.minLevel = LEVEL_PRIORITY[optsOrParent.level];
       this.consoleEnabled = optsOrParent.console;
+      this.writeState = { chain: Promise.resolve() };
     }
   }
 
@@ -177,14 +182,14 @@ export class Logger {
     }
 
     // Queue the write — serialized through writeChain to prevent interleaving
-    this.writeChain = this.writeChain
+    this.writeState.chain = this.writeState.chain
       .then(() => this.appendEntry(entry))
       .catch(() => {/* best-effort: swallow write errors to keep the chain alive */});
   }
 
   /** Await all pending log writes. Call during graceful shutdown. */
   async flush(): Promise<void> {
-    await this.writeChain;
+    await this.writeState.chain;
   }
 
   private async appendEntry(entry: LogEntry): Promise<void> {
