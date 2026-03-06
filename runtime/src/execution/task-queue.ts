@@ -146,12 +146,12 @@ export class TaskQueue {
   /**
    * Replace a parent task with sub-tasks during replanning.
    *
-   * The parent is marked as blocked (so it won't be selected by `getReady()`
-   * but still satisfies dependency checks for downstream tasks) and the
-   * sub-tasks are injected into the active task map.
+   * The parent is marked as completed (its work is now represented by the
+   * sub-tasks, and downstream tasks that depend on it remain unblocked)
+   * and the sub-tasks are injected into the active task map.
    */
   replaceWithSubtasks(parentId: string, subtasks: MigrationTask[]): void {
-    this.blocked.add(parentId);
+    this.completed.add(parentId);
     for (const subtask of subtasks) {
       this.tasks.set(subtask.id, subtask);
     }

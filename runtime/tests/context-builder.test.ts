@@ -249,6 +249,40 @@ describe('ContextBuilder', () => {
       expect(strategy.requiresNonOverlappingTargets).toBe(true);
     });
 
+    it('should forward replanning context in task-decomposer payload', async () => {
+      const contextPath = await builder.buildContext('task-decomposer', 4, 'task-001', {
+        strategyFile: '/tmp/strategy.md',
+        parentTaskId: 'task-001',
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
+        parityIssues: ['Missing error handling', 'Type mismatch'],
+        lineRange: { start: 1, end: 100 },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.payload?.parentTaskId).toBe('task-001');
+      expect(context.payload?.sourceFiles).toEqual(['src/auth.py']);
+      expect(context.payload?.targetFiles).toEqual(['src/auth.ts']);
+      expect(context.payload?.parityIssues).toEqual([
+        'Missing error handling',
+        'Type mismatch',
+      ]);
+      expect(context.payload?.lineRange).toEqual({ start: 1, end: 100 });
+    });
+
+    it('should omit replanning fields from task-decomposer payload when not provided', async () => {
+      const contextPath = await builder.buildContext('task-decomposer', 3, 'core', {
+        strategyFile: '/tmp/strategy.md',
+        groupId: 'core',
+        groupName: 'Core',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.payload?.parentTaskId).toBeUndefined();
+      expect(context.payload?.parityIssues).toBeUndefined();
+      expect(context.payload?.lineRange).toBeUndefined();
+    });
+
     it('should route code-migrator with task-specific source/target files', async () => {
       const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],

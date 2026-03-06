@@ -189,6 +189,13 @@ export class ContextBuilder {
             taskSchemaPath: TASK_DECOMPOSER_SCHEMA_PATH,
             maxLinesPerTask: this.config.options.maxLinesPerTask,
             executionStrategy: this.buildExecutionStrategy(),
+            // Replanning context: forwarded when task-decomposer is invoked
+            // during Phase 4 replanning to split a failing task.
+            ...(payload?.parentTaskId ? { parentTaskId: payload.parentTaskId } : {}),
+            ...(payload?.sourceFiles ? { sourceFiles: payload.sourceFiles } : {}),
+            ...(payload?.targetFiles ? { targetFiles: payload.targetFiles } : {}),
+            ...(payload?.parityIssues ? { parityIssues: payload.parityIssues } : {}),
+            ...(payload?.lineRange ? { lineRange: payload.lineRange } : {}),
           },
         };
       }

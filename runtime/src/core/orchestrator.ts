@@ -1185,7 +1185,8 @@ export class MigrationOrchestrator {
 
     // 3b. Replay prior replanning events from checkpoint on resume.
     // For each replanning event, replace the parent task with its sub-tasks
-    // in the queue and mark the parent as blocked, unless already done.
+    // in the queue and mark the parent as completed (its work is now
+    // represented by the sub-tasks).
     const replanningEvents = checkpointState.replanningEvents ?? [];
     for (const event of replanningEvents) {
       const parentInQueue = queue.getTask(event.parentTaskId);
@@ -1214,9 +1215,7 @@ export class MigrationOrchestrator {
     }
 
     queue.markCompleted(checkpointState.completedTasks);
-    const replannedParentIds = new Set(replanningEvents.map(e => e.parentTaskId));
     for (const blockedId of checkpointState.blockedTasks) {
-      if (replannedParentIds.has(blockedId)) continue;
       queue.markBlocked(blockedId);
     }
     this.progress.setTotalTasks(queue.getProgress().total);
@@ -2345,8 +2344,8 @@ export class MigrationOrchestrator {
       reason,
     });
 
-    // Mark parent as blocked with replanned reason
-    await this.checkpoint.blockTask(task.id);
+    // Mark parent as completed — the work is now represented by its sub-tasks
+    await this.checkpoint.completeTask(task.id);
 
     // Emit events
     this.logger.event({

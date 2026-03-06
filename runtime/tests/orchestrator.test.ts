@@ -7425,8 +7425,8 @@ describe('MigrationOrchestrator', () => {
       const state = checkpoint.getState();
       expect(state.replanningEvents!.length).toBe(1);
       expect(state.replanningEvents![0]!.subtaskIds).toEqual(['task-001a']);
-      // Parent should be blocked
-      expect(state.blockedTasks).toContain('task-001');
+      // Parent should be completed (its work is represented by sub-tasks)
+      expect(state.completedTasks).toContain('task-001');
     });
 
     it('should record replanning event reason with attempt count and issue count', async () => {
@@ -7538,7 +7538,7 @@ describe('MigrationOrchestrator', () => {
         subtaskIds: ['task-001a', 'task-001b'],
         reason: 'Issue overlap threshold met after 2 attempt(s); 1 unresolved non-minor issue(s)',
       });
-      await checkpoint.blockTask('task-001');
+      await checkpoint.completeTask('task-001');
 
       const result = await orchestrator.run();
       const phase4 = result.phases.find((p) => p.phase === 4);
@@ -7593,7 +7593,7 @@ describe('MigrationOrchestrator', () => {
         subtaskIds: ['task-001a', 'task-001b'],
         reason: 'overlap threshold',
       });
-      await checkpoint.blockTask('task-001');
+      await checkpoint.completeTask('task-001');
       await checkpoint.completeTask('task-001a');
 
       const result = await orchestrator.run();
