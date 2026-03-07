@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { readdir, unlink } from 'node:fs/promises';
+import { readdir, readFile, unlink } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
 import { CheckpointManager } from './checkpoint.js';
@@ -3420,7 +3420,7 @@ export class MigrationOrchestrator {
    * Returns `false` (fail-closed) if no result was parsed from the agent output.
    */
   private checkParityResult(taskId: string): boolean {
-    const result = this._parityResults.get(taskId);
+    const result = this._parityResults.get(taskId) ?? this.rehydrateParityFromLog(taskId);
     if (!result) {
       this.logger.warn(`Parity result missing for ${taskId} — treating as failed (fail-closed)`);
       return false;
@@ -3438,7 +3438,7 @@ export class MigrationOrchestrator {
    * Returns `true` (fail-closed) if no result exists, assuming blocking issues.
    */
   private hasNonMinorParityIssues(taskId: string): boolean {
-    const result = this._parityResults.get(taskId);
+    const result = this._parityResults.get(taskId) ?? this.rehydrateParityFromLog(taskId);
     if (!result) {
       this.logger.warn(`Parity result missing for ${taskId} — assuming blocking issues (fail-closed)`);
       return true;
@@ -3451,7 +3451,7 @@ export class MigrationOrchestrator {
    * Returns `undefined` if no result or no issues exist.
    */
   private getParityIssueSummary(taskId: string): string | undefined {
-    const result = this._parityResults.get(taskId);
+    const result = this._parityResults.get(taskId) ?? this.rehydrateParityFromLog(taskId);
     if (!result || result.issues.length === 0) return undefined;
 
     const bySeverity = { critical: 0, major: 0, minor: 0 };
@@ -3469,6 +3469,59 @@ export class MigrationOrchestrator {
       .slice(0, 5); // Cap at 5 to stay within summary length
 
     return `${counts}: ${nonMinor.join('; ')}`;
+  }
+
+  /**
+   * Rehydrate a parity result from the on-disk agent log files.
+   * Used on resume when the in-memory _parityResults map is empty but
+   * the parity-tests substep is already checkpointed (so the agent
+   * won't be re-launched).  Scans the latest parity-verifier .log file
+   * for the aamf-json block and re-parses it.
+   *
+   * Returns the parsed result and caches it in the map, or undefined
+   * if no usable log exists.
+   */
+  private rehydrateParityFromLog(taskId: string): ParityResultData | undefined {
+    try {
+      const taskLogDir = join(this.paths.logsAgentsDir, 'parity-verifier', taskId);
+      // Synchronous check: readdirSync is acceptable here because this is
+      // a cold-path fallback that only fires once per task on resume.
+      const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
+      let entries: string[];
+      try {
+        entries = readdirSync(taskLogDir);
+      } catch {
+        return undefined; // directory doesn't exist
+      }
+      // Find .log files (not .live.log) and pick the latest by name (timestamp-sorted)
+      const logFiles = entries
+        .filter((f) => f.endsWith('.log') && !f.endsWith('.live.log'))
+        .sort();
+      if (logFiles.length === 0) return undefined;
+
+      const latestLog = readFileSync(join(taskLogDir, logFiles[logFiles.length - 1]!), 'utf-8');
+
+      // Extract the last aamf-json block from stdout
+      const blockRegex = /```aamf-json\r?\n([\s\S]*?)```/g;
+      let lastMatch: RegExpExecArray | null = null;
+      let match: RegExpExecArray | null;
+      while ((match = blockRegex.exec(latestLog)) !== null) {
+        lastMatch = match;
+      }
+      if (!lastMatch) return undefined;
+
+      const raw = JSON.parse(lastMatch[1]!.trim()) as Record<string, unknown>;
+      const parity = raw.parity;
+      if (parity !== 'pass' && parity !== 'partial' && parity !== 'fail') return undefined;
+      const issues = Array.isArray(raw.issues) ? raw.issues as ParityResultData['issues'] : [];
+      const data: ParityResultData = { parity, issues };
+      this._parityResults.set(taskId, data);
+      this.logger.info(`Rehydrated parity result for ${taskId} from agent log (${parity}, ${issues.length} issues)`);
+      return data;
+    } catch (err) {
+      this.logger.warn(`Failed to rehydrate parity result for ${taskId} from logs: ${(err as Error).message}`);
+      return undefined;
+    }
   }
 
   private isGitAutomationEnabled(): boolean {
