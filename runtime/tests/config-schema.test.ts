@@ -118,6 +118,25 @@ describe('MigrationConfigSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('should accept optional formatCommand and lintCommand', () => {
+    const result = MigrationConfigSchema.parse({
+      ...validConfig,
+      target: {
+        ...validConfig.target,
+        formatCommand: 'cargo fmt --all',
+        lintCommand: 'cargo clippy -- -D warnings',
+      },
+    });
+    expect(result.target.formatCommand).toBe('cargo fmt --all');
+    expect(result.target.lintCommand).toBe('cargo clippy -- -D warnings');
+  });
+
+  it('should default formatCommand and lintCommand to undefined', () => {
+    const result = MigrationConfigSchema.parse(validConfig);
+    expect(result.target.formatCommand).toBeUndefined();
+    expect(result.target.lintCommand).toBeUndefined();
+  });
+
   describe('Additional Validation', () => {
     it('should accept agentBackend.failureRecoveryModel override', () => {
       const result = MigrationConfigSchema.parse({

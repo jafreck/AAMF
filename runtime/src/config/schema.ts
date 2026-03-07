@@ -30,6 +30,8 @@ export const MigrationConfigSchema = z.object({
     testFramework: z.string().optional(),
     buildCommand: z.string().optional(),
     testCommand: z.string().optional(),
+    formatCommand: z.string().optional(),
+    lintCommand: z.string().optional(),
   }),
   options: z.object({
     maxParallelAgents: z.number().int().min(1).max(10).default(3),

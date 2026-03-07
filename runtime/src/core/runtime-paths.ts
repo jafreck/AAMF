@@ -12,6 +12,8 @@ export interface RuntimePaths {
   logsCommandsDir: string;
   logsCommandBuildDir: string;
   logsCommandTestDir: string;
+  logsCommandFormatDir: string;
+  logsCommandLintDir: string;
   artifactsDir: string;
   artifactsContextsDir: string;
   artifactsResultsDir: string;
@@ -57,6 +59,8 @@ export function buildRuntimePaths(projectRoot: string, projectName: string): Run
     logsCommandsDir,
     logsCommandBuildDir: join(logsCommandsDir, 'build'),
     logsCommandTestDir: join(logsCommandsDir, 'test'),
+    logsCommandFormatDir: join(logsCommandsDir, 'format'),
+    logsCommandLintDir: join(logsCommandsDir, 'lint'),
     artifactsDir,
     artifactsContextsDir: join(artifactsDir, 'contexts'),
     artifactsResultsDir: join(artifactsDir, 'results'),
