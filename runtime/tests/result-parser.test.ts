@@ -434,7 +434,7 @@ Here are the tasks:
     });
 
     it('should validate ParityVerifierOutput', () => {
-      expect(() => ParityVerifierOutput.parse({ status: 'completed', agent: 'parity-verifier' })).not.toThrow();
+      expect(() => ParityVerifierOutput.parse({ status: 'completed', agent: 'parity-verifier', parity: 'pass' })).not.toThrow();
     });
 
     it('should validate TestWriterOutput', () => {

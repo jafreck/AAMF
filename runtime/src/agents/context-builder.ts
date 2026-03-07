@@ -78,14 +78,12 @@ export class ContextBuilder {
 
     if (
       payload?.failureKind !== undefined ||
-      payload?.failureSummary !== undefined ||
       payload?.failureTarget !== undefined ||
       payload?.artifactPaths !== undefined ||
       payload?.expectedSuccessCondition !== undefined
     ) {
       return {
         failureKind: payload?.failureKind,
-        failureSummary: payload?.failureSummary,
         failureTarget: payload?.failureTarget,
         artifactPaths: payload?.artifactPaths,
         expectedSuccessCondition: payload?.expectedSuccessCondition,

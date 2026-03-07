@@ -68,50 +68,7 @@ Use KB markdown for synthesized architecture, risk, and migration context — no
 
 ## Output
 
-Write to `.aamf/migration/{projectName}/artifacts/parity/task-{taskId}.md`:
-
-```markdown
-# Parity Report: Task {taskId}
-
-## Summary
-- **Source**: {source file(s)}
-- **Target**: {target file(s)}
-- **Overall Parity**: PASS | PARTIAL | FAIL
-- **Issues Found**: {count}
-
-## API Surface Comparison
-| Source Declaration | Target Declaration | Status | Notes |
-|-------------------|--------------------|--------|-------|
-| functionA(x, y)   | functionA(x, y)    | ✅ Match | |
-| ClassB             | ClassB              | ⚠️ Partial | Missing method .foo() |
-
-## Behavioral Analysis
-### {function/method name}
-- **Logic Flow**: ✅ Equivalent | ⚠️ Differs | ❌ Missing
-- **Error Handling**: ✅ | ⚠️ | ❌
-- **Side Effects**: ✅ | ⚠️ | ❌
-- **Details**: {specifics of any differences}
-
-## Issues
-### Issue 1: {title}
-- **Severity**: Critical | Major | Minor
-- **Source Location**: {file:line}
-- **Description**: {what's wrong}
-- **Source Behavior**: {what the source does}
-- **Target Behavior**: {what the target does, or "missing"}
-
-## Static Analysis Results
-- **Type Check**: Pass | Fail ({error count} errors)
-- **Lint**: Pass | Fail ({warning count} warnings)
-- **Errors**: {list of compilation/type errors if any}
-
-## Verdict
-{PASS: ready to proceed | PARTIAL: minor issues, may proceed with notes | FAIL: must fix before proceeding}
-```
-
-## Sub-Agents
-
-None — this is a **leaf agent**.
+Write your parity analysis to `.aamf/migration/{projectName}/artifacts/parity/task-{taskId}.md`.
 
 ## Context Window Management
 

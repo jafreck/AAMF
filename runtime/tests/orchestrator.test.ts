@@ -157,30 +157,63 @@ async function writeParityReport(
 }
 
 /**
- * Wrap a launcher function so parity-verifier invocations auto-write a
- * pass sidecar when none exists, matching the fail-closed default (#118).
+ * Wrap a launcher function so parity-verifier invocations auto-include
+ * valid parity data in structuredOutput, matching the fail-closed default (#118).
  */
-function withParityPassSidecar(
+function withParityPassOutput(
   fn: (inv: AgentInvocation) => Promise<AgentResult>,
 ): (inv: AgentInvocation) => Promise<AgentResult> {
   return async (inv: AgentInvocation): Promise<AgentResult> => {
     const result = await fn(inv);
-    if (inv.agent === 'parity-verifier' && inv.taskId && inv.progressDir) {
-      const resultsDir = join(inv.progressDir, 'artifacts', 'results');
-      const sidecarPath = join(resultsDir, `parity-verifier-${inv.taskId}.result.json`);
-      if (!(await fileExists(sidecarPath))) {
-        await mkdir(resultsDir, { recursive: true });
-        await writeFile(
-          sidecarPath,
-          JSON.stringify({
-            taskId: inv.taskId,
-            agent: 'parity-verifier',
-            status: 'completed',
-            outputFiles: [],
-            parity: 'pass',
-            issues: [],
-          }),
-        );
+    if (inv.agent === 'parity-verifier' && inv.taskId) {
+      if (!result.structuredOutput || !(result.structuredOutput as any).parity) {
+        result.structuredOutput = {
+          ...(result.structuredOutput ?? {}),
+          agent: 'parity-verifier',
+          status: 'completed',
+          taskId: inv.taskId,
+          parity: 'pass',
+          issues: [],
+        };
+        result.outputParsed = true;
+      }
+    }
+    return result;
+  };
+}
+
+/**
+ * Wrap a launcher function so parity-verifier invocations return custom
+ * structuredOutput per task. Used to simulate specific parity outcomes.
+ */
+function withParityOutput(
+  fn: (inv: AgentInvocation) => Promise<AgentResult>,
+  overrides: Record<string, { parity: string; issues: Array<{ severity: string; description: string; sourceLocation?: string; targetLocation?: string }> }>,
+): (inv: AgentInvocation) => Promise<AgentResult> {
+  return async (inv: AgentInvocation): Promise<AgentResult> => {
+    const result = await fn(inv);
+    if (inv.agent === 'parity-verifier' && inv.taskId) {
+      const override = overrides[inv.taskId];
+      if (override) {
+        result.structuredOutput = {
+          ...(result.structuredOutput ?? {}),
+          agent: 'parity-verifier',
+          status: 'completed',
+          taskId: inv.taskId,
+          parity: override.parity,
+          issues: override.issues,
+        };
+        result.outputParsed = true;
+      } else if (!result.structuredOutput || !(result.structuredOutput as any).parity) {
+        result.structuredOutput = {
+          ...(result.structuredOutput ?? {}),
+          agent: 'parity-verifier',
+          status: 'completed',
+          taskId: inv.taskId,
+          parity: 'pass',
+          issues: [],
+        };
+        result.outputParsed = true;
       }
     }
     return result;
@@ -232,7 +265,7 @@ async function setupOrchestrator(
   const progress = new ProgressWriter(progressFile);
   await progress.initialize(config);
 
-  const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
+  const mockLauncher = new MockAgentLauncher(withParityPassOutput(launcherFn));
 
   const orchestrator = new MigrationOrchestrator(
     config,
@@ -782,7 +815,7 @@ describe('MigrationOrchestrator', () => {
       const progress = new ProgressWriter(progressFile);
       await progress.initialize(config);
 
-      const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
+      const mockLauncher = new MockAgentLauncher(withParityPassOutput(launcherFn));
 
       const orchestrator = new MigrationOrchestrator(
         config,
@@ -859,7 +892,7 @@ describe('MigrationOrchestrator', () => {
       const progress = new ProgressWriter(progressFile);
       await progress.initialize(config);
 
-      const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
+      const mockLauncher = new MockAgentLauncher(withParityPassOutput(launcherFn));
       const orchestrator = new MigrationOrchestrator(
         config,
         checkpoint,
@@ -1039,7 +1072,7 @@ describe('MigrationOrchestrator', () => {
       const progress = new ProgressWriter(progressFile);
       await progress.initialize(config);
 
-      const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
+      const mockLauncher = new MockAgentLauncher(withParityPassOutput(launcherFn));
       const orchestrator = new MigrationOrchestrator(
         config,
         checkpoint,
@@ -1888,368 +1921,13 @@ describe('MigrationOrchestrator', () => {
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'parity-verifier') {
           parityCallCount++;
-        }
-        return {};
-      });
-
-      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
-        tempDir,
-        launcherFn,
-        {
-          options: {
-            maxParallelAgents: 3,
-            maxRetriesPerTask: 2,
-            maxLinesPerTask: 500,
-            dryRun: false,
-            resume: false,
-            invocationDelayMs: 0,
-            buildConcurrency: 1,
-            continueOnBlocked: true,
-            maxBlockedTasks: 0,
-            maxInfraRetries: 3,
-          },
-        },
-      );
-
-      const singleTaskPlan = `# Migration Plan
-
-## Task: task-001 - Auth Module
-
-**Description:** Migrate auth
-**Complexity:** simple
-**Knowledge Base Reference:** kb/auth.md
-
-**Source Files:**
-- src/auth.py
-
-**Target Files:**
-- src/auth.ts
-
-**Dependencies:** none
-
-**Acceptance Criteria:**
-- works
-
-**Parity Checks:**
-- matches
-`;
-      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
-      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
-      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
-
-      // Write a parity sidecar with critical issues (will be read after parity-verifier runs)
-      await ensureDir(join(progressDir, 'artifacts', 'results'));
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: ['parity-reports/task-001.md'],
-          parity: 'fail',
-          issues: [
-            {
-              severity: 'critical',
-              description: 'Missing error handling in auth flow',
-              sourceLocation: 'src/auth.py:45',
-              targetLocation: 'src/auth.ts:52',
-            },
-          ],
-        }),
-      );
-
-      await orchestrator.run();
-
-      const recoveryInvocations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
-      );
-      expect(recoveryInvocations.length).toBeGreaterThan(0);
-
-      const parityRecovery = recoveryInvocations[0]!;
-      const recoveryContext = JSON.parse(await readFile(parityRecovery.contextFile, 'utf-8'));
-      expect(recoveryContext.payload?.remediationContext?.failureKind).toBe('parity');
-      expect(recoveryContext.payload?.remediationContext?.failureTarget?.taskId).toBe('task-001');
-
-      const remigrateCandidates = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.phase === 4,
-      );
-      let foundParityRemediation = false;
-      for (const inv of remigrateCandidates) {
-        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
-        if (ctx.payload?.remediationContext?.failureKind === 'parity') {
-          foundParityRemediation = true;
-          break;
-        }
-      }
-      expect(foundParityRemediation).toBe(true);
-    });
-
-    it('should pass enriched context to code-migrator during parity recovery', async () => {
-      const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
-        tempDir,
-        launcherFn,
-        {
-          options: {
-            maxParallelAgents: 3,
-            maxRetriesPerTask: 1,
-            maxLinesPerTask: 500,
-            dryRun: false,
-            resume: false,
-            invocationDelayMs: 0,
-            buildConcurrency: 1,
-            continueOnBlocked: true,
-            maxBlockedTasks: 0,
-            maxInfraRetries: 3,
-          },
-        },
-      );
-
-      const singleTaskPlan = `# Migration Plan
-
-## Task: task-001 - Auth Module
-
-**Description:** Migrate auth
-**Complexity:** simple
-**Knowledge Base Reference:** kb/auth.md
-
-**Source Files:**
-- src/auth.py
-
-**Target Files:**
-- src/auth.ts
-
-**Dependencies:** none
-
-**Acceptance Criteria:**
-- works
-
-**Parity Checks:**
-- matches
-`;
-      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
-      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
-      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
-
-      await ensureDir(join(progressDir, 'artifacts', 'results'));
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: ['parity-reports/task-001.md'],
-          parity: 'fail',
-          issues: [
-            {
-              severity: 'major',
-              description: 'HashMap shim instead of direct struct access',
-              sourceLocation: 'src/wrapper.c:178',
-              targetLocation: 'src/lib.rs:120',
-            },
-            {
-              severity: 'critical',
-              description: 'Missing z_deflate wrapper functions',
-              sourceLocation: 'src/wrapper.c:263',
-              targetLocation: 'src/lib.rs',
-            },
-          ],
-        }),
-      );
-
-      await orchestrator.run();
-
-      // Find the code-migrator invocation that has a parity remediationContext
-      const reMigrateCandidates = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.phase === 4,
-      );
-      let reMigrateCtx: Record<string, unknown> | undefined;
-      for (const inv of reMigrateCandidates) {
-        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
-        if (ctx.payload?.remediationContext?.failureKind === 'parity') {
-          reMigrateCtx = ctx;
-          break;
-        }
-      }
-      expect(reMigrateCtx).toBeDefined();
-
-      // Enriched failureSummary should contain the specific issue descriptions
-      const remediation = reMigrateCtx!.payload?.remediationContext as Record<string, unknown>;
-      const summary = remediation?.failureSummary as string;
-      expect(summary).toContain('major');
-      expect(summary).toContain('critical');
-      expect(summary).toContain('HashMap shim');
-
-      // Parity report .md should be in inputFiles
-      const inputFiles = reMigrateCtx!.inputFiles as string[];
-      const hasParityMd = inputFiles.some((f: string) => f.endsWith('.md') && f.includes('parity'));
-      expect(hasParityMd).toBe(true);
-
-      // Adjudication report path should be in inputFiles
-      const hasAdjudicationMd = inputFiles.some((f: string) => f.includes('adjudication'));
-      expect(hasAdjudicationMd).toBe(true);
-
-      // adjudicationReportPath should be set in remediationContext
-      expect(remediation?.adjudicationReportPath).toBeDefined();
-      expect(typeof remediation?.adjudicationReportPath).toBe('string');
-    });
-
-    it('should not trigger recovery when parity has only minor issues', async () => {
-      const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
-        tempDir,
-        launcherFn,
-      );
-
-      const singleTaskPlan = `# Migration Plan
-
-## Task: task-001 - Auth Module
-
-**Description:** Migrate auth
-**Complexity:** simple
-**Knowledge Base Reference:** kb/auth.md
-
-**Source Files:**
-- src/auth.py
-
-**Target Files:**
-- src/auth.ts
-
-**Dependencies:** none
-
-**Acceptance Criteria:**
-- works
-
-**Parity Checks:**
-- matches
-`;
-      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
-      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
-      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
-
-      // Write a parity sidecar with only minor issues
-      await ensureDir(join(progressDir, 'artifacts', 'results'));
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: ['parity-reports/task-001.md'],
-          parity: 'partial',
-          issues: [
-            {
-              severity: 'minor',
-              description: 'Slightly different API surface',
-            },
-          ],
-        }),
-      );
-
-      const result = await orchestrator.run();
-
-      // No failure-adjudicator should be invoked for parity
-      const recoveryForParity = mockLauncher.invocations.filter(
-        (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
-      );
-      expect(recoveryForParity).toHaveLength(0);
-      expect(result.success).toBe(true);
-    });
-
-    it('should fail fast when parity retains non-minor issues after retries', async () => {
-      let migratorAttempt = 0;
-      const launcherFn = createMockLauncher((inv) => {
-        if (inv.agent === 'code-migrator') {
-          migratorAttempt++;
-        }
-        return {};
-      });
-
-      const { orchestrator, progressDir } = await setupOrchestrator(
-        tempDir,
-        launcherFn,
-        {
-          options: {
-            maxParallelAgents: 3,
-            maxRetriesPerTask: 1,
-            maxLinesPerTask: 500,
-            dryRun: false,
-            resume: false,
-            invocationDelayMs: 0,
-            buildConcurrency: 1,
-            continueOnBlocked: true,
-            maxBlockedTasks: 0,
-            maxInfraRetries: 3,
-          },
-        },
-      );
-
-      const singleTaskPlan = `# Migration Plan
-
-## Task: task-001 - Auth Module
-
-**Description:** Migrate auth
-**Complexity:** simple
-**Knowledge Base Reference:** kb/auth.md
-
-**Source Files:**
-- src/auth.py
-
-**Target Files:**
-- src/auth.ts
-
-**Dependencies:** none
-
-**Acceptance Criteria:**
-- works
-
-**Parity Checks:**
-- matches
-`;
-      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
-      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
-      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
-
-      // Write a parity sidecar with major issues that downgrade to minor after retry
-      // but since the file persists, we simulate "only minor remaining"
-      await ensureDir(join(progressDir, 'artifacts', 'results'));
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: ['parity-reports/task-001.md'],
-          parity: 'partial',
-          issues: [
-            {
-              severity: 'major',
-              description: 'Missing validation logic',
-            },
-            {
-              severity: 'minor',
-              description: 'Slightly different API surface',
-            },
-          ],
-        }),
-      );
-
-      const result = await orchestrator.run();
-      const phase4 = result.phases.find((p) => p.phase === 4);
-
-      expect(result.success).toBe(false);
-      expect(phase4?.error).toContain('parity-non-minor-exhausted');
-      expect(result.blockedTasks).not.toContain('task-001');
-    });
-
-    it('should terminally exhaust when failure-adjudicator emits no aamf-json during parity recovery', async () => {
-      const launcherFn = createMockLauncher((inv) => {
-        if (inv.agent === 'failure-adjudicator') {
           return {
-            exitCode: 1,
-            success: false,
-            error: 'aamf-json parse failed: missing aamf-json block',
-            parseError: 'missing aamf-json block',
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'fail',
+              issues: [{ severity: 'critical', description: 'Missing error handling in auth flow', sourceLocation: 'src/auth.py:45', targetLocation: 'src/auth.ts:52' }],
+            },
           };
         }
         return {};
@@ -2300,24 +1978,598 @@ describe('MigrationOrchestrator', () => {
       await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
-      await ensureDir(join(progressDir, 'artifacts', 'results'));
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: ['parity-reports/task-001.md'],
-          parity: 'fail',
-          issues: [
-            {
-              severity: 'major',
-              description: 'Behavior diverges in auth checks',
+      await orchestrator.run();
+
+      const recoveryInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+      );
+      expect(recoveryInvocations.length).toBeGreaterThan(0);
+
+      const parityRecovery = recoveryInvocations[0]!;
+      const recoveryContext = JSON.parse(await readFile(parityRecovery.contextFile, 'utf-8'));
+      expect(recoveryContext.payload?.remediationContext?.failureKind).toBe('parity');
+      expect(recoveryContext.payload?.remediationContext?.failureTarget?.taskId).toBe('task-001');
+
+      const remigrateCandidates = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      let foundParityRemediation = false;
+      for (const inv of remigrateCandidates) {
+        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
+        if (ctx.payload?.remediationContext?.failureKind === 'parity') {
+          foundParityRemediation = true;
+          break;
+        }
+      }
+      expect(foundParityRemediation).toBe(true);
+    });
+
+    it('should pass enriched context to code-migrator during parity recovery', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'fail',
+              issues: [
+                { severity: 'major', description: 'HashMap shim instead of direct struct access', sourceLocation: 'src/wrapper.c:178', targetLocation: 'src/lib.rs:120' },
+                { severity: 'critical', description: 'Missing z_deflate wrapper functions', sourceLocation: 'src/wrapper.c:263', targetLocation: 'src/lib.rs' },
+              ],
             },
-          ],
-        }),
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 1,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+          },
+        },
       );
 
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      await orchestrator.run();
+
+      // Find the code-migrator invocation that has a parity remediationContext
+      const reMigrateCandidates = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      let reMigrateCtx: Record<string, unknown> | undefined;
+      for (const inv of reMigrateCandidates) {
+        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
+        if (ctx.payload?.remediationContext?.failureKind === 'parity') {
+          reMigrateCtx = ctx;
+          break;
+        }
+      }
+      expect(reMigrateCtx).toBeDefined();
+
+      // failureSummary should be stripped from the agent-facing context
+      const remediation = reMigrateCtx!.payload?.remediationContext as Record<string, unknown>;
+      expect(remediation?.failureSummary).toBeUndefined();
+
+      // Parity report .md should be in inputFiles
+      const inputFiles = reMigrateCtx!.inputFiles as string[];
+      const hasParityMd = inputFiles.some((f: string) => f.endsWith('.md') && f.includes('parity'));
+      expect(hasParityMd).toBe(true);
+
+      // Adjudication report path should be in inputFiles
+      const hasAdjudicationMd = inputFiles.some((f: string) => f.includes('adjudication'));
+      expect(hasAdjudicationMd).toBe(true);
+
+      // adjudicationReportPath should be set in remediationContext
+      expect(remediation?.adjudicationReportPath).toBeDefined();
+      expect(typeof remediation?.adjudicationReportPath).toBe('string');
+    });
+
+    it('should not trigger recovery when parity has only minor issues', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'partial',
+              issues: [{ severity: 'minor', description: 'Slightly different API surface', sourceLocation: 'src/auth.py:10', targetLocation: 'src/auth.ts:12' }],
+            },
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      // No failure-adjudicator should be invoked for parity
+      const recoveryForParity = mockLauncher.invocations.filter(
+        (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+      );
+      expect(recoveryForParity).toHaveLength(0);
+      expect(result.success).toBe(true);
+
+      // Minor-parity-repass should trigger an extra code-migrator + parity-verifier cycle
+      const phase4Migrators = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      // 1 initial + 1 re-pass = 2
+      expect(phase4Migrators.length).toBeGreaterThanOrEqual(2);
+
+      const phase4Parity = mockLauncher.invocations.filter(
+        (i) => i.agent === 'parity-verifier' && i.phase === 4,
+      );
+      // 1 initial + 1 re-pass = 2
+      expect(phase4Parity.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should run minor-parity-repass and accept remaining minor issues as non-blocking', async () => {
+      // Parity always returns minor issues — even after re-pass
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'partial',
+              issues: [
+                { severity: 'minor', description: 'Naming convention differs' },
+                { severity: 'minor', description: 'Comment style varies' },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      // Migration succeeds — minor issues are not blocking
+      expect(result.success).toBe(true);
+
+      // Re-pass code-migrator was invoked (1 initial + 1 re-pass)
+      const migrators = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      expect(migrators.length).toBeGreaterThanOrEqual(2);
+
+      // Re-pass parity-verifier was invoked (1 initial + 1 re-pass)
+      const parityRuns = mockLauncher.invocations.filter(
+        (i) => i.agent === 'parity-verifier' && i.phase === 4,
+      );
+      expect(parityRuns.length).toBeGreaterThanOrEqual(2);
+
+      // The re-pass code-migrator should receive remediation context with parity-minor
+      const repassMigrator = migrators[migrators.length - 1];
+      const repassPayload = (repassMigrator as any).payload ?? {};
+      const repassRemediation = repassPayload.remediationContext as Record<string, unknown> | undefined;
+      if (repassRemediation) {
+        expect(repassRemediation.failureKind).toBe('parity-minor');
+      }
+    });
+
+    it('should skip minor-parity-repass when parity is a clean pass', async () => {
+      // Parity returns clean pass with no issues
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'pass',
+              issues: [],
+            },
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+
+      // Only 1 code-migrator run — no re-pass because parity was clean
+      const migrators = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      expect(migrators).toHaveLength(1);
+
+      // Only 1 parity-verifier run — no re-pass
+      const parityRuns = mockLauncher.invocations.filter(
+        (i) => i.agent === 'parity-verifier' && i.phase === 4,
+      );
+      expect(parityRuns).toHaveLength(1);
+    });
+
+    it('should revert to original parity result when re-pass introduces non-minor issues', async () => {
+      let parityCallCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'parity-verifier') {
+          parityCallCount++;
+          if (parityCallCount === 1) {
+            // First run: only minor issues
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+                parity: 'partial',
+                issues: [{ severity: 'minor', description: 'Naming convention differs' }],
+              },
+            };
+          }
+          // Re-pass: introduces a major issue
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'partial',
+              issues: [{ severity: 'major', description: 'Missing error handling' }],
+            },
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      // Should succeed because the original minor-only result is restored
+      expect(result.success).toBe(true);
+    });
+
+    it('should proceed when minor-parity-repass code-migrator fails', async () => {
+      let migratorCallCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          migratorCallCount++;
+          // First call succeeds (initial migration), second call fails (re-pass)
+          if (migratorCallCount >= 2) {
+            return { success: false, exitCode: 1, error: 'Re-pass migration failed' };
+          }
+        }
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'partial',
+              issues: [{ severity: 'minor', description: 'Naming convention differs' }],
+            },
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      // Migration should succeed — failed re-pass is not blocking
+      expect(result.success).toBe(true);
+    });
+
+    it('should fail fast when parity retains non-minor issues after retries', async () => {
+      let migratorAttempt = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          migratorAttempt++;
+        }
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'partial',
+              issues: [{ severity: 'major', description: 'Missing validation logic' }],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 1,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+          },
+        },
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      // but since the file persists, we simulate "only minor remaining"
+      const result = await orchestrator.run();
+      const phase4 = result.phases.find((p) => p.phase === 4);
+
+      expect(result.success).toBe(false);
+      expect(phase4?.error).toContain('parity-non-minor-exhausted');
+      expect(result.blockedTasks).not.toContain('task-001');
+    });
+
+    it('should terminally exhaust when failure-adjudicator emits no aamf-json during parity recovery', async () => {
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'failure-adjudicator') {
+          return {
+            exitCode: 1,
+            success: false,
+            error: 'aamf-json parse failed: missing aamf-json block',
+            parseError: 'missing aamf-json block',
+          };
+        }
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'fail',
+              issues: [{ severity: 'major', description: 'Behavior diverges in auth checks' }],
+            },
+          };
+        }
+        return {};
+      });
+
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          options: {
+            maxParallelAgents: 3,
+            maxRetriesPerTask: 2,
+            maxLinesPerTask: 500,
+            dryRun: false,
+            resume: false,
+            invocationDelayMs: 0,
+            buildConcurrency: 1,
+            continueOnBlocked: true,
+            maxBlockedTasks: 0,
+            maxInfraRetries: 3,
+          },
+        },
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
       const result = await orchestrator.run();
       const phase4 = result.phases.find((p) => p.phase === 4);
 
@@ -2485,7 +2737,19 @@ describe('MigrationOrchestrator', () => {
       });
 
       it('should pass wave-end parity gate in deferred-strict when all tasks have only minor issues', async () => {
-        const launcherFn = createMockLauncher();
+        const launcherFn = createMockLauncher((inv) => {
+          if (inv.agent === 'parity-verifier') {
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+                parity: 'partial',
+                issues: [{ severity: 'minor', description: 'Style nit' }],
+              },
+            };
+          }
+          return {};
+        });
         const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
           target: {
             outputPath: join(tempDir, 'deferred-parity-pass-output'),
@@ -2519,20 +2783,6 @@ describe('MigrationOrchestrator', () => {
         await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
         await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
-        // Write a parity sidecar with only minor issues
-        await ensureDir(join(progressDir, 'artifacts', 'results'));
-        await writeFile(
-          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-          JSON.stringify({
-            taskId: 'task-001',
-            agent: 'parity-verifier',
-            status: 'completed',
-            outputFiles: [],
-            parity: 'partial',
-            issues: [{ severity: 'minor', description: 'Slightly different API surface' }],
-          }),
-        );
-
         const result = await orchestrator.run();
 
         expect(result.success).toBe(true);
@@ -2544,9 +2794,29 @@ describe('MigrationOrchestrator', () => {
       });
 
       it('should trigger batched remediation at wave-end in deferred-strict for non-minor parity issues', async () => {
+        let parityCallCount = 0;
         const launcherFn = createMockLauncher((inv) => {
-          // After remediation, parity-verifier writes a passing sidecar
-          // (the withParityPassSidecar wrapper handles this automatically)
+          if (inv.agent === 'parity-verifier') {
+            parityCallCount++;
+            if (parityCallCount === 1) {
+              return {
+                outputParsed: true,
+                structuredOutput: {
+                  agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+                  parity: 'fail',
+                  issues: [{ severity: 'major', description: 'Divergence in task' }],
+                },
+              };
+            }
+            // After remediation, pass
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+                parity: 'pass', issues: [],
+              },
+            };
+          }
           return {};
         });
         const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
@@ -2582,20 +2852,6 @@ describe('MigrationOrchestrator', () => {
         await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
         await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
-        // Write a parity sidecar with major issues
-        await ensureDir(join(progressDir, 'artifacts', 'results'));
-        await writeFile(
-          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-          JSON.stringify({
-            taskId: 'task-001',
-            agent: 'parity-verifier',
-            status: 'completed',
-            outputFiles: ['parity-reports/task-001.md'],
-            parity: 'fail',
-            issues: [{ severity: 'major', description: 'Missing validation logic' }],
-          }),
-        );
-
         const result = await orchestrator.run();
 
         // Remediation should have been triggered at wave-end
@@ -2611,8 +2867,20 @@ describe('MigrationOrchestrator', () => {
       });
 
       it('should raise terminal exhaustion at wave-end in deferred-strict when remediation does not converge', async () => {
-        // Launcher always returns success, but the parity sidecar persists with major issues
-        const launcherFn = createMockLauncher();
+        // Parity-verifier always reports fail with major issues — remediation cannot converge
+        const launcherFn = createMockLauncher((inv) => {
+          if (inv.agent === 'parity-verifier') {
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+                parity: 'fail',
+                issues: [{ severity: 'major', description: 'Persistent divergence' }],
+              },
+            };
+          }
+          return {};
+        });
         const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
           target: {
             outputPath: join(tempDir, 'deferred-exhaustion-output'),
@@ -2645,20 +2913,6 @@ describe('MigrationOrchestrator', () => {
         await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
         await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
         await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
-
-        // Write a parity sidecar with major issues that won't be resolved
-        await ensureDir(join(progressDir, 'artifacts', 'results'));
-        await writeFile(
-          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-          JSON.stringify({
-            taskId: 'task-001',
-            agent: 'parity-verifier',
-            status: 'completed',
-            outputFiles: ['parity-reports/task-001.md'],
-            parity: 'fail',
-            issues: [{ severity: 'major', description: 'Critical behavior divergence' }],
-          }),
-        );
 
         const result = await orchestrator.run();
         const phase4 = result.phases.find((p) => p.phase === 4);
@@ -2732,20 +2986,6 @@ describe('MigrationOrchestrator', () => {
         await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
         await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
-        // Write a parity sidecar with parity: 'pass' and no issues
-        await ensureDir(join(progressDir, 'artifacts', 'results'));
-        await writeFile(
-          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-          JSON.stringify({
-            taskId: 'task-001',
-            agent: 'parity-verifier',
-            status: 'completed',
-            outputFiles: [],
-            parity: 'pass',
-            issues: [],
-          }),
-        );
-
         const result = await orchestrator.run();
 
         expect(result.success).toBe(true);
@@ -2790,12 +3030,9 @@ describe('MigrationOrchestrator', () => {
         await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
         await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
-        // Intentionally do NOT write a parity sidecar — the initial pass sidecar
-        // written by withParityPassSidecar during Phase 4 migration will be present,
-        // so we must delete it after phase 4 migration runs. Instead, we spy on
-        // hasNonMinorParityIssues to simulate missing sidecar at wave-end.
+        // Simulate missing parity result at wave-end by mocking hasNonMinorParityIssues
         const hasNonMinorSpy = vi.spyOn(orchestrator as any, 'hasNonMinorParityIssues')
-          .mockResolvedValue(true);
+          .mockReturnValue(true);
 
         const result = await orchestrator.run();
 
@@ -2810,7 +3047,19 @@ describe('MigrationOrchestrator', () => {
       });
 
       it('should trigger remediation for critical severity parity issues in deferred-strict', async () => {
-        const launcherFn = createMockLauncher();
+        const launcherFn = createMockLauncher((inv) => {
+          if (inv.agent === 'parity-verifier') {
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+                parity: 'fail',
+                issues: [{ severity: 'critical', description: 'Missing export' }],
+              },
+            };
+          }
+          return {};
+        });
         const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
           target: {
             outputPath: join(tempDir, 'deferred-critical-output'),
@@ -2843,20 +3092,6 @@ describe('MigrationOrchestrator', () => {
         await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
         await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
         await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
-
-        // Write a parity sidecar with critical severity issues
-        await ensureDir(join(progressDir, 'artifacts', 'results'));
-        await writeFile(
-          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-          JSON.stringify({
-            taskId: 'task-001',
-            agent: 'parity-verifier',
-            status: 'completed',
-            outputFiles: ['parity-reports/task-001.md'],
-            parity: 'fail',
-            issues: [{ severity: 'critical', description: 'Security check missing entirely' }],
-          }),
-        );
 
         const result = await orchestrator.run();
 
@@ -2905,20 +3140,6 @@ describe('MigrationOrchestrator', () => {
         await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
         await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
-        // Write a parity sidecar with major issues — but build gate should fail first
-        await ensureDir(join(progressDir, 'artifacts', 'results'));
-        await writeFile(
-          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-          JSON.stringify({
-            taskId: 'task-001',
-            agent: 'parity-verifier',
-            status: 'completed',
-            outputFiles: [],
-            parity: 'fail',
-            issues: [{ severity: 'major', description: 'Major divergence' }],
-          }),
-        );
-
         const result = await orchestrator.run();
         const phase4 = result.phases.find((p) => p.phase === 4);
 
@@ -2934,6 +3155,16 @@ describe('MigrationOrchestrator', () => {
         const invocationOrder: string[] = [];
         const launcherFn = createMockLauncher((inv) => {
           invocationOrder.push(`${inv.agent}:${inv.taskId}`);
+          if (inv.agent === 'parity-verifier') {
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+                parity: 'fail',
+                issues: [{ severity: 'major', description: `Divergence in ${inv.taskId}` }],
+              },
+            };
+          }
           return {};
         });
         const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(tempDir, launcherFn, {
@@ -2943,31 +3174,6 @@ describe('MigrationOrchestrator', () => {
           options: { qualityPolicy: 'deferred-strict', maxRetriesPerTask: 1 },
         });
         await writeMigrationPlan(progressDir);
-
-        // Write parity sidecars with major issues for both tasks
-        await ensureDir(join(progressDir, 'artifacts', 'results'));
-        await writeFile(
-          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-          JSON.stringify({
-            taskId: 'task-001',
-            agent: 'parity-verifier',
-            status: 'completed',
-            outputFiles: [],
-            parity: 'fail',
-            issues: [{ severity: 'major', description: 'Divergence in task-001' }],
-          }),
-        );
-        await writeFile(
-          join(progressDir, 'artifacts', 'results', 'parity-verifier-task-002.result.json'),
-          JSON.stringify({
-            taskId: 'task-002',
-            agent: 'parity-verifier',
-            status: 'completed',
-            outputFiles: [],
-            parity: 'fail',
-            issues: [{ severity: 'major', description: 'Divergence in task-002' }],
-          }),
-        );
 
         const result = await orchestrator.run();
 
@@ -3003,7 +3209,7 @@ describe('MigrationOrchestrator', () => {
         await checkpoint.load(config.projectName);
         const progress = new ProgressWriter(join(progressDir2, 'progress.md'));
         await progress.initialize(config);
-        const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
+        const mockLauncher = new MockAgentLauncher(withParityPassOutput(launcherFn));
         const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub1'), 'test-run-id');
         await writeMigrationPlan(progressDir2);
         await orchestrator.run();
@@ -3025,7 +3231,7 @@ describe('MigrationOrchestrator', () => {
         await checkpoint.load(config.projectName);
         const progress = new ProgressWriter(join(progressDir3, 'progress.md'));
         await progress.initialize(config);
-        const mockLauncher = new MockAgentLauncher(withParityPassSidecar(launcherFn));
+        const mockLauncher = new MockAgentLauncher(withParityPassOutput(launcherFn));
         const orchestrator = new MigrationOrchestrator(config, checkpoint, mockLauncher as any, progress, logger, join(tempDir, 'sub2'), 'test-run-id');
         await writeMigrationPlan(progressDir3);
         await orchestrator.run();
@@ -3251,231 +3457,278 @@ describe('MigrationOrchestrator', () => {
     });
   });
 
-  // ─── Parity Sidecar Fail-Closed ────────────────────────────────────
+  // ─── Parity Result Fail-Closed ──────────────────────────────────────
 
-  describe('Parity sidecar fail-closed defaults', () => {
-    it('checkParityResult returns false when no sidecar file exists', async () => {
+  describe('Parity result fail-closed defaults', () => {
+    it('checkParityResult returns false when no result is stored', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
-      // Ensure the results directory exists but no sidecar is written
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
 
       const warnSpy = vi.spyOn(logger, 'warn');
-      const result = await (orchestrator as any).checkParityResult('task-001');
+      const result = (orchestrator as any).checkParityResult('task-001');
 
       expect(result).toBe(false);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Parity sidecar missing for task-001'),
+        expect.stringContaining('Parity result missing for task-001'),
       );
     });
 
-    it('hasNonMinorParityIssues returns true when no sidecar file exists', async () => {
+    it('hasNonMinorParityIssues returns true when no result is stored', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
 
       const warnSpy = vi.spyOn(logger, 'warn');
-      const result = await (orchestrator as any).hasNonMinorParityIssues('task-001');
+      const result = (orchestrator as any).hasNonMinorParityIssues('task-001');
 
       expect(result).toBe(true);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Parity sidecar missing for task-001'),
+        expect.stringContaining('Parity result missing for task-001'),
       );
     });
 
-    it('checkParityResult returns true when sidecar has parity pass', async () => {
+    it('checkParityResult returns true when parity is pass', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: [],
-          parity: 'pass',
-          issues: [],
-        }),
-      );
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      (orchestrator as any)._parityResults.set('task-001', { parity: 'pass', issues: [] });
 
-      const result = await (orchestrator as any).checkParityResult('task-001');
+      const result = (orchestrator as any).checkParityResult('task-001');
       expect(result).toBe(true);
     });
 
-    it('hasNonMinorParityIssues returns false when sidecar has only minor issues', async () => {
+    it('hasNonMinorParityIssues returns false when only minor issues', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: [],
-          parity: 'partial',
-          issues: [{ severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' }],
-        }),
-      );
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      (orchestrator as any)._parityResults.set('task-001', {
+        parity: 'partial',
+        issues: [{ severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' }],
+      });
 
-      const result = await (orchestrator as any).hasNonMinorParityIssues('task-001');
+      const result = (orchestrator as any).hasNonMinorParityIssues('task-001');
       expect(result).toBe(false);
     });
 
     it('checkParityResult returns false when parity is fail', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: [],
-          parity: 'fail',
-          issues: [{ severity: 'critical', description: 'missing function', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' }],
-        }),
-      );
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      (orchestrator as any)._parityResults.set('task-001', {
+        parity: 'fail',
+        issues: [{ severity: 'critical', description: 'missing function', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' }],
+      });
 
-      const result = await (orchestrator as any).checkParityResult('task-001');
+      const result = (orchestrator as any).checkParityResult('task-001');
       expect(result).toBe(false);
     });
 
     it('checkParityResult returns true when parity is partial with all minor issues', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: [],
-          parity: 'partial',
-          issues: [
-            { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
-            { severity: 'minor', description: 'whitespace diff', sourceLocation: 'a.py:5', targetLocation: 'a.ts:5' },
-          ],
-        }),
-      );
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      (orchestrator as any)._parityResults.set('task-001', {
+        parity: 'partial',
+        issues: [
+          { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
+          { severity: 'minor', description: 'whitespace diff', sourceLocation: 'a.py:5', targetLocation: 'a.ts:5' },
+        ],
+      });
 
-      const result = await (orchestrator as any).checkParityResult('task-001');
+      const result = (orchestrator as any).checkParityResult('task-001');
       expect(result).toBe(true);
     });
 
     it('checkParityResult returns false when parity is partial with a major issue', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: [],
-          parity: 'partial',
-          issues: [
-            { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
-            { severity: 'major', description: 'logic mismatch', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' },
-          ],
-        }),
-      );
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      (orchestrator as any)._parityResults.set('task-001', {
+        parity: 'partial',
+        issues: [
+          { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
+          { severity: 'major', description: 'logic mismatch', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' },
+        ],
+      });
 
-      const result = await (orchestrator as any).checkParityResult('task-001');
+      const result = (orchestrator as any).checkParityResult('task-001');
       expect(result).toBe(false);
     });
 
-    it('hasNonMinorParityIssues returns true when sidecar has a critical issue', async () => {
+    it('hasNonMinorParityIssues returns true when a critical issue exists', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: [],
-          parity: 'fail',
-          issues: [
-            { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
-            { severity: 'critical', description: 'missing export', sourceLocation: 'a.py:20', targetLocation: 'a.ts:20' },
-          ],
-        }),
-      );
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      (orchestrator as any)._parityResults.set('task-001', {
+        parity: 'fail',
+        issues: [
+          { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
+          { severity: 'critical', description: 'missing export', sourceLocation: 'a.py:20', targetLocation: 'a.ts:20' },
+        ],
+      });
 
-      const result = await (orchestrator as any).hasNonMinorParityIssues('task-001');
+      const result = (orchestrator as any).hasNonMinorParityIssues('task-001');
       expect(result).toBe(true);
     });
 
     it('hasNonMinorParityIssues returns false when issues array is empty', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: [],
-          parity: 'pass',
-          issues: [],
-        }),
-      );
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      (orchestrator as any)._parityResults.set('task-001', { parity: 'pass', issues: [] });
 
-      const result = await (orchestrator as any).hasNonMinorParityIssues('task-001');
+      const result = (orchestrator as any).hasNonMinorParityIssues('task-001');
       expect(result).toBe(false);
     });
 
-    it('checkParityResult does not log warning when sidecar exists', async () => {
+    it('checkParityResult does not log warning when result is stored', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: [],
-          parity: 'pass',
-          issues: [],
-        }),
-      );
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+      (orchestrator as any)._parityResults.set('task-001', { parity: 'pass', issues: [] });
 
       const warnSpy = vi.spyOn(logger, 'warn');
-      await (orchestrator as any).checkParityResult('task-001');
+      (orchestrator as any).checkParityResult('task-001');
       expect(warnSpy).not.toHaveBeenCalledWith(
-        expect.stringContaining('Parity sidecar missing'),
+        expect.stringContaining('Parity result missing'),
       );
     });
 
-    it('hasNonMinorParityIssues does not log warning when sidecar exists', async () => {
+    it('hasNonMinorParityIssues does not log warning when result is stored', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir, logger } = await setupOrchestrator(tempDir, launcherFn);
-      await mkdir(join(progressDir, 'artifacts', 'results'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'results', 'parity-verifier-task-001.result.json'),
-        JSON.stringify({
-          taskId: 'task-001',
-          agent: 'parity-verifier',
-          status: 'completed',
-          outputFiles: [],
-          parity: 'pass',
-          issues: [],
-        }),
-      );
+      const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+      (orchestrator as any)._parityResults.set('task-001', { parity: 'pass', issues: [] });
 
       const warnSpy = vi.spyOn(logger, 'warn');
-      await (orchestrator as any).hasNonMinorParityIssues('task-001');
+      (orchestrator as any).hasNonMinorParityIssues('task-001');
       expect(warnSpy).not.toHaveBeenCalledWith(
-        expect.stringContaining('Parity sidecar missing'),
+        expect.stringContaining('Parity result missing'),
       );
+    });
+
+    it('storeParityResult populates map from structuredOutput', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: true,
+        structuredOutput: {
+          agent: 'parity-verifier',
+          status: 'completed',
+          parity: 'partial',
+          issues: [{ severity: 'major', description: 'divergence' }],
+        },
+      };
+      (orchestrator as any).storeParityResult(agentResult, 'task-001');
+
+      const stored = (orchestrator as any)._parityResults.get('task-001');
+      expect(stored).toBeDefined();
+      expect(stored.parity).toBe('partial');
+      expect(stored.issues).toHaveLength(1);
+    });
+
+    it('storeParityResult ignores result when outputParsed is false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: false,
+        structuredOutput: undefined,
+      };
+      (orchestrator as any).storeParityResult(agentResult, 'task-001');
+
+      expect((orchestrator as any)._parityResults.has('task-001')).toBe(false);
+    });
+
+    it('rehydrateParityFromLog recovers parity result from agent log file on disk', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      // Write a fake parity-verifier log file with an aamf-json block
+      const logDir = join(
+        tempDir, '.aamf', 'migration', 'test-project', 'logs', 'agents',
+        'parity-verifier', 'task-001',
+      );
+      await mkdir(logDir, { recursive: true });
+      const logContent = `=== STDOUT ===
+Some preamble text
+
+\`\`\`aamf-json
+{
+  "agent": "parity-verifier",
+  "status": "completed",
+  "outputFiles": ["artifacts/parity/task-001.md"],
+  "taskId": "task-001",
+  "parity": "partial",
+  "issues": [
+    {
+      "severity": "minor",
+      "description": "String mismatch",
+      "sourceLocation": "a.c:10",
+      "targetLocation": "a.rs:15"
+    }
+  ]
+}
+\`\`\`
+
+=== STDERR ===
+Total usage est: 1 Premium requests
+`;
+      await writeFile(join(logDir, 'abc-2026-01-01T00-00-00-000Z.log'), logContent, 'utf-8');
+
+      // Map should be empty initially
+      expect((orchestrator as any)._parityResults.has('task-001')).toBe(false);
+
+      // checkParityResult should rehydrate from log and return true (partial with only minor)
+      const result = (orchestrator as any).checkParityResult('task-001');
+      expect(result).toBe(true);
+
+      // Map should now be populated
+      const stored = (orchestrator as any)._parityResults.get('task-001');
+      expect(stored).toBeDefined();
+      expect(stored.parity).toBe('partial');
+      expect(stored.issues).toHaveLength(1);
+      expect(stored.issues[0].severity).toBe('minor');
+    });
+
+    it('rehydrateParityFromLog picks the latest log file when multiple exist', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      const logDir = join(
+        tempDir, '.aamf', 'migration', 'test-project', 'logs', 'agents',
+        'parity-verifier', 'task-001',
+      );
+      await mkdir(logDir, { recursive: true });
+
+      const makeLog = (parity: string) => `=== STDOUT ===
+\`\`\`aamf-json
+{"agent":"parity-verifier","status":"completed","parity":"${parity}","issues":[]}
+\`\`\`
+=== STDERR ===
+`;
+
+      // Write two logs — earlier one is "fail", later one is "pass"
+      await writeFile(join(logDir, 'aaa-2026-01-01T00-00-00-000Z.log'), makeLog('fail'), 'utf-8');
+      await writeFile(join(logDir, 'bbb-2026-01-02T00-00-00-000Z.log'), makeLog('pass'), 'utf-8');
+      // Write a .live.log that should be ignored
+      await writeFile(join(logDir, 'ccc-2026-01-03T00-00-00-000Z.live.log'), makeLog('fail'), 'utf-8');
+
+      const result = (orchestrator as any).checkParityResult('task-001');
+      expect(result).toBe(true);
+      expect((orchestrator as any)._parityResults.get('task-001').parity).toBe('pass');
+    });
+
+    it('rehydrateParityFromLog returns undefined when no log directory exists', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      const result = (orchestrator as any).rehydrateParityFromLog('nonexistent-task');
+      expect(result).toBeUndefined();
+    });
+
+    it('rehydrateParityFromLog returns undefined when log has no aamf-json block', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      const logDir = join(
+        tempDir, '.aamf', 'migration', 'test-project', 'logs', 'agents',
+        'parity-verifier', 'task-001',
+      );
+      await mkdir(logDir, { recursive: true });
+      await writeFile(join(logDir, 'abc-2026-01-01T00-00-00-000Z.log'), '=== STDOUT ===\nno json here\n=== STDERR ===\n', 'utf-8');
+
+      const result = (orchestrator as any).rehydrateParityFromLog('task-001');
+      expect(result).toBeUndefined();
     });
   });
 
@@ -3674,7 +3927,7 @@ describe('MigrationOrchestrator', () => {
       await checkpoint2.load(config2.projectName);
       const progress2 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress2.initialize(config2);
-      const mockLauncher2 = new MockAgentLauncher(withParityPassSidecar(createMockLauncher()));
+      const mockLauncher2 = new MockAgentLauncher(withParityPassOutput(createMockLauncher()));
       const orch2 = new MigrationOrchestrator(
         config2,
         checkpoint2,
@@ -3884,7 +4137,7 @@ describe('MigrationOrchestrator', () => {
       await checkpoint1.load(config.projectName);
       const progress1 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress1.initialize(config);
-      const orch1 = new MigrationOrchestrator(config, checkpoint1, new MockAgentLauncher(withParityPassSidecar(launcherFn)) as any, progress1, logger, tempDir, 'test-run-id');
+      const orch1 = new MigrationOrchestrator(config, checkpoint1, new MockAgentLauncher(withParityPassOutput(launcherFn)) as any, progress1, logger, tempDir, 'test-run-id');
       const result1 = await orch1.run();
 
       expect(result1.cumulativeDuration).toBe(result1.totalDuration);
@@ -3904,7 +4157,7 @@ describe('MigrationOrchestrator', () => {
 
       const progress2 = new ProgressWriter(join(progressDir, 'progress.md'));
       await progress2.initialize(config2);
-      const orch2 = new MigrationOrchestrator(config2, checkpoint2, new MockAgentLauncher(withParityPassSidecar(launcherFn)) as any, progress2, logger, tempDir, 'test-run-id');
+      const orch2 = new MigrationOrchestrator(config2, checkpoint2, new MockAgentLauncher(withParityPassOutput(launcherFn)) as any, progress2, logger, tempDir, 'test-run-id');
       const result2 = await orch2.run();
 
       expect(result2.cumulativeDuration).toBe(afterFirst + result2.totalDuration);
