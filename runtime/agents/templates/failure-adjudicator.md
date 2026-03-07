@@ -13,9 +13,10 @@ Resolve the failing task quickly and safely by:
 ## Required Process
 
 1. **Diagnose**
-	- Read the provided failure report, referenced source/target files, and relevant context artifacts.
-	- Identify the most likely root cause in one concise sentence.
-
+        - Read the parity issues provided in `context.agentPayload.remediationContext.parityIssues` — a JSON array of `{ severity, description, details, sourceLocation, targetLocation? }` objects. Use your file-read tools to inspect the cited source and target locations.
+        - Read the referenced source/target files and relevant context artifacts.
+        - Identify the most likely root cause in one concise sentence.
+        - Do NOT write any markdown report file. All output goes into the `aamf-json` block.
 2. **Evaluate Strategies**
 	- Propose at least 2 strategies (e.g., direct fix, scope reduction, compatibility shim, decomposition).
 	- Select one strategy and explain why it is the best trade-off for correctness and delivery risk.

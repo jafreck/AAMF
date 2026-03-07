@@ -38,7 +38,8 @@ export const TaskResultSchema = z.object({
   issues: z.array(z.object({
     severity: z.enum(['critical', 'major', 'minor']),
     description: z.string(),
-    sourceLocation: z.string().optional(),
+    details: z.string(),
+    sourceLocation: z.string(),
     targetLocation: z.string().optional(),
   })).default([]),
   metrics: z.object({

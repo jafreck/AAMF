@@ -187,26 +187,10 @@ export class ContextBuilder {
         };
 
       case 'code-migrator': {
-        // During parity recovery, include the parity report and adjudication
-        // analysis as direct input files so the agent can read them.
-        const recoveryInputFiles: string[] = [];
-        if (remediationContext) {
-          const parityPaths = (remediationContext.artifactPaths as string[] | undefined) ?? [];
-          for (const p of parityPaths) {
-            if (typeof p === 'string' && p.endsWith('.md') && this.isLikelyPathString(p)) {
-              recoveryInputFiles.push(p);
-            }
-          }
-          const adjudicationPath = (remediationContext as Record<string, unknown>).adjudicationReportPath;
-          if (typeof adjudicationPath === 'string' && this.isLikelyPathString(adjudicationPath)) {
-            recoveryInputFiles.push(adjudicationPath);
-          }
-        }
         return {
           inputFiles: [
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
-            ...recoveryInputFiles,
           ],
           outputPath: out,
           agentPayload: {
@@ -225,7 +209,7 @@ export class ContextBuilder {
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
           ],
-          outputPath: join(this.progressDir, 'artifacts', 'parity', `${taskId ?? 'main'}.md`),
+          outputPath: out,
           agentPayload: { taskId },
         };
 
@@ -255,18 +239,13 @@ export class ContextBuilder {
 
       case 'failure-adjudicator':
         {
-          const failureReportPath = this.isLikelyPathString(payload?.failureReport)
-            ? String(payload?.failureReport)
-            : undefined;
-
         return {
           inputFiles: [
-            ...(failureReportPath ? [failureReportPath] : []),
             ...(payload?.sourceFile ? [String(payload.sourceFile)] : []),
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
           ],
-          outputPath: join(this.progressDir, 'artifacts', 'adjudication', `${taskId ?? 'main'}.md`),
+          outputPath: out,
           agentPayload: {
             taskId,
             failureType: payload?.failureType,
@@ -280,7 +259,7 @@ export class ContextBuilder {
       case 'final-parity-checker':
         return {
           inputFiles: [src, out, migrationPlan],
-          outputPath: join(this.progressDir, 'artifacts', 'parity', 'final-parity-report.md'),
+          outputPath: out,
         };
 
       case 'e2e-test-crafter':
@@ -295,23 +274,26 @@ export class ContextBuilder {
 
       case 'documentation-writer':
         return {
-          inputFiles: [kbDir, migrationPlan, join(this.progressDir, 'artifacts', 'parity', 'final-parity-report.md')],
+          inputFiles: [kbDir, migrationPlan],
           outputPath: join(out, 'docs'),
         };
 
       case 'idiomatic-reviewer':
         return {
           inputFiles: [out],
-          outputPath: join(this.progressDir, 'artifacts', 'parity', 'idiomatic-review-report.md'),
+          outputPath: out,
         };
 
       case 'idiomatic-refactorer':
         return {
           inputFiles: [
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
-            ...(payload?.idiomaticReport ? [String(payload.idiomaticReport)] : []),
           ],
           outputPath: out,
+          agentPayload: {
+            targetFile: payload?.targetFile,
+            issue: payload?.issue,
+          },
         };
 
       default:

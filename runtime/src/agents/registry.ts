@@ -120,7 +120,8 @@ const ParityVerifierSchema = AamfOutputBase.extend({
   issues: z.array(z.object({
     severity: z.enum(['critical', 'major', 'minor']),
     description: z.string(),
-    sourceLocation: z.string().optional(),
+    details: z.string(),
+    sourceLocation: z.string(),
     targetLocation: z.string().optional(),
   })).default([]),
 });
@@ -132,8 +133,11 @@ const FinalParityCheckerSchema = AamfOutputBase.extend({
   agent: z.literal('final-parity-checker'),
   fixes: z.array(z.object({
     description: z.string().min(1),
+    details: z.string(),
     sourceFile: z.string().min(1),
     targetFile: z.string().min(1),
+    sourceLocation: z.string(),
+    targetLocation: z.string().optional(),
   })).optional(),
 });
 const E2eTestCrafterSchema = AamfOutputBase.extend({ agent: z.literal('e2e-test-crafter') });
@@ -143,8 +147,10 @@ const IdiomaticReviewerSchema = AamfOutputBase.extend({
   agent: z.literal('idiomatic-reviewer'),
   issues: z.array(z.object({
     file: z.string().min(1),
+    location: z.string(),
     issue: z.string().min(1),
     suggestion: z.string().min(1),
+    details: z.string(),
   })).optional(),
 });
 const IdiomaticRefactorerSchema = AamfOutputBase.extend({ agent: z.literal('idiomatic-refactorer') });
@@ -319,12 +325,13 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
           type: 'array',
           items: {
             type: 'object',
-            required: ['severity', 'description'],
+            required: ['severity', 'description', 'details', 'sourceLocation'],
             properties: {
               severity:       { enum: ['critical', 'major', 'minor'] },
               description:    { type: 'string', minLength: 1 },
-              sourceLocation: { type: 'string' },
-              targetLocation: { type: 'string' },
+              details:        { type: 'string', minLength: 1 },
+              sourceLocation: { type: 'string', minLength: 1 },
+              targetLocation: { type: 'string', minLength: 1 },
             },
           },
         },
@@ -395,11 +402,14 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
           type: 'array',
           items: {
             type: 'object',
-            required: ['description', 'sourceFile', 'targetFile'],
+            required: ['description', 'details', 'sourceFile', 'targetFile', 'sourceLocation'],
             properties: {
-              description: { type: 'string', minLength: 1 },
-              sourceFile:  { type: 'string', minLength: 1 },
-              targetFile:  { type: 'string', minLength: 1 },
+              description:    { type: 'string', minLength: 1 },
+              details:        { type: 'string', minLength: 1 },
+              sourceFile:     { type: 'string', minLength: 1 },
+              targetFile:     { type: 'string', minLength: 1 },
+              sourceLocation: { type: 'string', minLength: 1 },
+              targetLocation: { type: 'string', minLength: 1 },
             },
           },
         },
@@ -470,11 +480,13 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
           type: 'array',
           items: {
             type: 'object',
-            required: ['file', 'issue', 'suggestion'],
+            required: ['file', 'location', 'issue', 'suggestion', 'details'],
             properties: {
               file:       { type: 'string', minLength: 1 },
+              location:   { type: 'string', minLength: 1 },
               issue:      { type: 'string', minLength: 1 },
               suggestion: { type: 'string', minLength: 1 },
+              details:    { type: 'string', minLength: 1 },
             },
           },
         },
@@ -491,8 +503,8 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
     outputSchema: IdiomaticRefactorerSchema,
     inputJsonSchema: inputSchema({
       extraProperties: {
-        targetFile:      { type: 'string', minLength: 1 },
-        idiomaticReport: { type: 'string', minLength: 1 },
+        targetFile: { type: 'string', minLength: 1 },
+        issue:      { type: 'object' },
       },
     }),
     outputJsonSchema: outputSchema('idiomatic-refactorer'),

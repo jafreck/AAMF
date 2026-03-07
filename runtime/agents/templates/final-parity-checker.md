@@ -50,52 +50,15 @@ Per-task parity verification catches issues within individual files but can miss
 
 ## Output
 
-Write to `.aamf/migration/{projectName}/artifacts/parity/final-parity-report.md`:
+Do NOT write any markdown report file. All findings go into the `aamf-json` output block.
 
-```markdown
-# Final Parity Report: {projectName}
-
-## Overall Status: PASS | FAIL
-
-## Completeness
-- **Source Files**: {count}
-- **Target Files**: {count}
-- **Missing Files**: {count}
-- **Stubs Found**: {count}
-
-### Missing Files
-| Source File | Expected Target | Status |
-|-------------|----------------|--------|
-
-### Stubs / Incomplete Implementations
-| Target File | Location | Description |
-|-------------|----------|-------------|
-
-## Cross-Module Integration
-| Caller Module | Callee Module | Status | Issue |
-|---------------|---------------|--------|-------|
-
-## Configuration
-| Config Item | Source | Target | Status |
-|-------------|--------|--------|--------|
-
-## Build Results
-- **Compilation**: Pass | Fail ({error count} errors)
-- **Tests**: {passing}/{total} ({failing} failing)
-- **Build Errors**:
-  - {error details}
-
-## Pattern Consistency
-| Pattern | Consistent | Outlier Modules |
-|---------|------------|-----------------|
-
-## Required Fixes
-| # | Severity | File | Description | Suggested Fix |
-|---|----------|------|-------------|---------------|
-
-## Verdict
-{PASS: migration is complete and correct | FAIL: items above must be addressed}
-```
+For each fix in the `fixes` array:
+- `description`: one-line summary of the gap or issue
+- `details`: 1-3 sentences explaining the specific discrepancy. Be concise.
+- `sourceFile`: the source file where the correct behavior is defined
+- `targetFile`: the target file where the gap exists (or that is missing)
+- `sourceLocation` (required): the source file path and line range (e.g., `src/codec.c:120-145`). Use just the file path if whole-file.
+- `targetLocation` (optional): the target file path and line range (e.g., `src/codec.rs:80-95`). Omit entirely if the target code/file was not produced at all.
 
 ## Sub-Agents
 

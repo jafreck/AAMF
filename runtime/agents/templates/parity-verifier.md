@@ -68,7 +68,13 @@ Use KB markdown for synthesized architecture, risk, and migration context — no
 
 ## Output
 
-Write your parity analysis to `.aamf/migration/{projectName}/artifacts/parity/task-{taskId}.md`.
+Do NOT write any markdown report file. All analysis goes into the `aamf-json` output block.
+
+For each issue in the `issues` array:
+- `description`: one-line summary of the gap
+- `details`: 1-3 sentences explaining what the source does vs. what the target does (or fails to do). Be concise — do not exceed 3 sentences.
+- `sourceLocation` (required): the source file path and line range where the correct behavior is defined (e.g., `legacy/zstd_v04.c:342-358`). Use just the file path if the issue spans the entire file.
+- `targetLocation` (optional): the target file path and line range where the gap exists (e.g., `src/v04/decoder.rs:210-215`). Omit entirely if the target code/file was not produced at all.
 
 ## Context Window Management
 

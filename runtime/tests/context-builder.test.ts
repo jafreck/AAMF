@@ -282,7 +282,7 @@ describe('ContextBuilder', () => {
       expect(remediation?.failureSummary).toBeUndefined();
     });
 
-    it('should include parity .md artifact paths as inputFiles for code-migrator during recovery', async () => {
+    it('should not include .md artifact paths as inputFiles for code-migrator during recovery (structured context only)', async () => {
       const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
@@ -296,14 +296,13 @@ describe('ContextBuilder', () => {
       });
       const context = await readJson<AgentContext>(contextPath);
 
-      // .md files from artifactPaths should appear in inputFiles
-      expect(context.inputFiles).toContain('/tmp/parity/task-001.md');
-      // Non-.md files from artifactPaths should NOT appear in inputFiles
+      // .md files from artifactPaths should NOT appear in inputFiles — structured data only
+      expect(context.inputFiles).not.toContain('/tmp/parity/task-001.md');
       expect(context.inputFiles).not.toContain('/tmp/source/auth.py');
       expect(context.inputFiles).not.toContain('/tmp/target/auth.rs');
     });
 
-    it('should include adjudicationReportPath as inputFile for code-migrator during recovery', async () => {
+    it('should not include adjudicationReportPath as inputFile for code-migrator during recovery (structured context only)', async () => {
       const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
@@ -317,8 +316,9 @@ describe('ContextBuilder', () => {
       });
       const context = await readJson<AgentContext>(contextPath);
 
-      expect(context.inputFiles).toContain('/tmp/adjudication/task-001.md');
-      expect(context.inputFiles).toContain('/tmp/parity/task-001.md');
+      // Sidecar .md paths should NOT appear in inputFiles
+      expect(context.inputFiles).not.toContain('/tmp/adjudication/task-001.md');
+      expect(context.inputFiles).not.toContain('/tmp/parity/task-001.md');
     });
 
     it('should not add recovery inputFiles for code-migrator without remediationContext', async () => {
@@ -360,7 +360,7 @@ describe('ContextBuilder', () => {
 
       expect(context.inputFiles).toContain('src/auth.py');
       expect(context.inputFiles).toContain('src/auth.ts');
-      expect(context.outputPath).toContain('artifacts/parity');
+      expect(context.outputPath).toBe('/tmp/target');
     });
 
     it('should route test-writer to target file + KB entry', async () => {
@@ -538,7 +538,7 @@ describe('ContextBuilder', () => {
       expect(context.payload?.testType).toBe('e2e');
     });
 
-    it('should route failure-adjudicator to failure report + source/target', async () => {
+    it('should route failure-adjudicator with source/target (no failureReport in inputFiles)', async () => {
       const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
@@ -548,10 +548,11 @@ describe('ContextBuilder', () => {
       });
       const context = await readJson<AgentContext>(contextPath);
 
-      expect(context.inputFiles).toContain('/tmp/failure.md');
+      // failureReport is passed via payload, not inputFiles
+      expect(context.inputFiles).not.toContain('/tmp/failure.md');
       expect(context.inputFiles).toContain('src/auth.py');
       expect(context.inputFiles).toContain('src/auth.ts');
-      expect(context.outputPath).toContain('adjudication');
+      expect(context.outputPath).toBe('/tmp/target');
     });
 
     it('should preserve remediation payload fields in failure-adjudicator payload', async () => {
@@ -569,7 +570,7 @@ describe('ContextBuilder', () => {
       const context = await readJson<AgentContext>(contextPath);
       const remediation = context.payload?.remediationContext as Record<string, unknown> | undefined;
 
-      expect(context.inputFiles).toContain('/tmp/failure.md');
+      expect(context.inputFiles).not.toContain('/tmp/failure.md');
       expect(context.inputFiles).toContain('src/auth.py');
       expect(context.inputFiles).toContain('src/auth.ts');
       expect(context.payload?.attemptNumber).toBe(2);
@@ -637,7 +638,7 @@ describe('ContextBuilder', () => {
       expect(context.inputFiles).toContain('/tmp/source');
       expect(context.inputFiles).toContain('/tmp/target');
       expect(context.inputFiles.some((f: string) => f.includes('migration-plan.md'))).toBe(true);
-      expect(context.outputPath).toContain('final-parity-report.md');
+      expect(context.outputPath).toBe('/tmp/target');
     });
 
     it('should route e2e-test-crafter to KB architecture docs', async () => {
@@ -649,34 +650,45 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toContain('e2e');
     });
 
-    it('should route documentation-writer to KB + plan + parity report', async () => {
+    it('should route documentation-writer to KB + plan', async () => {
       const contextPath = await builder.buildContext('documentation-writer', 6);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles.some((f: string) => f.includes('knowledge-base'))).toBe(true);
       expect(context.inputFiles.some((f: string) => f.includes('migration-plan.md'))).toBe(true);
-      expect(context.inputFiles.some((f: string) => f.includes('final-parity-report.md'))).toBe(true);
+      // No longer includes final-parity-report.md — structured data only
+      expect(context.inputFiles.every((f: string) => !f.includes('final-parity-report.md'))).toBe(true);
       expect(context.outputPath).toContain('docs');
     });
 
-    it('should route idiomatic-reviewer to target output dir, output to idiomatic-review-report.md', async () => {
+    it('should route idiomatic-reviewer to target output dir', async () => {
       const contextPath = await builder.buildContext('idiomatic-reviewer', 8);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/target');
-      expect(context.outputPath).toContain('idiomatic-review-report.md');
+      expect(context.outputPath).toBe('/tmp/target');
     });
 
-    it('should route idiomatic-refactorer with targetFile and idiomaticReport from payload', async () => {
+    it('should route idiomatic-refactorer with targetFile and structured issue from payload', async () => {
+      const issue = {
+        file: '/tmp/target/src/utils.ts',
+        location: '42-58',
+        issue: 'Uses manual for-loop instead of map',
+        suggestion: 'Replace with Array.prototype.map()',
+        details: 'The for-loop iterates over an array and pushes to a new array, which is the exact use case for map().',
+      };
       const contextPath = await builder.buildContext('idiomatic-refactorer', 8, undefined, {
         targetFile: '/tmp/target/src/utils.ts',
-        idiomaticReport: '/tmp/progress/idiomatic-review-report.md',
+        issue,
       });
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/target/src/utils.ts');
-      expect(context.inputFiles).toContain('/tmp/progress/idiomatic-review-report.md');
+      // No idiomaticReport path in inputFiles
+      expect(context.inputFiles).toHaveLength(1);
       expect(context.outputPath).toBe('/tmp/target');
+      expect(context.payload?.issue).toEqual(issue);
+      expect(context.payload?.targetFile).toBe('/tmp/target/src/utils.ts');
     });
 
     it('should use default routing for unknown/orchestrator agents', async () => {
