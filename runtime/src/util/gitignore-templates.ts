@@ -540,20 +540,22 @@ ${COMMON}`,
 
 // ─── Aliases ─────────────────────────────────────────────────────────
 // Map common alternative names and abbreviations to canonical keys.
-TEMPLATES['c#']     = TEMPLATES.csharp;
-TEMPLATES['c++']    = TEMPLATES.cpp;
-TEMPLATES.ts        = TEMPLATES.typescript;
-TEMPLATES.js        = TEMPLATES.javascript;
-TEMPLATES.golang    = TEMPLATES.go;
-TEMPLATES.py        = TEMPLATES.python;
-TEMPLATES.rs        = TEMPLATES.rust;
-TEMPLATES.kt        = TEMPLATES.kotlin;
-TEMPLATES.rb        = TEMPLATES.ruby;
-TEMPLATES.ex        = TEMPLATES.elixir;
-TEMPLATES.hs        = TEMPLATES.haskell;
-TEMPLATES.flutter   = TEMPLATES.dart;
-TEMPLATES.objc      = TEMPLATES['objective-c'];
-TEMPLATES['obj-c']  = TEMPLATES['objective-c'];
+/* eslint-disable @typescript-eslint/no-non-null-assertion */
+TEMPLATES['c#']     = TEMPLATES.csharp!;
+TEMPLATES['c++']    = TEMPLATES.cpp!;
+TEMPLATES.ts        = TEMPLATES.typescript!;
+TEMPLATES.js        = TEMPLATES.javascript!;
+TEMPLATES.golang    = TEMPLATES.go!;
+TEMPLATES.py        = TEMPLATES.python!;
+TEMPLATES.rs        = TEMPLATES.rust!;
+TEMPLATES.kt        = TEMPLATES.kotlin!;
+TEMPLATES.rb        = TEMPLATES.ruby!;
+TEMPLATES.ex        = TEMPLATES.elixir!;
+TEMPLATES.hs        = TEMPLATES.haskell!;
+TEMPLATES.flutter   = TEMPLATES.dart!;
+TEMPLATES.objc      = TEMPLATES['objective-c']!;
+TEMPLATES['obj-c']  = TEMPLATES['objective-c']!;
+/* eslint-enable @typescript-eslint/no-non-null-assertion */
 
 /**
  * Returns a `.gitignore` body for the given target language.
