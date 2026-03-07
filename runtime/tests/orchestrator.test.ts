@@ -5796,13 +5796,14 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('ensureGitRepositoryReady should initialize git and configure author when repo is missing', async () => {
+      const outputPath = join(tempDir, 'git-init-output');
       const launcherFn = createMockLauncher();
       const { orchestrator } = await setupOrchestrator(
         tempDir,
         launcherFn,
         {
           target: {
-            outputPath: join(tempDir, 'git-init-output'),
+            outputPath,
           },
           options: {
             git: {
@@ -5829,6 +5830,90 @@ describe('MigrationOrchestrator', () => {
       expect(runGitSpy).toHaveBeenNthCalledWith(2, ['init']);
       expect(runGitSpy).toHaveBeenNthCalledWith(3, ['config', 'user.name', 'Test Bot']);
       expect(runGitSpy).toHaveBeenNthCalledWith(4, ['config', 'user.email', 'test@local']);
+
+      // Should have written a .gitignore for the target language (default: typescript)
+      const gitignorePath = join(outputPath, '.gitignore');
+      expect(await fileExists(gitignorePath)).toBe(true);
+      const content = await readFile(gitignorePath, 'utf-8');
+      expect(content).toContain('node_modules');
+      expect(content).toContain('.DS_Store');
+    });
+
+    it('ensureGitRepositoryReady should write rust .gitignore when target language is rust', async () => {
+      const outputPath = join(tempDir, 'git-init-rust-output');
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            language: 'rust',
+            outputPath,
+          },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'not a repo', exitCode: 128 })
+        .mockResolvedValueOnce({ success: true, stdout: 'initialized', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).ensureGitRepositoryReady();
+
+      const content = await readFile(join(outputPath, '.gitignore'), 'utf-8');
+      expect(content).toContain('target/');
+      expect(content).toContain('*.rlib');
+      expect(content).not.toContain('node_modules');
+    });
+
+    it('ensureGitRepositoryReady should not overwrite existing .gitignore', async () => {
+      const outputPath = join(tempDir, 'git-init-existing-gitignore');
+      await ensureDir(outputPath);
+      const gitignorePath = join(outputPath, '.gitignore');
+      await writeFile(gitignorePath, 'custom-rule\n');
+
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+        {
+          target: {
+            outputPath,
+          },
+          options: {
+            git: {
+              enabled: true,
+              autoInit: true,
+              commitByAgent: true,
+              commitPerTask: true,
+              authorName: 'Test Bot',
+              authorEmail: 'test@local',
+            },
+          },
+        },
+      );
+
+      vi.spyOn(orchestrator as any, 'runGit')
+        .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'not a repo', exitCode: 128 })
+        .mockResolvedValueOnce({ success: true, stdout: 'initialized', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 })
+        .mockResolvedValueOnce({ success: true, stdout: '', stderr: '', exitCode: 0 });
+
+      await (orchestrator as any).ensureGitRepositoryReady();
+
+      const content = await readFile(gitignorePath, 'utf-8');
+      expect(content).toBe('custom-rule\n');
     });
 
     it('ensureGitRepositoryReady should initialize nested outputPath as its own repository', async () => {
