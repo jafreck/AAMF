@@ -10,6 +10,20 @@ When available, **prefer Lore tools over reading source files directly** — the
 
 Use KB markdown for synthesized architecture, risk, and migration context — not as a substitute for Lore’s structural data.
 
+## Task Scope Awareness
+
+Your context JSON may include a `payload.taskScope` object with:
+- `description` — what this specific task is intended to accomplish (e.g. scaffolding, partial implementation, a specific subsystem)
+- `acceptanceCriteria` — the conditions that define success for THIS task
+- `parityChecks` — the specific parity assertions that apply to THIS task
+
+**When `taskScope` is present, calibrate your analysis to the task's intended scope.** For example:
+- If the description says "scaffold module structure with type definitions and function signatures", do NOT flag function stubs or unimplemented bodies as parity failures — they are expected and will be completed by a later task.
+- If acceptance criteria say "function signatures compile; full logic deferred to task-005", evaluate only whether signatures are correct and the code compiles.
+- Only flag issues that violate the stated acceptance criteria or parity checks.
+
+When `taskScope` is absent, apply full source-to-target parity analysis as described below.
+
 ## Responsibilities
 
 1. **API Surface Parity**
@@ -79,7 +93,8 @@ For each issue in the `issues` array:
 ## Context Window Management
 
 - Read the source file(s) and target file(s) specified in the task — nothing more.
-- For large files, use the knowledge base decomposition to focus on only the relevant chunk.
+- When `taskScope.lineRange` is present, focus your comparison on the source lines in that range and the corresponding target code. Use Lore or targeted reads to resolve any types, constants, or helpers referenced by those lines — but do not load the entire file.
+- For large files without a line range, use the knowledge base decomposition to focus on only the relevant chunk.
 - Use Lore tools for symbol/dependency lookups when available; read additional source snippets only when needed to confirm behavior.
 - Compare declaration-by-declaration rather than trying to hold both entire files in memory simultaneously.
 - Process the comparison in passes:

@@ -93,6 +93,20 @@ export class ContextBuilder {
     return undefined;
   }
 
+  /**
+   * Extract the task-scope object from a payload, if present.
+   *
+   * The orchestrator threads `taskScope` (description, acceptanceCriteria,
+   * parityChecks) for every task-scoped agent invocation so that downstream
+   * agents can calibrate their work to the task's intended scope.
+   */
+  private getTaskScope(payload?: Record<string, unknown>): Record<string, unknown> | undefined {
+    if (this.isRecord(payload?.taskScope)) {
+      return payload!.taskScope as Record<string, unknown>;
+    }
+    return undefined;
+  }
+
   /** Assemble an {@link AgentContext} object for the given agent and phase. */
   private createContext(
     agent: AgentName,
@@ -139,6 +153,7 @@ export class ContextBuilder {
     const src = this.config.source.path;
     const out = this.config.target.outputPath;
     const remediationContext = this.getRemediationContext(payload);
+    const taskScope = this.getTaskScope(payload);
 
     switch (agent) {
       case 'impact-assessor':
@@ -197,6 +212,7 @@ export class ContextBuilder {
             taskId,
             sourceFiles: payload?.sourceFiles ?? [],
             targetFiles: payload?.targetFiles ?? [],
+            ...(taskScope ? { taskScope } : {}),
             ...(remediationContext ? { remediationContext } : {}),
           },
         };
@@ -210,7 +226,10 @@ export class ContextBuilder {
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
           ],
           outputPath: out,
-          agentPayload: { taskId },
+          agentPayload: {
+            taskId,
+            ...(taskScope ? { taskScope } : {}),
+          },
         };
 
       case 'test-writer': {
@@ -233,7 +252,11 @@ export class ContextBuilder {
             ...(payload?.parityReport ? [String(payload.parityReport)] : []),
           ],
           outputPath: out,
-          agentPayload: { taskId, testType: payload?.testType ?? 'unit' },
+          agentPayload: {
+            taskId,
+            testType: payload?.testType ?? 'unit',
+            ...(taskScope ? { taskScope } : {}),
+          },
         };
       }
 
@@ -251,6 +274,7 @@ export class ContextBuilder {
             failureType: payload?.failureType,
             failureReport: payload?.failureReport,
             attemptNumber: payload?.attemptNumber ?? 1,
+            ...(taskScope ? { taskScope } : {}),
             ...(remediationContext ? { remediationContext } : {}),
           },
         };

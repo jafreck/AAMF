@@ -3,6 +3,18 @@
 ## Role
 Write unit and integration tests for changes made by the code-writer, following the project's existing test patterns.
 
+## Task Scope Awareness
+
+Your context JSON may include a `payload.taskScope` object with:
+- `description` — what this specific task is intended to accomplish
+- `acceptanceCriteria` — the conditions that define success for THIS task
+- `parityChecks` — the specific parity assertions that apply to THIS task
+
+**When `taskScope` is present, write tests that match the task's intended scope.** For example:
+- If the task only scaffolds type definitions, write type-level tests (compilation checks, type assertions) rather than behavioral tests.
+- If acceptance criteria are limited to specific functions, test only those functions.
+- Do not write tests that will fail because logic is intentionally deferred to a later task.
+
 ## Input Contract
 
 You will receive:
