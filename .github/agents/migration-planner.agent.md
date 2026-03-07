@@ -19,18 +19,11 @@ You must therefore focus on producing Phase 3a artifacts and **must not** launch
 
 ## Index-First Principle
 
-The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that exposes these tools:
+The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that provides code-intelligence tools for symbol lookup, dependency/call-graph queries, code search, snippet extraction, metrics, and write-back. Lore exposes its full tool list via MCP — discover and use the right tool for each query.
 
-| Tool | Purpose |
-|------|---------|
-| `kb_lookup` | Symbol or file lookup (signatures, locations) |
-| `kb_graph` | Call-graph and import-graph queries |
-| `kb_search` | Structural, semantic, and fused code search |
-| `kb_snippet` | Source-code snippet extraction by line range |
-| `kb_metrics` | Aggregate code metrics |
-| `kb_writeback` | Write LLM-generated summaries back to the KB |
+When available, **prefer Lore tools over reading source files directly** — they are faster, more precise, and conserve your context window. Fall back to direct file reads only when the MCP server is unavailable or a query cannot be satisfied by Lore.
 
-When these tools are available, prefer them for structural facts over exhaustive markdown inventories. Use KB markdown only for synthesized architecture, risk, and migration context.
+Use KB markdown for synthesized architecture, risk, and migration context — not as a substitute for Lore’s structural data.
 
 ## Responsibilities
 
@@ -38,7 +31,7 @@ When these tools are available, prefer them for structural facts over exhaustive
    - Read the impact assessment (`.aamf/migration/{projectName}/artifacts/impact-assessment.md`)
    - Read the knowledge base index (`.aamf/migration/{projectName}/knowledge-base/index.md`)
    - Understand module dependencies, complexity ratings, and risk factors
-  - Use Lore tools (`kb_lookup`, `kb_graph`) for authoritative dependency/symbol detail when available
+  - Use Lore tools for authoritative dependency/symbol detail when available
   - **Check your context JSON for a `guidance` array.** If present, these are user-provided migration directives that MUST be incorporated into every strategy you produce and propagated into `strategy.md` so that downstream agents (task-decomposer, code-migrator) honour them.
 
 2. **Generate Strategy Candidates**
@@ -126,7 +119,7 @@ Do not launch sub-agents directly from this agent. Runtime orchestrates `adjudic
 
 - **Do not read source code files** — rely entirely on the knowledge base and impact assessment.
 - Read only the knowledge base documents relevant to the current planning phase.
-- Use Lore tools (`kb_graph`, `kb_lookup`, `kb_snippet`) for code-layout and dependency detail.
+- Use Lore tools for code-layout and dependency detail.
 - Treat KB markdown as decision context (architecture, risks, caveats), not as a full symbol/dependency inventory.
 - Write strategy and grouping artifacts incrementally and deterministically.
 

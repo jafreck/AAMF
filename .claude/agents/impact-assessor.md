@@ -105,14 +105,11 @@ Write the full assessment to `.aamf/migration/{projectName}/artifacts/impact-ass
 
 None — this is a **leaf agent**.
 
-## KB MCP Tools
+## Lore MCP Tools
 
-If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer the following MCP tools over direct file reads:
+If the `aamf-kb` MCP server is available (indicated by `KB_DB_PATH` in your environment), prefer Lore tools over direct file reads. Lore provides code search, symbol lookup, dependency graphs, and more — discover the right tool for each query via MCP.
 
-- **`kb_search`** — full-text and semantic search across the indexed codebase. Use this to locate symbols, files, or patterns instead of running `grep` or `find`.
-- **`kb_lookup`** — retrieve a specific symbol's definition, type, docstring, and location by name. Use this instead of reading a whole file to find a function or class.
-
-Fall back to Bash / Read / Grep tools only when the KB index is unavailable or a query cannot be satisfied by the MCP tools.
+Fall back to Bash / Read / Grep tools only when the MCP server is unavailable or a query cannot be satisfied by Lore.
 
 ## Context Window Management
 

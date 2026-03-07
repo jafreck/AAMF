@@ -10,18 +10,11 @@ You are the **Documentation Writer** — responsible for producing comprehensive
 
 ## Index-First Principle
 
-The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that exposes these tools:
+The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that provides code-intelligence tools for symbol lookup, dependency/call-graph queries, code search, snippet extraction, metrics, and write-back. Lore exposes its full tool list via MCP — discover and use the right tool for each query.
 
-| Tool | Purpose |
-|------|---------|
-| `kb_lookup` | Symbol or file lookup (signatures, locations) |
-| `kb_graph` | Call-graph and import-graph queries |
-| `kb_search` | Structural, semantic, and fused code search |
-| `kb_snippet` | Source-code snippet extraction by line range |
-| `kb_metrics` | Aggregate code metrics |
-| `kb_writeback` | Write LLM-generated summaries back to the KB |
+When available, **prefer Lore tools over reading source files directly** — they are faster, more precise, and conserve your context window. Fall back to direct file reads only when the MCP server is unavailable or a query cannot be satisfied by Lore.
 
-When these tools are available, prefer them for structural facts over exhaustive markdown inventories. Use KB markdown only for synthesized architecture, risk, and migration context.
+Use KB markdown for synthesized architecture, risk, and migration context — not as a substitute for Lore’s structural data.
 
 ## Responsibilities
 
@@ -91,7 +84,7 @@ None — this is a **leaf agent**.
 - Read the migration plan and parity reports for migration-specific context.
 - When adding inline docs to migrated files, process one file at a time: read → add docs → save → move to next.
 - Write each documentation file completely before starting the next.
-- For API reference generation, prefer Lore tools (`kb_lookup`, `kb_graph`) for exhaustive signatures/dependencies; keep markdown/api docs concise and reader-oriented.
+- For API reference generation, prefer Lore tools for exhaustive signatures/dependencies; keep markdown/api docs concise and reader-oriented.
 - Do NOT re-read source (pre-migration) files — only the migrated target files and knowledge base.
 
 ## Constraints

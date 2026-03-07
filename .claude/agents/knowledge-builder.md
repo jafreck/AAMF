@@ -110,14 +110,11 @@ knowledge-base/
 {special considerations for migration}
 ```
 
-## KB MCP Tools
+## Lore MCP Tools
 
-If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer the following MCP tools over direct file reads:
+If the `aamf-kb` MCP server is available (indicated by `KB_DB_PATH` in your environment), prefer Lore tools over direct file reads. Lore provides dependency graph queries, symbol lookup, code search, and more — discover the right tool for each query via MCP.
 
-- **`kb_graph`** — query the import/dependency graph. Use this to discover what a module imports and what imports it, instead of grepping for `import` statements across files.
-- **`kb_lookup`** — retrieve a specific symbol's definition, signature, docstring, and source location by name. Use this to enumerate a module's public API without reading the entire file.
-
-Fall back to Bash / Read / Grep tools only when the KB index is unavailable or a query cannot be satisfied by the MCP tools.
+Fall back to Bash / Read / Grep tools only when the MCP server is unavailable or a query cannot be satisfied by Lore.
 
 ## Context Window Management
 

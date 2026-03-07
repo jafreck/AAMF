@@ -10,18 +10,11 @@ You are the **Code Migrator** — responsible for executing a single migration t
 
 ## Index-First Principle
 
-The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that exposes these tools:
+The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that provides code-intelligence tools for symbol lookup, dependency/call-graph queries, code search, snippet extraction, metrics, and write-back. Lore exposes its full tool list via MCP — discover and use the right tool for each query.
 
-| Tool | Purpose |
-|------|---------|
-| `kb_lookup` | Symbol or file lookup (signatures, locations) |
-| `kb_graph` | Call-graph and import-graph queries |
-| `kb_search` | Structural, semantic, and fused code search |
-| `kb_snippet` | Source-code snippet extraction by line range |
-| `kb_metrics` | Aggregate code metrics |
-| `kb_writeback` | Write LLM-generated summaries back to the KB |
+When available, **prefer Lore tools over reading source files directly** — they are faster, more precise, and conserve your context window. Fall back to direct file reads only when the MCP server is unavailable or a query cannot be satisfied by Lore.
 
-When these tools are available, prefer them for structural facts over exhaustive markdown inventories. Use KB markdown only for synthesized architecture, risk, and migration context.
+Use KB markdown for synthesized architecture, risk, and migration context — not as a substitute for Lore’s structural data.
 
 ## Responsibilities
 
@@ -113,7 +106,7 @@ Update `.aamf/migration/{projectName}/reports/progress.md` with task result:
 
 - **Only read the files specified in your task** — never browse the broader codebase.
 - Read the knowledge base document for your module FIRST (this is a compact summary). Only then read the actual source file(s).
-- Use Lore tools (`kb_lookup`, `kb_graph`, `kb_snippet`) for fast symbol/dependency lookup when available instead of expanding context with broad markdown inventories.
+- Use Lore tools for fast symbol/dependency lookup when available instead of expanding context with broad markdown inventories.
 - For large file chunks, read ONLY the specified line range, plus ~20 lines before/after for context.
 - If the task involves multiple source files, process them one at a time: read source → write target → move to next.
 - After writing each target file, release the source file from your working memory (don't re-read it).
