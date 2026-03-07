@@ -14,8 +14,10 @@ import type {
   ModelTier,
   RoutingDecision,
   RemediationContext,
+  AgentRemediationContext,
   TerminalReasonCode,
 } from '../../src/agents/types.js';
+import { toAgentRemediationContext } from '../../src/agents/types.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -621,22 +623,56 @@ describe('ModelTier', () => {
 
 // ─── Remediation Contracts ────────────────────────────────────────────────────
 
-describe('RemediationContext', () => {
-  it('should include failure kind, summary, target context, artifacts, and success condition', () => {
-    const remediation: RemediationContext = {
+describe('AgentRemediationContext', () => {
+  it('should include failure kind, target context, artifacts, and success condition', () => {
+    const remediation: AgentRemediationContext = {
       failureKind: 'parity',
-      failureSummary: 'Normalized parity mismatch on auth flow',
       failureTarget: { wave: 2, taskId: 'task-001', check: 'auth-parity-check' },
       artifactPaths: ['progress/parity-reports/task-001.md', 'src/auth.py'],
       expectedSuccessCondition: 'Parity checker returns minor-or-better delta',
     };
     expect(remediation.failureKind).toBe('parity');
-    expect(remediation.failureSummary).toContain('Normalized parity mismatch');
     expect(remediation.failureTarget.wave).toBe(2);
     expect(remediation.failureTarget.taskId).toBe('task-001');
     expect(remediation.failureTarget.check).toBe('auth-parity-check');
     expect(remediation.artifactPaths).toContain('src/auth.py');
     expect(remediation.expectedSuccessCondition).toContain('Parity checker');
+  });
+});
+
+describe('RemediationContext', () => {
+  it('should require failureSummary for internal logging use', () => {
+    const remediation: RemediationContext = {
+      failureKind: 'parity',
+      failureSummary: 'Normalized parity mismatch on auth flow',
+      failureTarget: { wave: 2, taskId: 'task-001', check: 'auth-parity-check' },
+      artifactPaths: ['progress/parity-reports/task-001.md'],
+      expectedSuccessCondition: 'Parity checker returns minor-or-better delta',
+    };
+    expect(remediation.failureSummary).toContain('Normalized parity mismatch');
+  });
+});
+
+describe('toAgentRemediationContext', () => {
+  it('should strip failureSummary and preserve all other fields', () => {
+    const internal: RemediationContext = {
+      failureKind: 'parity',
+      failureSummary: 'This should be stripped',
+      failureTarget: { wave: 1, taskId: 'task-001', check: 'parity-verifier' },
+      artifactPaths: ['/tmp/parity/task-001.md'],
+      expectedSuccessCondition: 'Parity passes',
+      adjudicationReportPath: '/tmp/adjudication/task-001.md',
+      priorAttempts: [{ attempt: 1, issueCount: 3, unresolvedIssues: ['issue-a'] }],
+    };
+    const agentCtx = toAgentRemediationContext(internal);
+
+    expect(agentCtx.failureKind).toBe('parity');
+    expect(agentCtx.failureTarget.taskId).toBe('task-001');
+    expect(agentCtx.artifactPaths).toEqual(['/tmp/parity/task-001.md']);
+    expect(agentCtx.expectedSuccessCondition).toBe('Parity passes');
+    expect(agentCtx.adjudicationReportPath).toBe('/tmp/adjudication/task-001.md');
+    expect(agentCtx.priorAttempts).toHaveLength(1);
+    expect((agentCtx as Record<string, unknown>).failureSummary).toBeUndefined();
   });
 });
 

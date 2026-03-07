@@ -17,6 +17,7 @@ import {
   RoutingDecision,
   ModelTier,
   RemediationContext,
+  toAgentRemediationContext,
   TerminalReasonCode,
   E2eSuiteBrief,
 } from '../agents/types.js';
@@ -1815,7 +1816,7 @@ export class MigrationOrchestrator {
           sourceFiles: task.sourceFiles,
           targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef,
-          ...(remediationContext ? { remediationContext } : {}),
+          ...(remediationContext ? { remediationContext: toAgentRemediationContext(remediationContext) } : {}),
         },
       );
       const migratorInv = this.buildInvocation('code-migrator', migratorCtx, 4, task.id, task);
@@ -1915,7 +1916,7 @@ export class MigrationOrchestrator {
               sourceFiles: task.sourceFiles,
               targetFiles: task.targetFiles,
               kbEntry: task.knowledgeBaseRef,
-              remediationContext: retryExhaustionRemediation,
+              remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
             },
           );
           migratorInv.contextFile = retryContext;
@@ -1931,7 +1932,7 @@ export class MigrationOrchestrator {
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: this.config.options.maxRetriesPerTask,
-              remediationContext: retryExhaustionRemediation,
+              remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
             },
           );
           return this.buildInvocation('failure-adjudicator', recoveryCtx, 4, taskId);
@@ -2063,7 +2064,7 @@ export class MigrationOrchestrator {
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: attempt,
-              remediationContext: parityRemediation,
+              remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
           const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
@@ -2085,7 +2086,7 @@ export class MigrationOrchestrator {
               sourceFiles: task.sourceFiles,
               targetFiles: task.targetFiles,
               kbEntry: task.knowledgeBaseRef,
-              remediationContext: parityRemediation,
+              remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
           const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
@@ -2185,7 +2186,7 @@ export class MigrationOrchestrator {
             sourceFiles: task.sourceFiles,
             targetFiles: task.targetFiles,
             kbEntry: task.knowledgeBaseRef,
-            remediationContext: minorRemediation,
+            remediationContext: toAgentRemediationContext(minorRemediation),
           },
         );
         const repassInv = this.buildInvocation('code-migrator', repassCtx, 4, task.id);
@@ -3175,7 +3176,7 @@ export class MigrationOrchestrator {
           targetFile: task.targetFiles[0],
           kbEntry: task.knowledgeBaseRef,
           attemptNumber: attempt,
-          remediationContext,
+          remediationContext: toAgentRemediationContext(remediationContext),
         },
       );
       const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
@@ -3196,7 +3197,7 @@ export class MigrationOrchestrator {
           sourceFiles: task.sourceFiles,
           targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef,
-          remediationContext,
+          remediationContext: toAgentRemediationContext(remediationContext),
         },
       );
       const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
@@ -3326,7 +3327,7 @@ export class MigrationOrchestrator {
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: attempt,
-              remediationContext: parityRemediation,
+              remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
           const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
@@ -3344,7 +3345,7 @@ export class MigrationOrchestrator {
               sourceFiles: task.sourceFiles,
               targetFiles: task.targetFiles,
               kbEntry: task.knowledgeBaseRef,
-              remediationContext: parityRemediation,
+              remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
           const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
