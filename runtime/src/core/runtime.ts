@@ -80,24 +80,21 @@ export class MigrationRuntime {
   private getActiveRuntimeSettings(): {
     agentDir: string;
     model?: string;
-    costOverrides?: MigrationConfig['copilot']['costOverrides'];
     agentFileSuffix: '.agent.md' | '.md';
     validateSchemaContract: boolean;
   } {
-    if (this.config.agentRuntime === 'claude-code') {
+    if (this.config.agentBackend.runtime === 'claude-code') {
       return {
-        agentDir: this.config.claudeCode.agentDir,
-        model: this.config.claudeCode.model,
-        costOverrides: this.config.claudeCode.costOverrides,
+        agentDir: this.config.agentBackend.agentDir,
+        model: this.config.agentBackend.model,
         agentFileSuffix: '.md',
         validateSchemaContract: false,
       };
     }
 
     return {
-      agentDir: this.config.copilot.agentDir,
-      model: this.config.copilot.model,
-      costOverrides: this.config.copilot.costOverrides,
+      agentDir: this.config.agentBackend.agentDir,
+      model: this.config.agentBackend.model,
       agentFileSuffix: '.agent.md',
       validateSchemaContract: true,
     };
@@ -260,7 +257,7 @@ export class MigrationRuntime {
     
     const runtimeSettings = this.getActiveRuntimeSettings();
     const model = runtimeSettings.model ?? 'claude-sonnet-4';
-    const estimator = new CostEstimator(runtimeSettings.costOverrides);
+    const estimator = new CostEstimator();
     const cost = estimator.estimateFromTotal(model, result.tokenUsage.total);
     console.log(`Estimated Cost: ${CostEstimator.formatCost(cost.total)}`);
 

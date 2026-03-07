@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 export const MigrationConfigSchema = z.object({
   projectName: z.string().min(1).regex(/^[a-z0-9-]+$/),
-  agentRuntime: z.enum(['copilot', 'claude-code']).default('copilot'),
   source: z.object({
     path: z.string(),
     language: z.string(),
@@ -24,8 +23,6 @@ export const MigrationConfigSchema = z.object({
     maxRetriesPerTask: z.number().int().min(1).max(5).default(3),
     maxLinesPerTask: z.number().int().default(500),
     tokenBudget: z.number().int().optional(),
-    contextWindowStrategy: z.enum(['per-invocation', 'session']).default('per-invocation'),
-    contextWindowTokens: z.number().int().optional(),
     dryRun: z.boolean().default(false),
     resume: z.boolean().default(false),
     invocationDelayMs: z.number().int().min(0).default(0),
@@ -72,7 +69,7 @@ export const MigrationConfigSchema = z.object({
      * Maximum number of blocked tasks before Phase 4 is halted.
      * Only applies when `continueOnBlocked` is `true`. Default: unlimited (0).
      */
-    maxBlockedTasks: z.number().int().min(0).default(0),
+    maxBlockedTasks: z.number().int().min(0).default(1),
     qualityPolicy: z.enum(['strict', 'balanced', 'deferred-strict']).default('strict'),
     /**
      * Maximum infrastructure-error retries before invoking failure-adjudicator.
@@ -82,18 +79,7 @@ export const MigrationConfigSchema = z.object({
      * Default: 3.
      */
     maxInfraRetries: z.number().int().min(0).max(10).default(3),
-    /**
-     * Estimated average number of tokens consumed per migration task.
-     * Used for Phase 4 cost projection. Default: 100000.
-     */
-    avgTokensPerTask: z.number().int().min(1).default(100000),
-    /**
-     * Multiplier applied to the Phase 4 aggregate cost projection to account
-     * for retry and convergence overhead (failure-adjudicator invocations,
-     * wave convergence iterations, and code-migrator retries).
-     * Must be between 1 and 3. Default: 1.25.
-     */
-    retryOverheadMultiplier: z.number().min(1).max(3).default(1.25),
+
     /**
      * Options for the optional idiomatic refactor phase (Phase 8).
      * When enabled, the idiomatic-reviewer and idiomatic-refactorer agents
@@ -193,7 +179,6 @@ export const MigrationConfigSchema = z.object({
     maxParallelAgents: 3,
     maxRetriesPerTask: 3,
     maxLinesPerTask: 500,
-    contextWindowStrategy: 'per-invocation',
     dryRun: false,
     resume: false,
     invocationDelayMs: 0,
@@ -204,11 +189,9 @@ export const MigrationConfigSchema = z.object({
       maxConvergenceIterations: 3,
     },
     continueOnBlocked: true,
-    maxBlockedTasks: 0,
+    maxBlockedTasks: 1,
     qualityPolicy: 'strict',
     maxInfraRetries: 3,
-    avgTokensPerTask: 100000,
-    retryOverheadMultiplier: 1.25,
     keepArtifacts: false,
     git: {
       enabled: true,
@@ -220,47 +203,36 @@ export const MigrationConfigSchema = z.object({
       authorEmail: 'aamf@local.invalid',
     },
   }),
-  copilot: z.object({
-    cliCommand: z.string().default('copilot'),
+  /**
+   * Agent backend configuration.
+   *
+   * `runtime` selects which CLI to use: `'copilot'` (default) or `'claude-code'`.
+   * The remaining fields (`cliCommand`, `agentDir`) default based on the
+   * selected runtime if not explicitly provided.
+   */
+  agentBackend: z.object({
+    /** Which CLI runtime to use. */
+    runtime: z.enum(['copilot', 'claude-code']).default('copilot'),
+    /** CLI command to invoke. Defaults to `'copilot'` or `'claude'` based on `runtime`. */
+    cliCommand: z.string().optional(),
+    /** Model identifier to pass to the CLI. */
     model: z.string().optional(),
+    /** Model to use for failure-recovery retries. */
     failureRecoveryModel: z.string().optional(),
-    agentDir: z.string().default('.github/agents'),
+    /** Directory containing agent definition files. Defaults to `'.github/agents'` (copilot) or `'.claude/agents'` (claude-code). */
+    agentDir: z.string().optional(),
+    /** Default timeout per agent invocation in milliseconds. */
     timeout: z.number().int().default(300_000),
-    costOverrides: z.record(
-      z.string(),
-      z.object({
-        input: z.number().min(0).describe('Cost per 1M input tokens in USD'),
-        output: z.number().min(0).describe('Cost per 1M output tokens in USD'),
-      }),
-    ).optional().describe('Per-model cost overrides (USD per 1M tokens)'),
     /** Per-phase timeout overrides in milliseconds, keyed by phase number. */
     phaseTimeouts: z.record(z.coerce.number(), z.number().int()).optional(),
   }).default({
-    cliCommand: 'copilot',
-    agentDir: '.github/agents',
+    runtime: 'copilot',
     timeout: 300_000,
-  }),
-  claudeCode: z.object({
-    cliCommand: z.string().default('claude'),
-    model: z.string().optional(),
-    failureRecoveryModel: z.string().optional(),
-    agentDir: z.string().default('.claude/agents'),
-    timeout: z.number().int().default(300_000),
-    contextWindowTokens: z.number().int().optional(),
-    costOverrides: z.record(
-      z.string(),
-      z.object({
-        input: z.number().min(0).describe('Cost per 1M input tokens in USD'),
-        output: z.number().min(0).describe('Cost per 1M output tokens in USD'),
-      }),
-    ).optional().describe('Per-model cost overrides (USD per 1M tokens)'),
-    /** Per-phase timeout overrides in milliseconds, keyed by phase number. */
-    phaseTimeouts: z.record(z.coerce.number(), z.number().int()).optional(),
-  }).default({
-    cliCommand: 'claude',
-    agentDir: '.claude/agents',
-    timeout: 300_000,
-  }),
+  }).transform((val) => ({
+    ...val,
+    cliCommand: val.cliCommand ?? (val.runtime === 'claude-code' ? 'claude' : 'copilot'),
+    agentDir: val.agentDir ?? (val.runtime === 'claude-code' ? '.claude/agents' : '.github/agents'),
+  })),
   environment: z.object({
     /** Whether to resolve PATH from a login shell at startup (default: true). */
     inheritShellPath: z.boolean().default(true),

@@ -184,11 +184,6 @@ describe('createMockConfig', () => {
     const config = createMockConfig();
     expect(config.options.keepArtifacts).toBe(false);
   });
-
-  it('should default contextWindowStrategy to per-invocation', () => {
-    const config = createMockConfig();
-    expect(config.options.contextWindowStrategy).toBe('per-invocation');
-  });
 });
 
 // ─── makeTask ─────────────────────────────────────────────────────────────────

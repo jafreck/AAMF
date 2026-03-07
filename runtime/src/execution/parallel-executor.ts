@@ -25,12 +25,6 @@ export class ParallelExecutor {
 
   /** Execute all invocations concurrently (up to the concurrency limit). Returns results in invocation order. */
   async executeAll(invocations: AgentInvocation[]): Promise<AgentResult[]> {
-    if (this.config?.options.contextWindowStrategy === 'session' && this.concurrency > 1) {
-      this.logger.warn(
-        `contextWindowStrategy is 'session' but concurrency is ${this.concurrency} > 1. ` +
-          'Session isolation is not guaranteed when multiple agents run concurrently.',
-      );
-    }
     this.logger.info(`Executing ${invocations.length} agent invocations with concurrency ${this.concurrency}`);
     const promises = invocations.map((inv, i) =>
       this.limit(async () => {

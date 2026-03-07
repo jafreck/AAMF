@@ -57,18 +57,6 @@ export class ContextBuilder {
     return contextPath;
   }
 
-  /**
-   * Returns the effective context-window token limit based on `agentRuntime`.
-   * When `agentRuntime === 'claude-code'`, `claudeCode.contextWindowTokens`
-   * takes precedence over `options.contextWindowTokens`.
-   */
-  private getEffectiveContextWindowTokens(): number | undefined {
-    if (this.config.agentRuntime === 'claude-code') {
-      return this.config.claudeCode?.contextWindowTokens ?? this.config.options.contextWindowTokens;
-    }
-    return this.config.options.contextWindowTokens;
-  }
-
   private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
@@ -107,17 +95,14 @@ export class ContextBuilder {
     return undefined;
   }
 
-  /**
-   * Assemble an {@link AgentContext} object for the given agent and phase.
-   * Includes a `contextWindowTokens` key so agents can self-limit their context usage.
-   */
+  /** Assemble an {@link AgentContext} object for the given agent and phase. */
   private createContext(
     agent: AgentName,
     phase: number,
     taskId?: string,
     payload?: Record<string, unknown>,
-  ): AgentContext & { contextWindowTokens?: number } {
-    const base: Omit<AgentContext, 'inputFiles' | 'outputPath' | 'payload'> & { contextWindowTokens?: number } = {
+  ): AgentContext {
+    const base: Omit<AgentContext, 'inputFiles' | 'outputPath' | 'payload'> = {
       agent,
       projectName: this.config.projectName,
       phase,
@@ -133,7 +118,6 @@ export class ContextBuilder {
           outputPath: this.config.target.outputPath,
         },
       },
-      contextWindowTokens: this.getEffectiveContextWindowTokens(),
     };
 
     const { inputFiles, outputPath, agentPayload } = this.getAgentFiles(agent, taskId, payload);

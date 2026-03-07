@@ -64,31 +64,34 @@ describe('Config Loader', () => {
     expect(config.target.outputPath).toBe(join(tempDir, 'out'));
   });
 
-  it('should resolve copilot.agentDir relative to config file directory', async () => {
+  it('should resolve agentBackend.agentDir relative to config file directory', async () => {
     const configPath = join(tempDir, 'migration.config.json');
     await writeFile(configPath, JSON.stringify(validConfig));
 
     const config = await loadConfig(configPath);
-    expect(config.copilot.agentDir).toBe(join(tempDir, '.github', 'agents'));
+    expect(config.agentBackend.agentDir).toBe(join(tempDir, '.github', 'agents'));
   });
 
-  it('should resolve claudeCode.agentDir relative to config file directory', async () => {
-    const configPath = join(tempDir, 'migration.config.json');
-    await writeFile(configPath, JSON.stringify(validConfig));
-
-    const config = await loadConfig(configPath);
-    expect(config.claudeCode.agentDir).toBe(join(tempDir, '.claude', 'agents'));
-  });
-
-  it('should resolve explicit claudeCode.agentDir relative to config file directory', async () => {
+  it('should resolve agentBackend.agentDir for claude-code relative to config file directory', async () => {
     const configPath = join(tempDir, 'migration.config.json');
     await writeFile(configPath, JSON.stringify({
       ...validConfig,
-      claudeCode: { agentDir: './custom-agents' },
+      agentBackend: { runtime: 'claude-code' },
     }));
 
     const config = await loadConfig(configPath);
-    expect(config.claudeCode.agentDir).toBe(join(tempDir, 'custom-agents'));
+    expect(config.agentBackend.agentDir).toBe(join(tempDir, '.claude', 'agents'));
+  });
+
+  it('should resolve explicit agentBackend.agentDir relative to config file directory', async () => {
+    const configPath = join(tempDir, 'migration.config.json');
+    await writeFile(configPath, JSON.stringify({
+      ...validConfig,
+      agentBackend: { agentDir: './custom-agents' },
+    }));
+
+    const config = await loadConfig(configPath);
+    expect(config.agentBackend.agentDir).toBe(join(tempDir, 'custom-agents'));
   });
 
   it('should merge overrides correctly with applyOverrides', async () => {
@@ -125,8 +128,8 @@ describe('Config Loader', () => {
     expect(config.options.maxRetriesPerTask).toBe(3);
     expect(config.options.waveControl).toEqual({ waveSize: 3, maxConvergenceIterations: 3 });
     expect(config.options.qualityPolicy).toBe('strict');
-    expect(config.copilot.timeout).toBe(300_000);
-    expect(config.copilot.cliCommand).toBe('copilot');
+    expect(config.agentBackend.timeout).toBe(300_000);
+    expect(config.agentBackend.cliCommand).toBe('copilot');
   });
 
   it('should preserve wave execution options while resolving paths', async () => {

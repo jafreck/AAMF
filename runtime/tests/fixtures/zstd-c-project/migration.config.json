@@ -51,7 +51,8 @@
       }
     }
   },
-  "copilot": {
+  "agentBackend": {
+    "runtime": "copilot",
     "cliCommand": "copilot",
     "model": "claude-opus-4.6",
     "failureRecoveryModel": "gpt-5.3-codex",

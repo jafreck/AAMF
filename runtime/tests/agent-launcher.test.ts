@@ -18,7 +18,7 @@ describe('AgentLauncher', () => {
     tempDir = await mkdtemp(join(tmpdir(), 'aamf-launcher-'));
     projectRoot = tempDir;
     config = createMockConfig({
-      copilot: { cliCommand: 'node', agentDir: '.github/agents', timeout: 300_000 },
+      agentBackend: { runtime: 'copilot', cliCommand: 'node', agentDir: '.github/agents', timeout: 300_000 },
     });
     logger = createSilentLogger(tempDir);
   });
@@ -38,7 +38,7 @@ describe('AgentLauncher', () => {
   /** Helper to create a launcher with a given CLI command */
   function makeLauncher(cliCommand: string, model?: string): AgentLauncher {
     const cfg = createMockConfig({
-      copilot: { cliCommand, agentDir: '.github/agents', timeout: 300_000, ...(model ? { model } : {}) },
+      agentBackend: { runtime: 'copilot', cliCommand, agentDir: '.github/agents', timeout: 300_000, ...(model ? { model } : {}) },
     });
     config = cfg;
     return new AgentLauncher(cfg, projectRoot, logger);
@@ -230,7 +230,7 @@ describe('AgentLauncher', () => {
   it('should enforce timeout and kill the process', async () => {
     // Use node -e directly since it's a single process, easier to kill than bash
     const cfg = createMockConfig({
-      copilot: { cliCommand: 'node', agentDir: '.github/agents', timeout: 300_000 },
+      agentBackend: { runtime: 'copilot', cliCommand: 'node', agentDir: '.github/agents', timeout: 300_000 },
     });
     const launcherT = new AgentLauncher(cfg, projectRoot, logger);
     config = cfg;
@@ -543,7 +543,7 @@ describe('AgentLauncher', () => {
       const script = await createScript('no-aamf-warn.sh', 'echo "no block"\nexit 0');
       const warnSpy = vi.spyOn(Logger.prototype, 'warn');
       const cfg2 = createMockConfig({
-        copilot: { cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
+        agentBackend: { runtime: 'copilot', cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
       });
       const launcher2 = new AgentLauncher(cfg2, projectRoot, logger);
       const { contextFile, progressDir } = await prepareInvocation('aamf-warn-001');
@@ -732,7 +732,7 @@ describe('AgentLauncher', () => {
     it('should set queueDelay when invocationDelayMs causes a wait', async () => {
       const script = await createScript('queue-delay.sh', 'echo "OK"\nexit 0');
       const cfg = createMockConfig({
-        copilot: { cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
+        agentBackend: { runtime: 'copilot', cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 3,
@@ -744,7 +744,6 @@ describe('AgentLauncher', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          avgTokensPerTask: 5000,
         },
       });
       config = cfg;
@@ -801,7 +800,7 @@ describe('AgentLauncher', () => {
     it('should prepend environment.extraPath entries when inheritShellPath is false', async () => {
       const script = await createScript('print-path.sh', 'echo "PATH_VALUE:$PATH"\nexit 0');
       const cfg = createMockConfig({
-        copilot: { cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
+        agentBackend: { runtime: 'copilot', cliCommand: script, agentDir: '.github/agents', timeout: 300_000 },
         environment: {
           inheritShellPath: false,
           extraPath: ['/tmp/aamf-extra-bin'],
@@ -937,20 +936,15 @@ describe('AgentLauncher', () => {
       expect(logContent).not.toContain('--additional-mcp-config');
     });
 
-    it('should use Claude runtime and pass --mcp-config when agentRuntime is claude-code', async () => {
+    it('should use Claude runtime and pass --mcp-config when agentBackend.runtime is claude-code', async () => {
       const script = await createScript('echo-claude-mcp.sh', 'echo "ARGS:$@"\nexit 0');
       const cfg = createMockConfig({
-        agentRuntime: 'claude-code',
-        claudeCode: {
+        agentBackend: {
+          runtime: 'claude-code',
           cliCommand: script,
           agentDir: '.claude/agents',
           timeout: 300_000,
           model: 'claude-sonnet-4',
-        },
-        copilot: {
-          cliCommand: 'copilot',
-          agentDir: '.github/agents',
-          timeout: 300_000,
         },
       });
       config = cfg;

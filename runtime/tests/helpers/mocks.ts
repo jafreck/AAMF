@@ -103,9 +103,6 @@ export function createMockConfig(overrides?: any): MigrationConfig {
       maxBlockedTasks: 0,
       qualityPolicy: 'strict',
       maxInfraRetries: 3,
-      avgTokensPerTask: 100000,
-      retryOverheadMultiplier: 1.25,
-      contextWindowStrategy: 'per-invocation',
       keepArtifacts: false,
       git: {
         enabled: false,
@@ -118,19 +115,18 @@ export function createMockConfig(overrides?: any): MigrationConfig {
       },
       ...(overrides?.options ?? {}),
     },
-    copilot: {
+    agentBackend: {
+      runtime: 'copilot',
       cliCommand: 'copilot',
       agentDir: '.github/agents',
       timeout: 300_000,
-      ...(overrides?.copilot ?? {}),
+      ...(overrides?.agentBackend ?? {}),
     },
     environment: {
       inheritShellPath: false,
       extraPath: [],
       ...(overrides?.environment ?? {}),
     },
-    ...(overrides?.agentRuntime ? { agentRuntime: overrides.agentRuntime } : {}),
-    ...(overrides?.claudeCode ? { claudeCode: overrides.claudeCode } : {}),
   };
 
   return MigrationConfigSchema.parse(raw);
