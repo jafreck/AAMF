@@ -363,6 +363,35 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe('/tmp/target');
     });
 
+    it('should include taskScope in parity-verifier payload when provided', async () => {
+      const contextPath = await builder.buildContext('parity-verifier', 4, 'task-001', {
+        sourceFile: 'src/auth.py',
+        targetFile: 'src/auth.ts',
+        taskScope: {
+          description: 'Scaffold auth module with type stubs',
+          acceptanceCriteria: ['Function signatures compile'],
+          parityChecks: ['API surface only'],
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      const scope = context.payload?.taskScope as Record<string, unknown> | undefined;
+
+      expect(scope).toBeDefined();
+      expect(scope?.description).toBe('Scaffold auth module with type stubs');
+      expect(scope?.acceptanceCriteria).toEqual(['Function signatures compile']);
+      expect(scope?.parityChecks).toEqual(['API surface only']);
+    });
+
+    it('should omit taskScope from parity-verifier payload when not provided', async () => {
+      const contextPath = await builder.buildContext('parity-verifier', 4, 'task-001', {
+        sourceFile: 'src/auth.py',
+        targetFile: 'src/auth.ts',
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.payload?.taskScope).toBeUndefined();
+    });
+
     it('should route test-writer to target file + KB entry', async () => {
       const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFile: 'src/auth.ts',
@@ -374,6 +403,25 @@ describe('ContextBuilder', () => {
       expect(context.inputFiles).toContain('src/auth.ts');
       expect(context.inputFiles).toContain('kb/auth.md');
       expect(context.outputPath).toBe('/tmp/target');
+    });
+
+    it('should include taskScope in test-writer payload when provided', async () => {
+      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+        targetFile: 'src/auth.ts',
+        kbEntry: 'kb/auth.md',
+        testType: 'unit',
+        taskScope: {
+          description: 'Migrate auth module login flow',
+          acceptanceCriteria: ['Login function returns token on success'],
+          parityChecks: ['Login returns equivalent token format'],
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      const scope = context.payload?.taskScope as Record<string, unknown> | undefined;
+
+      expect(scope).toBeDefined();
+      expect(scope?.description).toBe('Migrate auth module login flow');
+      expect(scope?.acceptanceCriteria).toEqual(['Login function returns token on success']);
     });
 
     it('should set test-writer outputPath to target root, not a subdirectory', async () => {
@@ -553,6 +601,57 @@ describe('ContextBuilder', () => {
       expect(context.inputFiles).toContain('src/auth.py');
       expect(context.inputFiles).toContain('src/auth.ts');
       expect(context.outputPath).toBe('/tmp/target');
+    });
+
+    it('should include taskScope in failure-adjudicator payload when provided', async () => {
+      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
+        failureReport: 'Parity failed',
+        sourceFile: 'src/auth.py',
+        targetFile: 'src/auth.ts',
+        kbEntry: 'kb/auth.md',
+        attemptNumber: 1,
+        taskScope: {
+          description: 'Scaffold auth module',
+          acceptanceCriteria: ['Signatures compile'],
+          parityChecks: ['API surface matches'],
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      const scope = context.payload?.taskScope as Record<string, unknown> | undefined;
+
+      expect(scope).toBeDefined();
+      expect(scope?.description).toBe('Scaffold auth module');
+      expect(scope?.acceptanceCriteria).toEqual(['Signatures compile']);
+      expect(scope?.parityChecks).toEqual(['API surface matches']);
+    });
+
+    it('should include taskScope in code-migrator payload when provided', async () => {
+      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
+        kbEntry: 'kb/auth.md',
+        taskScope: {
+          description: 'Migrate auth login',
+          acceptanceCriteria: ['Login/logout parity'],
+          parityChecks: ['Token format matches'],
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      const scope = context.payload?.taskScope as Record<string, unknown> | undefined;
+
+      expect(scope).toBeDefined();
+      expect(scope?.description).toBe('Migrate auth login');
+      expect(scope?.acceptanceCriteria).toEqual(['Login/logout parity']);
+    });
+
+    it('should omit taskScope from code-migrator payload when not provided', async () => {
+      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
+      });
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.payload?.taskScope).toBeUndefined();
     });
 
     it('should preserve remediation payload fields in failure-adjudicator payload', async () => {

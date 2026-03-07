@@ -1455,6 +1455,24 @@ export class MigrationOrchestrator {
     };
   }
 
+  /**
+   * Extract the task-scope fields (description, acceptanceCriteria, parityChecks)
+   * from a {@link MigrationTask} as a payload fragment.  Every task-scoped agent
+   * (code-migrator, parity-verifier, test-writer, failure-adjudicator) receives
+   * this so it can calibrate its work to the task's intended scope rather than
+   * assuming full source↔target equivalence.
+   */
+  private taskScopePayload(task: MigrationTask): Record<string, unknown> {
+    return {
+      taskScope: {
+        description: task.description,
+        acceptanceCriteria: task.acceptanceCriteria,
+        parityChecks: task.parityChecks,
+        ...(task.lineRange ? { lineRange: task.lineRange } : {}),
+      },
+    };
+  }
+
   private formatFailureTarget(details: Pick<RetryTargetDetails, 'taskId' | 'wave' | 'check'>): string {
     const parts = [
       details.taskId ? `task=${details.taskId}` : undefined,
@@ -1818,6 +1836,7 @@ export class MigrationOrchestrator {
           sourceFiles: task.sourceFiles,
           targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef,
+          ...this.taskScopePayload(task),
           ...(remediationContext ? { remediationContext: toAgentRemediationContext(remediationContext) } : {}),
         },
       );
@@ -1918,6 +1937,7 @@ export class MigrationOrchestrator {
               sourceFiles: task.sourceFiles,
               targetFiles: task.targetFiles,
               kbEntry: task.knowledgeBaseRef,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
             },
           );
@@ -1934,6 +1954,7 @@ export class MigrationOrchestrator {
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: this.config.options.maxRetriesPerTask,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
             },
           );
@@ -1971,6 +1992,7 @@ export class MigrationOrchestrator {
         {
           sourceFile: task.sourceFiles[0],
           targetFile: task.targetFiles[0],
+          ...this.taskScopePayload(task),
         },
       );
       const testCtx = await this.contextBuilder.buildContext(
@@ -1981,6 +2003,7 @@ export class MigrationOrchestrator {
           targetFile: task.targetFiles[0],
           kbEntry: task.knowledgeBaseRef,
           testType: 'unit',
+          ...this.taskScopePayload(task),
         },
       );
 
@@ -2060,6 +2083,7 @@ export class MigrationOrchestrator {
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: attempt,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
@@ -2082,6 +2106,7 @@ export class MigrationOrchestrator {
               sourceFiles: task.sourceFiles,
               targetFiles: task.targetFiles,
               kbEntry: task.knowledgeBaseRef,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
@@ -2104,6 +2129,7 @@ export class MigrationOrchestrator {
             {
               sourceFile: task.sourceFiles[0],
               targetFile: task.targetFiles[0],
+              ...this.taskScopePayload(task),
             },
           );
           const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
@@ -2182,6 +2208,7 @@ export class MigrationOrchestrator {
             sourceFiles: task.sourceFiles,
             targetFiles: task.targetFiles,
             kbEntry: task.knowledgeBaseRef,
+            ...this.taskScopePayload(task),
             remediationContext: toAgentRemediationContext(minorRemediation),
           },
         );
@@ -2200,6 +2227,7 @@ export class MigrationOrchestrator {
             {
               sourceFile: task.sourceFiles[0],
               targetFile: task.targetFiles[0],
+              ...this.taskScopePayload(task),
             },
           );
           const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
@@ -2515,6 +2543,18 @@ export class MigrationOrchestrator {
             fixIndex,
             lastSuccessfulStep: 'fix-started',
           });
+          const fixRemediation = this.buildRemediationContext({
+            failureKind: 'parity',
+            failureSummary: fix.description,
+            taskId: fixTaskId,
+            check: 'final-parity-checker',
+            artifactPaths: [
+              ...(fix.sourceFile ? [fix.sourceFile] : []),
+              ...(fix.targetFile ? [fix.targetFile] : []),
+            ],
+            expectedSuccessCondition: `Parity issue resolved: ${fix.description}`,
+          });
+
           const fixCtx = await this.contextBuilder.buildContext(
             'code-migrator',
             5,
@@ -2522,7 +2562,12 @@ export class MigrationOrchestrator {
             {
               sourceFiles: fix.sourceFile ? [fix.sourceFile] : [],
               targetFiles: fix.targetFile ? [fix.targetFile] : [],
-              description: fix.description,
+              taskScope: {
+                description: `Fix parity issue: ${fix.description}`,
+                acceptanceCriteria: [fix.description],
+                parityChecks: [fix.description],
+              },
+              remediationContext: toAgentRemediationContext(fixRemediation),
             },
           );
           const fixInv = this.buildInvocation(
@@ -3178,6 +3223,7 @@ export class MigrationOrchestrator {
           targetFile: task.targetFiles[0],
           kbEntry: task.knowledgeBaseRef,
           attemptNumber: attempt,
+          ...this.taskScopePayload(task),
           remediationContext: toAgentRemediationContext(remediationContext),
         },
       );
@@ -3199,6 +3245,7 @@ export class MigrationOrchestrator {
           sourceFiles: task.sourceFiles,
           targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef,
+          ...this.taskScopePayload(task),
           remediationContext: toAgentRemediationContext(remediationContext),
         },
       );
@@ -3324,6 +3371,7 @@ export class MigrationOrchestrator {
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: attempt,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
@@ -3342,6 +3390,7 @@ export class MigrationOrchestrator {
               sourceFiles: task.sourceFiles,
               targetFiles: task.targetFiles,
               kbEntry: task.knowledgeBaseRef,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
@@ -3359,6 +3408,7 @@ export class MigrationOrchestrator {
             {
               sourceFile: task.sourceFiles[0],
               targetFile: task.targetFiles[0],
+              ...this.taskScopePayload(task),
             },
           );
           const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
