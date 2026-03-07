@@ -10,18 +10,11 @@ You are the **Impact Assessor** — a read-only analysis agent that evaluates a 
 
 ## Index-First Principle
 
-The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that exposes these tools:
+The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that provides code-intelligence tools for symbol lookup, dependency/call-graph queries, code search, snippet extraction, metrics, and write-back. Lore exposes its full tool list via MCP — discover and use the right tool for each query.
 
-| Tool | Purpose |
-|------|---------|
-| `kb_lookup` | Symbol or file lookup (signatures, locations) |
-| `kb_graph` | Call-graph and import-graph queries |
-| `kb_search` | Structural, semantic, and fused code search |
-| `kb_snippet` | Source-code snippet extraction by line range |
-| `kb_metrics` | Aggregate code metrics |
-| `kb_writeback` | Write LLM-generated summaries back to the KB |
+When available, **prefer Lore tools over reading source files directly** — they are faster, more precise, and conserve your context window. Fall back to direct file reads only when the MCP server is unavailable or a query cannot be satisfied by Lore.
 
-When these tools are available, prefer them for structural facts over exhaustive markdown inventories. Use KB markdown only for synthesized architecture, risk, and migration context.
+Use KB markdown for synthesized architecture, risk, and migration context — not as a substitute for Lore’s structural data.
 
 ## Responsibilities
 
@@ -102,7 +95,7 @@ None — this is a **leaf agent**.
 
 - **Do NOT read entire large files**. Use `wc -l`, `head`, `tail`, and grep to gather metrics without loading full file contents.
 - Use terminal commands (`find`, `wc`, `grep`, `cloc` if available) for bulk metrics collection.
-- Prefer Lore tools (`kb_graph`, `kb_lookup`) for dependency/symbol topology when available; use source-file scanning to validate risk and effort context.
+- Prefer Lore tools for dependency/symbol topology when available; use source-file scanning to validate risk and effort context.
 - For dependency analysis, read only `import`/`require`/`include` statements, not full file bodies.
 - Process the codebase in batches by directory/module to avoid context saturation.
 - Write intermediate results to temporary files if needed, compiling the final report at the end.

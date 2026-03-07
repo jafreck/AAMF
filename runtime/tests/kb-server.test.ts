@@ -52,7 +52,7 @@ afterAll(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-// ─── kb_lookup ────────────────────────────────────────────────────────────────
+// ─── lore_lookup ────────────────────────────────────────────────────────────────
 
 describe('lookup handler', () => {
   it('returns an array result for kind="symbol" with a known name', () => {
@@ -75,7 +75,7 @@ describe('lookup handler', () => {
   });
 });
 
-// ─── kb_graph ─────────────────────────────────────────────────────────────────
+// ─── lore_graph ─────────────────────────────────────────────────────────────────
 
 describe('graph handler', () => {
   it('returns an edges array for kind="import"', () => {
@@ -96,7 +96,7 @@ describe('graph handler', () => {
   });
 });
 
-// ─── kb_search ────────────────────────────────────────────────────────────────
+// ─── lore_search ────────────────────────────────────────────────────────────────
 
 describe('search handler', () => {
   it('mode="structural" returns results for a known symbol name', async () => {
@@ -124,7 +124,7 @@ describe('search handler', () => {
   });
 });
 
-// ─── kb_snippet ───────────────────────────────────────────────────────────────
+// ─── lore_snippet ───────────────────────────────────────────────────────────────
 
 describe('snippet handler', () => {
   it('returns source text for an indexed file', () => {
@@ -157,7 +157,7 @@ describe('snippet handler', () => {
   });
 });
 
-// ─── kb_metrics ───────────────────────────────────────────────────────────────
+// ─── lore_metrics ───────────────────────────────────────────────────────────────
 
 describe('metrics handler', () => {
   it('returns symbol_count, file_count, and import_edge_count', () => {
@@ -170,7 +170,7 @@ describe('metrics handler', () => {
   });
 });
 
-// ─── kb_writeback ─────────────────────────────────────────────────────────────
+// ─── lore_writeback ─────────────────────────────────────────────────────────────
 
 describe('writeback handler', () => {
   it('persists a summary and returns ok=true', () => {

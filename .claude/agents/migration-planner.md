@@ -127,13 +127,11 @@ Example `strategy.md`:
 
 Do not launch sub-agents directly from this prompt.
 
-## KB MCP Tools
+## Lore MCP Tools
 
-If the KB index is available (indicated by `KB_DB_PATH` in your environment), prefer the following MCP tool over direct file reads:
+If the `aamf-kb` MCP server is available (indicated by `KB_DB_PATH` in your environment), prefer Lore tools over direct file reads. Lore provides dependency graph queries, symbol lookup, code search, and more — discover the right tool for each query via MCP.
 
-- **`kb_graph`** — query the import/dependency graph to determine topological ordering of modules and to identify tightly coupled components that must be migrated together.
-
-Fall back to Bash / Read / Grep tools only when the KB index is unavailable or a query cannot be satisfied by the MCP tools.
+Fall back to Bash / Read / Grep tools only when the MCP server is unavailable or a query cannot be satisfied by Lore.
 
 ## Context Window Management
 

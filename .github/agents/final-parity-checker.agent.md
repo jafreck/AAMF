@@ -10,18 +10,11 @@ You are the **Final Parity Checker** — a secondary, comprehensive verification
 
 ## Index-First Principle
 
-The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that exposes these tools:
+The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that provides code-intelligence tools for symbol lookup, dependency/call-graph queries, code search, snippet extraction, metrics, and write-back. Lore exposes its full tool list via MCP — discover and use the right tool for each query.
 
-| Tool | Purpose |
-|------|---------|
-| `kb_lookup` | Symbol or file lookup (signatures, locations) |
-| `kb_graph` | Call-graph and import-graph queries |
-| `kb_search` | Structural, semantic, and fused code search |
-| `kb_snippet` | Source-code snippet extraction by line range |
-| `kb_metrics` | Aggregate code metrics |
-| `kb_writeback` | Write LLM-generated summaries back to the KB |
+When available, **prefer Lore tools over reading source files directly** — they are faster, more precise, and conserve your context window. Fall back to direct file reads only when the MCP server is unavailable or a query cannot be satisfied by Lore.
 
-When these tools are available, prefer them for structural facts over exhaustive markdown inventories. Use KB markdown only for synthesized architecture, risk, and migration context.
+Use KB markdown for synthesized architecture, risk, and migration context — not as a substitute for Lore’s structural data.
 
 ## Why a Separate Final Check?
 
@@ -121,7 +114,7 @@ This agent inevitably needs to scan a large codebase. Manage context aggressivel
 - **Phase 1: File Manifest** — Use `find` and `ls` commands to list all files. Compare source and target file lists. This requires zero file content in context.
 - **Phase 2: Stub Scan** — Use `grep -rn "TODO\|FIXME\|not implemented\|stub\|placeholder"` across the target codebase. Read only matching lines, not full files.
 - **Phase 3: Import Chain Verification** — Use `grep` to extract all import/require statements from target files. Check that referenced modules exist. No need to read file bodies.
-- Prefer Lore tools (`kb_graph`, `kb_lookup`) for cross-module dependency verification when available; use grep/find scans as a fast consistency cross-check.
+- Prefer Lore tools for cross-module dependency verification when available; use grep/find scans as a fast consistency cross-check.
 - **Phase 4: Build Verification** — Run build/compile commands in terminal. Read only error output.
 - **Phase 5: Targeted Deep Checks** — Only for files flagged in previous phases, read relevant sections to diagnose issues.
 - Write each section of the report as it's completed to free up context.

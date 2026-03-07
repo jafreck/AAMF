@@ -62,7 +62,7 @@ function createMockEmbedder(embedResult: number[] | null = [0.1, 0.2, 0.3]): Emb
   } as unknown as EmbeddingProvider;
 }
 
-describe('kb_search handler', () => {
+describe('lore_search handler', () => {
   let db: Database.Database;
 
   beforeEach(() => {

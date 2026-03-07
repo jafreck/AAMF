@@ -42,7 +42,7 @@ export class KbServerProcess {
    * @param dbPath          Path to the KB SQLite database.
    * @param embedder        Optional pre-initialised embedding provider for semantic search.
    *                        The caller owns the lifecycle — `stop()` will NOT dispose it.
-   * @param searchObserver  Optional callback invoked after every kb_search call.
+   * @param searchObserver  Optional callback invoked after every lore_search call.
    */
   constructor(dbPath: string, embedder?: EmbeddingProvider, searchObserver?: SearchObserver) {
     this.dbPath = dbPath;
