@@ -131,6 +131,17 @@ import { formatDuration } from '../util/format.js';
 
 type Phase4QualityGateMode = 'enforce' | 'advisory' | 'skip';
 
+/** Parity result data extracted from parity-verifier aamf-json output. */
+interface ParityResultData {
+  parity: 'pass' | 'partial' | 'fail';
+  issues: Array<{
+    severity: 'critical' | 'major' | 'minor';
+    description: string;
+    sourceLocation?: string;
+    targetLocation?: string;
+  }>;
+}
+
 interface RetryTargetDetails {
   scope: 'task' | 'parity' | 'command' | 'wave';
   attempt: number;
@@ -247,6 +258,8 @@ export class MigrationOrchestrator {
   private readonly paths: ReturnType<typeof buildRuntimePaths>;
   /** Tracks the maximum concurrency observed across all ParallelExecutor instances. */
   private _peakConcurrency = 0;
+  /** In-memory cache of parity-verifier results parsed from aamf-json output. */
+  private readonly _parityResults = new Map<string, ParityResultData>();
   /** Unique task IDs that have consumed routed-task budget (heavy/critical). */
   private readonly _routedTaskIds = new Set<string>();
   /** Cumulative projected escalation cost (USD) for this run. */
@@ -1978,7 +1991,10 @@ export class MigrationOrchestrator {
         this.buildInvocation('test-writer', testCtx, 4, task.id),
       ]);
       this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
-      if (parityResult) this.recordTokens(parityResult, 4);
+      if (parityResult) {
+        this.recordTokens(parityResult, 4);
+        this.storeParityResult(parityResult, task.id);
+      }
       if (testResult) this.recordTokens(testResult, 4);
       if (testResult?.success) {
         await this.commitForAgent('test-writer', 4, task.id, task.name);
@@ -1991,7 +2007,7 @@ export class MigrationOrchestrator {
     // b2. Check parity result and retry if non-minor issues found
     if (gateMode !== 'skip' && !this.hasPhase4Substep(task.id, 'parity-gate')) {
       const maxParityRetries = this.config.options.maxRetriesPerTask;
-      let parityPassed = await this.checkParityResult(task.id);
+      let parityPassed = this.checkParityResult(task.id);
 
       if (!parityPassed && gateMode === 'enforce') {
         const priorAttempts: Array<{ attempt: number; issueCount: number; unresolvedIssues: string[] }> = [];
@@ -2007,8 +2023,8 @@ export class MigrationOrchestrator {
             `${task.id}.md`,
           );
 
-          // Build an enriched failure summary from the actual parity sidecar
-          const issueSummary = await this.getParityIssueSummary(task.id);
+          // Build an enriched failure summary from the actual parity result
+          const issueSummary = this.getParityIssueSummary(task.id);
           const enrichedSummary = issueSummary
             ? `Parity verification failed for ${task.id}: ${issueSummary}`
             : `Parity verification failed for ${task.id}`;
@@ -2096,32 +2112,29 @@ export class MigrationOrchestrator {
           const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
           const reParityResult = await this.launchAgentWithEvents(reParityInv);
           this.recordTokens(reParityResult, 4);
+          this.storeParityResult(reParityResult, task.id);
 
-          parityPassed = await this.checkParityResult(task.id);
+          parityPassed = this.checkParityResult(task.id);
           if (parityPassed) {
             this.logger.info(`Parity recovered for ${task.id} on attempt ${attempt}`);
             break;
           }
 
           // Record this attempt's outcome for next iteration's context
-          const attemptResult = await ResultParser.readTaskResultJson(
-            this.progressDir,
-            'parity-verifier',
-            task.id,
-          );
-          const unresolvedIssues = (attemptResult?.issues ?? [])
+          const storedResult = this._parityResults.get(task.id);
+          const unresolvedIssues = (storedResult?.issues ?? [])
             .filter((i) => i.severity !== 'minor')
             .map((i) => i.description);
           priorAttempts.push({
             attempt,
-            issueCount: attemptResult?.issues?.length ?? 0,
+            issueCount: storedResult?.issues?.length ?? 0,
             unresolvedIssues,
           });
         }
 
         // After exhausting retries, check if only minor issues remain
         if (!parityPassed) {
-          const hasBlockingIssues = await this.hasNonMinorParityIssues(task.id);
+          const hasBlockingIssues = this.hasNonMinorParityIssues(task.id);
           if (hasBlockingIssues) {
             await this.raiseTerminalExhaustion({
               reasonCode: 'parity-non-minor-exhausted',
@@ -3185,7 +3198,7 @@ export class MigrationOrchestrator {
       // Identify tasks with non-minor parity issues
       let failingTasks: MigrationTask[] = [];
       for (const task of waveTasks) {
-        const hasNonMinor = await this.hasNonMinorParityIssues(task.id);
+        const hasNonMinor = this.hasNonMinorParityIssues(task.id);
         if (hasNonMinor) failingTasks.push(task);
       }
 
@@ -3207,7 +3220,7 @@ export class MigrationOrchestrator {
             `${task.id}.md`,
           );
 
-          const issueSummary = await this.getParityIssueSummary(task.id);
+          const issueSummary = this.getParityIssueSummary(task.id);
           const enrichedSummary = issueSummary
             ? `Parity verification failed for ${task.id}: ${issueSummary}`
             : `Parity verification failed for ${task.id}`;
@@ -3274,12 +3287,13 @@ export class MigrationOrchestrator {
           const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
           const reParityResult = await this.launchAgentWithEvents(reParityInv);
           this.recordTokens(reParityResult, 4);
+          this.storeParityResult(reParityResult, task.id);
         }));
 
         // Re-evaluate: filter to tasks that still have non-minor issues
         const stillFailing: MigrationTask[] = [];
         for (const task of failingTasks) {
-          const hasNonMinor = await this.hasNonMinorParityIssues(task.id);
+          const hasNonMinor = this.hasNonMinorParityIssues(task.id);
           if (hasNonMinor) stillFailing.push(task);
         }
         failingTasks = stillFailing;
@@ -3309,17 +3323,27 @@ export class MigrationOrchestrator {
   // ─── Helpers ─────────────────────────────────────────────────────────
 
   /**
-   * Check if the parity-verifier sidecar result indicates a pass.
-   * Returns `false` (fail-closed) if no sidecar file exists.
+   * Extract parity data from a parity-verifier AgentResult and store it
+   * in the in-memory map. If the aamf-json output was missing or malformed,
+   * nothing is stored and checkParityResult will return false (fail-closed).
    */
-  private async checkParityResult(taskId: string): Promise<boolean> {
-    const result = await ResultParser.readTaskResultJson(
-      this.progressDir,
-      'parity-verifier',
-      taskId,
-    );
+  private storeParityResult(agentResult: AgentResult, taskId: string): void {
+    if (!agentResult.outputParsed || !agentResult.structuredOutput) return;
+    const out = agentResult.structuredOutput as Record<string, unknown>;
+    const parity = out.parity;
+    if (parity !== 'pass' && parity !== 'partial' && parity !== 'fail') return;
+    const issues = Array.isArray(out.issues) ? out.issues as ParityResultData['issues'] : [];
+    this._parityResults.set(taskId, { parity, issues });
+  }
+
+  /**
+   * Check if the parity-verifier result indicates a pass.
+   * Returns `false` (fail-closed) if no result was parsed from the agent output.
+   */
+  private checkParityResult(taskId: string): boolean {
+    const result = this._parityResults.get(taskId);
     if (!result) {
-      this.logger.warn(`Parity sidecar missing for ${taskId} — treating as failed (fail-closed)`);
+      this.logger.warn(`Parity result missing for ${taskId} — treating as failed (fail-closed)`);
       return false;
     }
     if (result.parity === 'pass') return true;
@@ -3331,32 +3355,24 @@ export class MigrationOrchestrator {
   }
 
   /**
-   * Check if the parity sidecar has any non-minor (critical/major) issues.
-   * Returns `true` (fail-closed) if no sidecar exists, assuming blocking issues.
+   * Check if the parity result has any non-minor (critical/major) issues.
+   * Returns `true` (fail-closed) if no result exists, assuming blocking issues.
    */
-  private async hasNonMinorParityIssues(taskId: string): Promise<boolean> {
-    const result = await ResultParser.readTaskResultJson(
-      this.progressDir,
-      'parity-verifier',
-      taskId,
-    );
+  private hasNonMinorParityIssues(taskId: string): boolean {
+    const result = this._parityResults.get(taskId);
     if (!result) {
-      this.logger.warn(`Parity sidecar missing for ${taskId} — assuming blocking issues (fail-closed)`);
+      this.logger.warn(`Parity result missing for ${taskId} — assuming blocking issues (fail-closed)`);
       return true;
     }
     return result.issues.some((i) => i.severity !== 'minor');
   }
 
   /**
-   * Build a concise human-readable summary of parity issues from the sidecar.
-   * Returns `undefined` if no sidecar or no issues exist.
+   * Build a concise human-readable summary of parity issues.
+   * Returns `undefined` if no result or no issues exist.
    */
-  private async getParityIssueSummary(taskId: string): Promise<string | undefined> {
-    const result = await ResultParser.readTaskResultJson(
-      this.progressDir,
-      'parity-verifier',
-      taskId,
-    );
+  private getParityIssueSummary(taskId: string): string | undefined {
+    const result = this._parityResults.get(taskId);
     if (!result || result.issues.length === 0) return undefined;
 
     const bySeverity = { critical: 0, major: 0, minor: 0 };

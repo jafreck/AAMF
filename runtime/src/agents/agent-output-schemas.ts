@@ -25,7 +25,9 @@ export const AamfOutputBase = z.object({
 export type AamfOutputBaseType = z.infer<typeof AamfOutputBase>;
 
 /**
- * JSON schema for structured agent task results (sidecar `.result.json`).
+ * JSON schema for structured agent task results.
+ * @deprecated Parity results are now extracted from aamf-json output directly.
+ * Retained for backward compatibility with readTaskResultJson.
  */
 export const TaskResultSchema = z.object({
   taskId: z.string().min(1),
