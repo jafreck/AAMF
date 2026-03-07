@@ -182,6 +182,13 @@ export interface AgentContext {
   /** Directory or file path where the agent should write its output. */
   outputPath: string;
 
+  /**
+   * User-provided migration guidance directives from the config file.
+   * Every agent receives the same array so it can respect project-specific
+   * constraints (e.g. "do not use wrapper crates").
+   */
+  guidance?: string[];
+
   /** Arbitrary extra data specific to the invoking phase or agent. */
   payload?: Record<string, unknown>;
 }

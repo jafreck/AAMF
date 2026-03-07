@@ -32,6 +32,7 @@ When these tools are available, prefer them for structural facts over exhaustive
   - `groupName`
   - `taskSchemaPath` (absolute path to canonical JSON Schema)
   - `maxLinesPerTask` (hard per-task source line budget)
+- **`guidance`** (optional string array) — user-provided migration directives from the config. If present, embed relevant guidance items into each task's `description` or `acceptanceCriteria` so that `code-migrator` agents see them at task level.
 
 ## Responsibilities
 

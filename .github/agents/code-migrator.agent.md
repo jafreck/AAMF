@@ -29,6 +29,7 @@ When these tools are available, prefer them for structural facts over exhaustive
    - Read your assigned task from the migration plan
    - Read the relevant knowledge base document(s) referenced by the task
    - Understand the source file(s) structure, behavior, and dependencies
+   - **Check your context JSON for a `guidance` array.** If present, these are user-provided migration directives that you MUST follow. They take precedence over default heuristics (e.g. if guidance says "do not use wrapper crates", you must write native code rather than importing an existing binding).
 
 2. **Read Source Code**
    - Read only the source file(s) specified in the task — nothing else

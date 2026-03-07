@@ -39,6 +39,7 @@ When these tools are available, prefer them for structural facts over exhaustive
    - Read the knowledge base index (`.aamf/migration/{projectName}/knowledge-base/index.md`)
    - Understand module dependencies, complexity ratings, and risk factors
   - Use Lore tools (`kb_lookup`, `kb_graph`) for authoritative dependency/symbol detail when available
+  - **Check your context JSON for a `guidance` array.** If present, these are user-provided migration directives that MUST be incorporated into every strategy you produce and propagated into `strategy.md` so that downstream agents (task-decomposer, code-migrator) honour them.
 
 2. **Generate Strategy Candidates**
   - Produce **at least 2 competing migration strategies** (e.g., bottom-up vs top-down, by-module vs by-layer, risk-first vs dependency-first).

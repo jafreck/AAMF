@@ -531,4 +531,43 @@ describe('MigrationConfigSchema', () => {
       });
     });
   });
+
+  describe('Guidance', () => {
+    it('should accept guidance as an array of strings', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        guidance: ['Do not use wrapper crates', 'Write native Rust code'],
+      });
+      expect(result.guidance).toEqual(['Do not use wrapper crates', 'Write native Rust code']);
+    });
+
+    it('should default guidance to undefined when omitted', () => {
+      const result = MigrationConfigSchema.parse(validConfig);
+      expect(result.guidance).toBeUndefined();
+    });
+
+    it('should reject guidance with empty strings', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        guidance: ['valid', ''],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should accept an empty guidance array', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        guidance: [],
+      });
+      expect(result.guidance).toEqual([]);
+    });
+
+    it('should reject guidance when not an array', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        guidance: 'single string',
+      });
+      expect(result.success).toBe(false);
+    });
+  });
 });
