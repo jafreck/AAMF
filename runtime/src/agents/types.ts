@@ -229,6 +229,12 @@ export interface ExecutionStrategy {
   /** Shell command used to test the target project (empty when not configured). */
   testCommand?: string;
 
+  /** Shell command used to format generated code (empty when not configured). */
+  formatCommand?: string;
+
+  /** Shell command used to lint the target project (empty when not configured). */
+  lintCommand?: string;
+
   /**
    * Whether wave members must have non-overlapping target files/directories.
    * Always `true` — exposed so the planner can reason about the constraint.

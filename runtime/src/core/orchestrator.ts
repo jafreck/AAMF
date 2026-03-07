@@ -1235,6 +1235,8 @@ export class MigrationOrchestrator {
       waveConvergenceLimitHits: 0,
       buildCommandRuns: 0,
       testCommandRuns: 0,
+      formatCommandRuns: 0,
+      lintCommandRuns: 0,
       commandRecoveryAttempts: 0,
       commandInfraRetries: 0,
       recoveryLoopTimeMs: 0,
@@ -2235,7 +2237,20 @@ export class MigrationOrchestrator {
       return { migrated: true, durationMs: Date.now() - taskStartMs };
     }
 
-    // c2. Run build command if configured
+    // c2. Run format command if configured (deterministic — always enforced)
+    if (this.config.target.formatCommand) {
+      if (!this.hasPhase4Substep(task.id, 'format')) {
+        const formatResult = await this.runCommand('format', this.config.target.formatCommand, task.id);
+        if (!formatResult.success) {
+          this.logger.warn(
+            `Format command failed for ${task.id}: ${formatResult.error ?? 'unknown error'}`,
+          );
+        }
+        await this.markPhase4Substep(task.id, 'format');
+      }
+    }
+
+    // c3. Run build command if configured
     if (this.config.target.buildCommand) {
       if (!this.hasPhase4Substep(task.id, 'build')) {
         if (gateMode === 'enforce') {
@@ -2256,7 +2271,7 @@ export class MigrationOrchestrator {
       }
     }
 
-    // c3. Run test command if configured
+    // c4. Run test command if configured
     if (this.config.target.testCommand) {
       if (!this.hasPhase4Substep(task.id, 'test')) {
         if (gateMode === 'enforce') {
@@ -2341,6 +2356,14 @@ export class MigrationOrchestrator {
       this.phase4Snapshot.waveValidationRuns++;
     }
     const waveTaskId = `wave-${wave}`;
+
+    // Format first — normalize code before build/test/lint
+    if (this.config.target.formatCommand) {
+      const format = await this.runCommand('format', this.config.target.formatCommand, waveTaskId);
+      if (!format.success) {
+        this.logger.warn(`Wave ${wave} format command failed (non-gating): ${format.error ?? 'unknown'}`);
+      }
+    }
 
     if (this.config.target.buildCommand) {
       const build = await this.runCommand('build', this.config.target.buildCommand, waveTaskId);
@@ -2959,7 +2982,21 @@ export class MigrationOrchestrator {
           const refactorResult = await this.launchAgentWithEvents(refactorInv);
           this.recordTokens(refactorResult, 8);
           if (refactorResult.success) {
+            // Format after refactor to normalize code style
+            if (this.config.target.formatCommand) {
+              const fmtResult = await this.runCommand('format', this.config.target.formatCommand, `phase8-${issue.file}`);
+              if (!fmtResult.success) {
+                this.logger.warn(`Phase 8 format failed for ${issue.file}: ${fmtResult.error ?? 'unknown'}`);
+              }
+            }
             await this.commitForAgent('idiomatic-refactorer', 8, issue.file);
+            // Lint after refactor — failure is gating in Phase 8
+            if (this.config.target.lintCommand) {
+              const lintResult = await this.runCommand('lint', this.config.target.lintCommand, `phase8-${issue.file}`);
+              if (!lintResult.success) {
+                this.logger.warn(`Phase 8 lint failed after refactoring ${issue.file}: ${lintResult.error ?? 'unknown'}`);
+              }
+            }
             await this.savePhase8Cursor({
               iteration,
               issueIndex: issueIndex + 1,
@@ -3016,6 +3053,8 @@ export class MigrationOrchestrator {
     if (this.phase4Snapshot) {
       if (label === 'build') this.phase4Snapshot.buildCommandRuns++;
       if (label === 'test') this.phase4Snapshot.testCommandRuns++;
+      if (label === 'format') this.phase4Snapshot.formatCommandRuns++;
+      if (label === 'lint') this.phase4Snapshot.lintCommandRuns++;
     }
     return this.buildLimiter(async () => {
       const timeout = this.getRuntimeTimeout();
@@ -3035,7 +3074,12 @@ export class MigrationOrchestrator {
 
         // Log the output
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const commandLogDir = label === 'build' ? this.paths.logsCommandBuildDir : this.paths.logsCommandTestDir;
+        const commandLogDir = {
+          build: this.paths.logsCommandBuildDir,
+          test: this.paths.logsCommandTestDir,
+          format: this.paths.logsCommandFormatDir,
+          lint: this.paths.logsCommandLintDir,
+        }[label] ?? this.paths.logsCommandBuildDir;
         await ensureDir(commandLogDir);
         const logPath = join(commandLogDir, `${taskId}-${timestamp}.log`);
         const logContent = `=== COMMAND: ${command} ===\n=== EXIT CODE: ${result.exitCode} ===\n\n=== STDOUT ===\n${result.stdout}\n\n=== STDERR ===\n${result.stderr}\n`;

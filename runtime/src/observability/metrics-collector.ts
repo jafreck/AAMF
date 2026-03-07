@@ -23,6 +23,8 @@ export interface Phase4MetricsSnapshot {
   waveConvergenceLimitHits: number;
   buildCommandRuns: number;
   testCommandRuns: number;
+  formatCommandRuns: number;
+  lintCommandRuns: number;
   commandRecoveryAttempts: number;
   commandInfraRetries: number;
   recoveryLoopTimeMs: number;
@@ -72,6 +74,10 @@ export interface MetricsAggregate {
   buildCommandRuns: number;
   /** Number of test command invocations in phase 4. */
   testCommandRuns: number;
+  /** Number of format command invocations. */
+  formatCommandRuns: number;
+  /** Number of lint command invocations. */
+  lintCommandRuns: number;
   /** Number of recovery-loop attempts for build/test failures. */
   commandRecoveryAttempts: number;
   /** Number of infrastructure-only retries for build/test failures. */
@@ -232,6 +238,8 @@ export class MetricsCollector {
     const completedPhase4Tasks = this.phase4Snapshot?.completedTaskCount ?? phase4TaskIds.size;
     const buildCommandRuns = this.phase4Snapshot?.buildCommandRuns ?? 0;
     const testCommandRuns = this.phase4Snapshot?.testCommandRuns ?? 0;
+    const formatCommandRuns = this.phase4Snapshot?.formatCommandRuns ?? 0;
+    const lintCommandRuns = this.phase4Snapshot?.lintCommandRuns ?? 0;
     const retryVolumePerCompletedTask = completedPhase4Tasks > 0
       ? totalRetries / completedPhase4Tasks
       : 0;
@@ -267,6 +275,8 @@ export class MetricsCollector {
       waveConvergenceLimitHits: this.phase4Snapshot?.waveConvergenceLimitHits ?? 0,
       buildCommandRuns,
       testCommandRuns,
+      formatCommandRuns,
+      lintCommandRuns,
       commandRecoveryAttempts: this.phase4Snapshot?.commandRecoveryAttempts ?? 0,
       commandInfraRetries: this.phase4Snapshot?.commandInfraRetries ?? 0,
       recoveryLoopTimeMs: this.phase4Snapshot?.recoveryLoopTimeMs ?? 0,
