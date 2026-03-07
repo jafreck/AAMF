@@ -31,6 +31,7 @@ import { CostEstimator } from '../budget/cost-estimator.js';
 import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite, readJson, ensureDir } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
+import { gitignoreForLanguage } from '../util/gitignore-templates.js';
 import type { EmbeddingProvider } from '@aamf/lore';
 import type { KbServerProcess } from './kb-server-process.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
@@ -3399,6 +3400,15 @@ export class MigrationOrchestrator {
 
     await this.runGit(['config', 'user.name', gitCfg.authorName]);
     await this.runGit(['config', 'user.email', gitCfg.authorEmail]);
+
+    // Write a language-appropriate .gitignore so build artifacts are never committed.
+    const gitignorePath = join(outputPath, '.gitignore');
+    if (!(await fileExists(gitignorePath))) {
+      const content = gitignoreForLanguage(this.config.target.language);
+      await atomicWrite(gitignorePath, content);
+      this.logger.info(`Wrote .gitignore for target language "${this.config.target.language}"`);
+    }
+
     this.logger.info(`Initialized git repository at ${this.config.target.outputPath}`);
   }
 
