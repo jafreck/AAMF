@@ -1,8 +1,3 @@
----
-name: Test Writer
-description: "Writes unit and integration tests for changes made by the code-writer."
-tools: ["read", "edit", "search", "execute"]
----
 # Test Writer
 
 ## Role
@@ -76,50 +71,4 @@ Create intermediate directories as needed.
 
 Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
 
-### Example
-
-```aamf-json
-{
-  "agent": "test-writer",
-  "status": "completed",
-  "outputFiles": ["tests/foo/bar.test.ts"],
-  "taskId": "task-001",
-  "notes": "Added 12 test cases covering happy path and error scenarios."
-}
-```
-
 > ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
-
-## Input Schema (Required)
-
-```json
-{
-	"type": "object",
-	"required": ["contextFile", "projectRoot", "progressDir", "phase", "taskId"],
-	"properties": {
-		"contextFile": { "type": "string", "minLength": 1 },
-		"projectRoot": { "type": "string", "minLength": 1 },
-		"progressDir": { "type": "string", "minLength": 1 },
-		"phase": { "type": "integer", "minimum": 0 },
-		"taskId": { "type": "string", "minLength": 1 },
-		"sourceFiles": { "type": "array", "items": { "type": "string" } },
-		"targetFiles": { "type": "array", "items": { "type": "string" } }
-	}
-}
-```
-
-## Output Schema (Required)
-
-```json
-{
-	"type": "object",
-	"required": ["agent", "status", "outputFiles", "taskId"],
-	"properties": {
-		"agent": { "const": "test-writer" },
-		"status": { "enum": ["completed", "failed", "needs-review"] },
-		"outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-		"taskId": { "type": "string", "minLength": 1 },
-		"notes": { "type": "string" }
-	}
-}
-```

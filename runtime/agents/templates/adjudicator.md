@@ -1,8 +1,3 @@
----
-name: Adjudicator
-description: "Evaluates competing implementation plans or design decisions and selects the best option."
-tools: ["read", "edit", "search", "execute"]
----
 # Adjudicator
 
 ## Role
@@ -57,52 +52,4 @@ Avoid selecting an option solely because it is more sophisticated or uses newer 
 
 Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
 
-### Example
-
-```aamf-json
-{
-  "agent": "adjudicator",
-  "status": "completed",
-  "outputFiles": [],
-  "taskId": "task-001",
-  "decision": "Option B — single configuration file with environment-specific overrides.",
-  "notes": "Option B keeps configuration centralized, reducing inconsistency risk."
-}
-```
-
 > ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
-
-## Input Schema (Required)
-
-```json
-{
-	"type": "object",
-	"required": ["contextFile", "projectRoot", "progressDir", "phase"],
-	"properties": {
-		"contextFile": { "type": "string", "minLength": 1 },
-		"projectRoot": { "type": "string", "minLength": 1 },
-		"progressDir": { "type": "string", "minLength": 1 },
-		"phase": { "type": "integer", "minimum": 0 },
-		"taskId": { "type": "string", "minLength": 1 },
-		"options": { "type": "object" }
-	}
-}
-```
-
-## Output Schema (Required)
-
-```json
-{
-	"type": "object",
-	"required": ["agent", "status", "outputFiles"],
-	"properties": {
-		"agent": { "const": "adjudicator" },
-		"status": { "enum": ["completed", "failed", "needs-review"] },
-		"outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-		"taskId": { "type": "string", "minLength": 1 },
-		"decision": { "type": "string", "minLength": 1 },
-		"notes": { "type": "string" }
-	}
-}
-```
-```

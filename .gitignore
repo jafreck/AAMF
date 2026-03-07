@@ -43,3 +43,7 @@ lz4-src/
 *.tgz
 .cache/
 .cadre/
+
+# Generated agent definitions (produced at runtime from templates)
+.github/agents/*.agent.md
+.claude/agents/*.md

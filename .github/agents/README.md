@@ -1,6 +1,16 @@
 # AAMF — Agent Architecture for Migration Framework
 
-A framework of 14 single-purpose Copilot agents designed for migrating extremely large legacy codebases (100k+ lines). Every agent runs as a headless, out-of-process CLI invocation of the same model. Context window saturation is minimized at every level.
+A framework of 16 single-purpose agents designed for migrating extremely large legacy codebases (100k+ lines). Every agent runs as a headless, out-of-process CLI invocation of the same model. Context window saturation is minimized at every level.
+
+## Agent Definition Generation
+
+Agent definition files (`.agent.md` for Copilot, `.md` for Claude Code) are **not committed to source control**. They are generated at runtime from shared templates.
+
+- **Templates**: `runtime/agents/templates/<agent-name>.md` — shared body content
+- **Generator**: `runtime/src/agents/generator.ts` — prepends backend-specific front matter
+- **Registry**: `runtime/src/agents/registry.ts` — canonical metadata (description, tools, phases)
+
+The runtime generates agent definitions automatically during initialization based on the configured `agentBackend.runtime` (`copilot` or `claude-code`).
 
 ## Agent Inventory
 

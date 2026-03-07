@@ -1,25 +1,24 @@
 /**
- * Tests for the Claude Code CLI agent definition files under `.claude/agents/`.
+ * Tests for the agent definition generator, shared templates, and registry schemas.
  *
- * Verifies that each file exists, has valid YAML front matter with the required
- * fields, that the `name` field matches the filename, and that the body instructs
- * the agent to read from AAMF_CONTEXT_FILE.
+ * Verifies that:
+ * - Templates exist for every registered agent
+ * - Templates contain NO YAML front matter, example blocks, or schema sections
+ * - Registry defines valid inputJsonSchema / outputJsonSchema for every agent
+ * - Generation produces valid Copilot and Claude Code agent files
+ * - Generated files have correct front matter per backend
+ * - Generated files contain Input/Output Schema sections injected from the registry
+ * - Both backends get identical body + schema content
  */
-import { describe, it, expect } from 'vitest';
-import { readFile } from 'node:fs/promises';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { readFile, readdir, rm, mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ALL_AGENT_NAMES } from '../src/agents/registry.js';
+import { tmpdir } from 'node:os';
+import { ALL_AGENT_NAMES, AGENT_REGISTRY } from '../src/agents/registry.js';
+import { generateAgentDefinitions, stripSchemaSections } from '../src/agents/generator.js';
 
-// Agents that have Claude Code agent definition files (.claude/agents/*.md).
-// Some agents don't have agent files: task-decomposer (invoked programmatically),
-// idiomatic-reviewer/idiomatic-refactorer (optional phase, not yet scaffolded).
-const AGENTS_WITHOUT_FILES = new Set(['task-decomposer', 'idiomatic-reviewer', 'idiomatic-refactorer']);
-const EXPECTED_AGENTS = ALL_AGENT_NAMES.filter(name => !AGENTS_WITHOUT_FILES.has(name));
-
-// Resolve `.claude/agents/` relative to the repo root (one level above `runtime/`)
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const AGENTS_DIR = join(REPO_ROOT, '.claude', 'agents');
+const TEMPLATE_DIR = fileURLToPath(new URL('../agents/templates/', import.meta.url));
 
 // ─── Front-matter parser ─────────────────────────────────────────────────────
 
@@ -30,10 +29,6 @@ interface FrontMatter {
   [key: string]: unknown;
 }
 
-/**
- * Parses a minimal YAML front matter block delimited by `---` lines.
- * Only handles simple key: value and list items (no nested objects).
- */
 function parseFrontMatter(content: string): { frontMatter: FrontMatter; body: string } {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   if (!match) {
@@ -53,7 +48,6 @@ function parseFrontMatter(content: string): { frontMatter: FrontMatter; body: st
     if (listItemMatch && currentList !== null) {
       currentList.push(listItemMatch[1].trim());
     } else if (keyValueMatch) {
-      // Save any in-progress list
       if (currentKey && currentList) {
         frontMatter[currentKey] = currentList;
       }
@@ -61,12 +55,10 @@ function parseFrontMatter(content: string): { frontMatter: FrontMatter; body: st
       const rawValue = keyValueMatch[2].trim();
 
       if (rawValue === '' || rawValue === '|' || rawValue === '>') {
-        // Start of a list or block scalar
         currentList = [];
         frontMatter[currentKey] = currentList;
       } else {
         currentList = null;
-        // Strip surrounding quotes
         frontMatter[currentKey] = rawValue.replace(/^["']|["']$/g, '');
       }
     }
@@ -75,74 +67,310 @@ function parseFrontMatter(content: string): { frontMatter: FrontMatter; body: st
   return { frontMatter, body };
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+/** Extract the JSON object from a schema section in a generated agent file. */
+function extractSchemaJson(content: string, sectionTitle: string): unknown {
+  const headingRegex = new RegExp(`^##\\s+${sectionTitle}(?:\\s*\\(Required\\))?\\s*$`, 'im');
+  const headingMatch = headingRegex.exec(content);
+  if (!headingMatch) return undefined;
+  const afterHeading = content.slice(headingMatch.index + headingMatch[0].length);
+  const jsonBlock = afterHeading.match(/```json\r?\n([\s\S]*?)```/m);
+  if (!jsonBlock) return undefined;
+  return JSON.parse(jsonBlock[1].trim());
+}
 
-describe('Claude agent definition files (.claude/agents/)', () => {
-  describe('file existence', () => {
-    it('should have exactly the 13 expected agent definition files', () => {
-      // Verify all expected agents are enumerated (compile-time check via const array)
-      expect(EXPECTED_AGENTS).toHaveLength(13);
+// ─── Template Tests ──────────────────────────────────────────────────────────
+
+describe('Agent templates (runtime/agents/templates/)', () => {
+  it('should have a template for every registered agent', async () => {
+    const files = await readdir(TEMPLATE_DIR);
+    const templateNames = files.filter(f => f.endsWith('.md')).map(f => f.replace(/\.md$/, ''));
+    for (const agent of ALL_AGENT_NAMES) {
+      expect(templateNames, `Missing template for agent "${agent}"`).toContain(agent);
+    }
+  });
+
+  for (const agentName of ALL_AGENT_NAMES) {
+    describe(`${agentName}.md`, () => {
+      let content: string;
+
+      beforeAll(async () => {
+        content = await readFile(join(TEMPLATE_DIR, `${agentName}.md`), 'utf-8');
+      });
+
+      it('should NOT contain YAML front matter', () => {
+        expect(content).not.toMatch(/^---\r?\n/);
+      });
+
+      it('should NOT contain example aamf-json blocks', () => {
+        expect(content).not.toMatch(/### Example/i);
+      });
+
+      it('should NOT contain Input Schema sections (injected at generation)', () => {
+        expect(content).not.toMatch(/##\s+Input Schema/);
+      });
+
+      it('should NOT contain Output Schema sections (injected at generation)', () => {
+        expect(content).not.toMatch(/##\s+Output Schema/);
+      });
+    });
+  }
+});
+
+// ─── Registry Schema Tests ───────────────────────────────────────────────────
+
+describe('Registry JSON schemas', () => {
+  for (const agentName of ALL_AGENT_NAMES) {
+    describe(`${agentName}`, () => {
+      it('should define a valid inputJsonSchema', () => {
+        const schema = AGENT_REGISTRY[agentName].inputJsonSchema;
+        expect(schema.type).toBe('object');
+        expect(Array.isArray(schema.required)).toBe(true);
+        expect((schema.required as string[]).length).toBeGreaterThan(0);
+        // All agents require the base context fields
+        for (const field of ['contextFile', 'projectRoot', 'progressDir', 'phase']) {
+          expect(schema.required, `Missing base required field "${field}"`).toContain(field);
+        }
+      });
+
+      it('should define a valid outputJsonSchema', () => {
+        const schema = AGENT_REGISTRY[agentName].outputJsonSchema;
+        expect(schema.type).toBe('object');
+        expect(Array.isArray(schema.required)).toBe(true);
+        expect(schema.required).toContain('agent');
+        expect(schema.required).toContain('status');
+        expect(schema.required).toContain('outputFiles');
+        const props = schema.properties as Record<string, unknown>;
+        expect(props.agent).toBeDefined();
+      });
+    });
+  }
+});
+
+// ─── Generation Tests ────────────────────────────────────────────────────────
+
+describe('generateAgentDefinitions()', () => {
+  let copilotDir: string;
+  let claudeDir: string;
+
+  beforeAll(async () => {
+    copilotDir = await mkdtemp(join(tmpdir(), 'aamf-copilot-'));
+    claudeDir = await mkdtemp(join(tmpdir(), 'aamf-claude-'));
+
+    await generateAgentDefinitions({
+      backend: 'copilot',
+      outputDir: copilotDir,
+      templateDir: TEMPLATE_DIR,
     });
 
-    for (const agentName of EXPECTED_AGENTS) {
-      it(`should have a file for agent "${agentName}"`, async () => {
-        const filePath = join(AGENTS_DIR, `${agentName}.md`);
-        await expect(readFile(filePath, 'utf-8')).resolves.toBeDefined();
+    await generateAgentDefinitions({
+      backend: 'claude-code',
+      outputDir: claudeDir,
+      templateDir: TEMPLATE_DIR,
+    });
+  });
+
+  afterAll(async () => {
+    await rm(copilotDir, { recursive: true, force: true });
+    await rm(claudeDir, { recursive: true, force: true });
+  });
+
+  describe('Copilot backend', () => {
+    it('should generate a .agent.md file for every registered agent', async () => {
+      const files = await readdir(copilotDir);
+      for (const agent of ALL_AGENT_NAMES) {
+        expect(files, `Missing Copilot file for "${agent}"`).toContain(`${agent}.agent.md`);
+      }
+    });
+
+    it('should generate exactly one file per registered agent', async () => {
+      const files = (await readdir(copilotDir)).filter(f => f.endsWith('.agent.md'));
+      expect(files.length).toBe(ALL_AGENT_NAMES.length);
+    });
+
+    for (const agentName of ALL_AGENT_NAMES) {
+      describe(`${agentName}.agent.md`, () => {
+        let content: string;
+
+        beforeAll(async () => {
+          content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+        });
+
+        it('should have Title Case name in front matter', () => {
+          const { frontMatter } = parseFrontMatter(content);
+          expect(frontMatter.name).toBe(AGENT_REGISTRY[agentName].displayName);
+        });
+
+        it('should have a description matching the registry', () => {
+          const { frontMatter } = parseFrontMatter(content);
+          expect(frontMatter.description).toBe(AGENT_REGISTRY[agentName].description);
+        });
+
+        it('should have JSON-array tools in front matter', () => {
+          const { frontMatter } = parseFrontMatter(content);
+          const toolsStr = frontMatter.tools as unknown as string;
+          const parsed = JSON.parse(toolsStr);
+          expect(parsed).toEqual([...AGENT_REGISTRY[agentName].copilotTools]);
+        });
+
+        it('should contain Input Schema heading with (Required) suffix', () => {
+          expect(content).toMatch(/^## Input Schema \(Required\)/m);
+        });
+
+        it('should contain Input Schema section matching registry', () => {
+          const parsed = extractSchemaJson(content, 'Input Schema');
+          expect(parsed).toEqual(AGENT_REGISTRY[agentName].inputJsonSchema);
+        });
+
+        it('should contain Output Schema heading with (Required) suffix', () => {
+          expect(content).toMatch(/^## Output Schema \(Required\)/m);
+        });
+
+        it('should contain Output Schema section matching registry', () => {
+          const parsed = extractSchemaJson(content, 'Output Schema');
+          expect(parsed).toEqual(AGENT_REGISTRY[agentName].outputJsonSchema);
+        });
       });
     }
   });
 
-  describe('YAML front matter validity', () => {
-    for (const agentName of EXPECTED_AGENTS) {
+  describe('Claude Code backend', () => {
+    it('should generate a .md file for every registered agent', async () => {
+      const files = await readdir(claudeDir);
+      for (const agent of ALL_AGENT_NAMES) {
+        expect(files, `Missing Claude file for "${agent}"`).toContain(`${agent}.md`);
+      }
+    });
+
+    it('should generate exactly one file per registered agent', async () => {
+      const files = (await readdir(claudeDir)).filter(f => f.endsWith('.md'));
+      expect(files.length).toBe(ALL_AGENT_NAMES.length);
+    });
+
+    for (const agentName of ALL_AGENT_NAMES) {
       describe(`${agentName}.md`, () => {
-        it('should have a "name" field matching the filename', async () => {
-          const content = await readFile(join(AGENTS_DIR, `${agentName}.md`), 'utf-8');
+        let content: string;
+
+        beforeAll(async () => {
+          content = await readFile(join(claudeDir, `${agentName}.md`), 'utf-8');
+        });
+
+        it('should have kebab-case name matching agent name', () => {
           const { frontMatter } = parseFrontMatter(content);
           expect(frontMatter.name).toBe(agentName);
         });
 
-        it('should have a non-empty "description" field', async () => {
-          const content = await readFile(join(AGENTS_DIR, `${agentName}.md`), 'utf-8');
+        it('should have a description matching the registry', () => {
           const { frontMatter } = parseFrontMatter(content);
-          expect(typeof frontMatter.description).toBe('string');
-          expect((frontMatter.description as string).length).toBeGreaterThan(0);
+          expect(frontMatter.description).toBe(AGENT_REGISTRY[agentName].description);
         });
 
-        it('should have a non-empty "tools" list', async () => {
-          const content = await readFile(join(AGENTS_DIR, `${agentName}.md`), 'utf-8');
+        it('should have YAML-list tools in front matter', () => {
           const { frontMatter } = parseFrontMatter(content);
           expect(Array.isArray(frontMatter.tools)).toBe(true);
-          expect((frontMatter.tools as string[]).length).toBeGreaterThan(0);
+          expect(frontMatter.tools).toEqual([...AGENT_REGISTRY[agentName].claudeTools]);
         });
 
-        it('should reference AAMF_CONTEXT_FILE in the body', async () => {
-          const content = await readFile(join(AGENTS_DIR, `${agentName}.md`), 'utf-8');
-          const { body } = parseFrontMatter(content);
-          expect(body).toContain('AAMF_CONTEXT_FILE');
+        it('should contain Input Schema heading with (Required) suffix', () => {
+          expect(content).toMatch(/^## Input Schema \(Required\)/m);
+        });
+
+        it('should contain Input Schema section matching registry', () => {
+          const parsed = extractSchemaJson(content, 'Input Schema');
+          expect(parsed).toEqual(AGENT_REGISTRY[agentName].inputJsonSchema);
+        });
+
+        it('should contain Output Schema heading with (Required) suffix', () => {
+          expect(content).toMatch(/^## Output Schema \(Required\)/m);
+        });
+
+        it('should contain Output Schema section matching registry', () => {
+          const parsed = extractSchemaJson(content, 'Output Schema');
+          expect(parsed).toEqual(AGENT_REGISTRY[agentName].outputJsonSchema);
         });
       });
     }
   });
 
-  describe('parseFrontMatter helper', () => {
-    it('should return empty frontMatter for content without delimiters', () => {
-      const { frontMatter, body } = parseFrontMatter('just a body');
-      expect(frontMatter).toEqual({});
-      expect(body).toBe('just a body');
-    });
+  it('should produce identical body content for both backends', async () => {
+    for (const agentName of ALL_AGENT_NAMES) {
+      const copilotContent = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+      const claudeContent = await readFile(join(claudeDir, `${agentName}.md`), 'utf-8');
+      const { body: copilotBody } = parseFrontMatter(copilotContent);
+      const { body: claudeBody } = parseFrontMatter(claudeContent);
+      expect(copilotBody.trim(), `Body mismatch for "${agentName}"`).toBe(claudeBody.trim());
+    }
+  });
+});
 
-    it('should parse simple key-value pairs', () => {
-      const content = `---\nname: my-agent\ndescription: "A test agent"\n---\nbody here`;
-      const { frontMatter, body } = parseFrontMatter(content);
-      expect(frontMatter.name).toBe('my-agent');
-      expect(frontMatter.description).toBe('A test agent');
-      expect(body).toBe('body here');
-    });
+// ─── stripSchemaSections unit tests ──────────────────────────────────────────
 
-    it('should parse a list under a key', () => {
-      const content = `---\ntools:\n  - Read\n  - Write\n---\nbody`;
-      const { frontMatter } = parseFrontMatter(content);
-      expect(frontMatter.tools).toEqual(['Read', 'Write']);
-    });
+describe('stripSchemaSections()', () => {
+  it('should remove ## Input Schema section', () => {
+    const input = '# Title\n\nSome text.\n\n## Input Schema (Required)\n\n```json\n{}\n```\n\n## Next';
+    const result = stripSchemaSections(input);
+    expect(result).not.toContain('Input Schema');
+    expect(result).toContain('# Title');
+    expect(result).toContain('## Next');
+  });
+
+  it('should remove ## Output Schema section at end of file', () => {
+    const input = '# Title\n\n## Output Schema (Required)\n\n```json\n{"type":"object"}\n```\n';
+    const result = stripSchemaSections(input);
+    expect(result).not.toContain('Output Schema');
+    expect(result).toContain('# Title');
+  });
+
+  it('should remove both schema sections', () => {
+    const input = [
+      '# Agent',
+      '',
+      '## Responsibilities',
+      'Do things.',
+      '',
+      '## Input Schema (Required)',
+      '',
+      '```json',
+      '{"type": "object", "required": ["a"]}',
+      '```',
+      '',
+      '## Output Schema (Required)',
+      '',
+      '```json',
+      '{"type": "object", "required": ["b"]}',
+      '```',
+    ].join('\n');
+    const result = stripSchemaSections(input);
+    expect(result).not.toContain('Input Schema');
+    expect(result).not.toContain('Output Schema');
+    expect(result).toContain('## Responsibilities');
+  });
+
+  it('should leave content unchanged when no schema sections exist', () => {
+    const input = '# Title\n\nSome text.\n\n## Other Section\n\nMore text.';
+    expect(stripSchemaSections(input)).toBe(input);
+  });
+});
+
+// ─── Front-matter parser unit tests ──────────────────────────────────────────
+
+describe('parseFrontMatter helper', () => {
+  it('should return empty frontMatter for content without delimiters', () => {
+    const { frontMatter, body } = parseFrontMatter('just a body');
+    expect(frontMatter).toEqual({});
+    expect(body).toBe('just a body');
+  });
+
+  it('should parse simple key-value pairs', () => {
+    const content = `---\nname: my-agent\ndescription: "A test agent"\n---\nbody here`;
+    const { frontMatter, body } = parseFrontMatter(content);
+    expect(frontMatter.name).toBe('my-agent');
+    expect(frontMatter.description).toBe('A test agent');
+    expect(body).toBe('body here');
+  });
+
+  it('should parse a YAML list under a key', () => {
+    const content = `---\ntools:\n  - Read\n  - Write\n---\nbody`;
+    const { frontMatter } = parseFrontMatter(content);
+    expect(frontMatter.tools).toEqual(['Read', 'Write']);
   });
 });
