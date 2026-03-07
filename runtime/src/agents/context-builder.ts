@@ -323,6 +323,8 @@ export class ContextBuilder {
       maxRetriesPerTask: opts.maxRetriesPerTask,
       buildCommand: this.config.target.buildCommand,
       testCommand: this.config.target.testCommand,
+      formatCommand: this.config.target.formatCommand,
+      lintCommand: this.config.target.lintCommand,
       requiresNonOverlappingTargets: true,
     };
   }
