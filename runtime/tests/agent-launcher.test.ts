@@ -1038,12 +1038,13 @@ describe('AgentLauncher', () => {
       expect(liveLogFile).toBeDefined();
 
       const liveContent = await readFile(join(agentLogDir, liveLogFile!), 'utf-8');
-      expect(liveContent).toContain('[stdout] line one');
-      expect(liveContent).toContain('[stdout] line two');
-      expect(liveContent).toContain('[stdout] line three');
+      expect(liveContent).toContain('line one');
+      expect(liveContent).toContain('line two');
+      expect(liveContent).toContain('line three');
+      expect(liveContent).not.toContain('[stdout]');
     });
 
-    it('should include stderr lines prefixed with [stderr] in the live log', async () => {
+    it('should include stderr lines in the live log without stream prefixes', async () => {
       const script = await createScript('live-stderr.sh', [
         'echo "stdout stuff"',
         'echo "error stuff" >&2',
@@ -1068,8 +1069,10 @@ describe('AgentLauncher', () => {
       expect(liveLogFile).toBeDefined();
 
       const liveContent = await readFile(join(agentLogDir, liveLogFile!), 'utf-8');
-      expect(liveContent).toContain('[stdout] stdout stuff');
-      expect(liveContent).toContain('[stderr] error stuff');
+      expect(liveContent).toContain('stdout stuff');
+      expect(liveContent).toContain('error stuff');
+      expect(liveContent).not.toContain('[stdout]');
+      expect(liveContent).not.toContain('[stderr]');
     });
 
     it('should still create the final agent log alongside the live log', async () => {
@@ -1114,8 +1117,10 @@ describe('AgentLauncher', () => {
       expect(liveLogFile).toBeDefined();
 
       const liveContent = await readFile(join(agentLogDir, liveLogFile!), 'utf-8');
-      expect(liveContent).toContain('[stdout] before fail');
-      expect(liveContent).toContain('[stderr] fail reason');
+      expect(liveContent).toContain('before fail');
+      expect(liveContent).toContain('fail reason');
+      expect(liveContent).not.toContain('[stdout]');
+      expect(liveContent).not.toContain('[stderr]');
     });
   });
 });

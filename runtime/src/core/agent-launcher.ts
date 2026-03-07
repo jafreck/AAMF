@@ -147,7 +147,6 @@ function createLiveOutputCallbacks(
   agent: string,
   taskId: string,
   invocationId: string,
-  logger: Logger,
 ): {
   onStdoutData: (chunk: Buffer) => void;
   onStderrData: (chunk: Buffer) => void;
@@ -171,23 +170,13 @@ function createLiveOutputCallbacks(
   const processChunk = (
     chunk: Buffer,
     residue: string,
-    stream: 'stdout' | 'stderr',
   ): string => {
     const text = residue + chunk.toString('utf-8');
     const lines = text.split('\n');
     const remaining = lines.pop()!;
 
     for (const line of lines) {
-      const prefixed = `[${stream}] ${line}\n`;
-      enqueueWrite(prefixed);
-      logger.event({
-        type: 'agent-output-line',
-        agent,
-        taskId,
-        invocationId,
-        stream,
-        line,
-      });
+      enqueueWrite(line + '\n');
     }
 
     return remaining;
@@ -195,18 +184,18 @@ function createLiveOutputCallbacks(
 
   return {
     onStdoutData: (chunk: Buffer) => {
-      stdoutResidue = processChunk(chunk, stdoutResidue, 'stdout');
+      stdoutResidue = processChunk(chunk, stdoutResidue);
     },
     onStderrData: (chunk: Buffer) => {
-      stderrResidue = processChunk(chunk, stderrResidue, 'stderr');
+      stderrResidue = processChunk(chunk, stderrResidue);
     },
     flush: async () => {
       if (stdoutResidue) {
-        enqueueWrite(`[stdout] ${stdoutResidue}\n`);
+        enqueueWrite(stdoutResidue + '\n');
         stdoutResidue = '';
       }
       if (stderrResidue) {
-        enqueueWrite(`[stderr] ${stderrResidue}\n`);
+        enqueueWrite(stderrResidue + '\n');
         stderrResidue = '';
       }
       await writeChain;
@@ -424,7 +413,7 @@ export class CliAgentRunner implements AgentRunner {
     // ── Live output streaming ────────────────────────────────────────
     const liveTaskId = invocation.taskId ?? 'main';
     const liveCallbacks = createLiveOutputCallbacks(
-      this.logDir, invocation.agent, liveTaskId, invocationId, invLogger,
+      this.logDir, invocation.agent, liveTaskId, invocationId,
     );
 
     try {
