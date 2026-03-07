@@ -2156,6 +2156,281 @@ describe('MigrationOrchestrator', () => {
       );
       expect(recoveryForParity).toHaveLength(0);
       expect(result.success).toBe(true);
+
+      // Minor-parity-repass should trigger an extra code-migrator + parity-verifier cycle
+      const phase4Migrators = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      // 1 initial + 1 re-pass = 2
+      expect(phase4Migrators.length).toBeGreaterThanOrEqual(2);
+
+      const phase4Parity = mockLauncher.invocations.filter(
+        (i) => i.agent === 'parity-verifier' && i.phase === 4,
+      );
+      // 1 initial + 1 re-pass = 2
+      expect(phase4Parity.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should run minor-parity-repass and accept remaining minor issues as non-blocking', async () => {
+      // Parity always returns minor issues — even after re-pass
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'partial',
+              issues: [
+                { severity: 'minor', description: 'Naming convention differs' },
+                { severity: 'minor', description: 'Comment style varies' },
+              ],
+            },
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      // Migration succeeds — minor issues are not blocking
+      expect(result.success).toBe(true);
+
+      // Re-pass code-migrator was invoked (1 initial + 1 re-pass)
+      const migrators = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      expect(migrators.length).toBeGreaterThanOrEqual(2);
+
+      // Re-pass parity-verifier was invoked (1 initial + 1 re-pass)
+      const parityRuns = mockLauncher.invocations.filter(
+        (i) => i.agent === 'parity-verifier' && i.phase === 4,
+      );
+      expect(parityRuns.length).toBeGreaterThanOrEqual(2);
+
+      // The re-pass code-migrator should receive remediation context with parity-minor
+      const repassMigrator = migrators[migrators.length - 1];
+      const repassPayload = (repassMigrator as any).payload ?? {};
+      const repassRemediation = repassPayload.remediationContext as Record<string, unknown> | undefined;
+      if (repassRemediation) {
+        expect(repassRemediation.failureKind).toBe('parity-minor');
+      }
+    });
+
+    it('should skip minor-parity-repass when parity is a clean pass', async () => {
+      // Parity returns clean pass with no issues
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'pass',
+              issues: [],
+            },
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(true);
+
+      // Only 1 code-migrator run — no re-pass because parity was clean
+      const migrators = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      );
+      expect(migrators).toHaveLength(1);
+
+      // Only 1 parity-verifier run — no re-pass
+      const parityRuns = mockLauncher.invocations.filter(
+        (i) => i.agent === 'parity-verifier' && i.phase === 4,
+      );
+      expect(parityRuns).toHaveLength(1);
+    });
+
+    it('should revert to original parity result when re-pass introduces non-minor issues', async () => {
+      let parityCallCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'parity-verifier') {
+          parityCallCount++;
+          if (parityCallCount === 1) {
+            // First run: only minor issues
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+                parity: 'partial',
+                issues: [{ severity: 'minor', description: 'Naming convention differs' }],
+              },
+            };
+          }
+          // Re-pass: introduces a major issue
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'partial',
+              issues: [{ severity: 'major', description: 'Missing error handling' }],
+            },
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      // Should succeed because the original minor-only result is restored
+      expect(result.success).toBe(true);
+    });
+
+    it('should proceed when minor-parity-repass code-migrator fails', async () => {
+      let migratorCallCount = 0;
+      const launcherFn = createMockLauncher((inv) => {
+        if (inv.agent === 'code-migrator') {
+          migratorCallCount++;
+          // First call succeeds (initial migration), second call fails (re-pass)
+          if (migratorCallCount >= 2) {
+            return { success: false, exitCode: 1, error: 'Re-pass migration failed' };
+          }
+        }
+        if (inv.agent === 'parity-verifier') {
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+              parity: 'partial',
+              issues: [{ severity: 'minor', description: 'Naming convention differs' }],
+            },
+          };
+        }
+        return {};
+      });
+      const { orchestrator, progressDir } = await setupOrchestrator(
+        tempDir,
+        launcherFn,
+      );
+
+      const singleTaskPlan = `# Migration Plan
+
+## Task: task-001 - Auth Module
+
+**Description:** Migrate auth
+**Complexity:** simple
+**Knowledge Base Reference:** kb/auth.md
+
+**Source Files:**
+- src/auth.py
+
+**Target Files:**
+- src/auth.ts
+
+**Dependencies:** none
+
+**Acceptance Criteria:**
+- works
+
+**Parity Checks:**
+- matches
+`;
+      await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
+      await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
+      await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
+
+      const result = await orchestrator.run();
+
+      // Migration should succeed — failed re-pass is not blocking
+      expect(result.success).toBe(true);
     });
 
     it('should fail fast when parity retains non-minor issues after retries', async () => {

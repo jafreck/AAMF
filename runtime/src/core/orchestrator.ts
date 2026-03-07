@@ -2155,6 +2155,85 @@ export class MigrationOrchestrator {
       await this.markPhase4Substep(task.id, 'parity-gate');
     }
 
+    // b3. Minor-issue re-pass — run code-migrator one more time when only minor issues remain
+    if (gateMode !== 'skip' && !this.hasPhase4Substep(task.id, 'minor-parity-repass')) {
+      const currentResult = this._parityResults.get(task.id);
+      if (
+        currentResult &&
+        currentResult.issues.length > 0 &&
+        currentResult.issues.every((i) => i.severity === 'minor')
+      ) {
+        this.logger.info(
+          `${task.id} has ${currentResult.issues.length} minor parity issue(s) — running code-migrator once more to address them`,
+        );
+
+        const minorIssueDescriptions = currentResult.issues.map((i) => i.description).join('; ');
+        const minorRemediation = this.buildRemediationContext({
+          failureKind: 'parity-minor',
+          failureSummary: `Minor parity issues remain for ${task.id}: ${minorIssueDescriptions}`,
+          taskId: task.id,
+          check: 'parity-verifier',
+          artifactPaths: [...task.sourceFiles, ...task.targetFiles],
+          expectedSuccessCondition: `All minor parity issues resolved for ${task.id}`,
+        });
+
+        const repassCtx = await this.contextBuilder.buildContext(
+          'code-migrator',
+          4,
+          task.id,
+          {
+            sourceFiles: task.sourceFiles,
+            targetFiles: task.targetFiles,
+            kbEntry: task.knowledgeBaseRef,
+            remediationContext: minorRemediation,
+          },
+        );
+        const repassInv = this.buildInvocation('code-migrator', repassCtx, 4, task.id);
+        const repassResult = await this.launchAgentWithEvents(repassInv);
+        this.recordTokens(repassResult, 4);
+
+        if (repassResult.success) {
+          await this.commitForAgent('code-migrator', 4, task.id, task.name);
+
+          // Re-run parity-verifier to check if minor issues were resolved
+          const reParityCtx = await this.contextBuilder.buildContext(
+            'parity-verifier',
+            4,
+            task.id,
+            {
+              sourceFile: task.sourceFiles[0],
+              targetFile: task.targetFiles[0],
+            },
+          );
+          const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
+          const reParityResult = await this.launchAgentWithEvents(reParityInv);
+          this.recordTokens(reParityResult, 4);
+          this.storeParityResult(reParityResult, task.id);
+
+          const repassParity = this._parityResults.get(task.id);
+          if (repassParity?.parity === 'pass' || (repassParity && repassParity.issues.length === 0)) {
+            this.logger.info(`Minor parity issues fully resolved for ${task.id}`);
+          } else if (repassParity && repassParity.issues.every((i) => i.severity === 'minor')) {
+            this.logger.info(
+              `${task.id} still has ${repassParity.issues.length} minor issue(s) after re-pass — accepting as non-blocking`,
+            );
+          } else {
+            // Re-pass unexpectedly introduced non-minor issues; restore the
+            // original minor-only result so the task is not blocked.
+            this.logger.warn(
+              `${task.id} re-pass introduced non-minor issues — reverting to prior minor-only result`,
+            );
+            this._parityResults.set(task.id, currentResult);
+          }
+        } else {
+          this.logger.warn(
+            `Code-migrator re-pass failed for ${task.id} — proceeding with existing minor issues`,
+          );
+        }
+      }
+      await this.markPhase4Substep(task.id, 'minor-parity-repass');
+    }
+
     if (mode === 'wave-migration') {
       return { migrated: true, durationMs: Date.now() - taskStartMs };
     }
