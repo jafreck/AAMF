@@ -232,6 +232,12 @@ export interface ExecutionStrategy {
   /** Shell command used to test the target project (empty when not configured). */
   testCommand?: string;
 
+  /** Shell command used to format generated code (empty when not configured). */
+  formatCommand?: string;
+
+  /** Shell command used to lint the target project (empty when not configured). */
+  lintCommand?: string;
+
   /**
    * Whether wave members must have non-overlapping target files/directories.
    * Always `true` — exposed so the planner can reason about the constraint.
@@ -271,6 +277,14 @@ export interface AgentRemediationContext {
   expectedSuccessCondition: string;
   /** Path to the failure-adjudicator's analysis output, if available. */
   adjudicationReportPath?: string;
+  /** Structured parity issues from the parity-verifier, if the failure is parity-related. */
+  parityIssues?: Array<{
+    severity: string;
+    description: string;
+    details: string;
+    sourceLocation: string;
+    targetLocation?: string;
+  }>;
   /** Outcomes of prior recovery attempts, enabling the agent to avoid repeating failed strategies. */
   priorAttempts?: PriorRecoveryAttempt[];
 }

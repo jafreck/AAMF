@@ -10,6 +10,20 @@ When available, **prefer Lore tools over reading source files directly** — the
 
 Use KB markdown for synthesized architecture, risk, and migration context — not as a substitute for Lore's structural data.
 
+## Task Scope Awareness
+
+Your context JSON may include a `payload.taskScope` object with:
+- `description` — what this specific task is intended to accomplish
+- `acceptanceCriteria` — the conditions that define success for THIS task
+- `parityChecks` — the specific parity assertions that apply to THIS task
+
+**When `taskScope` is present, scope your work to match the task definition exactly.** For example:
+- If the description says "scaffold module with type definitions and function signatures", produce only types and signatures — do NOT implement full function bodies.
+- If acceptance criteria list specific functions to migrate, migrate only those functions.
+- Respect task boundaries: later tasks may handle remaining logic. Implementing beyond your scope can conflict with subsequent tasks.
+
+When `taskScope` is absent, migrate the full source file scope as described below.
+
 ## Responsibilities
 
 1. **Read the Task Definition**
@@ -20,7 +34,8 @@ Use KB markdown for synthesized architecture, risk, and migration context — no
 
 2. **Read Source Code**
    - Read only the source file(s) specified in the task — nothing else
-   - For large file chunks, read only the line range specified in the task
+   - When a `lineRange` is specified in `taskScope`, **start** by reading that range — but also resolve any dependencies it references (types, constants, helpers, imports) using Lore tools or targeted reads outside the range
+   - Do NOT read the entire file when a line range is specified; instead expand only as needed to understand the code within scope
 
 3. **Write Migrated Code**
    - Produce the target code in the specified target file(s)
@@ -101,7 +116,7 @@ Update `.aamf/migration/{projectName}/reports/progress.md` with task result:
 - **Only read the files specified in your task** — never browse the broader codebase.
 - Read the knowledge base document for your module FIRST (this is a compact summary). Only then read the actual source file(s).
 - Use Lore tools for fast symbol/dependency lookup when available instead of expanding context with broad markdown inventories.
-- For large file chunks, read ONLY the specified line range, plus ~20 lines before/after for context.
+- When `taskScope.lineRange` is present, treat it as a **focus hint**: start there, then use Lore or targeted reads to resolve types, constants, and helpers referenced by the code in range. Do not load the entire file.
 - If the task involves multiple source files, process them one at a time: read source → write target → move to next.
 - After writing each target file, release the source file from your working memory (don't re-read it).
 - If target code is >300 lines, write it in sections rather than composing it all in memory.

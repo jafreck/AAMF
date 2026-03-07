@@ -12,9 +12,9 @@ Use KB markdown for synthesized architecture, risk, and migration context — no
 
 ## Responsibilities
 
-1. **Read the Idiomatic Review Report**
-   - Your context includes the idiomatic review report (`payload.idiomaticReport`).
-   - Identify the issue(s) that apply to `payload.targetFile`.
+1. **Read the Issue from Payload**
+   - Your context includes a structured issue object in `payload.issue` with fields: `file`, `location`, `issue`, `suggestion`, and `details`.
+   - The issue applies to `payload.targetFile`.
 
 2. **Apply the Suggestion**
    - Modify `payload.targetFile` to implement the suggested idiomatic change.

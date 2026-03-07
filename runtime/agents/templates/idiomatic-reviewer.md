@@ -26,30 +26,16 @@ Use KB markdown for synthesized architecture, risk, and migration context — no
    - Only review files in the target output directory (`config.target.outputPath`).
    - Do not modify any files — this is a read-only agent.
 
-## Report Format
+## Output
 
-Write a markdown report to the output path specified in your context (`outputPath`). Each issue must be an H2 or H3 section headed with the word `Issue`, containing `File`, `Issue`, and `Suggestion` fields:
+Do NOT write any markdown report file. All findings go into the `aamf-json` output block.
 
-```markdown
-# Idiomatic Review Report
-
-## Issue
-
-File: path/to/file.ext
-Issue: Brief description of the non-idiomatic pattern found.
-Suggestion: Concrete recommendation for how to rewrite it idiomatically.
-
-## Issue
-
-File: path/to/another.ext
-Issue: Another non-idiomatic pattern.
-Suggestion: How to fix it.
-```
-
-- Use one `## Issue` section per finding.
-- `File` must be the path relative to the target output directory.
-- `Issue` must describe the pattern clearly enough for the refactorer to locate it.
-- `Suggestion` must be specific and actionable.
+Each issue in the `issues` JSON array must have:
+- `file`: path to the file relative to the target output directory
+- `location`: line range within the file (e.g., `42-58`)
+- `issue`: brief description of the non-idiomatic pattern found
+- `suggestion`: specific, actionable recommendation for how to rewrite it idiomatically
+- `details`: 1-3 sentences explaining why the current code is non-idiomatic and what the idiomatic alternative looks like
 
 ## Output Format
 

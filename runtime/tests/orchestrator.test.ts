@@ -178,6 +178,26 @@ function withParityPassOutput(
         result.outputParsed = true;
       }
     }
+    // Phase 5: final-parity-checker must return structuredOutput (no file fallback)
+    if (inv.agent === 'final-parity-checker') {
+      if (!result.structuredOutput || !Array.isArray((result.structuredOutput as any).fixes)) {
+        result.structuredOutput = {
+          ...(result.structuredOutput ?? {}),
+          fixes: [],
+        };
+        result.outputParsed = true;
+      }
+    }
+    // Phase 8: idiomatic-reviewer must return structuredOutput (no file fallback)
+    if (inv.agent === 'idiomatic-reviewer') {
+      if (!result.structuredOutput || !Array.isArray((result.structuredOutput as any).issues)) {
+        result.structuredOutput = {
+          ...(result.structuredOutput ?? {}),
+          issues: [],
+        };
+        result.outputParsed = true;
+      }
+    }
     return result;
   };
 }
@@ -188,7 +208,7 @@ function withParityPassOutput(
  */
 function withParityOutput(
   fn: (inv: AgentInvocation) => Promise<AgentResult>,
-  overrides: Record<string, { parity: string; issues: Array<{ severity: string; description: string; sourceLocation?: string; targetLocation?: string }> }>,
+  overrides: Record<string, { parity: string; issues: Array<{ severity: string; description: string; details: string; sourceLocation: string; targetLocation?: string }> }>,
 ): (inv: AgentInvocation) => Promise<AgentResult> {
   return async (inv: AgentInvocation): Promise<AgentResult> => {
     const result = await fn(inv);
@@ -1926,7 +1946,7 @@ describe('MigrationOrchestrator', () => {
             structuredOutput: {
               agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
               parity: 'fail',
-              issues: [{ severity: 'critical', description: 'Missing error handling in auth flow', sourceLocation: 'src/auth.py:45', targetLocation: 'src/auth.ts:52' }],
+              issues: [{ severity: 'critical', description: 'Missing error handling in auth flow', details: 'Auth flow lacks try/catch around token validation', sourceLocation: 'src/auth.py:45', targetLocation: 'src/auth.ts:52' }],
             },
           };
         }
@@ -2013,8 +2033,8 @@ describe('MigrationOrchestrator', () => {
               agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
               parity: 'fail',
               issues: [
-                { severity: 'major', description: 'HashMap shim instead of direct struct access', sourceLocation: 'src/wrapper.c:178', targetLocation: 'src/lib.rs:120' },
-                { severity: 'critical', description: 'Missing z_deflate wrapper functions', sourceLocation: 'src/wrapper.c:263', targetLocation: 'src/lib.rs' },
+                { severity: 'major', description: 'HashMap shim instead of direct struct access', details: 'Should use direct struct field access instead of HashMap lookup', sourceLocation: 'src/wrapper.c:178', targetLocation: 'src/lib.rs:120' },
+                { severity: 'critical', description: 'Missing z_deflate wrapper functions', details: 'z_deflate wrappers not ported from C source', sourceLocation: 'src/wrapper.c:263', targetLocation: 'src/lib.rs' },
               ],
             },
           };
@@ -2086,18 +2106,15 @@ describe('MigrationOrchestrator', () => {
       const remediation = reMigrateCtx!.payload?.remediationContext as Record<string, unknown>;
       expect(remediation?.failureSummary).toBeUndefined();
 
-      // Parity report .md should be in inputFiles
-      const inputFiles = reMigrateCtx!.inputFiles as string[];
-      const hasParityMd = inputFiles.some((f: string) => f.endsWith('.md') && f.includes('parity'));
-      expect(hasParityMd).toBe(true);
+      // parityIssues should be passed in the remediationContext
+      expect(remediation?.parityIssues).toBeDefined();
+      expect(Array.isArray(remediation?.parityIssues)).toBe(true);
 
-      // Adjudication report path should be in inputFiles
-      const hasAdjudicationMd = inputFiles.some((f: string) => f.includes('adjudication'));
-      expect(hasAdjudicationMd).toBe(true);
-
-      // adjudicationReportPath should be set in remediationContext
-      expect(remediation?.adjudicationReportPath).toBeDefined();
-      expect(typeof remediation?.adjudicationReportPath).toBe('string');
+      // failureReport should be an enriched summary string, not a file path
+      const failureReport = reMigrateCtx!.payload?.failureReport;
+      if (failureReport !== undefined) {
+        expect(typeof failureReport).toBe('string');
+      }
     });
 
     it('should not trigger recovery when parity has only minor issues', async () => {
@@ -2108,7 +2125,7 @@ describe('MigrationOrchestrator', () => {
             structuredOutput: {
               agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
               parity: 'partial',
-              issues: [{ severity: 'minor', description: 'Slightly different API surface', sourceLocation: 'src/auth.py:10', targetLocation: 'src/auth.ts:12' }],
+              issues: [{ severity: 'minor', description: 'Slightly different API surface', details: 'API shape differs slightly in parameter order', sourceLocation: 'src/auth.py:10', targetLocation: 'src/auth.ts:12' }],
             },
           };
         }
@@ -2178,8 +2195,8 @@ describe('MigrationOrchestrator', () => {
               agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
               parity: 'partial',
               issues: [
-                { severity: 'minor', description: 'Naming convention differs' },
-                { severity: 'minor', description: 'Comment style varies' },
+                { severity: 'minor', description: 'Naming convention differs', details: 'Uses camelCase vs snake_case', sourceLocation: 'src/auth.py:1', targetLocation: 'src/auth.ts:1' },
+                { severity: 'minor', description: 'Comment style varies', details: 'Docstring vs JSDoc format', sourceLocation: 'src/auth.py:5', targetLocation: 'src/auth.ts:5' },
               ],
             },
           };
@@ -2318,7 +2335,7 @@ describe('MigrationOrchestrator', () => {
               structuredOutput: {
                 agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
                 parity: 'partial',
-                issues: [{ severity: 'minor', description: 'Naming convention differs' }],
+                issues: [{ severity: 'minor', description: 'Naming convention differs', details: 'Uses camelCase vs snake_case', sourceLocation: 'src/auth.py:1', targetLocation: 'src/auth.ts:1' }],
               },
             };
           }
@@ -2328,7 +2345,7 @@ describe('MigrationOrchestrator', () => {
             structuredOutput: {
               agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
               parity: 'partial',
-              issues: [{ severity: 'major', description: 'Missing error handling' }],
+              issues: [{ severity: 'major', description: 'Missing error handling', details: 'No try/catch around async calls', sourceLocation: 'src/auth.py:30', targetLocation: 'src/auth.ts:35' }],
             },
           };
         }
@@ -2387,7 +2404,7 @@ describe('MigrationOrchestrator', () => {
             structuredOutput: {
               agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
               parity: 'partial',
-              issues: [{ severity: 'minor', description: 'Naming convention differs' }],
+              issues: [{ severity: 'minor', description: 'Naming convention differs', details: 'Uses camelCase vs snake_case', sourceLocation: 'src/auth.py:1', targetLocation: 'src/auth.ts:1' }],
             },
           };
         }
@@ -2442,7 +2459,7 @@ describe('MigrationOrchestrator', () => {
             structuredOutput: {
               agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
               parity: 'partial',
-              issues: [{ severity: 'major', description: 'Missing validation logic' }],
+              issues: [{ severity: 'major', description: 'Missing validation logic', details: 'Input validation not ported', sourceLocation: 'src/auth.py:50', targetLocation: 'src/auth.ts:55' }],
             },
           };
         }
@@ -2519,7 +2536,7 @@ describe('MigrationOrchestrator', () => {
             structuredOutput: {
               agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
               parity: 'fail',
-              issues: [{ severity: 'major', description: 'Behavior diverges in auth checks' }],
+              issues: [{ severity: 'major', description: 'Behavior diverges in auth checks', details: 'Auth check behavior differs between source and target', sourceLocation: 'src/auth.py:20', targetLocation: 'src/auth.ts:25' }],
             },
           };
         }
@@ -2744,7 +2761,7 @@ describe('MigrationOrchestrator', () => {
               structuredOutput: {
                 agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
                 parity: 'partial',
-                issues: [{ severity: 'minor', description: 'Style nit' }],
+                issues: [{ severity: 'minor', description: 'Style nit', details: 'Minor formatting difference', sourceLocation: 'src/auth.py:1', targetLocation: 'src/auth.ts:1' }],
               },
             };
           }
@@ -2804,7 +2821,7 @@ describe('MigrationOrchestrator', () => {
                 structuredOutput: {
                   agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
                   parity: 'fail',
-                  issues: [{ severity: 'major', description: 'Divergence in task' }],
+                  issues: [{ severity: 'major', description: 'Divergence in task', details: 'Task behavior diverges from source', sourceLocation: 'src/auth.py:10', targetLocation: 'src/auth.ts:10' }],
                 },
               };
             }
@@ -2875,7 +2892,7 @@ describe('MigrationOrchestrator', () => {
               structuredOutput: {
                 agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
                 parity: 'fail',
-                issues: [{ severity: 'major', description: 'Persistent divergence' }],
+                issues: [{ severity: 'major', description: 'Persistent divergence', details: 'Behavior divergence persists after remediation', sourceLocation: 'src/auth.py:10', targetLocation: 'src/auth.ts:10' }],
               },
             };
           }
@@ -3054,7 +3071,7 @@ describe('MigrationOrchestrator', () => {
               structuredOutput: {
                 agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
                 parity: 'fail',
-                issues: [{ severity: 'critical', description: 'Missing export' }],
+                issues: [{ severity: 'critical', description: 'Missing export', details: 'Public export not present in target module', sourceLocation: 'src/auth.py:1', targetLocation: 'src/auth.ts:1' }],
               },
             };
           }
@@ -3161,7 +3178,7 @@ describe('MigrationOrchestrator', () => {
               structuredOutput: {
                 agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
                 parity: 'fail',
-                issues: [{ severity: 'major', description: `Divergence in ${inv.taskId}` }],
+                issues: [{ severity: 'major', description: `Divergence in ${inv.taskId}`, details: `Behavior diverges in ${inv.taskId}`, sourceLocation: 'src/a.py:1', targetLocation: 'src/a.ts:1' }],
               },
             };
           }
@@ -3500,7 +3517,7 @@ describe('MigrationOrchestrator', () => {
       const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
       (orchestrator as any)._parityResults.set('task-001', {
         parity: 'partial',
-        issues: [{ severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' }],
+        issues: [{ severity: 'minor', description: 'style nit', details: 'Minor style difference', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' }],
       });
 
       const result = (orchestrator as any).hasNonMinorParityIssues('task-001');
@@ -3512,7 +3529,7 @@ describe('MigrationOrchestrator', () => {
       const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
       (orchestrator as any)._parityResults.set('task-001', {
         parity: 'fail',
-        issues: [{ severity: 'critical', description: 'missing function', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' }],
+        issues: [{ severity: 'critical', description: 'missing function', details: 'Function not ported to target', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' }],
       });
 
       const result = (orchestrator as any).checkParityResult('task-001');
@@ -3525,8 +3542,8 @@ describe('MigrationOrchestrator', () => {
       (orchestrator as any)._parityResults.set('task-001', {
         parity: 'partial',
         issues: [
-          { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
-          { severity: 'minor', description: 'whitespace diff', sourceLocation: 'a.py:5', targetLocation: 'a.ts:5' },
+          { severity: 'minor', description: 'style nit', details: 'Minor style difference', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
+          { severity: 'minor', description: 'whitespace diff', details: 'Whitespace formatting differs', sourceLocation: 'a.py:5', targetLocation: 'a.ts:5' },
         ],
       });
 
@@ -3540,8 +3557,8 @@ describe('MigrationOrchestrator', () => {
       (orchestrator as any)._parityResults.set('task-001', {
         parity: 'partial',
         issues: [
-          { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
-          { severity: 'major', description: 'logic mismatch', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' },
+          { severity: 'minor', description: 'style nit', details: 'Minor style difference', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
+          { severity: 'major', description: 'logic mismatch', details: 'Control flow logic diverges', sourceLocation: 'a.py:10', targetLocation: 'a.ts:10' },
         ],
       });
 
@@ -3555,8 +3572,8 @@ describe('MigrationOrchestrator', () => {
       (orchestrator as any)._parityResults.set('task-001', {
         parity: 'fail',
         issues: [
-          { severity: 'minor', description: 'style nit', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
-          { severity: 'critical', description: 'missing export', sourceLocation: 'a.py:20', targetLocation: 'a.ts:20' },
+          { severity: 'minor', description: 'style nit', details: 'Minor style difference', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' },
+          { severity: 'critical', description: 'missing export', details: 'Public export not present in target module', sourceLocation: 'a.py:20', targetLocation: 'a.ts:20' },
         ],
       });
 
@@ -3606,7 +3623,7 @@ describe('MigrationOrchestrator', () => {
           agent: 'parity-verifier',
           status: 'completed',
           parity: 'partial',
-          issues: [{ severity: 'major', description: 'divergence' }],
+          issues: [{ severity: 'major', description: 'divergence', details: 'Behavior diverges', sourceLocation: 'src/a.py:1', targetLocation: 'src/a.ts:1' }],
         },
       };
       (orchestrator as any).storeParityResult(agentResult, 'task-001');
@@ -3960,6 +3977,21 @@ Total usage est: 1 Premium requests
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'final-parity-checker') {
           parityCheckCount++;
+          if (parityCheckCount === 1) {
+            return {
+              outputParsed: true,
+              structuredOutput: {
+                fixes: [
+                  {
+                    description: 'Missing error handling',
+                    sourceFile: 'src/auth.py',
+                    targetFile: 'src/auth.ts',
+                  },
+                ],
+              },
+            };
+          }
+          return { outputParsed: true, structuredOutput: { fixes: [] } };
         }
         return {};
       });
@@ -3969,14 +4001,6 @@ Total usage est: 1 Premium requests
         launcherFn,
       );
       await writeMigrationPlan(progressDir);
-
-      await writeParityReport(progressDir, [
-        {
-          description: 'Missing error handling',
-          sourceFile: 'src/auth.py',
-          targetFile: 'src/auth.ts',
-        },
-      ]);
 
       const result = await orchestrator.run();
 
@@ -4393,6 +4417,14 @@ Total usage est: 1 Premium requests
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'idiomatic-reviewer') {
           reviewCount++;
+          return {
+            outputParsed: true,
+            structuredOutput: {
+              issues: [
+                { file: 'src/main.ts', location: 'line 5', issue: 'let used instead of const', suggestion: 'replace let with const', details: 'Use const for variables that are not reassigned' },
+              ],
+            },
+          };
         }
         return {};
       });
@@ -4419,12 +4451,7 @@ Total usage est: 1 Premium requests
       );
       await writeMigrationPlan(progressDir);
 
-      // Write an idiomatic report with issues so the loop keeps iterating
-      await mkdir(join(progressDir, 'artifacts', 'parity'), { recursive: true });
-      await writeFile(
-        join(progressDir, 'artifacts', 'parity', 'idiomatic-review-report.md'),
-        '# Idiomatic Review\n\n## Issue: Use const\nFile: src/main.ts\nIssue: let used instead of const\nSuggestion: replace let with const\n',
-      );
+      // structuredOutput from idiomatic-reviewer drives the loop (no .md file fallback)
 
       const warnSpy = vi.spyOn(logger, 'warn');
 
@@ -4483,7 +4510,7 @@ Total usage est: 1 Premium requests
       );
       await writeMigrationPlan(progressDir);
 
-      // No idiomatic report file → parseIdiomaticReport returns [] → loop exits immediately
+      // Default mock returns empty issues via withParityPassOutput → loop exits immediately
       await orchestrator.run();
 
       expect(reviewCount).toBe(1);

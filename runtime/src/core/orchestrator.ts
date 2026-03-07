@@ -24,7 +24,6 @@ import {
 } from '../agents/types.js';
 import { ContextBuilder } from '../agents/context-builder.js';
 import { parseMigrationPlan, parseE2eTestPlan } from '../agents/plan-parser.js';
-import { parseIdiomaticReport, parseFinalParityReport } from '../agents/report-parser.js';
 import { MigrationConfig } from '../config/schema.js';
 import { ParallelExecutor } from '../execution/parallel-executor.js';
 import { TaskQueue } from '../execution/task-queue.js';
@@ -140,7 +139,8 @@ interface ParityResultData {
   issues: Array<{
     severity: 'critical' | 'major' | 'minor';
     description: string;
-    sourceLocation?: string;
+    details: string;
+    sourceLocation: string;
     targetLocation?: string;
   }>;
 }
@@ -1235,6 +1235,8 @@ export class MigrationOrchestrator {
       waveConvergenceLimitHits: 0,
       buildCommandRuns: 0,
       testCommandRuns: 0,
+      formatCommandRuns: 0,
+      lintCommandRuns: 0,
       commandRecoveryAttempts: 0,
       commandInfraRetries: 0,
       recoveryLoopTimeMs: 0,
@@ -1452,6 +1454,24 @@ export class MigrationOrchestrator {
       },
       artifactPaths: Array.from(new Set(input.artifactPaths.filter(Boolean))),
       expectedSuccessCondition: input.expectedSuccessCondition,
+    };
+  }
+
+  /**
+   * Extract the task-scope fields (description, acceptanceCriteria, parityChecks)
+   * from a {@link MigrationTask} as a payload fragment.  Every task-scoped agent
+   * (code-migrator, parity-verifier, test-writer, failure-adjudicator) receives
+   * this so it can calibrate its work to the task's intended scope rather than
+   * assuming full source↔target equivalence.
+   */
+  private taskScopePayload(task: MigrationTask): Record<string, unknown> {
+    return {
+      taskScope: {
+        description: task.description,
+        acceptanceCriteria: task.acceptanceCriteria,
+        parityChecks: task.parityChecks,
+        ...(task.lineRange ? { lineRange: task.lineRange } : {}),
+      },
     };
   }
 
@@ -1818,6 +1838,7 @@ export class MigrationOrchestrator {
           sourceFiles: task.sourceFiles,
           targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef,
+          ...this.taskScopePayload(task),
           ...(remediationContext ? { remediationContext: toAgentRemediationContext(remediationContext) } : {}),
         },
       );
@@ -1918,6 +1939,7 @@ export class MigrationOrchestrator {
               sourceFiles: task.sourceFiles,
               targetFiles: task.targetFiles,
               kbEntry: task.knowledgeBaseRef,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
             },
           );
@@ -1934,6 +1956,7 @@ export class MigrationOrchestrator {
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: this.config.options.maxRetriesPerTask,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
             },
           );
@@ -1971,6 +1994,7 @@ export class MigrationOrchestrator {
         {
           sourceFile: task.sourceFiles[0],
           targetFile: task.targetFiles[0],
+          ...this.taskScopePayload(task),
         },
       );
       const testCtx = await this.contextBuilder.buildContext(
@@ -1981,6 +2005,7 @@ export class MigrationOrchestrator {
           targetFile: task.targetFiles[0],
           kbEntry: task.knowledgeBaseRef,
           testType: 'unit',
+          ...this.taskScopePayload(task),
         },
       );
 
@@ -2016,33 +2041,27 @@ export class MigrationOrchestrator {
         const priorAttempts: Array<{ attempt: number; issueCount: number; unresolvedIssues: string[] }> = [];
 
         for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
-          // Launch failure-adjudicator with parity report
-          const parityReportPath = join(
-            this.paths.artifactsParityDir,
-            `${task.id}.md`,
-          );
-          const adjudicationReportPath = join(
-            this.paths.artifactsAdjudicationDir,
-            `${task.id}.md`,
-          );
-
           // Build an enriched failure summary from the actual parity result
           const issueSummary = this.getParityIssueSummary(task.id);
           const enrichedSummary = issueSummary
             ? `Parity verification failed for ${task.id}: ${issueSummary}`
             : `Parity verification failed for ${task.id}`;
 
+          // Get structured parity issues for the remediation context
+          const storedParityResult = this._parityResults.get(task.id);
+          const parityIssues = storedParityResult?.issues ?? [];
+
           const parityRemediation = this.buildRemediationContext({
             failureKind: 'parity',
             failureSummary: enrichedSummary,
             taskId: task.id,
             check: 'parity-verifier',
-            artifactPaths: [parityReportPath, ...task.sourceFiles, ...task.targetFiles],
+            artifactPaths: [...task.sourceFiles, ...task.targetFiles],
             expectedSuccessCondition: `Parity checks pass (or only minor issues) for ${task.id}`,
           });
 
-          // Attach adjudication report path and prior attempt history
-          parityRemediation.adjudicationReportPath = adjudicationReportPath;
+          // Attach structured parity issues and prior attempt history
+          parityRemediation.parityIssues = parityIssues;
           if (priorAttempts.length > 0) {
             parityRemediation.priorAttempts = [...priorAttempts];
           }
@@ -2061,11 +2080,12 @@ export class MigrationOrchestrator {
             4,
             task.id,
             {
-              failureReport: parityReportPath,
+              failureReport: enrichedSummary,
               sourceFile: task.sourceFiles[0],
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: attempt,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
@@ -2088,6 +2108,7 @@ export class MigrationOrchestrator {
               sourceFiles: task.sourceFiles,
               targetFiles: task.targetFiles,
               kbEntry: task.knowledgeBaseRef,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
@@ -2110,6 +2131,7 @@ export class MigrationOrchestrator {
             {
               sourceFile: task.sourceFiles[0],
               targetFile: task.targetFiles[0],
+              ...this.taskScopePayload(task),
             },
           );
           const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
@@ -2188,6 +2210,7 @@ export class MigrationOrchestrator {
             sourceFiles: task.sourceFiles,
             targetFiles: task.targetFiles,
             kbEntry: task.knowledgeBaseRef,
+            ...this.taskScopePayload(task),
             remediationContext: toAgentRemediationContext(minorRemediation),
           },
         );
@@ -2206,6 +2229,7 @@ export class MigrationOrchestrator {
             {
               sourceFile: task.sourceFiles[0],
               targetFile: task.targetFiles[0],
+              ...this.taskScopePayload(task),
             },
           );
           const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
@@ -2241,7 +2265,20 @@ export class MigrationOrchestrator {
       return { migrated: true, durationMs: Date.now() - taskStartMs };
     }
 
-    // c2. Run build command if configured
+    // c2. Run format command if configured (deterministic — always enforced)
+    if (this.config.target.formatCommand) {
+      if (!this.hasPhase4Substep(task.id, 'format')) {
+        const formatResult = await this.runCommand('format', this.config.target.formatCommand, task.id);
+        if (!formatResult.success) {
+          this.logger.warn(
+            `Format command failed for ${task.id}: ${formatResult.error ?? 'unknown error'}`,
+          );
+        }
+        await this.markPhase4Substep(task.id, 'format');
+      }
+    }
+
+    // c3. Run build command if configured
     if (this.config.target.buildCommand) {
       if (!this.hasPhase4Substep(task.id, 'build')) {
         if (gateMode === 'enforce') {
@@ -2262,7 +2299,7 @@ export class MigrationOrchestrator {
       }
     }
 
-    // c3. Run test command if configured
+    // c4. Run test command if configured
     if (this.config.target.testCommand) {
       if (!this.hasPhase4Substep(task.id, 'test')) {
         if (gateMode === 'enforce') {
@@ -2348,6 +2385,14 @@ export class MigrationOrchestrator {
     }
     const waveTaskId = `wave-${wave}`;
 
+    // Format first — normalize code before build/test/lint
+    if (this.config.target.formatCommand) {
+      const format = await this.runCommand('format', this.config.target.formatCommand, waveTaskId);
+      if (!format.success) {
+        this.logger.warn(`Wave ${wave} format command failed (non-gating): ${format.error ?? 'unknown'}`);
+      }
+    }
+
     if (this.config.target.buildCommand) {
       const build = await this.runCommand('build', this.config.target.buildCommand, waveTaskId);
       if (!build.success) {
@@ -2432,7 +2477,7 @@ export class MigrationOrchestrator {
     const MAX_LOOPBACK = 2;
     const phase5Cursor = this.getPhase5Cursor();
     if (phase5Cursor.lastSuccessfulStep === 'complete' || phase5Cursor.iteration > MAX_LOOPBACK) {
-      const outputPath = join(this.paths.artifactsParityDir, 'final-parity-report.md');
+      const outputPath = this.config.target.outputPath;
       if (phase5Cursor.hadUnresolvedFixes) {
         return {
           phase: 5,
@@ -2480,16 +2525,19 @@ export class MigrationOrchestrator {
         };
       }
 
-      // Parse report for required fixes — prefer structuredOutput, fall back to file
+      // Parse report for required fixes — must come from structuredOutput
       let fixes: Array<{ description: string; sourceFile: string; targetFile: string }>;
       if (result.outputParsed && Array.isArray(result.structuredOutput?.['fixes'])) {
         fixes = result.structuredOutput['fixes'] as Array<{ description: string; sourceFile: string; targetFile: string }>;
       } else {
-        const reportPath = this.paths.finalParityReportFile;
-        const reportToRead = await fileExists(reportPath) ? reportPath : undefined;
-        if (!reportToRead) break;
-        this.logger.warn('Final-parity-checker structured output unavailable — falling back to parseFinalParityReport');
-        fixes = await parseFinalParityReport(reportToRead);
+        this.logger.warn('Final-parity-checker structured output unavailable — treating as agent failure');
+        return {
+          phase: 5,
+          name: 'Final Parity Verification',
+          success: false,
+          duration: Date.now() - start,
+          error: 'Final-parity-checker did not produce structured aamf-json output with fixes array',
+        };
       }
       if (fixes.length === 0) {
         lastIterationFixes = fixes;
@@ -2518,6 +2566,18 @@ export class MigrationOrchestrator {
             fixIndex,
             lastSuccessfulStep: 'fix-started',
           });
+          const fixRemediation = this.buildRemediationContext({
+            failureKind: 'parity',
+            failureSummary: fix.description,
+            taskId: fixTaskId,
+            check: 'final-parity-checker',
+            artifactPaths: [
+              ...(fix.sourceFile ? [fix.sourceFile] : []),
+              ...(fix.targetFile ? [fix.targetFile] : []),
+            ],
+            expectedSuccessCondition: `Parity issue resolved: ${fix.description}`,
+          });
+
           const fixCtx = await this.contextBuilder.buildContext(
             'code-migrator',
             5,
@@ -2525,7 +2585,12 @@ export class MigrationOrchestrator {
             {
               sourceFiles: fix.sourceFile ? [fix.sourceFile] : [],
               targetFiles: fix.targetFile ? [fix.targetFile] : [],
-              description: fix.description,
+              taskScope: {
+                description: `Fix parity issue: ${fix.description}`,
+                acceptanceCriteria: [fix.description],
+                parityChecks: [fix.description],
+              },
+              remediationContext: toAgentRemediationContext(fixRemediation),
             },
           );
           const fixInv = this.buildInvocation(
@@ -2881,12 +2946,11 @@ export class MigrationOrchestrator {
     const maxIterations = this.config.options.idiomaticRefactor?.maxIterations ?? 2;
     const phase8Cursor = this.getPhase8Cursor();
     if (phase8Cursor.lastSuccessfulStep === 'complete' || phase8Cursor.iteration >= maxIterations) {
-      const outputPath = join(this.paths.artifactsParityDir, 'idiomatic-review-report.md');
       return {
         phase: 8,
         name: 'Idiomatic Refactor',
         success: true,
-        outputPath,
+        outputPath: this.config.target.outputPath,
         duration: Date.now() - start,
       };
     }
@@ -2917,14 +2981,19 @@ export class MigrationOrchestrator {
         };
       }
 
-      // Parse idiomatic issues
-      const reportPath = this.paths.idiomaticReviewReportFile;
-      let issues: Array<{ file: string; issue: string; suggestion: string }>;
+      // Parse idiomatic issues — must come from structuredOutput
+      let issues: Array<{ file: string; location: string; issue: string; suggestion: string; details: string }>;
       if (reviewResult.outputParsed && Array.isArray(reviewResult.structuredOutput?.['issues'])) {
-        issues = reviewResult.structuredOutput['issues'] as Array<{ file: string; issue: string; suggestion: string }>;
+        issues = reviewResult.structuredOutput['issues'] as Array<{ file: string; location: string; issue: string; suggestion: string; details: string }>;
       } else {
-        this.logger.warn('Idiomatic-reviewer structured output unavailable — falling back to parseIdiomaticReport');
-        issues = await parseIdiomaticReport(reportPath);
+        this.logger.warn('Idiomatic-reviewer structured output unavailable — treating as agent failure');
+        return {
+          phase: 8,
+          name: 'Idiomatic Refactor',
+          success: false,
+          duration: Date.now() - start,
+          error: 'Idiomatic-reviewer did not produce structured aamf-json output with issues array',
+        };
       }
 
       if (issues.length === 0) {
@@ -2952,13 +3021,27 @@ export class MigrationOrchestrator {
           });
           const refactorCtx = await this.contextBuilder.buildContext('idiomatic-refactorer', 8, undefined, {
             targetFile: issue.file,
-            idiomaticReport: reportPath,
+            issue, // structured: { file, location, issue, suggestion, details }
           });
           const refactorInv = this.buildInvocation('idiomatic-refactorer', refactorCtx, 8);
           const refactorResult = await this.launchAgentWithEvents(refactorInv);
           this.recordTokens(refactorResult, 8);
           if (refactorResult.success) {
+            // Format after refactor to normalize code style
+            if (this.config.target.formatCommand) {
+              const fmtResult = await this.runCommand('format', this.config.target.formatCommand, `phase8-${issue.file}`);
+              if (!fmtResult.success) {
+                this.logger.warn(`Phase 8 format failed for ${issue.file}: ${fmtResult.error ?? 'unknown'}`);
+              }
+            }
             await this.commitForAgent('idiomatic-refactorer', 8, issue.file);
+            // Lint after refactor — failure is gating in Phase 8
+            if (this.config.target.lintCommand) {
+              const lintResult = await this.runCommand('lint', this.config.target.lintCommand, `phase8-${issue.file}`);
+              if (!lintResult.success) {
+                this.logger.warn(`Phase 8 lint failed after refactoring ${issue.file}: ${lintResult.error ?? 'unknown'}`);
+              }
+            }
             await this.savePhase8Cursor({
               iteration,
               issueIndex: issueIndex + 1,
@@ -2970,7 +3053,6 @@ export class MigrationOrchestrator {
               phase: 8,
               name: 'Idiomatic Refactor',
               success: false,
-              outputPath: reportPath,
               duration: Date.now() - start,
             };
           }
@@ -2991,7 +3073,7 @@ export class MigrationOrchestrator {
       lastSuccessfulStep: 'complete',
     });
 
-    const outputPath = join(this.paths.artifactsParityDir, 'idiomatic-review-report.md');
+    const outputPath = this.config.target.outputPath;
     return {
       phase: 8,
       name: 'Idiomatic Refactor',
@@ -3016,6 +3098,8 @@ export class MigrationOrchestrator {
     if (this.phase4Snapshot) {
       if (label === 'build') this.phase4Snapshot.buildCommandRuns++;
       if (label === 'test') this.phase4Snapshot.testCommandRuns++;
+      if (label === 'format') this.phase4Snapshot.formatCommandRuns++;
+      if (label === 'lint') this.phase4Snapshot.lintCommandRuns++;
     }
     return this.buildLimiter(async () => {
       const timeout = this.getRuntimeTimeout();
@@ -3035,7 +3119,12 @@ export class MigrationOrchestrator {
 
         // Log the output
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const commandLogDir = label === 'build' ? this.paths.logsCommandBuildDir : this.paths.logsCommandTestDir;
+        const commandLogDir = {
+          build: this.paths.logsCommandBuildDir,
+          test: this.paths.logsCommandTestDir,
+          format: this.paths.logsCommandFormatDir,
+          lint: this.paths.logsCommandLintDir,
+        }[label] ?? this.paths.logsCommandBuildDir;
         await ensureDir(commandLogDir);
         const logPath = join(commandLogDir, `${taskId}-${timestamp}.log`);
         const logContent = `=== COMMAND: ${command} ===\n=== EXIT CODE: ${result.exitCode} ===\n\n=== STDOUT ===\n${result.stdout}\n\n=== STDERR ===\n${result.stderr}\n`;
@@ -3178,6 +3267,7 @@ export class MigrationOrchestrator {
           targetFile: task.targetFiles[0],
           kbEntry: task.knowledgeBaseRef,
           attemptNumber: attempt,
+          ...this.taskScopePayload(task),
           remediationContext: toAgentRemediationContext(remediationContext),
         },
       );
@@ -3199,6 +3289,7 @@ export class MigrationOrchestrator {
           sourceFiles: task.sourceFiles,
           targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef,
+          ...this.taskScopePayload(task),
           remediationContext: toAgentRemediationContext(remediationContext),
         },
       );
@@ -3293,19 +3384,14 @@ export class MigrationOrchestrator {
       // Batched remediation loop
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         await Promise.all(failingTasks.map(async (task) => {
-          const parityReportPath = join(
-            this.paths.artifactsParityDir,
-            `${task.id}.md`,
-          );
-          const adjudicationReportPath = join(
-            this.paths.artifactsAdjudicationDir,
-            `${task.id}.md`,
-          );
-
           const issueSummary = this.getParityIssueSummary(task.id);
           const enrichedSummary = issueSummary
             ? `Parity verification failed for ${task.id}: ${issueSummary}`
             : `Parity verification failed for ${task.id}`;
+
+          // Get structured parity issues for the remediation context
+          const storedParityResult = this._parityResults.get(task.id);
+          const parityIssues = storedParityResult?.issues ?? [];
 
           const parityRemediation = this.buildRemediationContext({
             failureKind: 'parity',
@@ -3313,10 +3399,10 @@ export class MigrationOrchestrator {
             taskId: task.id,
             wave: waveNumber,
             check: 'parity-verifier',
-            artifactPaths: [parityReportPath, ...task.sourceFiles, ...task.targetFiles],
+            artifactPaths: [...task.sourceFiles, ...task.targetFiles],
             expectedSuccessCondition: `Parity checks pass (or only minor issues) for ${task.id}`,
           });
-          parityRemediation.adjudicationReportPath = adjudicationReportPath;
+          parityRemediation.parityIssues = parityIssues;
 
           // failure-adjudicator
           const recoveryCtx = await this.contextBuilder.buildContext(
@@ -3324,11 +3410,12 @@ export class MigrationOrchestrator {
             4,
             task.id,
             {
-              failureReport: parityReportPath,
+              failureReport: enrichedSummary,
               sourceFile: task.sourceFiles[0],
               targetFile: task.targetFiles[0],
               kbEntry: task.knowledgeBaseRef,
               attemptNumber: attempt,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
@@ -3347,6 +3434,7 @@ export class MigrationOrchestrator {
               sourceFiles: task.sourceFiles,
               targetFiles: task.targetFiles,
               kbEntry: task.knowledgeBaseRef,
+              ...this.taskScopePayload(task),
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
@@ -3364,6 +3452,7 @@ export class MigrationOrchestrator {
             {
               sourceFile: task.sourceFiles[0],
               targetFile: task.targetFiles[0],
+              ...this.taskScopePayload(task),
             },
           );
           const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 4, task.id);
@@ -3468,7 +3557,12 @@ export class MigrationOrchestrator {
 
     const nonMinor = result.issues
       .filter((i) => i.severity !== 'minor')
-      .map((i) => i.description)
+      .map((i) => {
+        let s = i.description;
+        if (i.sourceLocation) s += ` [source: ${i.sourceLocation}]`;
+        if (i.targetLocation) s += ` [target: ${i.targetLocation}]`;
+        return s;
+      })
       .slice(0, 5); // Cap at 5 to stay within summary length
 
     return `${counts}: ${nonMinor.join('; ')}`;

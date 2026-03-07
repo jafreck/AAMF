@@ -93,6 +93,20 @@ export class ContextBuilder {
     return undefined;
   }
 
+  /**
+   * Extract the task-scope object from a payload, if present.
+   *
+   * The orchestrator threads `taskScope` (description, acceptanceCriteria,
+   * parityChecks) for every task-scoped agent invocation so that downstream
+   * agents can calibrate their work to the task's intended scope.
+   */
+  private getTaskScope(payload?: Record<string, unknown>): Record<string, unknown> | undefined {
+    if (this.isRecord(payload?.taskScope)) {
+      return payload!.taskScope as Record<string, unknown>;
+    }
+    return undefined;
+  }
+
   /** Assemble an {@link AgentContext} object for the given agent and phase. */
   private createContext(
     agent: AgentName,
@@ -139,6 +153,7 @@ export class ContextBuilder {
     const src = this.config.source.path;
     const out = this.config.target.outputPath;
     const remediationContext = this.getRemediationContext(payload);
+    const taskScope = this.getTaskScope(payload);
 
     switch (agent) {
       case 'impact-assessor':
@@ -187,32 +202,17 @@ export class ContextBuilder {
         };
 
       case 'code-migrator': {
-        // During parity recovery, include the parity report and adjudication
-        // analysis as direct input files so the agent can read them.
-        const recoveryInputFiles: string[] = [];
-        if (remediationContext) {
-          const parityPaths = (remediationContext.artifactPaths as string[] | undefined) ?? [];
-          for (const p of parityPaths) {
-            if (typeof p === 'string' && p.endsWith('.md') && this.isLikelyPathString(p)) {
-              recoveryInputFiles.push(p);
-            }
-          }
-          const adjudicationPath = (remediationContext as Record<string, unknown>).adjudicationReportPath;
-          if (typeof adjudicationPath === 'string' && this.isLikelyPathString(adjudicationPath)) {
-            recoveryInputFiles.push(adjudicationPath);
-          }
-        }
         return {
           inputFiles: [
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
-            ...recoveryInputFiles,
           ],
           outputPath: out,
           agentPayload: {
             taskId,
             sourceFiles: payload?.sourceFiles ?? [],
             targetFiles: payload?.targetFiles ?? [],
+            ...(taskScope ? { taskScope } : {}),
             ...(remediationContext ? { remediationContext } : {}),
           },
         };
@@ -225,8 +225,11 @@ export class ContextBuilder {
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
           ],
-          outputPath: join(this.progressDir, 'artifacts', 'parity', `${taskId ?? 'main'}.md`),
-          agentPayload: { taskId },
+          outputPath: out,
+          agentPayload: {
+            taskId,
+            ...(taskScope ? { taskScope } : {}),
+          },
         };
 
       case 'test-writer': {
@@ -249,29 +252,29 @@ export class ContextBuilder {
             ...(payload?.parityReport ? [String(payload.parityReport)] : []),
           ],
           outputPath: out,
-          agentPayload: { taskId, testType: payload?.testType ?? 'unit' },
+          agentPayload: {
+            taskId,
+            testType: payload?.testType ?? 'unit',
+            ...(taskScope ? { taskScope } : {}),
+          },
         };
       }
 
       case 'failure-adjudicator':
         {
-          const failureReportPath = this.isLikelyPathString(payload?.failureReport)
-            ? String(payload?.failureReport)
-            : undefined;
-
         return {
           inputFiles: [
-            ...(failureReportPath ? [failureReportPath] : []),
             ...(payload?.sourceFile ? [String(payload.sourceFile)] : []),
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
             ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
           ],
-          outputPath: join(this.progressDir, 'artifacts', 'adjudication', `${taskId ?? 'main'}.md`),
+          outputPath: out,
           agentPayload: {
             taskId,
             failureType: payload?.failureType,
             failureReport: payload?.failureReport,
             attemptNumber: payload?.attemptNumber ?? 1,
+            ...(taskScope ? { taskScope } : {}),
             ...(remediationContext ? { remediationContext } : {}),
           },
         };
@@ -280,7 +283,7 @@ export class ContextBuilder {
       case 'final-parity-checker':
         return {
           inputFiles: [src, out, migrationPlan],
-          outputPath: join(this.progressDir, 'artifacts', 'parity', 'final-parity-report.md'),
+          outputPath: out,
         };
 
       case 'e2e-test-crafter':
@@ -295,23 +298,26 @@ export class ContextBuilder {
 
       case 'documentation-writer':
         return {
-          inputFiles: [kbDir, migrationPlan, join(this.progressDir, 'artifacts', 'parity', 'final-parity-report.md')],
+          inputFiles: [kbDir, migrationPlan],
           outputPath: join(out, 'docs'),
         };
 
       case 'idiomatic-reviewer':
         return {
           inputFiles: [out],
-          outputPath: join(this.progressDir, 'artifacts', 'parity', 'idiomatic-review-report.md'),
+          outputPath: out,
         };
 
       case 'idiomatic-refactorer':
         return {
           inputFiles: [
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
-            ...(payload?.idiomaticReport ? [String(payload.idiomaticReport)] : []),
           ],
           outputPath: out,
+          agentPayload: {
+            targetFile: payload?.targetFile,
+            issue: payload?.issue,
+          },
         };
 
       default:
@@ -341,6 +347,8 @@ export class ContextBuilder {
       maxRetriesPerTask: opts.maxRetriesPerTask,
       buildCommand: this.config.target.buildCommand,
       testCommand: this.config.target.testCommand,
+      formatCommand: this.config.target.formatCommand,
+      lintCommand: this.config.target.lintCommand,
       requiresNonOverlappingTargets: true,
     };
   }

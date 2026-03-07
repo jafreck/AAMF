@@ -204,6 +204,8 @@ export class ReportGenerator {
       '|---|---|',
       `| Build command runs | ${aggregates.buildCommandRuns} |`,
       `| Test command runs | ${aggregates.testCommandRuns} |`,
+      `| Format command runs | ${aggregates.formatCommandRuns} |`,
+      `| Lint command runs | ${aggregates.lintCommandRuns} |`,
       `| Command recovery attempts | ${aggregates.commandRecoveryAttempts} |`,
       `| Command infra retries | ${aggregates.commandInfraRetries} |`,
       `| Recovery-loop time (ms) | ${aggregates.recoveryLoopTimeMs} |`,
