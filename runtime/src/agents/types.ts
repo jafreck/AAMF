@@ -251,13 +251,15 @@ export interface RemediationTargetContext {
 }
 
 /**
- * Shared remediation payload passed through recovery-triggered re-migration paths.
+ * Agent-facing remediation context serialized into the context JSON file.
+ * Contains only what agents need — failure classification, artifact paths,
+ * and prior-attempt history.  The truncated `failureSummary` that was
+ * previously included is omitted; agents receive full failure details via
+ * the artifact file paths instead.
  */
-export interface RemediationContext {
+export interface AgentRemediationContext {
   /** Canonical failure category (e.g. parity, build, test, convergence). */
   failureKind: string;
-  /** Normalized summary of the failure to target during recovery. */
-  failureSummary: string;
   /** Wave/task/check location describing the failure target. */
   failureTarget: RemediationTargetContext;
   /** File/report/artifact paths relevant to remediation. */
@@ -268,6 +270,29 @@ export interface RemediationContext {
   adjudicationReportPath?: string;
   /** Outcomes of prior recovery attempts, enabling the agent to avoid repeating failed strategies. */
   priorAttempts?: PriorRecoveryAttempt[];
+}
+
+/**
+ * Internal remediation state used by the orchestrator, logging, and progress
+ * systems.  Extends the agent-facing context with a `failureSummary` field
+ * used only for runtime log messages and progress reports.
+ *
+ * Call {@link toAgentRemediationContext} to strip internal-only fields before
+ * passing to the context builder.
+ */
+export interface RemediationContext extends AgentRemediationContext {
+  /** Normalized summary kept for runtime logging and progress reports. */
+  failureSummary: string;
+}
+
+/**
+ * Strip internal-only fields from a {@link RemediationContext}, producing an
+ * {@link AgentRemediationContext} safe for serialization into the agent
+ * context JSON.
+ */
+export function toAgentRemediationContext(state: RemediationContext): AgentRemediationContext {
+  const { failureSummary: _, ...agentCtx } = state;
+  return agentCtx;
 }
 
 /** Outcome record from a single prior recovery attempt. */

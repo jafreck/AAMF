@@ -267,7 +267,6 @@ describe('ContextBuilder', () => {
         targetFiles: ['src/auth.ts'],
         remediationContext: {
           failureKind: 'parity',
-          failureSummary: 'Normalized mismatch in auth handler',
           failureTarget: { wave: 1, taskId: 'task-001', check: 'auth-parity' },
           artifactPaths: ['/tmp/parity/task-001.md'],
           expectedSuccessCondition: 'Parity report returns minor-or-better',
@@ -280,7 +279,7 @@ describe('ContextBuilder', () => {
       expect(context.payload?.sourceFiles).toEqual(['src/auth.py']);
       expect(context.payload?.targetFiles).toEqual(['src/auth.ts']);
       expect(remediation?.failureKind).toBe('parity');
-      expect(remediation?.failureSummary).toBe('Normalized mismatch in auth handler');
+      expect(remediation?.failureSummary).toBeUndefined();
     });
 
     it('should include parity .md artifact paths as inputFiles for code-migrator during recovery', async () => {
@@ -290,7 +289,6 @@ describe('ContextBuilder', () => {
         kbEntry: 'kb/auth.md',
         remediationContext: {
           failureKind: 'parity',
-          failureSummary: 'Parity failed',
           failureTarget: { taskId: 'task-001', check: 'parity-verifier' },
           artifactPaths: ['/tmp/parity/task-001.md', '/tmp/source/auth.py', '/tmp/target/auth.rs'],
           expectedSuccessCondition: 'Parity passes',
@@ -311,7 +309,6 @@ describe('ContextBuilder', () => {
         targetFiles: ['src/auth.ts'],
         remediationContext: {
           failureKind: 'parity',
-          failureSummary: 'Parity failed',
           failureTarget: { taskId: 'task-001', check: 'parity-verifier' },
           artifactPaths: ['/tmp/parity/task-001.md'],
           expectedSuccessCondition: 'Parity passes',
@@ -339,7 +336,6 @@ describe('ContextBuilder', () => {
     it('should prioritize nested remediationContext payload for code-migrator when both shapes are provided', async () => {
       const nestedRemediation = {
         failureKind: 'parity',
-        failureSummary: 'Nested context summary',
         failureTarget: { wave: 1, taskId: 'task-001', check: 'parity' },
         artifactPaths: ['/tmp/parity.md'],
         expectedSuccessCondition: 'Parity delta is minor-or-better',
@@ -349,7 +345,6 @@ describe('ContextBuilder', () => {
         targetFiles: ['src/auth.ts'],
         remediationContext: nestedRemediation,
         failureKind: 'command',
-        failureSummary: 'Top-level fallback should be ignored',
       });
       const context = await readJson<AgentContext>(contextPath);
 
@@ -567,7 +562,6 @@ describe('ContextBuilder', () => {
         kbEntry: 'kb/auth.md',
         attemptNumber: 2,
         failureKind: 'command',
-        failureSummary: 'Normalized test failure in auth suite',
         failureTarget: { wave: 2, taskId: 'task-001', check: 'test' },
         artifactPaths: ['/tmp/failure.md', '/tmp/test.log'],
         expectedSuccessCondition: 'Test command exits with code 0',
@@ -612,7 +606,6 @@ describe('ContextBuilder', () => {
         targetFile: 'src/auth.ts',
         remediation: {
           failureKind: 'build',
-          failureSummary: 'Build command failed on retry',
           failureTarget: { wave: 2, taskId: 'task-001', check: 'build' },
           artifactPaths: ['/tmp/build.log'],
           expectedSuccessCondition: 'Build command exits with code 0',
@@ -622,7 +615,7 @@ describe('ContextBuilder', () => {
       const remediation = context.payload?.remediationContext as Record<string, unknown> | undefined;
 
       expect(remediation?.failureKind).toBe('build');
-      expect(remediation?.failureSummary).toBe('Build command failed on retry');
+      expect(remediation?.failureSummary).toBeUndefined();
     });
 
     it('should omit remediationContext when nested remediation payload is not an object', async () => {

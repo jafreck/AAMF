@@ -2082,12 +2082,9 @@ describe('MigrationOrchestrator', () => {
       }
       expect(reMigrateCtx).toBeDefined();
 
-      // Enriched failureSummary should contain the specific issue descriptions
+      // failureSummary should be stripped from the agent-facing context
       const remediation = reMigrateCtx!.payload?.remediationContext as Record<string, unknown>;
-      const summary = remediation?.failureSummary as string;
-      expect(summary).toContain('major');
-      expect(summary).toContain('critical');
-      expect(summary).toContain('HashMap shim');
+      expect(remediation?.failureSummary).toBeUndefined();
 
       // Parity report .md should be in inputFiles
       const inputFiles = reMigrateCtx!.inputFiles as string[];
