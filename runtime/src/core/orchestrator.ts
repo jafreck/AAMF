@@ -1,5 +1,6 @@
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
 import { readdir, readFile, unlink } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
@@ -3487,7 +3488,6 @@ export class MigrationOrchestrator {
       const taskLogDir = join(this.paths.logsAgentsDir, 'parity-verifier', taskId);
       // Synchronous check: readdirSync is acceptable here because this is
       // a cold-path fallback that only fires once per task on resume.
-      const { readdirSync, readFileSync } = require('node:fs') as typeof import('node:fs');
       let entries: string[];
       try {
         entries = readdirSync(taskLogDir);
