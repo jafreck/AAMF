@@ -43,7 +43,16 @@ const TaskDecomposerSchema = AamfOutputBase.extend({
 });
 const AdjudicatorSchema = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
 const CodeMigratorSchema = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
-const ParityVerifierSchema = AamfOutputBase.extend({ agent: z.literal('parity-verifier') });
+const ParityVerifierSchema = AamfOutputBase.extend({
+  agent: z.literal('parity-verifier'),
+  parity: z.enum(['pass', 'partial', 'fail']),
+  issues: z.array(z.object({
+    severity: z.enum(['critical', 'major', 'minor']),
+    description: z.string(),
+    sourceLocation: z.string().optional(),
+    targetLocation: z.string().optional(),
+  })).default([]),
+});
 const TestWriterSchema = AamfOutputBase.extend({ agent: z.literal('test-writer') });
 const FailureAdjudicatorSchema = AamfOutputBase.extend({
   agent: z.enum(['failure-adjudicator', 'failure-recovery']),

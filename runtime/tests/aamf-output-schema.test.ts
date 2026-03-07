@@ -100,12 +100,12 @@ describe('Per-agent output schemas', () => {
   describe('ParityVerifierOutput', () => {
     it('accepts valid output', () => {
       expect(() =>
-        ParityVerifierOutput.parse({ status: VALID_STATUS, agent: 'parity-verifier' }),
+        ParityVerifierOutput.parse({ status: VALID_STATUS, agent: 'parity-verifier', parity: 'pass' }),
       ).not.toThrow();
     });
     it('rejects wrong agent literal', () => {
       expect(() =>
-        ParityVerifierOutput.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
+        ParityVerifierOutput.parse({ status: VALID_STATUS, agent: 'code-migrator', parity: 'pass' }),
       ).toThrow();
     });
   });

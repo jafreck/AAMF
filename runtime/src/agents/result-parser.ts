@@ -87,6 +87,11 @@ export class ResultParser {
     return parseMigrationPlanContent(content, log);
   }
 
+  /**
+   * @deprecated Sidecar `.result.json` files are no longer used.
+   * Parity results are extracted from the aamf-json output block.
+   * This method is retained only for backward compatibility.
+   */
   static async readTaskResultJson(
     progressDir: string,
     agent: string,

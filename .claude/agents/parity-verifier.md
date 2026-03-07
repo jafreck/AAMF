@@ -85,36 +85,7 @@ The context JSON contains:
 
 ## Output
 
-Write to `.aamf/migration/{projectName}/artifacts/parity/task-{taskId}.md` and also write a structured JSON result file at:
-
-```
-.aamf/migration/{projectName}/results/parity-verifier-{taskId}.result.json
-```
-
-The JSON must conform to this schema:
-
-```json
-{
-  "taskId": "task-001",
-  "agent": "parity-verifier",
-  "status": "completed",
-  "outputFiles": ["artifacts/parity/task-001.md"],
-  "parity": "pass",
-  "issues": [
-    {
-      "severity": "minor",
-      "description": "Missing null check in handleLogin",
-      "sourceLocation": "src/auth/login.py:45",
-      "targetLocation": "src/auth/login.ts:52"
-    }
-  ],
-  "notes": "Overall parity is good with one minor gap."
-}
-```
-
-- `status`: one of `"completed"`, `"failed"`, `"needs-review"`
-- `parity`: one of `"pass"`, `"partial"`, `"fail"`
-- `issues[].severity`: one of `"critical"`, `"major"`, `"minor"`
+Write your parity analysis to `.aamf/migration/{projectName}/artifacts/parity/task-{taskId}.md`.
 
 ## Context Window Management
 
