@@ -118,6 +118,8 @@ export class ContextBuilder {
           outputPath: this.config.target.outputPath,
         },
       },
+      // Thread user-provided guidance into every agent context.
+      ...(this.config.guidance?.length ? { guidance: this.config.guidance } : {}),
     };
 
     const { inputFiles, outputPath, agentPayload } = this.getAgentFiles(agent, taskId, payload);

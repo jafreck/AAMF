@@ -2,6 +2,19 @@ import { z } from 'zod';
 
 export const MigrationConfigSchema = z.object({
   projectName: z.string().min(1).regex(/^[a-z0-9-]+$/),
+  /**
+   * Optional user-provided migration guidance directives.
+   *
+   * Each entry is a freeform instruction that is injected into every
+   * agent's context JSON so that planners, code-migrators, and reviewers
+   * can honour project-specific constraints.
+   *
+   * Examples:
+   *   - "Do NOT use any existing crates/packages that wrap the C implementation."
+   *   - "Write a pure native Rust port — no FFI or bindgen."
+   *   - "Preserve the original directory layout in the target output."
+   */
+  guidance: z.array(z.string().min(1)).optional(),
   source: z.object({
     path: z.string(),
     language: z.string(),

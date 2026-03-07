@@ -79,6 +79,7 @@ export class MockAgentLauncher {
 export function createMockConfig(overrides?: any): MigrationConfig {
   const raw = {
     projectName: overrides?.projectName ?? 'test-project',
+    ...(overrides?.guidance !== undefined ? { guidance: overrides.guidance } : {}),
     source: {
       path: '/tmp/source',
       language: 'python',
