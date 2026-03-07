@@ -268,6 +268,14 @@ export interface AgentRemediationContext {
   expectedSuccessCondition: string;
   /** Path to the failure-adjudicator's analysis output, if available. */
   adjudicationReportPath?: string;
+  /** Structured parity issues from the parity-verifier, if the failure is parity-related. */
+  parityIssues?: Array<{
+    severity: string;
+    description: string;
+    details: string;
+    sourceLocation: string;
+    targetLocation?: string;
+  }>;
   /** Outcomes of prior recovery attempts, enabling the agent to avoid repeating failed strategies. */
   priorAttempts?: PriorRecoveryAttempt[];
 }

@@ -7,7 +7,6 @@
  *   - registry.ts — AGENT_REGISTRY with per-agent output schemas
  *   - plan-parser.ts — migration plan & e2e test plan parsing
  *   - token-usage-parser.ts — token usage extraction
- *   - report-parser.ts — idiomatic & parity report parsing
  */
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -62,10 +61,6 @@ import {
   parseClaudeTokenUsage,
   parseCopilotCliUsage,
 } from './token-usage-parser.js';
-import {
-  parseIdiomaticReport,
-  parseFinalParityReport,
-} from './report-parser.js';
 import type { MigrationTask, E2eSuiteBrief } from './types.js';
 
 /**
@@ -154,18 +149,6 @@ export class ResultParser {
     output: string,
   ): { prompt: number; completion: number; total: number; cachedInput?: number; premiumRequests?: number } | undefined {
     return parseCopilotCliUsage(output);
-  }
-
-  static async parseIdiomaticReport(
-    reportPath: string,
-  ): Promise<Array<{ file: string; issue: string; suggestion: string }>> {
-    return parseIdiomaticReport(reportPath);
-  }
-
-  static async parseFinalParityReport(
-    reportPath: string,
-  ): Promise<Array<{ description: string; sourceFile: string; targetFile: string }>> {
-    return parseFinalParityReport(reportPath);
   }
 
   static parseE2eTestPlan(planPath: string): Promise<E2eSuiteBrief[]> {
