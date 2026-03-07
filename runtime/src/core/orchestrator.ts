@@ -23,7 +23,7 @@ import {
   E2eSuiteBrief,
 } from '../agents/types.js';
 import { ContextBuilder } from '../agents/context-builder.js';
-import { ResultParser } from '../agents/result-parser.js';
+import { parseMigrationPlan, parseE2eTestPlan } from '../agents/plan-parser.js';
 import { MigrationConfig } from '../config/schema.js';
 import { ParallelExecutor } from '../execution/parallel-executor.js';
 import { TaskQueue } from '../execution/task-queue.js';
@@ -1135,9 +1135,9 @@ export class MigrationOrchestrator {
         }
       } else {
         this.logger.warn(
-          'Phase 3 structured output unavailable — falling back to ResultParser.parseMigrationPlan',
+          'Phase 3 structured output unavailable — falling back to parseMigrationPlan',
         );
-        tasks = await ResultParser.parseMigrationPlan(planPath);
+        tasks = await parseMigrationPlan(planPath);
       }
     }
     if (tasks.length === 0) {
@@ -2716,7 +2716,7 @@ export class MigrationOrchestrator {
     const planPath = join(this.config.target.outputPath, 'e2e', 'e2e-test-plan.md');
     let suites: E2eSuiteBrief[] = [];
     if (await fileExists(planPath)) {
-      suites = await ResultParser.parseE2eTestPlan(planPath);
+      suites = await parseE2eTestPlan(planPath);
     } else {
       this.logger.warn('No e2e-test-plan.md found; skipping suite fan-out');
     }

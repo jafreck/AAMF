@@ -14,8 +14,6 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createKbMcpServer, openReadOnly, type EmbeddingProvider, type KbServerOptions, type SearchObserver } from '@aamf/lore';
 import type { McpServerConfig } from '../agents/types.js';
 
-// Re-export for convenience.
-export type { McpServerConfig };
 
 // ─── KbServerProcess ──────────────────────────────────────────────────────────
 

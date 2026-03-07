@@ -5,8 +5,9 @@ import { AgentInvocation, AgentName, AgentResult } from '../agents/types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { spawnWithTimeout, resolveLoginPath } from '../util/process.js';
 import { ensureDir, atomicWrite, fileExists } from '../util/fs.js';
-import { ResultParser, MISSING_BLOCK_ERROR } from '../agents/result-parser.js';
+import { parseAamfOutput, MISSING_BLOCK_ERROR } from '../agents/agent-output-schemas.js';
 import { getOutputSchema } from '../agents/registry.js';
+import { parseTokenUsage } from '../agents/token-usage-parser.js';
 import { Logger } from '../logging/logger.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { z } from 'zod';
@@ -252,7 +253,7 @@ function finaliseResult(
   logger: Logger,
 ): AgentResult {
   const schema = getOutputSchema(agentResult.agent);
-  const parseResult = ResultParser.parseAamfOutput(stdout, schema);
+  const parseResult = parseAamfOutput(stdout, schema);
   if (parseResult.parsed) {
     const parsedData = parseResult.data as Record<string, unknown> & {
       tokenUsage?: AgentResult['tokenUsage'];
@@ -433,7 +434,7 @@ export class CliAgentRunner implements AgentRunner {
       await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId);
 
       const outputFiles = await detectOutputFiles(invocation);
-      const tokenUsage = ResultParser.parseTokenUsage(
+      const tokenUsage = parseTokenUsage(
         result.stdout + '\n' + result.stderr,
         this.backend.tokenParserRuntime,
       );

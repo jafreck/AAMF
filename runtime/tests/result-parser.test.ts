@@ -3,26 +3,38 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ResultParser,
   TaskResultSchema,
   AamfOutputBase,
-  MigrationOrchestratorOutput,
-  ImpactAssessorOutput,
-  KnowledgeBuilderOutput,
-  MigrationPlannerOutput,
-  TaskDecomposerOutput,
-  AdjudicatorOutput,
-  CodeMigratorOutput,
-  ParityVerifierOutput,
-  TestWriterOutput,
-  FailureAdjudicatorOutput,
-  FailureRecoveryOutput,
-  FinalParityCheckerOutput,
-  E2eTestCrafterOutput,
-  DocumentationWriterOutput,
-  MigrationRunnerOutput,
   KbIndexerOutput,
-} from '../src/agents/result-parser.js';
+  parseAamfOutput,
+  readTaskResultJson,
+} from '../src/agents/agent-output-schemas.js';
+import {
+  MigrationOrchestratorSchema,
+  ImpactAssessorSchema,
+  KnowledgeBuilderSchema,
+  MigrationPlannerSchema,
+  TaskDecomposerSchema,
+  AdjudicatorSchema,
+  CodeMigratorSchema,
+  ParityVerifierSchema,
+  TestWriterSchema,
+  FailureAdjudicatorSchema,
+  FinalParityCheckerSchema,
+  E2eTestCrafterSchema,
+  DocumentationWriterSchema,
+  MigrationRunnerSchema,
+} from '../src/agents/registry.js';
+import {
+  parseMigrationPlanContent,
+  parseE2eTestPlanContent,
+  parseE2eTestPlan,
+} from '../src/agents/plan-parser.js';
+import {
+  parseTokenUsage,
+  parseClaudeTokenUsage,
+  parseCopilotCliUsage,
+} from '../src/agents/token-usage-parser.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -40,7 +52,7 @@ describe('ResultParser', () => {
     it('should parse tasks from migration plan markdown', async () => {
       const content = await readFile(join(__dirname, 'fixtures', 'sample-migration-plan.md'), 'utf-8');
       const log = silentLogger();
-      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      const tasks = parseMigrationPlanContent(content, log);
       
       expect(tasks).toHaveLength(3);
       expect(tasks[0]?.id).toBe('task-001');
@@ -64,7 +76,7 @@ describe('ResultParser', () => {
 **Complexity:** simple
 `;
       const log = silentLogger();
-      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      const tasks = parseMigrationPlanContent(content, log);
       expect(tasks).toHaveLength(0);
       expect(log.error).toHaveBeenCalledWith(expect.stringContaining('no source files'));
     });
@@ -87,7 +99,7 @@ describe('ResultParser', () => {
 - src/duplicate.py
 `;
       const log = silentLogger();
-      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      const tasks = parseMigrationPlanContent(content, log);
       expect(tasks).toHaveLength(1);
       expect(tasks[0]?.sourceFiles).toContain('src/first.py');
       expect(log.error).toHaveBeenCalledWith(expect.stringContaining('Duplicate task ID'));
@@ -115,7 +127,7 @@ describe('ResultParser', () => {
 **Dependencies:** task-001, task-888
 `;
       const log = silentLogger();
-      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      const tasks = parseMigrationPlanContent(content, log);
       expect(tasks).toHaveLength(2);
       expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('task-999'));
       expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('task-888'));
@@ -123,7 +135,7 @@ describe('ResultParser', () => {
 
     it('should return empty array for empty plan file', () => {
       const log = silentLogger();
-      const tasks = ResultParser.parseMigrationPlanContent('', log);
+      const tasks = parseMigrationPlanContent('', log);
       expect(tasks).toHaveLength(0);
     });
 
@@ -143,7 +155,7 @@ Nothing to migrate.
 Just notes.
 `;
       const log = silentLogger();
-      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      const tasks = parseMigrationPlanContent(content, log);
       expect(tasks).toHaveLength(0);
     });
 
@@ -157,7 +169,7 @@ Just notes.
 - src/valid.py
 `;
       const log = silentLogger();
-      ResultParser.parseMigrationPlanContent(content, log);
+      parseMigrationPlanContent(content, log);
       expect(log.info).toHaveBeenCalledWith(expect.stringContaining('1 tasks OK'));
     });
 
@@ -187,7 +199,7 @@ Here are the tasks:
 - src/b.py
 `;
       const log = silentLogger();
-      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      const tasks = parseMigrationPlanContent(content, log);
       expect(tasks).toHaveLength(2);
       expect(log.warn).not.toHaveBeenCalledWith(expect.stringContaining('Unparseable block headers'));
       expect(log.error).not.toHaveBeenCalledWith(expect.stringContaining('Task Summary'));
@@ -209,7 +221,7 @@ Here are the tasks:
 - src/constants.ts
 `;
       const log = silentLogger();
-      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      const tasks = parseMigrationPlanContent(content, log);
       // Non-canonical header format should not parse into tasks
       expect(tasks).toHaveLength(0);
     });
@@ -236,7 +248,7 @@ Here are the tasks:
 **Dependencies:** task-001, Task 3 (some-file.ts)
 `;
       const log = silentLogger();
-      const tasks = ResultParser.parseMigrationPlanContent(content, log);
+      const tasks = parseMigrationPlanContent(content, log);
       expect(tasks).toHaveLength(2);
       // Only the canonical task-001 reference should be kept
       expect(tasks[1]?.dependencies).toEqual(['task-001']);
@@ -283,7 +295,7 @@ Here are the tasks:
           JSON.stringify(sidecar),
           'utf-8',
         );
-        const result = await ResultParser.readTaskResultJson(dir, 'parity-verifier', 'task-001');
+        const result = await readTaskResultJson(dir, 'parity-verifier', 'task-001');
         expect(result).toBeDefined();
         expect(result?.parity).toBe('pass');
         expect(result?.issues).toHaveLength(0);
@@ -297,7 +309,7 @@ Here are the tasks:
       const { tmpdir } = await import('node:os');
       const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-sidecar-'));
       try {
-        const result = await ResultParser.readTaskResultJson(dir, 'parity-verifier', 'task-999');
+        const result = await readTaskResultJson(dir, 'parity-verifier', 'task-999');
         expect(result).toBeUndefined();
       } finally {
         await rm(dir, { recursive: true, force: true });
@@ -326,7 +338,7 @@ Here are the tasks:
           'utf-8',
         );
         // Should NOT find it — legacy path is no longer consulted
-        const result = await ResultParser.readTaskResultJson(dir, 'parity-verifier', 'task-001');
+        const result = await readTaskResultJson(dir, 'parity-verifier', 'task-001');
         expect(result).toBeUndefined();
       } finally {
         await rm(dir, { recursive: true, force: true });
@@ -345,7 +357,7 @@ Here are the tasks:
           'not valid json {{{',
           'utf-8',
         );
-        const result = await ResultParser.readTaskResultJson(dir, 'parity-verifier', 'task-001');
+        const result = await readTaskResultJson(dir, 'parity-verifier', 'task-001');
         expect(result).toBeUndefined();
       } finally {
         await rm(dir, { recursive: true, force: true });
@@ -402,71 +414,67 @@ Here are the tasks:
   });
 
   describe('per-agent output schemas', () => {
-    it('should accept a matching agent literal for MigrationOrchestratorOutput', () => {
-      const result = MigrationOrchestratorOutput.parse({ status: 'completed', agent: 'migration-orchestrator' });
+    it('should accept a matching agent literal for MigrationOrchestratorSchema', () => {
+      const result = MigrationOrchestratorSchema.parse({ status: 'completed', agent: 'migration-orchestrator' });
       expect(result.agent).toBe('migration-orchestrator');
     });
 
-    it('should reject a wrong agent literal for MigrationOrchestratorOutput', () => {
+    it('should reject a wrong agent literal for MigrationOrchestratorSchema', () => {
       expect(() =>
-        MigrationOrchestratorOutput.parse({ status: 'completed', agent: 'code-migrator' }),
+        MigrationOrchestratorSchema.parse({ status: 'completed', agent: 'code-migrator' }),
       ).toThrow();
     });
 
-    it('should validate ImpactAssessorOutput', () => {
-      expect(() => ImpactAssessorOutput.parse({ status: 'completed', agent: 'impact-assessor' })).not.toThrow();
+    it('should validate ImpactAssessorSchema', () => {
+      expect(() => ImpactAssessorSchema.parse({ status: 'completed', agent: 'impact-assessor' })).not.toThrow();
     });
 
-    it('should validate KnowledgeBuilderOutput', () => {
-      expect(() => KnowledgeBuilderOutput.parse({ status: 'completed', agent: 'knowledge-builder' })).not.toThrow();
+    it('should validate KnowledgeBuilderSchema', () => {
+      expect(() => KnowledgeBuilderSchema.parse({ status: 'completed', agent: 'knowledge-builder' })).not.toThrow();
     });
 
-    it('should validate MigrationPlannerOutput', () => {
-      expect(() => MigrationPlannerOutput.parse({ status: 'completed', agent: 'migration-planner' })).not.toThrow();
+    it('should validate MigrationPlannerSchema', () => {
+      expect(() => MigrationPlannerSchema.parse({ status: 'completed', agent: 'migration-planner' })).not.toThrow();
     });
 
-    it('should validate AdjudicatorOutput', () => {
-      expect(() => AdjudicatorOutput.parse({ status: 'completed', agent: 'adjudicator' })).not.toThrow();
+    it('should validate AdjudicatorSchema', () => {
+      expect(() => AdjudicatorSchema.parse({ status: 'completed', agent: 'adjudicator' })).not.toThrow();
     });
 
-    it('should validate CodeMigratorOutput', () => {
-      expect(() => CodeMigratorOutput.parse({ status: 'completed', agent: 'code-migrator' })).not.toThrow();
+    it('should validate CodeMigratorSchema', () => {
+      expect(() => CodeMigratorSchema.parse({ status: 'completed', agent: 'code-migrator' })).not.toThrow();
     });
 
-    it('should validate ParityVerifierOutput', () => {
-      expect(() => ParityVerifierOutput.parse({ status: 'completed', agent: 'parity-verifier', parity: 'pass' })).not.toThrow();
+    it('should validate ParityVerifierSchema', () => {
+      expect(() => ParityVerifierSchema.parse({ status: 'completed', agent: 'parity-verifier', parity: 'pass' })).not.toThrow();
     });
 
-    it('should validate TestWriterOutput', () => {
-      expect(() => TestWriterOutput.parse({ status: 'completed', agent: 'test-writer' })).not.toThrow();
+    it('should validate TestWriterSchema', () => {
+      expect(() => TestWriterSchema.parse({ status: 'completed', agent: 'test-writer' })).not.toThrow();
     });
 
-    it('should validate FailureAdjudicatorOutput with canonical id', () => {
-      expect(() => FailureAdjudicatorOutput.parse({ status: 'completed', agent: 'failure-adjudicator' })).not.toThrow();
+    it('should validate FailureAdjudicatorSchema with canonical id', () => {
+      expect(() => FailureAdjudicatorSchema.parse({ status: 'completed', agent: 'failure-adjudicator' })).not.toThrow();
     });
 
-    it('should validate FailureAdjudicatorOutput with legacy alias', () => {
-      expect(() => FailureAdjudicatorOutput.parse({ status: 'completed', agent: 'failure-recovery' })).not.toThrow();
+    it('should validate FailureAdjudicatorSchema with legacy alias', () => {
+      expect(() => FailureAdjudicatorSchema.parse({ status: 'completed', agent: 'failure-recovery' })).not.toThrow();
     });
 
-    it('should validate FailureRecoveryOutput alias with canonical id', () => {
-      expect(() => FailureRecoveryOutput.parse({ status: 'completed', agent: 'failure-adjudicator' })).not.toThrow();
+    it('should validate FinalParityCheckerSchema', () => {
+      expect(() => FinalParityCheckerSchema.parse({ status: 'completed', agent: 'final-parity-checker' })).not.toThrow();
     });
 
-    it('should validate FinalParityCheckerOutput', () => {
-      expect(() => FinalParityCheckerOutput.parse({ status: 'completed', agent: 'final-parity-checker' })).not.toThrow();
+    it('should validate E2eTestCrafterSchema', () => {
+      expect(() => E2eTestCrafterSchema.parse({ status: 'completed', agent: 'e2e-test-crafter' })).not.toThrow();
     });
 
-    it('should validate E2eTestCrafterOutput', () => {
-      expect(() => E2eTestCrafterOutput.parse({ status: 'completed', agent: 'e2e-test-crafter' })).not.toThrow();
+    it('should validate DocumentationWriterSchema', () => {
+      expect(() => DocumentationWriterSchema.parse({ status: 'completed', agent: 'documentation-writer' })).not.toThrow();
     });
 
-    it('should validate DocumentationWriterOutput', () => {
-      expect(() => DocumentationWriterOutput.parse({ status: 'completed', agent: 'documentation-writer' })).not.toThrow();
-    });
-
-    it('should validate MigrationRunnerOutput', () => {
-      expect(() => MigrationRunnerOutput.parse({ status: 'completed', agent: 'migration-runner' })).not.toThrow();
+    it('should validate MigrationRunnerSchema', () => {
+      expect(() => MigrationRunnerSchema.parse({ status: 'completed', agent: 'migration-runner' })).not.toThrow();
     });
 
     describe('KbIndexerOutput', () => {
@@ -502,7 +510,7 @@ Here are the tasks:
 
       it('should parse a KbIndexerOutput aamf-json block', () => {
         const stdout = '```aamf-json\n{"status":"completed","agent":"kb-indexer","dbPath":"/tmp/kb.db"}\n```';
-        const result = ResultParser.parseAamfOutput(stdout, KbIndexerOutput);
+        const result = parseAamfOutput(stdout, KbIndexerOutput);
         expect(result.parsed).toBe(true);
         if (result.parsed) {
           expect(result.data.dbPath).toBe('/tmp/kb.db');
@@ -519,7 +527,7 @@ Some output text.
 {"status":"completed","agent":"code-migrator"}
 \`\`\`
 `;
-      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput);
+      const result = parseAamfOutput(stdout, CodeMigratorSchema);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.status).toBe('completed');
@@ -537,7 +545,7 @@ intermediate text
 {"status":"completed","agent":"code-migrator"}
 \`\`\`
 `;
-      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput);
+      const result = parseAamfOutput(stdout, CodeMigratorSchema);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.status).toBe('completed');
@@ -545,7 +553,7 @@ intermediate text
     });
 
     it('should return parsed: false with error "missing aamf-json block" when no block present', () => {
-      const result = ResultParser.parseAamfOutput('no fenced blocks here', AamfOutputBase);
+      const result = parseAamfOutput('no fenced blocks here', AamfOutputBase);
       expect(result.parsed).toBe(false);
       if (!result.parsed) {
         expect(result.error).toContain('missing aamf-json block');
@@ -554,7 +562,7 @@ intermediate text
 
     it('should return parsed: false for malformed JSON', () => {
       const stdout = '```aamf-json\n{not valid json}\n```';
-      const result = ResultParser.parseAamfOutput(stdout, AamfOutputBase);
+      const result = parseAamfOutput(stdout, AamfOutputBase);
       expect(result.parsed).toBe(false);
       if (!result.parsed) {
         expect(result.error).toContain('malformed JSON');
@@ -563,7 +571,7 @@ intermediate text
 
     it('should return parsed: false for schema validation failure', () => {
       const stdout = '```aamf-json\n{"status":"invalid-status","agent":"code-migrator"}\n```';
-      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput);
+      const result = parseAamfOutput(stdout, CodeMigratorSchema);
       expect(result.parsed).toBe(false);
       if (!result.parsed) {
         expect(result.error).toContain('schema validation failed');
@@ -572,7 +580,7 @@ intermediate text
 
     it('should return parsed: false when agent literal does not match schema', () => {
       const stdout = '```aamf-json\n{"status":"completed","agent":"impact-assessor"}\n```';
-      const result = ResultParser.parseAamfOutput(stdout, CodeMigratorOutput);
+      const result = parseAamfOutput(stdout, CodeMigratorSchema);
       expect(result.parsed).toBe(false);
       if (!result.parsed) {
         expect(result.error).toContain('schema validation failed');
@@ -583,7 +591,7 @@ intermediate text
       const stdout = `\`\`\`aamf-json
 {"status":"completed","agent":"test-writer","taskId":"task-003","tokenUsage":{"prompt":100,"completion":50,"total":150},"notes":"All good"}
 \`\`\``;
-      const result = ResultParser.parseAamfOutput(stdout, TestWriterOutput);
+      const result = parseAamfOutput(stdout, TestWriterSchema);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.taskId).toBe('task-003');
@@ -594,13 +602,13 @@ intermediate text
 
     it('should handle CRLF line endings in the fenced block', () => {
       const stdout = '```aamf-json\r\n{"status":"completed","agent":"adjudicator"}\r\n```';
-      const result = ResultParser.parseAamfOutput(stdout, AdjudicatorOutput);
+      const result = parseAamfOutput(stdout, AdjudicatorSchema);
       expect(result.parsed).toBe(true);
     });
 
     it('should parse failure-adjudicator aamf-json with canonical agent id', () => {
       const stdout = '```aamf-json\n{"status":"completed","agent":"failure-adjudicator"}\n```';
-      const result = ResultParser.parseAamfOutput(stdout, FailureAdjudicatorOutput);
+      const result = parseAamfOutput(stdout, FailureAdjudicatorSchema);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.agent).toBe('failure-adjudicator');
@@ -609,7 +617,7 @@ intermediate text
 
     it('should parse failure-adjudicator aamf-json with legacy failure-recovery id', () => {
       const stdout = '```aamf-json\n{"status":"completed","agent":"failure-recovery"}\n```';
-      const result = ResultParser.parseAamfOutput(stdout, FailureAdjudicatorOutput);
+      const result = parseAamfOutput(stdout, FailureAdjudicatorSchema);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.agent).toBe('failure-adjudicator');
@@ -618,7 +626,7 @@ intermediate text
 
     it('should work with the base AamfOutputBase schema', () => {
       const stdout = '```aamf-json\n{"status":"needs-review","agent":"any-agent"}\n```';
-      const result = ResultParser.parseAamfOutput(stdout, AamfOutputBase);
+      const result = parseAamfOutput(stdout, AamfOutputBase);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.status).toBe('needs-review');
@@ -638,7 +646,7 @@ intermediate text
 }
 \`\`\``;
 
-      const result = ResultParser.parseAamfOutput(stdout, TaskDecomposerOutput);
+      const result = parseAamfOutput(stdout, TaskDecomposerSchema);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.agent).toBe('task-decomposer');
@@ -670,7 +678,7 @@ intermediate text
 }
 \`\`\``;
 
-      const result = ResultParser.parseAamfOutput(stdout, TaskDecomposerOutput);
+      const result = parseAamfOutput(stdout, TaskDecomposerSchema);
       expect(result.parsed).toBe(false);
       if (!result.parsed) {
         expect(result.error).toContain('schema validation failed');
@@ -681,13 +689,13 @@ intermediate text
   describe('parseTokenUsage', () => {
     it('should parse prompt and completion tokens', () => {
       const output = 'prompt_tokens: 1500\ncompletion_tokens: 800\ntotal_tokens: 2300';
-      const usage = ResultParser.parseTokenUsage(output);
+      const usage = parseTokenUsage(output);
       expect(usage).toEqual({ prompt: 1500, completion: 800, total: 2300 });
     });
 
     it('should parse total-only format', () => {
       const output = 'Total tokens: 5000';
-      const usage = ResultParser.parseTokenUsage(output);
+      const usage = parseTokenUsage(output);
       expect(usage).toBeDefined();
       expect(usage?.total).toBe(5000);
       // 80% prompt, 20% completion — consistent with CostEstimator.estimateFromTotal
@@ -696,19 +704,19 @@ intermediate text
     });
 
     it('should return undefined for no token info', () => {
-      const usage = ResultParser.parseTokenUsage('some output with no tokens');
+      const usage = parseTokenUsage('some output with no tokens');
       expect(usage).toBeUndefined();
     });
 
     it('should route to parseClaudeTokenUsage when runtime is claude-code', () => {
       const output = '{"type":"message","usage":{"input_tokens":1200,"output_tokens":400}}';
-      const usage = ResultParser.parseTokenUsage(output, 'claude-code');
+      const usage = parseTokenUsage(output, 'claude-code');
       expect(usage).toEqual({ prompt: 1200, completion: 400, total: 1600 });
     });
 
     it('should use regex path when runtime is not claude-code', () => {
       const output = 'prompt_tokens: 100\ncompletion_tokens: 50\n{"usage":{"input_tokens":999,"output_tokens":999}}';
-      const usage = ResultParser.parseTokenUsage(output);
+      const usage = parseTokenUsage(output);
       expect(usage).toEqual({ prompt: 100, completion: 50, total: 150 });
     });
   });
@@ -716,19 +724,19 @@ intermediate text
   describe('parseClaudeTokenUsage', () => {
     it('should parse Claude JSON usage from stdout', () => {
       const output = 'Some text\n{"type":"message","usage":{"input_tokens":2000,"output_tokens":500}}\nMore text';
-      const usage = ResultParser.parseClaudeTokenUsage(output);
+      const usage = parseClaudeTokenUsage(output);
       expect(usage).toEqual({ prompt: 2000, completion: 500, total: 2500 });
     });
 
     it('should parse Claude JSON usage from stderr', () => {
       const stderr = '[stderr] {"usage":{"input_tokens":1000,"output_tokens":300}}';
-      const usage = ResultParser.parseClaudeTokenUsage(stderr);
+      const usage = parseClaudeTokenUsage(stderr);
       expect(usage).toEqual({ prompt: 1000, completion: 300, total: 1300 });
     });
 
     it('should populate cachedInput when cache_read_input_tokens is present', () => {
       const output = '{"usage":{"input_tokens":1500,"output_tokens":400,"cache_read_input_tokens":200}}';
-      const usage = ResultParser.parseClaudeTokenUsage(output);
+      const usage = parseClaudeTokenUsage(output);
       expect(usage?.prompt).toBe(1500);
       expect(usage?.completion).toBe(400);
       expect(usage?.total).toBe(1900);
@@ -737,7 +745,7 @@ intermediate text
 
     it('should not include cachedInput when cache_read_input_tokens is absent', () => {
       const output = '{"usage":{"input_tokens":800,"output_tokens":200}}';
-      const usage = ResultParser.parseClaudeTokenUsage(output);
+      const usage = parseClaudeTokenUsage(output);
       expect(usage?.cachedInput).toBeUndefined();
     });
 
@@ -746,13 +754,13 @@ intermediate text
         '{"usage":{"input_tokens":100,"output_tokens":50}}',
         '{"usage":{"input_tokens":900,"output_tokens":300}}',
       ].join('\n');
-      const usage = ResultParser.parseClaudeTokenUsage(output);
+      const usage = parseClaudeTokenUsage(output);
       expect(usage?.prompt).toBe(900);
       expect(usage?.completion).toBe(300);
     });
 
     it('should return undefined when no Claude usage JSON is found', () => {
-      const usage = ResultParser.parseClaudeTokenUsage('prompt_tokens: 100\ncompletion_tokens: 50');
+      const usage = parseClaudeTokenUsage('prompt_tokens: 100\ncompletion_tokens: 50');
       expect(usage).toBeUndefined();
     });
   });
@@ -766,7 +774,7 @@ Breakdown by AI model:
   claude-sonnet-4-20250514:
     tokens_in: 5000, tokens_out: 1200, tokens_cached: 800, premium_requests_est: 1
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 5000, completion: 1200, total: 6200, cachedInput: 800, premiumRequests: 1 });
     });
 
@@ -780,7 +788,7 @@ Breakdown by AI model:
   gpt-4o:
     tokens_in: 2000, tokens_out: 600, premium_requests_est: 1
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 6000, completion: 1600, total: 7600, cachedInput: 500, premiumRequests: 3 });
     });
 
@@ -789,7 +797,7 @@ Breakdown by AI model:
   claude-sonnet-4-20250514:
     tokens_in: 41.3k, tokens_out: 2.1k, tokens_cached: 13.1k, premium_requests_est: 2
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 41300, completion: 2100, total: 43400, cachedInput: 13100, premiumRequests: 2 });
     });
 
@@ -798,7 +806,7 @@ Breakdown by AI model:
   large-model:
     tokens_in: 2.5m, tokens_out: 0.5m, tokens_cached: 1m, premium_requests_est: 10
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 2500000, completion: 500000, total: 3000000, cachedInput: 1000000, premiumRequests: 10 });
     });
 
@@ -810,7 +818,7 @@ Breakdown by AI model:
   gpt-4o:
     tokens_in: 3000, tokens_out: 500, premium_requests_est: 1
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 3000, completion: 500, total: 3500, premiumRequests: 1 });
     });
 
@@ -822,7 +830,7 @@ Breakdown by AI model:
   gpt-4o:
     tokens_in: 10000, tokens_out: 2000, tokens_cached: 500, premium_requests_est: 5
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 10000, completion: 2000, total: 12000, cachedInput: 500, premiumRequests: 5 });
     });
 
@@ -831,7 +839,7 @@ Breakdown by AI model:
   gpt-4o:
     tokens_in: 2000, tokens_out: 800, premium_requests_est: 1
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toBeDefined();
       expect(usage?.prompt).toBe(2000);
       expect(usage?.completion).toBe(800);
@@ -842,13 +850,13 @@ Breakdown by AI model:
 
     it('should return undefined when output has no Copilot CLI usage block', () => {
       const output = 'Some random agent output\nprompt_tokens: 100\ncompletion_tokens: 50';
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toBeUndefined();
     });
 
     it('should return undefined when breakdown header exists but no token lines follow', () => {
       const output = `Breakdown by AI model:\n  (no models used)\n`;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toBeUndefined();
     });
 
@@ -857,7 +865,7 @@ Breakdown by AI model:
   model-a:
     tokens_in:41.3k,tokens_out:2.1k,tokens_cached:13.1k,premium_requests_est:2
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 41300, completion: 2100, total: 43400, cachedInput: 13100, premiumRequests: 2 });
     });
 
@@ -869,7 +877,7 @@ Total code changes:     +0 -0
 Breakdown by AI model:
  claude-sonnet-4.6       87.6k in, 486 out, 43.0k cached (Est. 1 Premium request)
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 87600, completion: 486, total: 88086, cachedInput: 43000, premiumRequests: 1 });
     });
 
@@ -877,7 +885,7 @@ Breakdown by AI model:
       const output = `Breakdown by AI model:
  gpt-5-mini              1.2k in, 210 out (Est. 1 Premium request)
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 1200, completion: 210, total: 1410, premiumRequests: 1 });
     });
 
@@ -886,7 +894,7 @@ Breakdown by AI model:
   gpt-4o:
     tokens_in: 1000, tokens_out: 200, premium_requests_est: 1
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 1000, completion: 200, total: 1200, premiumRequests: 1 });
     });
 
@@ -897,12 +905,12 @@ Breakdown by AI model:
   model-b:
     tokens_in: 2000, tokens_out: 0.5k, premium_requests_est: 1
 `;
-      const usage = ResultParser.parseCopilotCliUsage(output);
+      const usage = parseCopilotCliUsage(output);
       expect(usage).toEqual({ prompt: 3500, completion: 800, total: 4300, cachedInput: 200, premiumRequests: 2 });
     });
 
     it('should return undefined for empty string input', () => {
-      const usage = ResultParser.parseCopilotCliUsage('');
+      const usage = parseCopilotCliUsage('');
       expect(usage).toBeUndefined();
     });
   });
@@ -913,12 +921,12 @@ Breakdown by AI model:
   gpt-4o:
     tokens_in: 3000, tokens_out: 500, premium_requests_est: 1
 `;
-      const usage = ResultParser.parseTokenUsage(output, 'copilot-cli');
+      const usage = parseTokenUsage(output, 'copilot-cli');
       expect(usage).toEqual({ prompt: 3000, completion: 500, total: 3500, premiumRequests: 1 });
     });
 
     it('should return undefined via copilot-cli dispatch when no usage block', () => {
-      const usage = ResultParser.parseTokenUsage('no copilot cli output here', 'copilot-cli');
+      const usage = parseTokenUsage('no copilot cli output here', 'copilot-cli');
       expect(usage).toBeUndefined();
     });
 
@@ -927,7 +935,7 @@ Breakdown by AI model:
   claude-sonnet-4-20250514:
     tokens_in: 5000, tokens_out: 1200, tokens_cached: 800, premium_requests_est: 1
 `;
-      const usage = ResultParser.parseTokenUsage(output, 'copilot-cli') as { prompt: number; completion: number; total: number; cachedInput?: number; premiumRequests?: number };
+      const usage = parseTokenUsage(output, 'copilot-cli') as { prompt: number; completion: number; total: number; cachedInput?: number; premiumRequests?: number };
       expect(usage).toBeDefined();
       expect(usage.cachedInput).toBe(800);
       expect(usage.premiumRequests).toBe(1);
@@ -935,7 +943,7 @@ Breakdown by AI model:
 
     it('should not fall through to regex path when runtime is copilot-cli', () => {
       const output = 'prompt_tokens: 999\ncompletion_tokens: 111\nBreakdown by AI model:\n  m:\n    tokens_in: 100, tokens_out: 50, premium_requests_est: 1';
-      const usage = ResultParser.parseTokenUsage(output, 'copilot-cli');
+      const usage = parseTokenUsage(output, 'copilot-cli');
       expect(usage).toEqual({ prompt: 100, completion: 50, total: 150, premiumRequests: 1 });
     });
 
@@ -943,7 +951,7 @@ Breakdown by AI model:
       const output = `Breakdown by AI model:
  claude-sonnet-4.6       2.4k in, 100 out, 1.1k cached (Est. 1 Premium request)
 `;
-      const usage = ResultParser.parseTokenUsage(output, 'copilot-cli');
+      const usage = parseTokenUsage(output, 'copilot-cli');
       expect(usage).toEqual({ prompt: 2400, completion: 100, total: 2500, cachedInput: 1100, premiumRequests: 1 });
     });
   });
@@ -987,7 +995,7 @@ Breakdown by AI model:
 - Export handles empty datasets
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
 
       expect(suites).toHaveLength(2);
 
@@ -1022,7 +1030,7 @@ Breakdown by AI model:
 - App launches successfully
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
       expect(suites).toHaveLength(1);
       expect(suites[0]?.id).toBe('suite-001');
       expect(suites[0]?.name).toBe('Only Suite');
@@ -1030,8 +1038,8 @@ Breakdown by AI model:
 
     it('should return empty array for empty input', () => {
       const log = silentLogger();
-      expect(ResultParser.parseE2eTestPlanContent('', log)).toEqual([]);
-      expect(ResultParser.parseE2eTestPlanContent('  \n  ', log)).toEqual([]);
+      expect(parseE2eTestPlanContent('', log)).toEqual([]);
+      expect(parseE2eTestPlanContent('  \n  ', log)).toEqual([]);
     });
 
     it('should return empty array for content with no suite headers', () => {
@@ -1042,7 +1050,7 @@ Breakdown by AI model:
 This plan has no suite definitions.
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
       expect(suites).toHaveLength(0);
     });
 
@@ -1067,7 +1075,7 @@ No proper fields here.
 - Test scenario
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
       expect(suites).toHaveLength(1);
       expect(suites[0]?.id).toBe('suite-001');
       expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('malformed suite block'));
@@ -1081,7 +1089,7 @@ No proper fields here.
 **Output Location:** tests/e2e
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
       expect(suites).toHaveLength(1);
       expect(suites[0]?.targetFiles).toEqual([]);
       expect(suites[0]?.kbReferences).toEqual([]);
@@ -1102,7 +1110,7 @@ No proper fields here.
 - Basic test
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
       expect(suites).toHaveLength(1);
       expect(suites[0]?.id).toBe('suite-001');
       expect(suites[0]?.name).toBe('Colon Separated');
@@ -1125,7 +1133,7 @@ No proper fields here.
 - Alternate scenario
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
       expect(suites).toHaveLength(1);
       expect(suites[0]?.purpose).toBe('Alternate bold-colon format');
       expect(suites[0]?.framework).toBe('vitest');
@@ -1150,7 +1158,7 @@ No proper fields here.
 - Scenario one
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
       expect(suites).toHaveLength(1);
       expect(suites[0]?.targetFiles).toEqual(['src/foo.ts', 'src/bar.ts']);
       expect(suites[0]?.kbReferences).toEqual(['kb-ref-001']);
@@ -1163,7 +1171,7 @@ No proper fields here.
 `;
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
-        const suites = ResultParser.parseE2eTestPlanContent(content);
+        const suites = parseE2eTestPlanContent(content);
         expect(suites).toHaveLength(0);
         expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('malformed suite block'));
       } finally {
@@ -1211,7 +1219,7 @@ No proper fields here.
 - Third scenario
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
       expect(suites).toHaveLength(3);
       expect(suites.map(s => s.id)).toEqual(['suite-001', 'suite-002', 'suite-003']);
       expect(suites.map(s => s.name)).toEqual(['First', 'Second', 'Third']);
@@ -1236,7 +1244,7 @@ No proper fields here.
 - Scenario B
 `;
       const log = silentLogger();
-      const suites = ResultParser.parseE2eTestPlanContent(content, log);
+      const suites = parseE2eTestPlanContent(content, log);
       expect(suites).toHaveLength(1);
       const suite = suites[0]!;
       expect(typeof suite.id).toBe('string');
@@ -1277,7 +1285,7 @@ No proper fields here.
 `;
         const planPath = join(dir, 'e2e-test-plan.md');
         await writeFile(planPath, planContent, 'utf-8');
-        const suites = await ResultParser.parseE2eTestPlan(planPath);
+        const suites = await parseE2eTestPlan(planPath);
         expect(suites).toHaveLength(1);
         expect(suites[0]?.id).toBe('suite-001');
         expect(suites[0]?.name).toBe('File Based Suite');
@@ -1296,7 +1304,7 @@ No proper fields here.
       try {
         const planPath = join(dir, 'e2e-test-plan.md');
         await writeFile(planPath, '', 'utf-8');
-        const suites = await ResultParser.parseE2eTestPlan(planPath);
+        const suites = await parseE2eTestPlan(planPath);
         expect(suites).toEqual([]);
       } finally {
         await rm(dir, { recursive: true, force: true });
@@ -1305,7 +1313,7 @@ No proper fields here.
 
     it('should throw when the file does not exist', async () => {
       await expect(
-        ResultParser.parseE2eTestPlan('/nonexistent/path/e2e-test-plan.md'),
+        parseE2eTestPlan('/nonexistent/path/e2e-test-plan.md'),
       ).rejects.toThrow();
     });
 
@@ -1340,7 +1348,7 @@ No proper fields here.
 `;
         const planPath = join(dir, 'e2e-test-plan.md');
         await writeFile(planPath, planContent, 'utf-8');
-        const suites = await ResultParser.parseE2eTestPlan(planPath);
+        const suites = await parseE2eTestPlan(planPath);
         expect(suites).toHaveLength(2);
         expect(suites[0]?.id).toBe('suite-001');
         expect(suites[1]?.id).toBe('suite-002');

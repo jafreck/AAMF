@@ -1,10 +1,13 @@
 /**
  * @module agents/agent-output-schemas
  *
- * Base Zod schemas for structured output blocks emitted by AAMF agents.
+ * Base Zod schemas and parsing utilities for structured output blocks
+ * emitted by AAMF agents.
  * Per-agent schema extensions live in the AGENT_REGISTRY (registry.ts).
  */
+import { join } from 'node:path';
 import { z } from 'zod';
+import { fileExists, readJson } from '../util/fs.js';
 
 /**
  * Base Zod schema for structured output blocks emitted by AAMF agents.
@@ -63,3 +66,59 @@ export const KbIndexerOutput = AamfOutputBase.extend({
   /** Absolute path to the SQLite knowledge-base database written by the indexer. */
   dbPath: z.string().min(1),
 });
+
+// ─── Parsing helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Extract and validate the last ```aamf-json fenced block from agent stdout.
+ */
+export function parseAamfOutput<T extends z.ZodTypeAny>(
+  stdout: string,
+  schema: T,
+): { data: z.infer<T>; parsed: true } | { parsed: false; error: string } {
+  const blockRegex = /```aamf-json\r?\n([\s\S]*?)```/g;
+  let lastMatch: RegExpExecArray | null = null;
+  let match: RegExpExecArray | null;
+  while ((match = blockRegex.exec(stdout)) !== null) {
+    lastMatch = match;
+  }
+
+  if (!lastMatch) {
+    return { parsed: false, error: MISSING_BLOCK_ERROR };
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(lastMatch[1]!.trim());
+  } catch (err) {
+    return { parsed: false, error: `malformed JSON in aamf-json block: ${String(err)}` };
+  }
+
+  const result = schema.safeParse(raw);
+  if (!result.success) {
+    return { parsed: false, error: `schema validation failed: ${result.error.message}` };
+  }
+
+  return { data: result.data, parsed: true };
+}
+
+/**
+ * Read a sidecar `.result.json` file for a task.
+ * @deprecated Sidecar files are no longer used. Parity results are
+ * extracted from the aamf-json output block. Retained for backward
+ * compatibility only.
+ */
+export async function readTaskResultJson(
+  progressDir: string,
+  agent: string,
+  taskId: string,
+): Promise<TaskResult | undefined> {
+  const sidecarPath = join(progressDir, 'artifacts', 'results', `${agent}-${taskId}.result.json`);
+  if (!(await fileExists(sidecarPath))) return undefined;
+  try {
+    const raw = await readJson<unknown>(sidecarPath);
+    return TaskResultSchema.parse(raw);
+  } catch {
+    return undefined;
+  }
+}

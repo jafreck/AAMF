@@ -5,8 +5,6 @@ import type { AdjudicationEventRecord, CheckpointState, TerminalExhaustionState 
 import type { TaskDetails } from '../agents/types.js';
 import { formatDuration } from '../util/format.js';
 
-export type { TaskDetails };
-
 export interface WaveLifecycleEvent {
   wave: number;
   milestone: 'started' | 'completed' | 'barrier-entered' | 'barrier-released' | 'convergence';
