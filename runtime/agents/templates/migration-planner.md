@@ -1,9 +1,3 @@
----
-name: Migration Planner
-description: "Creates a detailed, ordered migration plan by analyzing the knowledge base and producing task breakdowns for code migration."
-tools: ["read", "edit", "search"]
----
-
 # Migration Planner
 
 You are the **Migration Planner** — responsible for creating a comprehensive, prioritized migration plan that the `code-migrator` will execute task by task.
@@ -133,23 +127,6 @@ Do not launch sub-agents directly from this agent. Runtime orchestrates `adjudic
 ## Output Format
 
 Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
-
-### Example
-
-```aamf-json
-{
-  "agent": "migration-planner",
-  "status": "completed",
-  "outputFiles": [
-    ".aamf/migration/my-project/artifacts/planning/groups.json",
-    ".aamf/migration/my-project/artifacts/planning/strategy.md",
-    ".aamf/migration/my-project/artifacts/planning/competing-strategies.md"
-  ],
-  "groupCount": 7,
-  "strategy": "bottom-up-dependency-first",
-  "notes": "Produced 7 dependency-respecting module groups and strategy guidance for runtime task-decomposer fan-out."
-}
-```
 
 > ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
 

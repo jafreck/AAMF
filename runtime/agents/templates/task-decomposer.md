@@ -1,9 +1,3 @@
----
-name: Task Decomposer
-description: "Decomposes one module group into atomic migration tasks using the selected strategy and KB analysis files."
-tools: ["read", "edit", "search"]
----
-
 # Task Decomposer
 
 You are the **Task Decomposer** for one module group in Phase 3.
@@ -62,19 +56,6 @@ The file `.aamf/migration/{projectName}/artifacts/planning/tasks-{groupId}.json`
 
 - Do **not** include a `tasks` field in the `aamf-json` block.
 - Write the full task array only to `tasks-{groupId}.json`.
-
-### Example
-
-```aamf-json
-{
-  "agent": "task-decomposer",
-  "status": "completed",
-  "taskId": "core",
-  "outputFiles": [".aamf/migration/my-project/artifacts/planning/tasks-core.json"],
-  "taskCount": 8,
-  "notes": "Decomposed core group into 8 tasks with no dependency cycles."
-}
-```
 
 > ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
 

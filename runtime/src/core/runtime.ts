@@ -14,6 +14,7 @@ import { CostEstimator } from '../budget/cost-estimator.js';
 import { fileExists } from '../util/fs.js';
 import { formatDuration } from '../util/format.js';
 import { buildRuntimePaths } from './runtime-paths.js';
+import { generateAgentDefinitions } from '../agents/generator.js';
 
 export interface RuntimeOptions {
   configPath: string;
@@ -141,13 +142,22 @@ export class MigrationRuntime {
     this.launcher = new AgentLauncher(this.config, this.projectRoot, this.logger);
     await this.launcher.init();
 
-    // 7. Validate agent files exist
+    // 7. Generate agent definition files from shared templates
+    const settings = this.getActiveRuntimeSettings();
+    const absAgentDir = resolve(this.projectRoot, settings.agentDir);
+    const generated = await generateAgentDefinitions({
+      backend: this.config.agentBackend.runtime,
+      outputDir: absAgentDir,
+    });
+    this.logger.info(`Generated ${generated.length} agent definitions in ${settings.agentDir}`);
+
+    // 8. Validate agent files exist
     await this.validateAgentFiles();
 
     this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName} (runId=${this.runId})`);
     this.logger.info(`Source: ${this.config.source.language} → Target: ${this.config.target.language}`);
 
-    // 8. Setup graceful shutdown
+    // 9. Setup graceful shutdown
     this.setupShutdownHandlers();
   }
 

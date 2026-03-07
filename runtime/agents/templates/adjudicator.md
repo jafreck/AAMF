@@ -1,8 +1,3 @@
----
-name: Adjudicator
-description: "Evaluates competing implementation plans or design decisions and selects the best option."
-tools: ["read", "edit", "search", "execute"]
----
 # Adjudicator
 
 ## Role
@@ -57,19 +52,6 @@ Avoid selecting an option solely because it is more sophisticated or uses newer 
 
 Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
 
-### Example
-
-```aamf-json
-{
-  "agent": "adjudicator",
-  "status": "completed",
-  "outputFiles": [],
-  "taskId": "task-001",
-  "decision": "Option B — single configuration file with environment-specific overrides.",
-  "notes": "Option B keeps configuration centralized, reducing inconsistency risk."
-}
-```
-
 > ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
 
 ## Input Schema (Required)
@@ -104,5 +86,4 @@ Your response must end with a fenced `aamf-json` code block conforming to the Ou
 		"notes": { "type": "string" }
 	}
 }
-```
 ```
