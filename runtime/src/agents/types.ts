@@ -8,6 +8,9 @@
 
 // ─── Agent Identity ──────────────────────────────────────────────────────────
 
+/** Lightweight alias for a JSON Schema object. */
+export type JsonSchema = Record<string, unknown>;
+
 /** All recognized agent names in the AAMF system. */
 export type AgentName =
   | 'migration-orchestrator'

@@ -15,8 +15,7 @@ import { join, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureDir, atomicWrite } from '../util/fs.js';
 import { AGENT_REGISTRY } from './registry.js';
-import type { AgentName } from './types.js';
-import type { JsonSchema } from './registry.js';
+import type { AgentName, JsonSchema } from './types.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

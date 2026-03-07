@@ -3,19 +3,13 @@
  *
  * Canonical single source of truth for all agent metadata in the AAMF system.
  * Combines agent names, output schemas, phase membership, and agent file
- * conventions that were previously scattered across types.ts, result-parser.ts,
- * phase-registry.ts, and claude-agent-definitions.test.ts.
+ * conventions into a single registry.
  */
 import { z } from 'zod';
 import {
   AamfOutputBase,
 } from './agent-output-schemas.js';
-import type { AgentName } from './types.js';
-
-// ─── JSON Schema type ────────────────────────────────────────────────────────
-
-/** A plain JSON Schema object used to document agent input/output contracts. */
-export type JsonSchema = Record<string, unknown>;
+import type { AgentName, JsonSchema } from './types.js';
 
 // ─── Shared base properties ──────────────────────────────────────────────────
 
@@ -102,19 +96,19 @@ export interface AgentRegistryEntry {
 // ─── Per-Agent Output Schema Extensions ──────────────────────────────────────
 // These extend AamfOutputBase with agent-specific fields.
 
-const MigrationOrchestratorSchema = AamfOutputBase.extend({ agent: z.literal('migration-orchestrator') });
-const ImpactAssessorSchema = AamfOutputBase.extend({ agent: z.literal('impact-assessor') });
-const KnowledgeBuilderSchema = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
-const MigrationPlannerSchema = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
-const TaskDecomposerSchema = AamfOutputBase.extend({
+export const MigrationOrchestratorSchema = AamfOutputBase.extend({ agent: z.literal('migration-orchestrator') });
+export const ImpactAssessorSchema = AamfOutputBase.extend({ agent: z.literal('impact-assessor') });
+export const KnowledgeBuilderSchema = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
+export const MigrationPlannerSchema = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
+export const TaskDecomposerSchema = AamfOutputBase.extend({
   agent: z.literal('task-decomposer'),
   outputFiles: z.array(z.string().min(1)).min(1),
   taskCount: z.number().int().nonnegative().optional(),
   tasks: z.never().optional(),
 });
-const AdjudicatorSchema = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
-const CodeMigratorSchema = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
-const ParityVerifierSchema = AamfOutputBase.extend({
+export const AdjudicatorSchema = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
+export const CodeMigratorSchema = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
+export const ParityVerifierSchema = AamfOutputBase.extend({
   agent: z.literal('parity-verifier'),
   parity: z.enum(['pass', 'partial', 'fail']),
   issues: z.array(z.object({
@@ -124,11 +118,11 @@ const ParityVerifierSchema = AamfOutputBase.extend({
     targetLocation: z.string().optional(),
   })).default([]),
 });
-const TestWriterSchema = AamfOutputBase.extend({ agent: z.literal('test-writer') });
-const FailureAdjudicatorSchema = AamfOutputBase.extend({
+export const TestWriterSchema = AamfOutputBase.extend({ agent: z.literal('test-writer') });
+export const FailureAdjudicatorSchema = AamfOutputBase.extend({
   agent: z.enum(['failure-adjudicator', 'failure-recovery']),
 }).transform((data) => ({ ...data, agent: 'failure-adjudicator' as const }));
-const FinalParityCheckerSchema = AamfOutputBase.extend({
+export const FinalParityCheckerSchema = AamfOutputBase.extend({
   agent: z.literal('final-parity-checker'),
   fixes: z.array(z.object({
     description: z.string().min(1),
@@ -136,10 +130,10 @@ const FinalParityCheckerSchema = AamfOutputBase.extend({
     targetFile: z.string().min(1),
   })).optional(),
 });
-const E2eTestCrafterSchema = AamfOutputBase.extend({ agent: z.literal('e2e-test-crafter') });
-const DocumentationWriterSchema = AamfOutputBase.extend({ agent: z.literal('documentation-writer') });
-const MigrationRunnerSchema = AamfOutputBase.extend({ agent: z.literal('migration-runner') });
-const IdiomaticReviewerSchema = AamfOutputBase.extend({
+export const E2eTestCrafterSchema = AamfOutputBase.extend({ agent: z.literal('e2e-test-crafter') });
+export const DocumentationWriterSchema = AamfOutputBase.extend({ agent: z.literal('documentation-writer') });
+export const MigrationRunnerSchema = AamfOutputBase.extend({ agent: z.literal('migration-runner') });
+export const IdiomaticReviewerSchema = AamfOutputBase.extend({
   agent: z.literal('idiomatic-reviewer'),
   issues: z.array(z.object({
     file: z.string().min(1),
@@ -147,7 +141,7 @@ const IdiomaticReviewerSchema = AamfOutputBase.extend({
     suggestion: z.string().min(1),
   })).optional(),
 });
-const IdiomaticRefactorerSchema = AamfOutputBase.extend({ agent: z.literal('idiomatic-refactorer') });
+export const IdiomaticRefactorerSchema = AamfOutputBase.extend({ agent: z.literal('idiomatic-refactorer') });
 
 // ─── The Registry ────────────────────────────────────────────────────────────
 
@@ -515,26 +509,4 @@ export function getOutputSchema(agent: AgentName): z.ZodTypeAny {
   return AGENT_REGISTRY[agent].outputSchema;
 }
 
-// ─── Re-exports for backward compatibility ───────────────────────────────────
-// These named schema exports preserve the existing public API from result-parser.ts
-// so that existing imports continue to work during transition.
 
-export {
-  MigrationOrchestratorSchema as MigrationOrchestratorOutput,
-  ImpactAssessorSchema as ImpactAssessorOutput,
-  KnowledgeBuilderSchema as KnowledgeBuilderOutput,
-  MigrationPlannerSchema as MigrationPlannerOutput,
-  TaskDecomposerSchema as TaskDecomposerOutput,
-  AdjudicatorSchema as AdjudicatorOutput,
-  CodeMigratorSchema as CodeMigratorOutput,
-  ParityVerifierSchema as ParityVerifierOutput,
-  TestWriterSchema as TestWriterOutput,
-  FailureAdjudicatorSchema as FailureAdjudicatorOutput,
-  FailureAdjudicatorSchema as FailureRecoveryOutput,
-  FinalParityCheckerSchema as FinalParityCheckerOutput,
-  E2eTestCrafterSchema as E2eTestCrafterOutput,
-  DocumentationWriterSchema as DocumentationWriterOutput,
-  MigrationRunnerSchema as MigrationRunnerOutput,
-  IdiomaticReviewerSchema as IdiomaticReviewerOutput,
-  IdiomaticRefactorerSchema as IdiomaticRefactorerOutput,
-};

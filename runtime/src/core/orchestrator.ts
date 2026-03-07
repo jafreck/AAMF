@@ -23,7 +23,8 @@ import {
   E2eSuiteBrief,
 } from '../agents/types.js';
 import { ContextBuilder } from '../agents/context-builder.js';
-import { ResultParser } from '../agents/result-parser.js';
+import { parseMigrationPlan, parseE2eTestPlan } from '../agents/plan-parser.js';
+import { parseIdiomaticReport, parseFinalParityReport } from '../agents/report-parser.js';
 import { MigrationConfig } from '../config/schema.js';
 import { ParallelExecutor } from '../execution/parallel-executor.js';
 import { TaskQueue } from '../execution/task-queue.js';
@@ -1134,9 +1135,9 @@ export class MigrationOrchestrator {
         }
       } else {
         this.logger.warn(
-          'Phase 3 structured output unavailable — falling back to ResultParser.parseMigrationPlan',
+          'Phase 3 structured output unavailable — falling back to parseMigrationPlan',
         );
-        tasks = await ResultParser.parseMigrationPlan(planPath);
+        tasks = await parseMigrationPlan(planPath);
       }
     }
     if (tasks.length === 0) {
@@ -2487,8 +2488,8 @@ export class MigrationOrchestrator {
         const reportPath = this.paths.finalParityReportFile;
         const reportToRead = await fileExists(reportPath) ? reportPath : undefined;
         if (!reportToRead) break;
-        this.logger.warn('Final-parity-checker structured output unavailable — falling back to ResultParser.parseFinalParityReport');
-        fixes = await ResultParser.parseFinalParityReport(reportToRead);
+        this.logger.warn('Final-parity-checker structured output unavailable — falling back to parseFinalParityReport');
+        fixes = await parseFinalParityReport(reportToRead);
       }
       if (fixes.length === 0) {
         lastIterationFixes = fixes;
@@ -2650,7 +2651,7 @@ export class MigrationOrchestrator {
     const planPath = join(this.config.target.outputPath, 'e2e', 'e2e-test-plan.md');
     let suites: E2eSuiteBrief[] = [];
     if (await fileExists(planPath)) {
-      suites = await ResultParser.parseE2eTestPlan(planPath);
+      suites = await parseE2eTestPlan(planPath);
     } else {
       this.logger.warn('No e2e-test-plan.md found; skipping suite fan-out');
     }
@@ -2922,8 +2923,8 @@ export class MigrationOrchestrator {
       if (reviewResult.outputParsed && Array.isArray(reviewResult.structuredOutput?.['issues'])) {
         issues = reviewResult.structuredOutput['issues'] as Array<{ file: string; issue: string; suggestion: string }>;
       } else {
-        this.logger.warn('Idiomatic-reviewer structured output unavailable — falling back to ResultParser.parseIdiomaticReport');
-        issues = await ResultParser.parseIdiomaticReport(reportPath);
+        this.logger.warn('Idiomatic-reviewer structured output unavailable — falling back to parseIdiomaticReport');
+        issues = await parseIdiomaticReport(reportPath);
       }
 
       if (issues.length === 0) {
