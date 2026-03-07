@@ -97,11 +97,6 @@ export interface AgentRegistryEntry {
   copilotTools: readonly string[];
   /** Tool names for Claude Code front matter. */
   claudeTools: readonly string[];
-  /**
-   * Agent definition filename convention (without extension).
-   * Defaults to the agent name if not specified.
-   */
-  agentFile?: string;
 }
 
 // ─── Per-Agent Output Schema Extensions ──────────────────────────────────────
@@ -163,7 +158,6 @@ const IdiomaticRefactorerSchema = AamfOutputBase.extend({ agent: z.literal('idio
  * - Derive `AgentName` union values: `Object.keys(AGENT_REGISTRY)`
  * - Derive per-phase agent lists: `getAgentsForPhase(phaseId)`
  * - Look up output schemas: `AGENT_REGISTRY['code-migrator'].outputSchema`
- * - Validate agent file existence: iterate entries and check `agentFile ?? name`
  */
 /** Default Claude Code tools shared by all agents. */
 const CLAUDE_TOOLS = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'] as const;

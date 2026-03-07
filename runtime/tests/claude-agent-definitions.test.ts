@@ -182,6 +182,11 @@ describe('generateAgentDefinitions()', () => {
       }
     });
 
+    it('should generate exactly one file per registered agent', async () => {
+      const files = (await readdir(copilotDir)).filter(f => f.endsWith('.agent.md'));
+      expect(files.length).toBe(ALL_AGENT_NAMES.length);
+    });
+
     for (const agentName of ALL_AGENT_NAMES) {
       describe(`${agentName}.agent.md`, () => {
         let content: string;
@@ -207,9 +212,17 @@ describe('generateAgentDefinitions()', () => {
           expect(parsed).toEqual([...AGENT_REGISTRY[agentName].copilotTools]);
         });
 
+        it('should contain Input Schema heading with (Required) suffix', () => {
+          expect(content).toMatch(/^## Input Schema \(Required\)/m);
+        });
+
         it('should contain Input Schema section matching registry', () => {
           const parsed = extractSchemaJson(content, 'Input Schema');
           expect(parsed).toEqual(AGENT_REGISTRY[agentName].inputJsonSchema);
+        });
+
+        it('should contain Output Schema heading with (Required) suffix', () => {
+          expect(content).toMatch(/^## Output Schema \(Required\)/m);
         });
 
         it('should contain Output Schema section matching registry', () => {
@@ -228,6 +241,11 @@ describe('generateAgentDefinitions()', () => {
       }
     });
 
+    it('should generate exactly one file per registered agent', async () => {
+      const files = (await readdir(claudeDir)).filter(f => f.endsWith('.md'));
+      expect(files.length).toBe(ALL_AGENT_NAMES.length);
+    });
+
     for (const agentName of ALL_AGENT_NAMES) {
       describe(`${agentName}.md`, () => {
         let content: string;
@@ -241,15 +259,28 @@ describe('generateAgentDefinitions()', () => {
           expect(frontMatter.name).toBe(agentName);
         });
 
+        it('should have a description matching the registry', () => {
+          const { frontMatter } = parseFrontMatter(content);
+          expect(frontMatter.description).toBe(AGENT_REGISTRY[agentName].description);
+        });
+
         it('should have YAML-list tools in front matter', () => {
           const { frontMatter } = parseFrontMatter(content);
           expect(Array.isArray(frontMatter.tools)).toBe(true);
           expect(frontMatter.tools).toEqual([...AGENT_REGISTRY[agentName].claudeTools]);
         });
 
+        it('should contain Input Schema heading with (Required) suffix', () => {
+          expect(content).toMatch(/^## Input Schema \(Required\)/m);
+        });
+
         it('should contain Input Schema section matching registry', () => {
           const parsed = extractSchemaJson(content, 'Input Schema');
           expect(parsed).toEqual(AGENT_REGISTRY[agentName].inputJsonSchema);
+        });
+
+        it('should contain Output Schema heading with (Required) suffix', () => {
+          expect(content).toMatch(/^## Output Schema \(Required\)/m);
         });
 
         it('should contain Output Schema section matching registry', () => {
