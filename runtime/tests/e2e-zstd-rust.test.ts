@@ -120,7 +120,8 @@ async function writeMigrationConfig(): Promise<void> {
         },
       },
     },
-    copilot: {
+    agentBackend: {
+      runtime: 'copilot',
       cliCommand: 'copilot',
       model: 'claude-sonnet-4.6',
       agentDir: '../../../../.github/agents',

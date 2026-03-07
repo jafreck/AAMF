@@ -43,6 +43,11 @@ import { buildRuntimePaths } from './runtime-paths.js';
 const loadLore = () => import('@aamf/lore');
 const loadKbServerProcess = () => import('./kb-server-process.js');
 
+/** Hardcoded average token estimate per migration task for cost projections. */
+const AVG_TOKENS_PER_TASK = 100_000;
+/** Hardcoded retry-overhead multiplier for aggregate Phase 4 cost projections. */
+const RETRY_OVERHEAD_MULTIPLIER = 1.25;
+
 type LoreModule = Awaited<ReturnType<typeof loadLore>>;
 
 function computeSourceFingerprintCompat(
@@ -255,24 +260,15 @@ export class MigrationOrchestrator {
   private _deferGitCommits = false;
 
   private getConfiguredRuntimeModel(): string {
-    if (this.config.agentRuntime === 'claude-code') {
-      return this.config.claudeCode?.model ?? 'unknown';
-    }
-    return this.config.copilot.model ?? 'claude-sonnet-4';
+    return this.config.agentBackend.model ?? 'claude-sonnet-4';
   }
 
   private getRuntimeTimeout(): number {
-    if (this.config.agentRuntime === 'claude-code') {
-      return this.config.claudeCode?.timeout ?? this.config.copilot.timeout;
-    }
-    return this.config.copilot.timeout;
+    return this.config.agentBackend.timeout;
   }
 
   private getPhaseTimeout(phase: number): number {
-    const phaseTimeouts = this.config.agentRuntime === 'claude-code'
-      ? this.config.claudeCode?.phaseTimeouts
-      : this.config.copilot.phaseTimeouts;
-    return phaseTimeouts?.[phase] ?? this.getRuntimeTimeout();
+    return this.config.agentBackend.phaseTimeouts?.[phase] ?? this.getRuntimeTimeout();
   }
 
   constructor(
@@ -298,9 +294,7 @@ export class MigrationOrchestrator {
     this.buildLimiter = pLimit(bc === 0 ? config.options.maxParallelAgents : bc);
     this.gitLimiter = pLimit(1);
     this.metricsCollector = new MetricsCollector();
-    const overrides = config.agentRuntime === 'claude-code'
-      ? config.claudeCode?.costOverrides
-      : config.copilot.costOverrides;
+    const overrides = undefined; // costOverrides removed from config
     this.costEstimatorInstance = new CostEstimator(overrides);
     this.reportGenerator = new ReportGenerator();
     this.runId = runId;
@@ -691,8 +685,7 @@ export class MigrationOrchestrator {
 
     const maxAttempts = this.config.options.maxRetriesPerTask;
     const timeout =
-      this.config.copilot.phaseTimeouts?.[0] ??
-      this.config.claudeCode?.phaseTimeouts?.[0] ??
+      this.config.agentBackend.phaseTimeouts?.[0] ??
       DEFAULT_INDEX_TIMEOUT_MS;
 
     let lastErr: unknown;
@@ -1163,14 +1156,13 @@ export class MigrationOrchestrator {
     // 1c. Cost projection
     const taskCount = tasks.length;
     const agentMultiplier = this.config.target.testCommand ? 3 : 2; // migrator + parity (+ test-writer if testCommand set)
-    const retryMultiplier = this.config.options.retryOverheadMultiplier;
-    const estimatedTotalTokens = taskCount * this.config.options.avgTokensPerTask * agentMultiplier * retryMultiplier;
+    const estimatedTotalTokens = taskCount * AVG_TOKENS_PER_TASK * agentMultiplier * RETRY_OVERHEAD_MULTIPLIER;
     const model = this.getConfiguredRuntimeModel();
     const projected = this.costEstimatorInstance.estimateFromTotal(model, estimatedTotalTokens);
 
     this.logger.info(
       `Phase 4: ${taskCount} tasks, estimated ~${estimatedTotalTokens.toLocaleString()} tokens, ` +
-      `projected cost: ${CostEstimator.formatCost(projected.total)} (${model}, retry overhead: ${retryMultiplier}x)`,
+      `projected cost: ${CostEstimator.formatCost(projected.total)} (${model}, retry overhead: ${RETRY_OVERHEAD_MULTIPLIER}x)`,
     );
     await this.progress.appendEvent(
       `Phase 4 projection: ${taskCount} tasks, ~${CostEstimator.formatCost(projected.total)} estimated`,
@@ -1204,7 +1196,7 @@ export class MigrationOrchestrator {
     );
 
     const continueOnBlocked = this.config.options.continueOnBlocked ?? true;
-    const maxBlockedTasks = this.config.options.maxBlockedTasks ?? 0; // 0 = unlimited
+    const maxBlockedTasks = this.config.options.maxBlockedTasks ?? 1; // 0 = unlimited
     const executionMode = this.config.options.executionMode ?? 'per-task';
     const waveControl = this.config.options.waveControl ?? { waveSize: 3, maxConvergenceIterations: 3 };
     // In wave-barrier mode, wave-level commits replace per-task commits, so
@@ -1872,7 +1864,7 @@ export class MigrationOrchestrator {
                     this._routedTaskIds.add(task.id);
                   }
                   const defaultModel = this.getDefaultRoutingModel();
-                  const avgTokens = this.config.options.avgTokensPerTask;
+                  const avgTokens = AVG_TOKENS_PER_TASK;
                   const projectedCost = this.costEstimatorInstance.projectCost(retryDecision.selectedModel, avgTokens).total;
                   const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
                   this._escalationCostUsd += Math.max(0, projectedCost - baseCost);
@@ -3539,9 +3531,8 @@ export class MigrationOrchestrator {
   ): RoutingDecision {
     const routing = this.config.options.modelRouting;
     const defaultModel = routing?.defaultModel
-      ?? (this.config.agentRuntime === 'claude-code'
-        ? (this.config.claudeCode?.model ?? 'unknown')
-        : (this.config.copilot.model ?? 'unknown'));
+      ?? (this.config.agentBackend.model ?? 'unknown');
+        (this.config.agentBackend.model ?? 'unknown');
 
     if (!routing?.enabled) {
       return { tier: 'normal', selectedModel: defaultModel, reason: 'routing-disabled', score: 0, escalated: false };
@@ -3613,7 +3604,7 @@ export class MigrationOrchestrator {
 
     // Enforce maxEscalationCostUsd cap
     if (routing.maxEscalationCostUsd > 0) {
-      const avgTokens = this.config.options.avgTokensPerTask;
+      const avgTokens = AVG_TOKENS_PER_TASK;
       const projectedCost = this.costEstimatorInstance.projectCost(decision.selectedModel, avgTokens).total;
       const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
       const incrementalCost = Math.max(0, projectedCost - baseCost);
@@ -3628,9 +3619,7 @@ export class MigrationOrchestrator {
   private getDefaultRoutingModel(): string {
     const routing = this.config.options.modelRouting;
     return routing?.defaultModel
-      ?? (this.config.agentRuntime === 'claude-code'
-        ? (this.config.claudeCode?.model ?? 'unknown')
-        : (this.config.copilot.model ?? 'unknown'));
+      ?? (this.config.agentBackend.model ?? 'unknown');
   }
 
   private buildInvocation(
@@ -3694,7 +3683,7 @@ export class MigrationOrchestrator {
           this._routedTaskIds.add(taskId);
         }
         const defaultModel = this.getDefaultRoutingModel();
-        const avgTokens = this.config.options.avgTokensPerTask;
+        const avgTokens = AVG_TOKENS_PER_TASK;
         const projectedCost = this.costEstimatorInstance.projectCost(decision.selectedModel, avgTokens).total;
         const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
         this._escalationCostUsd += Math.max(0, projectedCost - baseCost);
@@ -3730,10 +3719,7 @@ export class MigrationOrchestrator {
   }
 
   private getFailureRecoveryModel(): string | undefined {
-    if (this.config.agentRuntime === 'claude-code') {
-      return this.config.claudeCode?.failureRecoveryModel;
-    }
-    return this.config.copilot.failureRecoveryModel;
+    return this.config.agentBackend.failureRecoveryModel;
   }
 
   private isTransientModelFailure(errorText: string): boolean {
@@ -3791,9 +3777,7 @@ export class MigrationOrchestrator {
 
     // Record invocation metric — prefer modelOverride for correct attribution
     const endTime = new Date().toISOString();
-    const configModel = this.config.agentRuntime === 'claude-code'
-      ? (this.config.claudeCode?.model ?? 'unknown')
-      : (this.config.copilot.model ?? 'unknown');
+    const configModel = this.config.agentBackend.model ?? 'unknown';
     const model = invocation.modelOverride ?? configModel;
     const tokensPrompt = result.tokenUsage?.prompt ?? 0;
     const tokensCompletion = result.tokenUsage?.completion ?? 0;
@@ -3806,7 +3790,7 @@ export class MigrationOrchestrator {
     const routingDecision = this.config.options.modelRouting?.enabled && invocation.routingTier
       ? (() => {
           const defaultModel = this.config.options.modelRouting!.defaultModel ?? configModel;
-          const avgTokens = this.config.options.avgTokensPerTask;
+          const avgTokens = AVG_TOKENS_PER_TASK;
           const projectedCost = this.costEstimatorInstance.projectCost(model, avgTokens).total;
           const baseCost = this.costEstimatorInstance.projectCost(defaultModel, avgTokens).total;
           return { incrementalCost: Math.max(0, projectedCost - baseCost) };

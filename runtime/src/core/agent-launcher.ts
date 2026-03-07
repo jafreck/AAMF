@@ -38,9 +38,9 @@ interface CliBackendDescriptor {
 function copilotDescriptor(config: MigrationConfig): CliBackendDescriptor {
   return {
     name: 'copilot-runner',
-    cliCommand: config.copilot.cliCommand,
-    timeout: config.copilot.timeout,
-    model: config.copilot.model,
+    cliCommand: config.agentBackend.cliCommand,
+    timeout: config.agentBackend.timeout,
+    model: config.agentBackend.model,
     tokenParserRuntime: 'copilot-cli',
     buildArgs(invocation, prompt, model, cfg) {
       const args = [
@@ -74,9 +74,9 @@ function copilotDescriptor(config: MigrationConfig): CliBackendDescriptor {
 function claudeCodeDescriptor(config: MigrationConfig): CliBackendDescriptor {
   return {
     name: 'claude-code-runner',
-    cliCommand: config.claudeCode.cliCommand,
-    timeout: config.claudeCode.timeout,
-    model: config.claudeCode.model,
+    cliCommand: config.agentBackend.cliCommand,
+    timeout: config.agentBackend.timeout,
+    model: config.agentBackend.model,
     tokenParserRuntime: 'claude-code',
     buildArgs(invocation, prompt, model, _cfg) {
       const args = [
@@ -517,7 +517,7 @@ export class ClaudeCodeRunner extends CliAgentRunner {
 
 /**
  * The critical bridge between the runtime and agent prompt files.
- * Delegates to the runner selected by `config.agentRuntime` (default: CopilotRunner).
+ * Delegates to the runner selected by `config.agentBackend.runtime` (default: CopilotRunner).
  */
 export class AgentLauncher {
   private lastInvocationTime = 0;
@@ -534,7 +534,7 @@ export class AgentLauncher {
     private readonly projectRoot: string,
     private readonly logger: Logger,
   ) {
-    this.runner = config.agentRuntime === 'claude-code'
+    this.runner = config.agentBackend.runtime === 'claude-code'
       ? new ClaudeCodeRunner(config, projectRoot, logger)
       : new CopilotRunner(config, projectRoot, logger);
   }

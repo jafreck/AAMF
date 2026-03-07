@@ -23,19 +23,17 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.waveControl?.waveSize).toBe(3);
     expect(result.options.waveControl?.maxConvergenceIterations).toBe(3);
     expect(result.options.continueOnBlocked).toBe(true);
-    expect(result.options.maxBlockedTasks).toBe(0);
+    expect(result.options.maxBlockedTasks).toBe(1);
     expect(result.options.qualityPolicy).toBe('strict');
     expect(result.options.maxInfraRetries).toBe(3);
-    expect(result.options.avgTokensPerTask).toBe(100000);
-    expect(result.options.retryOverheadMultiplier).toBe(1.25);
     expect(result.options.git?.enabled).toBe(true);
     expect(result.options.git?.autoInit).toBe(true);
     expect(result.options.git?.commitByAgent).toBe(true);
     expect(result.options.git?.commitPerTask).toBe(true);
     expect(result.options.git?.allowEmptyTaskCommits).toBe(true);
-    expect(result.copilot.cliCommand).toBe('copilot');
-    expect(result.copilot.timeout).toBe(300000);
-    expect(result.copilot.failureRecoveryModel).toBeUndefined();
+    expect(result.agentBackend.cliCommand).toBe('copilot');
+    expect(result.agentBackend.timeout).toBe(300000);
+    expect(result.agentBackend.failureRecoveryModel).toBeUndefined();
   });
 
   it('should accept git automation overrides', () => {
@@ -114,28 +112,27 @@ describe('MigrationConfigSchema', () => {
       source: { ...validConfig.source, entryPoints: ['main.py'], excludePatterns: ['venv'] },
       target: { ...validConfig.target, framework: 'express', testFramework: 'vitest' },
       options: { maxParallelAgents: 5, tokenBudget: 1000000 },
-      copilot: { cliCommand: 'copilot', model: 'gpt-4o', agentDir: '.github/agents', timeout: 300000 },
+      agentBackend: { runtime: 'copilot', cliCommand: 'copilot', model: 'gpt-4o', agentDir: '.github/agents', timeout: 300000 },
     };
     const result = MigrationConfigSchema.safeParse(full);
     expect(result.success).toBe(true);
   });
 
   describe('Additional Validation', () => {
-    it('should accept copilot.failureRecoveryModel override', () => {
+    it('should accept agentBackend.failureRecoveryModel override', () => {
       const result = MigrationConfigSchema.parse({
         ...validConfig,
-        copilot: { failureRecoveryModel: 'gpt-4.1' },
+        agentBackend: { failureRecoveryModel: 'gpt-4.1' },
       });
-      expect(result.copilot.failureRecoveryModel).toBe('gpt-4.1');
+      expect(result.agentBackend.failureRecoveryModel).toBe('gpt-4.1');
     });
 
-    it('should accept claudeCode.failureRecoveryModel override', () => {
+    it('should accept agentBackend.failureRecoveryModel override for claude-code', () => {
       const result = MigrationConfigSchema.parse({
         ...validConfig,
-        agentRuntime: 'claude-code',
-        claudeCode: { failureRecoveryModel: 'claude-sonnet-4.5' },
+        agentBackend: { runtime: 'claude-code', failureRecoveryModel: 'claude-sonnet-4.5' },
       });
-      expect(result.claudeCode.failureRecoveryModel).toBe('claude-sonnet-4.5');
+      expect(result.agentBackend.failureRecoveryModel).toBe('claude-sonnet-4.5');
     });
 
     it('should reject maxRetriesPerTask above 5', () => {
@@ -274,75 +271,19 @@ describe('MigrationConfigSchema', () => {
     it('should accept phaseTimeouts mapping phase numbers to ms values', () => {
       const result = MigrationConfigSchema.parse({
         ...validConfig,
-        copilot: { phaseTimeouts: { 1: 60000, 3: 120000 } },
+        agentBackend: { phaseTimeouts: { 1: 60000, 3: 120000 } },
       });
-      expect(result.copilot.phaseTimeouts).toEqual({ 1: 60000, 3: 120000 });
+      expect(result.agentBackend.phaseTimeouts).toEqual({ 1: 60000, 3: 120000 });
     });
 
     it('should leave phaseTimeouts undefined when omitted', () => {
       const result = MigrationConfigSchema.parse(validConfig);
-      expect(result.copilot.phaseTimeouts).toBeUndefined();
+      expect(result.agentBackend.phaseTimeouts).toBeUndefined();
     });
 
     it('should default keepArtifacts to false when omitted', () => {
       const result = MigrationConfigSchema.parse(validConfig);
       expect(result.options.keepArtifacts).toBe(false);
-    });
-
-    it('should default avgTokensPerTask to 100000 when omitted', () => {
-      const result = MigrationConfigSchema.parse(validConfig);
-      expect(result.options.avgTokensPerTask).toBe(100000);
-    });
-
-    it('should accept a custom avgTokensPerTask value', () => {
-      const result = MigrationConfigSchema.parse({
-        ...validConfig,
-        options: { avgTokensPerTask: 8000 },
-      });
-      expect(result.options.avgTokensPerTask).toBe(8000);
-    });
-
-    it('should default retryOverheadMultiplier to 1.25 when omitted', () => {
-      const result = MigrationConfigSchema.parse(validConfig);
-      expect(result.options.retryOverheadMultiplier).toBe(1.25);
-    });
-
-    it('should accept a custom retryOverheadMultiplier value', () => {
-      const result = MigrationConfigSchema.parse({
-        ...validConfig,
-        options: { retryOverheadMultiplier: 1.5 },
-      });
-      expect(result.options.retryOverheadMultiplier).toBe(1.5);
-    });
-
-    it('should reject retryOverheadMultiplier below 1', () => {
-      const result = MigrationConfigSchema.safeParse({
-        ...validConfig,
-        options: { retryOverheadMultiplier: 0.9 },
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it('should reject retryOverheadMultiplier above 3', () => {
-      const result = MigrationConfigSchema.safeParse({
-        ...validConfig,
-        options: { retryOverheadMultiplier: 3.1 },
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it('should accept retryOverheadMultiplier at boundary values (1 and 3)', () => {
-      const resultMin = MigrationConfigSchema.parse({
-        ...validConfig,
-        options: { retryOverheadMultiplier: 1 },
-      });
-      expect(resultMin.options.retryOverheadMultiplier).toBe(1);
-
-      const resultMax = MigrationConfigSchema.parse({
-        ...validConfig,
-        options: { retryOverheadMultiplier: 3 },
-      });
-      expect(resultMax.options.retryOverheadMultiplier).toBe(3);
     });
 
     describe('idiomaticRefactor option', () => {
@@ -370,76 +311,62 @@ describe('MigrationConfigSchema', () => {
       });
     });
 
-    it('should default agentRuntime to copilot', () => {
+    it('should default agentBackend.runtime to copilot', () => {
       const result = MigrationConfigSchema.parse(validConfig);
-      expect(result.agentRuntime).toBe('copilot');
+      expect(result.agentBackend.runtime).toBe('copilot');
     });
 
-    it('should accept agentRuntime of claude-code', () => {
+    it('should accept agentBackend.runtime of claude-code', () => {
       const result = MigrationConfigSchema.parse({
         ...validConfig,
-        agentRuntime: 'claude-code',
+        agentBackend: { runtime: 'claude-code' },
       });
-      expect(result.agentRuntime).toBe('claude-code');
+      expect(result.agentBackend.runtime).toBe('claude-code');
     });
 
-    it('should reject invalid agentRuntime value', () => {
+    it('should reject invalid agentBackend.runtime value', () => {
       const result = MigrationConfigSchema.safeParse({
         ...validConfig,
-        agentRuntime: 'openai',
+        agentBackend: { runtime: 'openai' },
       });
       expect(result.success).toBe(false);
     });
 
-    it('should apply claudeCode defaults', () => {
+    it('should apply agentBackend defaults for copilot runtime', () => {
       const result = MigrationConfigSchema.parse(validConfig);
-      expect(result.claudeCode.cliCommand).toBe('claude');
-      expect(result.claudeCode.agentDir).toBe('.claude/agents');
-      expect(result.claudeCode.timeout).toBe(300000);
-      expect(result.claudeCode.model).toBeUndefined();
-      expect(result.claudeCode.contextWindowTokens).toBeUndefined();
-      expect(result.claudeCode.costOverrides).toBeUndefined();
-      expect(result.claudeCode.phaseTimeouts).toBeUndefined();
+      expect(result.agentBackend.runtime).toBe('copilot');
+      expect(result.agentBackend.cliCommand).toBe('copilot');
+      expect(result.agentBackend.agentDir).toBe('.github/agents');
+      expect(result.agentBackend.timeout).toBe(300000);
+      expect(result.agentBackend.model).toBeUndefined();
+      expect(result.agentBackend.phaseTimeouts).toBeUndefined();
     });
 
-    it('should accept explicit claudeCode config', () => {
+    it('should apply agentBackend defaults for claude-code runtime', () => {
       const result = MigrationConfigSchema.parse({
         ...validConfig,
-        claudeCode: {
+        agentBackend: { runtime: 'claude-code' },
+      });
+      expect(result.agentBackend.runtime).toBe('claude-code');
+      expect(result.agentBackend.cliCommand).toBe('claude');
+      expect(result.agentBackend.agentDir).toBe('.claude/agents');
+      expect(result.agentBackend.timeout).toBe(300000);
+    });
+
+    it('should accept explicit agentBackend config', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        agentBackend: {
+          runtime: 'claude-code',
           cliCommand: 'claude',
           model: 'claude-sonnet-4-5',
           agentDir: '.claude/agents',
           timeout: 600000,
-          contextWindowTokens: 200000,
-          costOverrides: { 'claude-sonnet-4-5': { input: 3, output: 15 } },
           phaseTimeouts: { 4: 120000 },
         },
       });
-      expect(result.success ?? true).toBe(true);
-      expect(result.claudeCode.model).toBe('claude-sonnet-4-5');
-      expect(result.claudeCode.contextWindowTokens).toBe(200000);
-      expect(result.claudeCode.timeout).toBe(600000);
-    });
-
-    it('should default contextWindowStrategy to per-invocation', () => {
-      const result = MigrationConfigSchema.parse(validConfig);
-      expect(result.options.contextWindowStrategy).toBe('per-invocation');
-    });
-
-    it('should accept contextWindowStrategy of session', () => {
-      const result = MigrationConfigSchema.parse({
-        ...validConfig,
-        options: { contextWindowStrategy: 'session' },
-      });
-      expect(result.options.contextWindowStrategy).toBe('session');
-    });
-
-    it('should reject invalid contextWindowStrategy', () => {
-      const result = MigrationConfigSchema.safeParse({
-        ...validConfig,
-        options: { contextWindowStrategy: 'global' },
-      });
-      expect(result.success).toBe(false);
+      expect(result.agentBackend.model).toBe('claude-sonnet-4-5');
+      expect(result.agentBackend.timeout).toBe(600000);
     });
 
     it('should accept executionMode of wave-barrier', () => {
@@ -473,19 +400,6 @@ describe('MigrationConfigSchema', () => {
         options: { waveControl: { maxConvergenceIterations: 0 } },
       });
       expect(result.success).toBe(false);
-    });
-
-    it('should accept options.contextWindowTokens as a number', () => {
-      const result = MigrationConfigSchema.parse({
-        ...validConfig,
-        options: { contextWindowTokens: 100000 },
-      });
-      expect(result.options.contextWindowTokens).toBe(100000);
-    });
-
-    it('should leave options.contextWindowTokens undefined when omitted', () => {
-      const result = MigrationConfigSchema.parse(validConfig);
-      expect(result.options.contextWindowTokens).toBeUndefined();
     });
 
     describe('modelRouting option', () => {

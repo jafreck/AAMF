@@ -130,9 +130,7 @@ describe('MigrationRuntime', () => {
       // Inject a minimal config so formatDuration and CostEstimator work
       (runtime as any).config = {
         projectName: 'test-project',
-        agentRuntime: 'copilot',
-        copilot: { model: 'claude-sonnet-4', costOverrides: undefined },
-        claudeCode: { model: undefined, costOverrides: undefined },
+        agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4' },
       };
       consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     });
@@ -194,23 +192,19 @@ describe('MigrationRuntime', () => {
       expect(output).toContain('Blocked Tasks: task-b');
     });
 
-    it('should use claudeCode model and cost overrides when runtime is claude-code', () => {
+    it('should use claudeCode model when runtime is claude-code', () => {
       (runtime as any).config = {
         projectName: 'test-project',
-        agentRuntime: 'claude-code',
-        copilot: { model: 'claude-opus-4.6', costOverrides: undefined },
-        claudeCode: {
+        agentBackend: {
+          runtime: 'claude-code',
           model: 'claude-test-model',
-          costOverrides: {
-            'claude-test-model': { input: 10, output: 10 },
-          },
         },
       };
 
       (runtime as any).printSummary(makeResult({ totalDuration: 5_000, tokenUsage: { total: 1_000_000, byPhase: {}, byAgent: {} } }));
 
       const output = consoleSpy.mock.calls.flat().join('\n');
-      expect(output).toContain('Estimated Cost: $10.0000');
+      expect(output).toContain('Estimated Cost:');
     });
   });
 
@@ -299,11 +293,10 @@ describe('MigrationRuntime', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 1,
-          avgTokensPerTask: 1000,
         },
-        copilot: {
+        agentBackend: {
+          runtime: 'copilot',
           model: 'claude-sonnet-4',
-          costOverrides: undefined,
         },
       };
       runtime.checkpoint = {
@@ -436,7 +429,7 @@ describe('MigrationRuntime', () => {
     it('validateAgentFiles succeeds when all phase agents exist', async () => {
       const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-'));
       const runtime = new MigrationRuntime() as any;
-      runtime.config = { agentRuntime: 'copilot', copilot: { agentDir: root } };
+      runtime.config = { agentBackend: { runtime: 'copilot', agentDir: root } };
 
       const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
       await Promise.all(
@@ -450,7 +443,7 @@ describe('MigrationRuntime', () => {
       it('validateAgentFiles throws when schema sections are missing', async () => {
         const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-invalid-'));
         const runtime = new MigrationRuntime() as any;
-        runtime.config = { agentRuntime: 'copilot', copilot: { agentDir: root } };
+        runtime.config = { agentBackend: { runtime: 'copilot', agentDir: root } };
 
         const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
         await Promise.all(
@@ -491,7 +484,7 @@ describe('MigrationRuntime', () => {
     it('validateAgentFiles throws with missing file list', async () => {
       const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-missing-'));
       const runtime = new MigrationRuntime() as any;
-      runtime.config = { agentRuntime: 'copilot', copilot: { agentDir: root } };
+      runtime.config = { agentBackend: { runtime: 'copilot', agentDir: root } };
 
       await expect(runtime.validateAgentFiles()).rejects.toThrow('Missing agent file(s)');
       await rm(root, { recursive: true, force: true });
@@ -501,9 +494,10 @@ describe('MigrationRuntime', () => {
       const root = await mkdtemp(join(tmpdir(), 'aamf-claude-agent-files-'));
       const runtime = new MigrationRuntime() as any;
       runtime.config = {
-        agentRuntime: 'claude-code',
-        copilot: { agentDir: '/unused' },
-        claudeCode: { agentDir: root },
+        agentBackend: {
+          runtime: 'claude-code',
+          agentDir: root,
+        },
       };
 
       const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];

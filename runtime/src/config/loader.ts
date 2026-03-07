@@ -56,8 +56,7 @@ export async function loadConfig(configPath: string): Promise<MigrationConfig> {
   // ---------- resolve relative paths ----------
   config.source.path = resolve(baseDir, config.source.path);
   config.target.outputPath = resolve(baseDir, config.target.outputPath);
-  config.copilot.agentDir = resolve(baseDir, config.copilot.agentDir);
-  config.claudeCode.agentDir = resolve(baseDir, config.claudeCode.agentDir);
+  config.agentBackend.agentDir = resolve(baseDir, config.agentBackend.agentDir);
 
   return config;
 }

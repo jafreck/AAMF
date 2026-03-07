@@ -18,8 +18,7 @@ describe('ClaudeCodeRunner', () => {
     tempDir = await mkdtemp(join(tmpdir(), 'aamf-claude-'));
     projectRoot = tempDir;
     config = createMockConfig({
-      agentRuntime: 'claude-code',
-      claudeCode: { cliCommand: 'claude', agentDir: '.claude/agents', timeout: 300_000 },
+      agentBackend: { runtime: 'claude-code', cliCommand: 'claude', agentDir: '.claude/agents', timeout: 300_000 },
     }) as MigrationConfig;
     logger = createSilentLogger(tempDir);
   });
@@ -39,8 +38,8 @@ describe('ClaudeCodeRunner', () => {
   /** Helper to create a ClaudeCodeRunner with the given CLI command */
   function makeRunner(cliCommand: string, model?: string): ClaudeCodeRunner {
     const cfg = createMockConfig({
-      agentRuntime: 'claude-code',
-      claudeCode: {
+      agentBackend: {
+        runtime: 'claude-code',
         cliCommand,
         agentDir: '.claude/agents',
         timeout: 300_000,
@@ -54,8 +53,8 @@ describe('ClaudeCodeRunner', () => {
   /** Helper to create an AgentLauncher configured to use claude-code runtime */
   function makeLauncher(cliCommand: string, model?: string): AgentLauncher {
     const cfg = createMockConfig({
-      agentRuntime: 'claude-code',
-      claudeCode: {
+      agentBackend: {
+        runtime: 'claude-code',
         cliCommand,
         agentDir: '.claude/agents',
         timeout: 300_000,
@@ -97,7 +96,7 @@ describe('ClaudeCodeRunner', () => {
     expect(runner).toBeInstanceOf(ClaudeCodeRunner);
   });
 
-  it('AgentLauncher should select ClaudeCodeRunner when agentRuntime is "claude-code"', () => {
+  it('AgentLauncher should select ClaudeCodeRunner when agentBackend.runtime is "claude-code"', () => {
     const launcher = makeLauncher('claude');
     // Verify the launcher delegates to ClaudeCodeRunner by checking the log message
     // (the launcher itself is opaque, but we verify it works via integration)
@@ -242,11 +241,10 @@ describe('ClaudeCodeRunner', () => {
     expect(result.error).toContain('timed out');
   }, 15_000);
 
-  it('should use config.claudeCode.timeout as default timeout', async () => {
+  it('should use config.agentBackend.timeout as default timeout', async () => {
     const script = await createScript('claude-timeout-cfg.sh', 'exec node -e "setTimeout(() => {}, 60000)"');
     const cfg = createMockConfig({
-      agentRuntime: 'claude-code',
-      claudeCode: { cliCommand: script, agentDir: '.claude/agents', timeout: 400 },
+      agentBackend: { runtime: 'claude-code', cliCommand: script, agentDir: '.claude/agents', timeout: 400 },
     }) as MigrationConfig;
     const runner = new ClaudeCodeRunner(cfg, projectRoot, logger);
     const { contextFile, progressDir } = await prepareInvocation('claude-timeout-cfg');
@@ -257,14 +255,14 @@ describe('ClaudeCodeRunner', () => {
       progressDir,
       phase: 4,
       taskId: 'claude-timeout-cfg',
-      // No explicit timeout — should use claudeCode.timeout (400ms)
+      // No explicit timeout — should use agentBackend.timeout (400ms)
     });
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('timed out');
   }, 15_000);
 
-  it('should use config.claudeCode.cliCommand for spawning', async () => {
+  it('should use config.agentBackend.cliCommand for spawning', async () => {
     const script = await createScript('my-claude.sh', 'echo "custom claude"\nexit 0');
     const runner = makeRunner(script);
     const { contextFile, progressDir } = await prepareInvocation('claude-cmd');
@@ -337,7 +335,7 @@ describe('ClaudeCodeRunner', () => {
     expect(result.tokenUsage?.completion).toBe(100);
   });
 
-  it('should read agent definition path from config.claudeCode.agentDir for observability', async () => {
+  it('should read agent definition path from config.agentBackend.agentDir for observability', async () => {
     // Create an agent file in a custom agentDir
     const customAgentDir = join(tempDir, 'custom-agents');
     await mkdir(customAgentDir, { recursive: true });
@@ -345,8 +343,7 @@ describe('ClaudeCodeRunner', () => {
 
     const script = await createScript('claude-agentdir.sh', 'echo "OK"\nexit 0');
     const cfg = createMockConfig({
-      agentRuntime: 'claude-code',
-      claudeCode: { cliCommand: script, agentDir: 'custom-agents', timeout: 300_000 },
+      agentBackend: { runtime: 'claude-code', cliCommand: script, agentDir: 'custom-agents', timeout: 300_000 },
     }) as MigrationConfig;
     const runner = new ClaudeCodeRunner(cfg, projectRoot, logger);
     const { contextFile, progressDir } = await prepareInvocation('claude-agentdir');
