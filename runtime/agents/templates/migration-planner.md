@@ -129,36 +129,3 @@ Do not launch sub-agents directly from this agent. Runtime orchestrates `adjudic
 Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
 
 > ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
-
-## Input Schema (Required)
-
-```json
-{
-  "type": "object",
-  "required": ["contextFile", "projectRoot", "progressDir", "phase"],
-  "properties": {
-    "contextFile": { "type": "string", "minLength": 1 },
-    "projectRoot": { "type": "string", "minLength": 1 },
-    "progressDir": { "type": "string", "minLength": 1 },
-    "phase": { "type": "integer", "minimum": 0 },
-    "analysisFiles": { "type": "array" }
-  }
-}
-```
-
-## Output Schema (Required)
-
-```json
-{
-  "type": "object",
-  "required": ["agent", "status", "outputFiles"],
-  "properties": {
-    "agent": { "const": "migration-planner" },
-    "status": { "enum": ["completed", "failed", "needs-review"] },
-    "outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-    "groupCount": { "type": "integer", "minimum": 0 },
-    "strategy": { "type": "string" },
-    "notes": { "type": "string" }
-  }
-}
-```

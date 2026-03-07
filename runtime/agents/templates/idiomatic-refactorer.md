@@ -45,35 +45,3 @@ Use KB markdown for synthesized architecture, risk, and migration context — no
 Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
 
 > ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
-
-## Input Schema (Required)
-
-```json
-{
-   "type": "object",
-   "required": ["contextFile", "projectRoot", "progressDir", "phase"],
-   "properties": {
-      "contextFile": { "type": "string", "minLength": 1 },
-      "projectRoot": { "type": "string", "minLength": 1 },
-      "progressDir": { "type": "string", "minLength": 1 },
-      "phase": { "type": "integer", "minimum": 0 },
-      "targetFile": { "type": "string", "minLength": 1 },
-      "idiomaticReport": { "type": "string", "minLength": 1 }
-   }
-}
-```
-
-## Output Schema (Required)
-
-```json
-{
-   "type": "object",
-   "required": ["agent", "status", "outputFiles"],
-   "properties": {
-      "agent": { "const": "idiomatic-refactorer" },
-      "status": { "enum": ["completed", "failed", "needs-review"] },
-      "outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-      "notes": { "type": "string" }
-   }
-}
-```

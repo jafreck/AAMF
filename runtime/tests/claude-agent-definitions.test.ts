@@ -1,13 +1,14 @@
 /**
- * Tests for the agent definition generator and shared templates.
+ * Tests for the agent definition generator, shared templates, and registry schemas.
  *
  * Verifies that:
  * - Templates exist for every registered agent
- * - Templates contain required Input/Output Schema sections
- * - Templates contain NO YAML front matter or example blocks
+ * - Templates contain NO YAML front matter, example blocks, or schema sections
+ * - Registry defines valid inputJsonSchema / outputJsonSchema for every agent
  * - Generation produces valid Copilot and Claude Code agent files
  * - Generated files have correct front matter per backend
- * - Generated file content matches the template body
+ * - Generated files contain Input/Output Schema sections injected from the registry
+ * - Both backends get identical body + schema content
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFile, readdir, rm, mkdtemp } from 'node:fs/promises';
@@ -15,7 +16,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { ALL_AGENT_NAMES, AGENT_REGISTRY } from '../src/agents/registry.js';
-import { generateAgentDefinitions } from '../src/agents/generator.js';
+import { generateAgentDefinitions, stripSchemaSections } from '../src/agents/generator.js';
 
 const TEMPLATE_DIR = fileURLToPath(new URL('../agents/templates/', import.meta.url));
 
@@ -58,13 +59,23 @@ function parseFrontMatter(content: string): { frontMatter: FrontMatter; body: st
         frontMatter[currentKey] = currentList;
       } else {
         currentList = null;
-        // Strip surrounding quotes
         frontMatter[currentKey] = rawValue.replace(/^["']|["']$/g, '');
       }
     }
   }
 
   return { frontMatter, body };
+}
+
+/** Extract the JSON object from a schema section in a generated agent file. */
+function extractSchemaJson(content: string, sectionTitle: string): unknown {
+  const headingRegex = new RegExp(`^##\\s+${sectionTitle}(?:\\s*\\(Required\\))?\\s*$`, 'im');
+  const headingMatch = headingRegex.exec(content);
+  if (!headingMatch) return undefined;
+  const afterHeading = content.slice(headingMatch.index + headingMatch[0].length);
+  const jsonBlock = afterHeading.match(/```json\r?\n([\s\S]*?)```/m);
+  if (!jsonBlock) return undefined;
+  return JSON.parse(jsonBlock[1].trim());
 }
 
 // ─── Template Tests ──────────────────────────────────────────────────────────
@@ -94,31 +105,42 @@ describe('Agent templates (runtime/agents/templates/)', () => {
         expect(content).not.toMatch(/### Example/i);
       });
 
-      it('should contain an Input Schema section', () => {
-        expect(content).toMatch(/##\s+Input Schema/);
+      it('should NOT contain Input Schema sections (injected at generation)', () => {
+        expect(content).not.toMatch(/##\s+Input Schema/);
       });
 
-      it('should contain an Output Schema section', () => {
-        expect(content).toMatch(/##\s+Output Schema/);
+      it('should NOT contain Output Schema sections (injected at generation)', () => {
+        expect(content).not.toMatch(/##\s+Output Schema/);
+      });
+    });
+  }
+});
+
+// ─── Registry Schema Tests ───────────────────────────────────────────────────
+
+describe('Registry JSON schemas', () => {
+  for (const agentName of ALL_AGENT_NAMES) {
+    describe(`${agentName}`, () => {
+      it('should define a valid inputJsonSchema', () => {
+        const schema = AGENT_REGISTRY[agentName].inputJsonSchema;
+        expect(schema.type).toBe('object');
+        expect(Array.isArray(schema.required)).toBe(true);
+        expect((schema.required as string[]).length).toBeGreaterThan(0);
+        // All agents require the base context fields
+        for (const field of ['contextFile', 'projectRoot', 'progressDir', 'phase']) {
+          expect(schema.required, `Missing base required field "${field}"`).toContain(field);
+        }
       });
 
-      it('should contain a valid JSON code block in Input Schema', () => {
-        const inputSection = content.slice(content.search(/##\s+Input Schema/));
-        const jsonBlock = inputSection.match(/```json\r?\n([\s\S]*?)```/m);
-        expect(jsonBlock).not.toBeNull();
-        const parsed = JSON.parse(jsonBlock![1].trim());
-        expect(parsed.type).toBe('object');
-        expect(Array.isArray(parsed.required)).toBe(true);
-      });
-
-      it('should contain a valid JSON code block in Output Schema', () => {
-        const outputIdx = content.search(/##\s+Output Schema/);
-        const outputSection = content.slice(outputIdx);
-        const jsonBlock = outputSection.match(/```json\r?\n([\s\S]*?)```/m);
-        expect(jsonBlock).not.toBeNull();
-        const parsed = JSON.parse(jsonBlock![1].trim());
-        expect(parsed.type).toBe('object');
-        expect(Array.isArray(parsed.required)).toBe(true);
+      it('should define a valid outputJsonSchema', () => {
+        const schema = AGENT_REGISTRY[agentName].outputJsonSchema;
+        expect(schema.type).toBe('object');
+        expect(Array.isArray(schema.required)).toBe(true);
+        expect(schema.required).toContain('agent');
+        expect(schema.required).toContain('status');
+        expect(schema.required).toContain('outputFiles');
+        const props = schema.properties as Record<string, unknown>;
+        expect(props.agent).toBeDefined();
       });
     });
   }
@@ -162,32 +184,37 @@ describe('generateAgentDefinitions()', () => {
 
     for (const agentName of ALL_AGENT_NAMES) {
       describe(`${agentName}.agent.md`, () => {
-        it('should have Title Case name in front matter', async () => {
-          const content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+        let content: string;
+
+        beforeAll(async () => {
+          content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+        });
+
+        it('should have Title Case name in front matter', () => {
           const { frontMatter } = parseFrontMatter(content);
           expect(frontMatter.name).toBe(AGENT_REGISTRY[agentName].displayName);
         });
 
-        it('should have a description matching the registry', async () => {
-          const content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+        it('should have a description matching the registry', () => {
           const { frontMatter } = parseFrontMatter(content);
           expect(frontMatter.description).toBe(AGENT_REGISTRY[agentName].description);
         });
 
-        it('should have JSON-array tools in front matter', async () => {
-          const content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+        it('should have JSON-array tools in front matter', () => {
           const { frontMatter } = parseFrontMatter(content);
-          // Copilot tools are on the same line as `tools:` as a JSON array
           const toolsStr = frontMatter.tools as unknown as string;
           const parsed = JSON.parse(toolsStr);
           expect(parsed).toEqual([...AGENT_REGISTRY[agentName].copilotTools]);
         });
 
-        it('should contain the template body after front matter', async () => {
-          const generated = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
-          const template = await readFile(join(TEMPLATE_DIR, `${agentName}.md`), 'utf-8');
-          const { body } = parseFrontMatter(generated);
-          expect(body.trim()).toBe(template.trim());
+        it('should contain Input Schema section matching registry', () => {
+          const parsed = extractSchemaJson(content, 'Input Schema');
+          expect(parsed).toEqual(AGENT_REGISTRY[agentName].inputJsonSchema);
+        });
+
+        it('should contain Output Schema section matching registry', () => {
+          const parsed = extractSchemaJson(content, 'Output Schema');
+          expect(parsed).toEqual(AGENT_REGISTRY[agentName].outputJsonSchema);
         });
       });
     }
@@ -203,24 +230,31 @@ describe('generateAgentDefinitions()', () => {
 
     for (const agentName of ALL_AGENT_NAMES) {
       describe(`${agentName}.md`, () => {
-        it('should have kebab-case name matching agent name', async () => {
-          const content = await readFile(join(claudeDir, `${agentName}.md`), 'utf-8');
+        let content: string;
+
+        beforeAll(async () => {
+          content = await readFile(join(claudeDir, `${agentName}.md`), 'utf-8');
+        });
+
+        it('should have kebab-case name matching agent name', () => {
           const { frontMatter } = parseFrontMatter(content);
           expect(frontMatter.name).toBe(agentName);
         });
 
-        it('should have YAML-list tools in front matter', async () => {
-          const content = await readFile(join(claudeDir, `${agentName}.md`), 'utf-8');
+        it('should have YAML-list tools in front matter', () => {
           const { frontMatter } = parseFrontMatter(content);
           expect(Array.isArray(frontMatter.tools)).toBe(true);
           expect(frontMatter.tools).toEqual([...AGENT_REGISTRY[agentName].claudeTools]);
         });
 
-        it('should contain the template body after front matter', async () => {
-          const generated = await readFile(join(claudeDir, `${agentName}.md`), 'utf-8');
-          const template = await readFile(join(TEMPLATE_DIR, `${agentName}.md`), 'utf-8');
-          const { body } = parseFrontMatter(generated);
-          expect(body.trim()).toBe(template.trim());
+        it('should contain Input Schema section matching registry', () => {
+          const parsed = extractSchemaJson(content, 'Input Schema');
+          expect(parsed).toEqual(AGENT_REGISTRY[agentName].inputJsonSchema);
+        });
+
+        it('should contain Output Schema section matching registry', () => {
+          const parsed = extractSchemaJson(content, 'Output Schema');
+          expect(parsed).toEqual(AGENT_REGISTRY[agentName].outputJsonSchema);
         });
       });
     }
@@ -234,6 +268,55 @@ describe('generateAgentDefinitions()', () => {
       const { body: claudeBody } = parseFrontMatter(claudeContent);
       expect(copilotBody.trim(), `Body mismatch for "${agentName}"`).toBe(claudeBody.trim());
     }
+  });
+});
+
+// ─── stripSchemaSections unit tests ──────────────────────────────────────────
+
+describe('stripSchemaSections()', () => {
+  it('should remove ## Input Schema section', () => {
+    const input = '# Title\n\nSome text.\n\n## Input Schema (Required)\n\n```json\n{}\n```\n\n## Next';
+    const result = stripSchemaSections(input);
+    expect(result).not.toContain('Input Schema');
+    expect(result).toContain('# Title');
+    expect(result).toContain('## Next');
+  });
+
+  it('should remove ## Output Schema section at end of file', () => {
+    const input = '# Title\n\n## Output Schema (Required)\n\n```json\n{"type":"object"}\n```\n';
+    const result = stripSchemaSections(input);
+    expect(result).not.toContain('Output Schema');
+    expect(result).toContain('# Title');
+  });
+
+  it('should remove both schema sections', () => {
+    const input = [
+      '# Agent',
+      '',
+      '## Responsibilities',
+      'Do things.',
+      '',
+      '## Input Schema (Required)',
+      '',
+      '```json',
+      '{"type": "object", "required": ["a"]}',
+      '```',
+      '',
+      '## Output Schema (Required)',
+      '',
+      '```json',
+      '{"type": "object", "required": ["b"]}',
+      '```',
+    ].join('\n');
+    const result = stripSchemaSections(input);
+    expect(result).not.toContain('Input Schema');
+    expect(result).not.toContain('Output Schema');
+    expect(result).toContain('## Responsibilities');
+  });
+
+  it('should leave content unchanged when no schema sections exist', () => {
+    const input = '# Title\n\nSome text.\n\n## Other Section\n\nMore text.';
+    expect(stripSchemaSections(input)).toBe(input);
   });
 });
 

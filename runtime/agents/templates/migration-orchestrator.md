@@ -135,37 +135,3 @@ When any agent invocation fails:
 Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
 
 > ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
-
-## Input Schema (Required)
-
-```json
-{
-  "type": "object",
-  "required": ["contextFile", "projectRoot", "progressDir", "phase"],
-  "properties": {
-    "contextFile": { "type": "string", "minLength": 1 },
-    "projectRoot": { "type": "string", "minLength": 1 },
-    "progressDir": { "type": "string", "minLength": 1 },
-    "phase": { "type": "integer", "minimum": 0 },
-    "resume": { "type": "boolean" }
-  }
-}
-```
-
-## Output Schema (Required)
-
-```json
-{
-  "type": "object",
-  "required": ["agent", "status", "outputFiles"],
-  "properties": {
-    "agent": { "const": "migration-orchestrator" },
-    "status": { "enum": ["completed", "failed", "needs-review"] },
-    "outputFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-    "currentPhase": { "type": "integer", "minimum": 0 },
-    "completedTasks": { "type": "array", "items": { "type": "string" } },
-    "failedTasks": { "type": "array", "items": { "type": "string" } },
-    "notes": { "type": "string" }
-  }
-}
-```
