@@ -694,4 +694,50 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe(progressDir);
     });
   });
+
+  // ─── Guidance Propagation ──────────────────────────────────────────
+
+  describe('Guidance Propagation', () => {
+    it('should include guidance in context when config has guidance', async () => {
+      const config = createMockConfig({
+        guidance: ['Do not use wrapper crates', 'Write native Rust port'],
+      });
+      const guidanceBuilder = new ContextBuilder(config, progressDir, paths);
+
+      const contextPath = await guidanceBuilder.buildContext('code-migrator', 4, 'task-001');
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.guidance).toEqual(['Do not use wrapper crates', 'Write native Rust port']);
+    });
+
+    it('should omit guidance from context when config has no guidance', async () => {
+      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001');
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.guidance).toBeUndefined();
+    });
+
+    it('should omit guidance from context when config guidance is empty array', async () => {
+      const config = createMockConfig({ guidance: [] });
+      const emptyGuidanceBuilder = new ContextBuilder(config, progressDir, paths);
+
+      const contextPath = await emptyGuidanceBuilder.buildContext('migration-planner', 3);
+      const context = await readJson<AgentContext>(contextPath);
+
+      expect(context.guidance).toBeUndefined();
+    });
+
+    it('should propagate guidance to all agent types', async () => {
+      const config = createMockConfig({
+        guidance: ['No FFI bindings allowed'],
+      });
+      const guidanceBuilder = new ContextBuilder(config, progressDir, paths);
+
+      for (const agent of ['impact-assessor', 'migration-planner', 'code-migrator', 'parity-verifier'] as const) {
+        const contextPath = await guidanceBuilder.buildContext(agent, 1, 'task-001');
+        const context = await readJson<AgentContext>(contextPath);
+        expect(context.guidance).toEqual(['No FFI bindings allowed']);
+      }
+    });
+  });
 });
