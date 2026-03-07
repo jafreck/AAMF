@@ -3356,6 +3356,108 @@ describe('MigrationOrchestrator', () => {
 
       expect((orchestrator as any)._parityResults.has('task-001')).toBe(false);
     });
+
+    it('rehydrateParityFromLog recovers parity result from agent log file on disk', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      // Write a fake parity-verifier log file with an aamf-json block
+      const logDir = join(
+        tempDir, '.aamf', 'migration', 'test-project', 'logs', 'agents',
+        'parity-verifier', 'task-001',
+      );
+      await mkdir(logDir, { recursive: true });
+      const logContent = `=== STDOUT ===
+Some preamble text
+
+\`\`\`aamf-json
+{
+  "agent": "parity-verifier",
+  "status": "completed",
+  "outputFiles": ["artifacts/parity/task-001.md"],
+  "taskId": "task-001",
+  "parity": "partial",
+  "issues": [
+    {
+      "severity": "minor",
+      "description": "String mismatch",
+      "sourceLocation": "a.c:10",
+      "targetLocation": "a.rs:15"
+    }
+  ]
+}
+\`\`\`
+
+=== STDERR ===
+Total usage est: 1 Premium requests
+`;
+      await writeFile(join(logDir, 'abc-2026-01-01T00-00-00-000Z.log'), logContent, 'utf-8');
+
+      // Map should be empty initially
+      expect((orchestrator as any)._parityResults.has('task-001')).toBe(false);
+
+      // checkParityResult should rehydrate from log and return true (partial with only minor)
+      const result = (orchestrator as any).checkParityResult('task-001');
+      expect(result).toBe(true);
+
+      // Map should now be populated
+      const stored = (orchestrator as any)._parityResults.get('task-001');
+      expect(stored).toBeDefined();
+      expect(stored.parity).toBe('partial');
+      expect(stored.issues).toHaveLength(1);
+      expect(stored.issues[0].severity).toBe('minor');
+    });
+
+    it('rehydrateParityFromLog picks the latest log file when multiple exist', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      const logDir = join(
+        tempDir, '.aamf', 'migration', 'test-project', 'logs', 'agents',
+        'parity-verifier', 'task-001',
+      );
+      await mkdir(logDir, { recursive: true });
+
+      const makeLog = (parity: string) => `=== STDOUT ===
+\`\`\`aamf-json
+{"agent":"parity-verifier","status":"completed","parity":"${parity}","issues":[]}
+\`\`\`
+=== STDERR ===
+`;
+
+      // Write two logs — earlier one is "fail", later one is "pass"
+      await writeFile(join(logDir, 'aaa-2026-01-01T00-00-00-000Z.log'), makeLog('fail'), 'utf-8');
+      await writeFile(join(logDir, 'bbb-2026-01-02T00-00-00-000Z.log'), makeLog('pass'), 'utf-8');
+      // Write a .live.log that should be ignored
+      await writeFile(join(logDir, 'ccc-2026-01-03T00-00-00-000Z.live.log'), makeLog('fail'), 'utf-8');
+
+      const result = (orchestrator as any).checkParityResult('task-001');
+      expect(result).toBe(true);
+      expect((orchestrator as any)._parityResults.get('task-001').parity).toBe('pass');
+    });
+
+    it('rehydrateParityFromLog returns undefined when no log directory exists', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      const result = (orchestrator as any).rehydrateParityFromLog('nonexistent-task');
+      expect(result).toBeUndefined();
+    });
+
+    it('rehydrateParityFromLog returns undefined when log has no aamf-json block', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+
+      const logDir = join(
+        tempDir, '.aamf', 'migration', 'test-project', 'logs', 'agents',
+        'parity-verifier', 'task-001',
+      );
+      await mkdir(logDir, { recursive: true });
+      await writeFile(join(logDir, 'abc-2026-01-01T00-00-00-000Z.log'), '=== STDOUT ===\nno json here\n=== STDERR ===\n', 'utf-8');
+
+      const result = (orchestrator as any).rehydrateParityFromLog('task-001');
+      expect(result).toBeUndefined();
+    });
   });
 
   // ─── ETA Logging ───────────────────────────────────────────────────
