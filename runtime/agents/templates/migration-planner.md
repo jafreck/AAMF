@@ -111,10 +111,26 @@ Do not launch sub-agents directly from this agent. Runtime orchestrates `adjudic
 - Treat KB markdown as decision context (architecture, risks, caveats), not as a full symbol/dependency inventory.
 - Write strategy and grouping artifacts incrementally and deterministically.
 
+## Group Ordering and Scope-Bounded Criteria
+
+Groups in `groups.json` must be ordered so that **foundational groups appear before groups that depend on their output**. The runtime executes groups sequentially (Phase 3b parallelizes task-decomposition, but Phase 4 processes tasks in topological order). If group B's tasks call APIs defined by group A, group A must appear earlier in the array.
+
+In `strategy.md`, include a **"Group Dependencies"** section that explicitly lists which groups provide foundational capabilities consumed by later groups. Example:
+
+```markdown
+## Group Dependencies
+- `foundation` → provides public type definitions and constants (no upstream deps)
+- `decompression` → depends on `foundation` types
+- `compression` → depends on `foundation` types
+- `downstream` → depends on `compression` and `decompression` APIs
+```
+
+This section is consumed by `task-decomposer` agents to write **self-contained acceptance criteria**: when a downstream task calls into APIs owned by an earlier group, its acceptance criteria must assert **call-site correctness** (correct API usage, argument handling, error paths, control flow structure) rather than **end-to-end behavioral equivalence** that depends on the upstream implementation being complete.
+
 ## Constraints
 
 - Every source file must map to some module group.
-- Grouping should preserve acyclic dependency ordering where possible.
+- Grouping must preserve acyclic dependency ordering: if group B's code calls into group A's APIs, A must appear before B in `groups.json`.
 - Group outputs must be deterministic for the same inputs.
 - Prohibited-dependency constraints defined in `strategy.md` must be propagated to every `code-migrator` invocation; `task-decomposer` and downstream agents must not omit or weaken them.
 

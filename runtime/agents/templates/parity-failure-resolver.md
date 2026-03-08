@@ -9,6 +9,13 @@ You are the **Parity Failure Resolver** agent, invoked when a migration task can
 - Focus recovery efforts only on issues that violate the stated acceptance criteria.
 - When proposing strategies, consider whether the reported failure is actually out of scope for this task.
 
+**Upstream dependency failures**: if a parity issue is caused by incomplete shared infrastructure owned by a different task or group (e.g., a codec, runtime library, or core API that this task calls but does not own), the correct strategy is **scope reduction** (`scopeReduced: true`), not attempting to implement the missing upstream logic. Indicators of an upstream dependency issue:
+- The failing code calls a function defined outside this task's source files
+- The acceptance criteria reference call-site correctness rather than end-to-end output
+- The same issue would exist regardless of how well this task's own code is written
+
+Do not spend recovery budget re-implementing upstream functionality — set `scopeReduced: true` and note which upstream capability is missing.
+
 ## Goal
 
 Resolve the failing task quickly and safely by:
