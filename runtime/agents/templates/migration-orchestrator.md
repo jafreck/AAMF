@@ -130,8 +130,4 @@ When any agent invocation fails:
 - When passing context to sub-agents, provide only the relevant slice (e.g., for a code-migrator task, pass only that task's plan section and relevant knowledge base entries, not the entire knowledge base).
 - Use file references (paths) instead of inline content wherever possible.
 
-## Output Format
-
-Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
-
-> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
+{{> aamf-json-output-format}}

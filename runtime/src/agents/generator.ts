@@ -9,6 +9,10 @@
  * Input / Output Schema sections derived from the canonical JSON schemas stored
  * in the agent registry. This ensures the schemas agents see in their prompt
  * always reflect the runtime's current contract.
+ *
+ * Templates may include shared fragments via `{{> partial-name}}` directives.
+ * Partials live in `runtime/agents/templates/_partials/<name>.md` and support
+ * `{{placeholder}}` interpolation for per-agent customization.
  */
 import { readdir, readFile } from 'node:fs/promises';
 import { join, basename } from 'node:path';
@@ -62,6 +66,72 @@ function defaultTemplateDir(): string {
   return fileURLToPath(new URL('../../agents/templates/', import.meta.url));
 }
 
+// ─── Partial Resolution ──────────────────────────────────────────────────────
+
+/** Cache of loaded partial contents, keyed by partials directory path + partial name. */
+const partialsCache = new Map<string, string>();
+
+/**
+ * Resolve `{{> partial-name}}` directives in a template body.
+ *
+ * Directives may appear on their own line or inline within text. The
+ * referenced file is read from `<templateDir>/_partials/<name>.md`.
+ *
+ * After inclusion, simple `{{key}}` placeholders in the resolved text are
+ * replaced using the provided `vars` map.
+ */
+export async function resolvePartials(
+  content: string,
+  templateDir: string,
+  vars: Record<string, string> = {},
+): Promise<string> {
+  const partialsDir = join(templateDir, '_partials');
+  const partialPattern = /\{\{>\s*([\w-]+)\s*\}\}/g;
+
+  // Collect all partial references first to allow parallel reads
+  const names = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = partialPattern.exec(content)) !== null) {
+    if (m[1]) names.add(m[1]);
+  }
+
+  if (names.size === 0) return content;
+
+  // Load partials (with caching)
+  const loaded = new Map<string, string>();
+  await Promise.all(
+    [...names].map(async (name) => {
+      const cacheKey = `${partialsDir}/${name}`;
+      if (partialsCache.has(cacheKey)) {
+        loaded.set(name, partialsCache.get(cacheKey)!);
+        return;
+      }
+      const filePath = join(partialsDir, `${name}.md`);
+      const text = (await readFile(filePath, 'utf-8')).trimEnd();
+      partialsCache.set(cacheKey, text);
+      loaded.set(name, text);
+    }),
+  );
+
+  // Replace directives with loaded content
+  let result = content.replace(
+    /\{\{>\s*([\w-]+)\s*\}\}/g,
+    (_match, name: string) => loaded.get(name) ?? _match,
+  );
+
+  // Interpolate {{key}} placeholders
+  for (const [key, value] of Object.entries(vars)) {
+    result = result.replaceAll(`{{${key}}}`, value);
+  }
+
+  return result;
+}
+
+/** Clear the partials cache (useful in tests). */
+export function clearPartialsCache(): void {
+  partialsCache.clear();
+}
+
 // ─── Schema Section Helpers ──────────────────────────────────────────────────
 
 /**
@@ -109,9 +179,9 @@ export async function generateAgentDefinitions(options: GenerateOptions): Promis
 
   await ensureDir(outputDir);
 
-  // Discover available templates
+  // Discover available templates (skip _-prefixed entries like _partials/)
   const templateFiles = (await readdir(templateDir))
-    .filter(f => f.endsWith('.md'))
+    .filter(f => f.endsWith('.md') && !f.startsWith('_'))
     .sort();
 
   const generated: string[] = [];
@@ -122,7 +192,12 @@ export async function generateAgentDefinitions(options: GenerateOptions): Promis
     // Skip templates that don't have a registry entry
     if (!AGENT_REGISTRY[agentName]) continue;
 
-    const templateContent = await readFile(join(templateDir, templateFile), 'utf-8');
+    const rawTemplate = await readFile(join(templateDir, templateFile), 'utf-8');
+
+    // Resolve {{> partial}} directives and {{var}} placeholders
+    const templateContent = await resolvePartials(rawTemplate, templateDir, {
+      agentName,
+    });
 
     const frontMatter = backend === 'claude-code'
       ? buildClaudeCodeFrontMatter(agentName)

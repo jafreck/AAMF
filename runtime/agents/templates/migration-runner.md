@@ -63,4 +63,4 @@ Initialize `.aamf/migration/{projectName}/reports/progress.md` with:
 - If the orchestrator CLI invocation fails to launch, retry once. On second failure, record the error and terminate.
 - Never attempt to perform migration work yourself — always delegate to the orchestrator.
 
-## Output Format\n\nYour response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.\n\n> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
+{{> aamf-json-output-format}}

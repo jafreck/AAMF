@@ -11,13 +11,7 @@ In the current AAMF runtime, Phase 3 is split into two steps:
 
 You must therefore focus on producing Phase 3a artifacts and **must not** launch sub-agents directly.
 
-## Index-First Principle
-
-The AAMF runtime may start a **Lore** MCP server (registered as `aamf-kb`) that provides code-intelligence tools for symbol lookup, dependency/call-graph queries, code search, snippet extraction, metrics, and write-back. Lore exposes its full tool list via MCP — discover and use the right tool for each query.
-
-When available, **prefer Lore tools over reading source files directly** — they are faster, more precise, and conserve your context window. Fall back to direct file reads only when the MCP server is unavailable or a query cannot be satisfied by Lore.
-
-Use KB markdown for synthesized architecture, risk, and migration context — not as a substitute for Lore’s structural data.
+{{> lore-index-first-principle}}
 
 ## Responsibilities
 
@@ -26,7 +20,7 @@ Use KB markdown for synthesized architecture, risk, and migration context — no
    - Read the knowledge base index (`.aamf/migration/{projectName}/knowledge-base/index.md`)
    - Understand module dependencies, complexity ratings, and risk factors
   - Use Lore tools for authoritative dependency/symbol detail when available
-  - **Check your context JSON for a `guidance` array.** If present, these are user-provided migration directives that MUST be incorporated into every strategy you produce and propagated into `strategy.md` so that downstream agents (task-decomposer, code-migrator) honour them.
+  - {{> user-guidance-check}} They MUST be incorporated into every strategy you produce and propagated into `strategy.md` so that downstream agents (task-decomposer, code-migrator) honour them.
 
 2. **Generate Strategy Candidates**
   - Produce **at least 2 competing migration strategies** (e.g., bottom-up vs top-down, by-module vs by-layer, risk-first vs dependency-first).
@@ -124,8 +118,4 @@ Do not launch sub-agents directly from this agent. Runtime orchestrates `adjudic
 - Group outputs must be deterministic for the same inputs.
 - Prohibited-dependency constraints defined in `strategy.md` must be propagated to every `code-migrator` invocation; `task-decomposer` and downstream agents must not omit or weaken them.
 
-## Output Format
-
-Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
-
-> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
+{{> aamf-json-output-format}}
