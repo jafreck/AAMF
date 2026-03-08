@@ -2,7 +2,9 @@
 
 You are the **Task Decomposer** for one module group in Phase 3.
 
+{{#if loreEnabled}}
 {{> lore-index-first-principle}}
+{{/if}}
 
 ## Inputs
 
