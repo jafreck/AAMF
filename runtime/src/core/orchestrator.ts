@@ -2098,6 +2098,18 @@ export class MigrationOrchestrator {
             continue;
           }
 
+          // If the adjudicator determined all remaining issues are outside the
+          // task's declared scope, accept the verdict and stop the retry loop.
+          // Re-running parity-verifier would just re-discover the same out-of-
+          // scope gaps, wasting budget in an unwinnable cycle.
+          if (this.adjudicatorReducedScope(recoveryResult)) {
+            this.logger.info(
+              `Failure-adjudicator adjudicated remaining parity issues as out-of-scope for ${task.id} — accepting verdict`,
+            );
+            parityPassed = true;
+            break;
+          }
+
           // Re-run code-migrator with enriched recovery context —
           // parity report + adjudication analysis are wired as inputFiles
           const reMigrateCtx = await this.contextBuilder.buildContext(
@@ -3492,6 +3504,19 @@ export class MigrationOrchestrator {
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────
+
+  /**
+   * Check whether the failure-adjudicator determined that remaining parity
+   * issues are out of the task's declared scope (`scopeReduced: true`).
+   *
+   * When the adjudicator applies scope-based adjudication it intentionally
+   * makes no code changes, so re-running code-migrator + parity-verifier
+   * would only re-discover the same out-of-scope gaps.
+   */
+  private adjudicatorReducedScope(result: AgentResult): boolean {
+    if (!result.outputParsed || !result.structuredOutput) return false;
+    return (result.structuredOutput as Record<string, unknown>).scopeReduced === true;
+  }
 
   /**
    * Extract parity data from a parity-verifier AgentResult and store it

@@ -3749,6 +3749,87 @@ Total usage est: 1 Premium requests
     });
   });
 
+  // ─── Adjudicator Scope Reduction ────────────────────────────────────
+
+  describe('adjudicatorReducedScope', () => {
+    it('returns true when structuredOutput has scopeReduced: true', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: true,
+        structuredOutput: {
+          agent: 'failure-adjudicator',
+          status: 'completed',
+          taskId: 'task-26',
+          failureType: 'parity',
+          attempts: 1,
+          scopeReduced: true,
+          notes: 'Issues outside task scope',
+        },
+      };
+      const result = (orchestrator as any).adjudicatorReducedScope(agentResult);
+      expect(result).toBe(true);
+    });
+
+    it('returns false when scopeReduced is false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: true,
+        structuredOutput: {
+          agent: 'failure-adjudicator',
+          status: 'completed',
+          taskId: 'task-26',
+          failureType: 'parity',
+          attempts: 1,
+          scopeReduced: false,
+          notes: 'Applied direct fix',
+        },
+      };
+      const result = (orchestrator as any).adjudicatorReducedScope(agentResult);
+      expect(result).toBe(false);
+    });
+
+    it('returns false when outputParsed is false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: false,
+        structuredOutput: undefined,
+      };
+      const result = (orchestrator as any).adjudicatorReducedScope(agentResult);
+      expect(result).toBe(false);
+    });
+
+    it('returns false when structuredOutput is missing', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: true,
+        structuredOutput: undefined,
+      };
+      const result = (orchestrator as any).adjudicatorReducedScope(agentResult);
+      expect(result).toBe(false);
+    });
+
+    it('returns false when scopeReduced field is absent', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: true,
+        structuredOutput: {
+          agent: 'failure-adjudicator',
+          status: 'completed',
+          taskId: 'task-26',
+          failureType: 'parity',
+          attempts: 1,
+        },
+      };
+      const result = (orchestrator as any).adjudicatorReducedScope(agentResult);
+      expect(result).toBe(false);
+    });
+  });
+
   // ─── ETA Logging ───────────────────────────────────────────────────
 
   describe('ETA Logging', () => {
