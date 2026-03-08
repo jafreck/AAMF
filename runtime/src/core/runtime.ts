@@ -145,15 +145,12 @@ export class MigrationRuntime {
     // 7. Generate agent definition files from shared templates
     const settings = this.getActiveRuntimeSettings();
     const absAgentDir = resolve(this.projectRoot, settings.agentDir);
-    const loreEnabled = !!(this.config.options.kbIndex?.enabled);
     const generated = await generateAgentDefinitions({
       backend: this.config.agentBackend.runtime,
       outputDir: absAgentDir,
-      vars: {
-        ...(loreEnabled ? { loreEnabled: 'true' } : {}),
-      },
+      vars: { loreEnabled: 'true' },
     });
-    this.logger.info(`Generated ${generated.length} agent definitions in ${settings.agentDir} (loreEnabled=${loreEnabled})`);
+    this.logger.info(`Generated ${generated.length} agent definitions in ${settings.agentDir} (loreEnabled=true)`);
 
     // 8. Validate agent files exist
     await this.validateAgentFiles();

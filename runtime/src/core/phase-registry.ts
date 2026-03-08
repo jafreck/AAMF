@@ -25,7 +25,6 @@ export const PHASES: readonly PhaseDefinition[] = [
     agents: getAgentsForPhase(0),
     critical: true,
     parallel: false,
-    optional: true,
   },
   {
     id: 1,

@@ -298,7 +298,17 @@ async function setupOrchestrator(
     singlePhase,
   );
 
-  return { orchestrator, checkpoint, progress, mockLauncher, logger, config, progressDir };
+  // Phase 0 (KB Indexing) uses the real Lore IndexBuilder which requires
+  // a valid source tree.  In unit tests we stub it to return success and
+  // write an empty kb.db so downstream phases find the file they expect.
+  // Tests that need the real executePhase0 can call phase0Stub.mockRestore().
+  const kbDbPath = join(progressDir, 'kb.db');
+  const phase0Stub = vi.spyOn(orchestrator as any, 'executePhase0').mockImplementation(async () => {
+    await writeFile(kbDbPath, '');
+    return { phase: 0, name: 'KB Indexing', success: true, outputPath: kbDbPath, duration: 0 };
+  });
+
+  return { orchestrator, checkpoint, progress, mockLauncher, logger, config, progressDir, phase0Stub };
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -322,7 +332,7 @@ describe('MigrationOrchestrator', () => {
       await expect((orchestrator as any).executePhase({ id: 999 } as any)).rejects.toThrow('Unknown phase: 999');
     });
 
-    it('should warn when KB is enabled for a later single phase but kb.db is missing', async () => {
+    it('should warn when kb.db is missing for a later single phase', async () => {
       const warnSpy = vi.spyOn(Logger.prototype, 'warn');
 
       try {
@@ -330,11 +340,7 @@ describe('MigrationOrchestrator', () => {
         const { orchestrator } = await setupOrchestrator(
           tempDir,
           launcherFn,
-          {
-            options: {
-              kbIndex: { enabled: true, embeddings: { enabled: false } },
-            },
-          },
+          undefined,
           1,
         );
 
@@ -342,7 +348,7 @@ describe('MigrationOrchestrator', () => {
 
         expect(result.phases.some(p => p.phase === 1)).toBe(true);
         expect(warnSpy).toHaveBeenCalledWith(
-          expect.stringContaining('KB indexing is enabled, but'),
+          expect.stringContaining('missing'),
         );
       } finally {
         warnSpy.mockRestore();
@@ -353,39 +359,23 @@ describe('MigrationOrchestrator', () => {
   // ─── Phase 0: KB Indexing ──────────────────────────────────────────
 
   describe('Phase 0: KB Indexing', () => {
-    it('should skip Phase 0 when AAMF_USE_KB_INDEX is not set', async () => {
-      delete process.env['AAMF_USE_KB_INDEX'];
-
+    it('should always run Phase 0 (KB Indexing)', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(tempDir, launcherFn);
+      const { orchestrator, progressDir , phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+        phase0Stub.mockRestore();
       await writeMigrationPlan(progressDir);
 
       const result = await orchestrator.run();
 
       const phase0 = result.phases.find(p => p.phase === 0);
-      expect(phase0).toBeUndefined();
-    });
-
-    it('should skip Phase 0 when AAMF_USE_KB_INDEX is set to "0"', async () => {
-      process.env['AAMF_USE_KB_INDEX'] = '0';
-
-      try {
-        const launcherFn = createMockLauncher();
-        const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn);
-        await writeMigrationPlan(progressDir);
-
-        const result = await orchestrator.run();
-
-        const phase0 = result.phases.find(p => p.phase === 0);
-        expect(phase0).toBeUndefined();
-      } finally {
-        delete process.env['AAMF_USE_KB_INDEX'];
-      }
+      expect(phase0).toBeDefined();
+      expect(phase0!.success).toBe(true);
     });
 
     it('executePhase0 should return phase 0 result with success: false when source path does not exist', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const { orchestrator, phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+      phase0Stub.mockRestore();
 
       // Source path '/tmp/source' likely doesn't exist in test env, so build will fail gracefully
       const result = await orchestrator.executePhase0(Date.now());
@@ -404,7 +394,8 @@ describe('MigrationOrchestrator', () => {
 
     it('executePhase0 outputPath should match kbDbPath (progressDir/kb.db)', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const { orchestrator, phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+      phase0Stub.mockRestore();
 
       const result = await orchestrator.executePhase0(Date.now());
 
@@ -414,36 +405,9 @@ describe('MigrationOrchestrator', () => {
       }
     });
 
-    it('should skip Phase 0 when kbIndex.enabled is false and env var is not set', async () => {
-      delete process.env['AAMF_USE_KB_INDEX'];
-
-      const launcherFn = createMockLauncher();
-      const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
-        options: {
-          maxParallelAgents: 3,
-          maxRetriesPerTask: 1,
-          maxLinesPerTask: 500,
-          dryRun: false,
-          resume: false,
-          invocationDelayMs: 0,
-          buildConcurrency: 1,
-          continueOnBlocked: true,
-          maxBlockedTasks: 0,
-          maxInfraRetries: 3,
-          kbIndex: { enabled: false },
-        },
-      });
-      await writeMigrationPlan(progressDir);
-
-      const result = await orchestrator.run();
-
-      const phase0 = result.phases.find(p => p.phase === 0);
-      expect(phase0).toBeUndefined();
-    });
-
     it('executePhase0 should retry on failure up to maxRetriesPerTask times', async () => {
       const launcherFn = createMockLauncher();
-      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+      const { orchestrator, phase0Stub } = await setupOrchestrator(tempDir, launcherFn, {
         options: {
           maxParallelAgents: 3,
           maxRetriesPerTask: 2,
@@ -457,6 +421,7 @@ describe('MigrationOrchestrator', () => {
           maxInfraRetries: 3,
         },
       });
+      phase0Stub.mockRestore();
 
       // Source path '/tmp/source' does not exist, so build will fail on every attempt
       const result = await orchestrator.executePhase0(Date.now());
@@ -479,7 +444,7 @@ describe('MigrationOrchestrator', () => {
 
       try {
         const launcherFn = createMockLauncher();
-        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+        const { orchestrator, phase0Stub } = await setupOrchestrator(tempDir, launcherFn, {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 1,
@@ -500,6 +465,7 @@ describe('MigrationOrchestrator', () => {
             phaseTimeouts: { 0: 50 }, // 50ms — allows real setTimeout to fire
           },
         });
+        phase0Stub.mockRestore();
 
         const result = await orchestrator.executePhase0(Date.now());
 
@@ -522,7 +488,7 @@ describe('MigrationOrchestrator', () => {
 
       try {
         const launcherFn = createMockLauncher();
-        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+        const { orchestrator, phase0Stub } = await setupOrchestrator(tempDir, launcherFn, {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 1,
@@ -535,11 +501,11 @@ describe('MigrationOrchestrator', () => {
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
             kbIndex: {
-              enabled: true,
               embeddings: { enabled: true, model: 'Qwen/Qwen3-Embedding-0.6B', pythonBin: 'python3' },
             },
           },
         });
+        phase0Stub.mockRestore();
 
         const result = await orchestrator.executePhase0(Date.now());
 
@@ -565,7 +531,7 @@ describe('MigrationOrchestrator', () => {
 
       try {
         const launcherFn = createMockLauncher();
-        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn, {
+        const { orchestrator, phase0Stub } = await setupOrchestrator(tempDir, launcherFn, {
           options: {
             maxParallelAgents: 3,
             maxRetriesPerTask: 1,
@@ -578,11 +544,11 @@ describe('MigrationOrchestrator', () => {
             maxBlockedTasks: 0,
             maxInfraRetries: 3,
             kbIndex: {
-              enabled: true,
               embeddings: { enabled: true },
             },
           },
         });
+        phase0Stub.mockRestore();
 
         // Should still succeed — embeddings are best-effort
         const result = await orchestrator.executePhase0(Date.now());
@@ -611,6 +577,7 @@ describe('MigrationOrchestrator', () => {
       try {
         const launcherFn = createMockLauncher();
         const first = await setupOrchestrator(tempDir, launcherFn);
+        first.phase0Stub.mockRestore();
         await first.orchestrator.executePhase0(Date.now());
         const currentFingerprint = first.checkpoint.getState().phase0Fingerprint;
         expect(currentFingerprint).toMatch(/^[a-f0-9]{64}$/);
@@ -622,7 +589,8 @@ describe('MigrationOrchestrator', () => {
         db.close();
 
         buildSpy.mockClear();
-        const { orchestrator, checkpoint } = await setupOrchestrator(tempDir, launcherFn);
+        const { orchestrator, checkpoint , phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+        phase0Stub.mockRestore();
 
         const result = await orchestrator.executePhase0(Date.now());
 
@@ -661,7 +629,8 @@ describe('MigrationOrchestrator', () => {
         dbMod.setLoreMeta(db, 'source_fingerprint', 'old-fp');
         db.close();
 
-        const { orchestrator, checkpoint } = await setupOrchestrator(tempDir, launcherFn);
+        const { orchestrator, checkpoint , phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+        phase0Stub.mockRestore();
 
         const result = await orchestrator.executePhase0(Date.now());
 
@@ -684,7 +653,8 @@ describe('MigrationOrchestrator', () => {
 
       try {
         const launcherFn = createMockLauncher();
-        const { orchestrator, checkpoint } = await setupOrchestrator(tempDir, launcherFn);
+        const { orchestrator, checkpoint , phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+        phase0Stub.mockRestore();
 
         // kb.db does not exist on disk → fileExists returns false naturally
         const result = await orchestrator.executePhase0(Date.now());
@@ -717,7 +687,8 @@ describe('MigrationOrchestrator', () => {
 
       try {
         const launcherFn = createMockLauncher();
-        const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+        const { orchestrator , phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+        phase0Stub.mockRestore();
 
         const result = await orchestrator.executePhase0(Date.now());
 
@@ -748,6 +719,7 @@ describe('MigrationOrchestrator', () => {
       try {
         const launcherFn = createMockLauncher();
         const first = await setupOrchestrator(tempDir, launcherFn);
+        first.phase0Stub.mockRestore();
         await first.orchestrator.executePhase0(Date.now());
         const currentFingerprint = first.checkpoint.getState().phase0Fingerprint;
         expect(currentFingerprint).toMatch(/^[a-f0-9]{64}$/);
@@ -759,7 +731,8 @@ describe('MigrationOrchestrator', () => {
         db.close();
 
         buildSpy.mockClear();
-        const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+        const { orchestrator, logger , phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+        phase0Stub.mockRestore();
         const infoSpy = vi.spyOn(logger, 'info');
 
         await orchestrator.executePhase0(Date.now());
@@ -780,7 +753,8 @@ describe('MigrationOrchestrator', () => {
 
       try {
         const launcherFn = createMockLauncher();
-        const { orchestrator, logger } = await setupOrchestrator(tempDir, launcherFn);
+        const { orchestrator, logger , phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+        phase0Stub.mockRestore();
         const infoSpy = vi.spyOn(logger, 'info');
 
         // No kb.db exists → triggers rebuild path
@@ -799,7 +773,7 @@ describe('MigrationOrchestrator', () => {
   // ─── Phase Sequencing ──────────────────────────────────────────────
 
   describe('Phase Sequencing', () => {
-    it('should execute all 7 phases in order when all succeed', async () => {
+    it('should execute all 8 phases in order when all succeed', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(tempDir, launcherFn);
 
@@ -808,10 +782,10 @@ describe('MigrationOrchestrator', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(true);
-      expect(result.phases).toHaveLength(8);
+      expect(result.phases).toHaveLength(9);
       const phaseIds = result.phases.map((p) => p.phase).sort((a, b) => a - b);
       for (let i = 0; i < phaseIds.length; i++) {
-        expect(phaseIds[i]).toBe(i + 1);
+        expect(phaseIds[i]).toBe(i);
       }
       expect(mockLauncher.invocations.length).toBeGreaterThan(0);
     });
@@ -847,11 +821,18 @@ describe('MigrationOrchestrator', () => {
         'test-run-id',
       );
 
+      // Stub Phase 0 (no real source tree in tests)
+      const kbDbPath = join(progressDir, 'kb.db');
+      vi.spyOn(orchestrator as any, 'executePhase0').mockImplementation(async () => {
+        await writeFile(kbDbPath, '');
+        return { phase: 0, name: 'KB Indexing', success: true, outputPath: kbDbPath, duration: 0 };
+      });
+
       await writeMigrationPlan(progressDir);
 
       const result = await orchestrator.run();
 
-      expect(result.phases).toHaveLength(8);
+      expect(result.phases).toHaveLength(9);
       const agentsInvoked = mockLauncher.invocations.map((i) => i.agent);
       expect(agentsInvoked).not.toContain('impact-assessor');
       expect(agentsInvoked).not.toContain('knowledge-builder');
@@ -876,7 +857,7 @@ describe('MigrationOrchestrator', () => {
       expect(agentsInvoked).not.toContain('code-migrator');
     });
 
-    it('should re-run phase 0 on resume when kbIndex is enabled', async () => {
+    it('should re-run phase 0 on resume to ensure KB is up to date', async () => {
       const launcherFn = createMockLauncher();
       const config = createMockConfig({
         source: {
@@ -895,7 +876,6 @@ describe('MigrationOrchestrator', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          kbIndex: { enabled: true, embeddings: { enabled: false } },
         },
       });
 
@@ -943,9 +923,12 @@ describe('MigrationOrchestrator', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(false);
-      expect(result.phases).toHaveLength(1);
-      expect(result.phases[0]!.phase).toBe(1);
-      expect(result.phases[0]!.success).toBe(false);
+      // Phase 0 (KB Indexing, stubbed) succeeds, then Phase 1 fails
+      expect(result.phases).toHaveLength(2);
+      expect(result.phases[0]!.phase).toBe(0);
+      expect(result.phases[0]!.success).toBe(true);
+      expect(result.phases[1]!.phase).toBe(1);
+      expect(result.phases[1]!.success).toBe(false);
     });
 
     it('should abort migration when a critical phase fails (phase 4)', async () => {
@@ -1668,9 +1651,13 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('should fail phase 3 when kb.db is missing and no tasks-merged.json exists', async () => {
-      // No KB database and no prior tasks-merged.json — Phase 3 fails.
+      // Override the Phase 0 stub to NOT write kb.db — exercises the "KB not found" path.
       const launcherFn = createMockLauncher();
-      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const { orchestrator, phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+      phase0Stub.mockImplementation(async () => {
+        // Succeed without writing kb.db
+        return { phase: 0, name: 'KB Indexing', success: true, outputPath: '', duration: 0 };
+      });
 
       const result = await orchestrator.run();
 

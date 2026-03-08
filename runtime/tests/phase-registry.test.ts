@@ -66,9 +66,9 @@ describe('Phase Registry', () => {
       expect(phase?.name).toBe('KB Indexing');
     });
 
-    it('should be optional and critical', () => {
+    it('should be required and critical', () => {
       const phase = getPhase(0);
-      expect(phase?.optional).toBe(true);
+      expect(phase?.optional).toBeUndefined();
       expect(phase?.critical).toBe(true);
     });
 

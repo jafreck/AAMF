@@ -105,12 +105,11 @@ export const MigrationConfigSchema = z.object({
       maxIterations: z.number().int().min(1).default(2),
     }).optional(),
     /**
-     * Options for the optional KB indexing phase (Phase 0).
-     * When enabled (or when AAMF_USE_KB_INDEX=1), the indexer builds a SQLite
-     * knowledge-base and an HTTP MCP server is started for agents to query it.
+     * Options for KB indexing (Phase 0).
+     * The Lore indexer always runs in Phase 0 to build a SQLite knowledge-base.
+     * An HTTP MCP server is started for agents to query it.
      */
     kbIndex: z.object({
-      enabled: z.boolean().default(false),
       /**
        * Log level for the Lore KB server's internal structured logger.
        * Lore writes NDJSON entries to `logs/runtime/lore.log`.

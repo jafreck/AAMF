@@ -333,41 +333,30 @@ export class MigrationOrchestrator {
       this.logger.info(`Running single phase: ${this.singlePhase}`);
     }
 
-    const kbEnabled =
-      this.config.options.kbIndex?.enabled ||
-      process.env['AAMF_USE_KB_INDEX'] === '1';
-
     const phase0InSelection = phasesToRun.some((p) => p.id === 0);
+
+    // If this invocation won't execute Phase 0 (for example: resume from later
+    // checkpoint or running a later single phase), but a previously built
+    // kb.db exists, start the KB server up-front so downstream phases/agents
+    // retain KB access.
     const phase0SkippedByResume =
       this.singlePhase == null &&
       phase0InSelection &&
-      resumePoint.phase > 0 &&
-      !kbEnabled;
+      resumePoint.phase > 0;
 
-    // If this invocation won't execute Phase 0 (for example: resume from later
-    // checkpoint or run a later single phase), but KB indexing is enabled and a
-    // previously built kb.db exists, start the KB server up-front so downstream
-    // phases/agents retain KB access.
-    if (kbEnabled && (phase0SkippedByResume || !phase0InSelection)) {
+    if (phase0SkippedByResume || !phase0InSelection) {
       if (await fileExists(this.kbDbPath)) {
         await this.startKbServer();
-      } else {
+      } else if (!phase0InSelection) {
         this.logger.warn(
-          `KB indexing is enabled, but ${this.kbDbPath} is missing. ` +
-          'Run Phase 0 first to enable KB access for resumed/later phases.',
+          `${this.kbDbPath} is missing and Phase 0 is not in the run selection. ` +
+          'Run Phase 0 first to build the KB.',
         );
       }
     }
 
     try {
       for (const phase of phasesToRun) {
-        // Skip optional Phase 0 (KB Indexing) unless enabled via config or env var
-        if (phase.optional && phase.id === 0 &&
-            !this.config.options.kbIndex?.enabled &&
-            process.env['AAMF_USE_KB_INDEX'] !== '1') {
-          this.logger.info(`Skipping optional Phase 0 (KB Indexing) — set options.kbIndex.enabled or AAMF_USE_KB_INDEX=1 to enable`);
-          continue;
-        }
 
         // Skip optional phases that are not enabled
         if (phase.optional && phase.id === 8 && !this.config.options.idiomaticRefactor?.enabled) {
@@ -383,11 +372,12 @@ export class MigrationOrchestrator {
         }
 
         // Skip already-completed phases on resume (but not when explicitly
-        // requesting a single phase via --phase).
+        // requesting a single phase via --phase).  Phase 0 (KB Indexing)
+        // always re-runs to ensure the KB is up to date.
         if (
           this.singlePhase == null &&
           phase.id < resumePoint.phase &&
-          !(phase.id === 0 && kbEnabled)
+          phase.id !== 0
         ) {
           phaseResults.push({
             phase: phase.id,

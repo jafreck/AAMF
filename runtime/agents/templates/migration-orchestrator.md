@@ -30,9 +30,7 @@ Execute these phases in order. On resume, skip completed phases (read from `stat
 - Launch: `adjudicator` (to select the best plan from competing proposals)
 - Input: Knowledge base, impact assessment
 - Output: `.aamf/migration/{projectName}/artifacts/planning/migration-plan.md`
-{{#if loreEnabled}}
 - **Important**: Structural decomposition should come from Lore tools; markdown KB should stay high-level.
-{{/if}}
 
 ### Phase 4: Code Migration (Iterative Loop)
 For each task in the migration plan:

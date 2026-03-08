@@ -481,34 +481,18 @@ describe('MigrationConfigSchema', () => {
         expect(result.options.kbIndex).toBeUndefined();
       });
 
-      it('should default kbIndex.enabled to false when kbIndex is {}', () => {
+      it('should default kbIndex logLevel to debug when kbIndex is {}', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
           options: { kbIndex: {} },
         });
-        expect(result.options.kbIndex?.enabled).toBe(false);
-      });
-
-      it('should accept kbIndex: { enabled: true }', () => {
-        const result = MigrationConfigSchema.parse({
-          ...validConfig,
-          options: { kbIndex: { enabled: true } },
-        });
-        expect(result.options.kbIndex?.enabled).toBe(true);
-      });
-
-      it('should accept kbIndex: { enabled: false } explicitly', () => {
-        const result = MigrationConfigSchema.parse({
-          ...validConfig,
-          options: { kbIndex: { enabled: false } },
-        });
-        expect(result.options.kbIndex?.enabled).toBe(false);
+        expect(result.options.kbIndex?.logLevel).toBe('debug');
       });
 
       it('should leave embeddings undefined when omitted from kbIndex', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
-          options: { kbIndex: { enabled: true } },
+          options: { kbIndex: {} },
         });
         expect(result.options.kbIndex?.embeddings).toBeUndefined();
       });
@@ -516,7 +500,7 @@ describe('MigrationConfigSchema', () => {
       it('should default embeddings.enabled to false when embeddings is {}', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
-          options: { kbIndex: { enabled: true, embeddings: {} } },
+          options: { kbIndex: { embeddings: {} } },
         });
         expect(result.options.kbIndex?.embeddings?.enabled).toBe(false);
       });
@@ -526,7 +510,6 @@ describe('MigrationConfigSchema', () => {
           ...validConfig,
           options: {
             kbIndex: {
-              enabled: true,
               embeddings: { enabled: true, model: 'BAAI/bge-small-en-v1.5', pythonBin: '/usr/bin/python3.11' },
             },
           },
@@ -541,7 +524,7 @@ describe('MigrationConfigSchema', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
           options: {
-            kbIndex: { enabled: true, embeddings: { enabled: true } },
+            kbIndex: { embeddings: { enabled: true } },
           },
         });
         const emb = result.options.kbIndex?.embeddings;
