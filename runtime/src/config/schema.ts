@@ -111,6 +111,13 @@ export const MigrationConfigSchema = z.object({
      */
     kbIndex: z.object({
       enabled: z.boolean().default(false),
+      /**
+       * Log level for the Lore KB server's internal structured logger.
+       * Lore writes NDJSON entries to `logs/runtime/lore.log`.
+       * Set to `'debug'` to monitor every tool call, search, and timing.
+       * Default: `'debug'`.
+       */
+      logLevel: z.enum(['debug', 'info', 'warn', 'error', 'silent']).default('debug'),
       /** Embedding configuration for semantic search in the KB. */
       embeddings: z.object({
         /** Enable vector embeddings during indexing (requires Python + sentence-transformers). */

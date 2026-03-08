@@ -74,6 +74,11 @@ function computeSourceFingerprintCompat(
 }
 
 function getKbFingerprintCompat(lore: LoreModule, db: unknown): string | undefined {
+  // Prefer getLoreMeta (>=0.2.4), fall back to getKbFingerprint / getKbMeta.
+  const getLoreMeta = (lore as { getLoreMeta?: (db: unknown, key: string) => string | undefined }).getLoreMeta;
+  if (typeof getLoreMeta === 'function') {
+    return getLoreMeta(db, 'source_fingerprint');
+  }
   const getKbFingerprint = (lore as { getKbFingerprint?: (...args: any[]) => string | undefined }).getKbFingerprint;
   if (typeof getKbFingerprint === 'function') {
     return getKbFingerprint(db);
@@ -747,14 +752,23 @@ export class MigrationOrchestrator {
   /** Start the KB MCP server (HTTP transport). */
   private async startKbServer(): Promise<void> {
     const { KbServerProcess } = await loadKbServerProcess();
+    const lore = await loadLore();
+
+    // Build Lore-internal logger options from config (defaults to debug).
+    const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
+    const loreLoggerOpts: import('@aamf/lore').LoreLoggerOptions = {
+      level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
+      logFile: this.paths.loreLogFile,
+    };
+
     this.kbServer = new KbServerProcess(this.kbDbPath, this.embedder, (obs) => {
       this.logger.debug(
         `lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
       );
-    });
+    }, loreLoggerOpts);
     try {
       await this.kbServer.start();
-      this.logger.info('KB server started and ready');
+      this.logger.info(`KB server started and ready (lore log: ${this.paths.loreLogFile}, level: ${loreLogLevel})`);
     } catch (err) {
       this.logger.warn(
         `KB server failed to start — agents will run without KB access: ${err instanceof Error ? err.message : String(err)}`,

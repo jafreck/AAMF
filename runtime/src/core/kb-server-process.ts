@@ -11,7 +11,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createKbMcpServer, openReadOnly, type EmbeddingProvider, type KbServerOptions, type SearchObserver } from '@aamf/lore';
+import { createLoreMcpServer, openReadOnly, type EmbeddingProvider, type LoreServerOptions, type SearchObserver, LoreLogger, type LoreLoggerOptions } from '@aamf/lore';
 import type { McpServerConfig } from '../agents/types.js';
 
 
@@ -35,17 +35,20 @@ export class KbServerProcess {
   private db: import('better-sqlite3').Database | null = null;
   private readonly embedder: EmbeddingProvider | undefined;
   private readonly searchObserver: SearchObserver | undefined;
+  private readonly loreLoggerOpts: LoreLoggerOptions | undefined;
 
   /**
    * @param dbPath          Path to the KB SQLite database.
    * @param embedder        Optional pre-initialised embedding provider for semantic search.
    *                        The caller owns the lifecycle — `stop()` will NOT dispose it.
    * @param searchObserver  Optional callback invoked after every lore_search call.
+   * @param loreLoggerOpts  Optional Lore-internal logger configuration.
    */
-  constructor(dbPath: string, embedder?: EmbeddingProvider, searchObserver?: SearchObserver) {
+  constructor(dbPath: string, embedder?: EmbeddingProvider, searchObserver?: SearchObserver, loreLoggerOpts?: LoreLoggerOptions) {
     this.dbPath = dbPath;
     this.embedder = embedder;
     this.searchObserver = searchObserver;
+    this.loreLoggerOpts = loreLoggerOpts;
   }
 
   /**
@@ -68,10 +71,12 @@ export class KbServerProcess {
 
     this.db = openReadOnly(this.dbPath);
 
-    const serverOptions: KbServerOptions | undefined = this.searchObserver
-      ? { searchObserver: this.searchObserver }
-      : undefined;
-    const mcpServer = createKbMcpServer(this.db, this.dbPath, this.embedder, serverOptions);
+    const loreLogger = this.loreLoggerOpts ? new LoreLogger(this.loreLoggerOpts) : undefined;
+    const serverOptions: LoreServerOptions = {
+      ...(this.searchObserver ? { searchObserver: this.searchObserver } : {}),
+      ...(loreLogger ? { logger: loreLogger } : {}),
+    };
+    const mcpServer = createLoreMcpServer(this.db, this.dbPath, this.embedder, serverOptions);
 
     // Stateless transport: each POST request gets its own temporary session.
     const transport = new StreamableHTTPServerTransport({
