@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { MigrationRuntime } from './core/runtime.js';
-import { IndexBuilder } from '@aamf/lore';
+import { IndexBuilder, LogLevel, LOG_LEVEL_NAMES } from '@aamf/lore';
 import { KbServerProcess } from './core/kb-server-process.js';
 
 const program = new Command()
@@ -114,8 +114,14 @@ program
   .command('kb-server')
   .description('Start the knowledge-base MCP server')
   .requiredOption('--db <path>', 'Path to the SQLite knowledge-base file')
+  .option('--log-level <level>', 'Lore log level (debug|info|warn|error|silent)', 'debug')
+  .option('--log-file <path>', 'Path to the Lore log file')
   .action(async (opts) => {
-    const srv = new KbServerProcess(opts.db);
+    const loreLoggerOpts = {
+      level: LOG_LEVEL_NAMES[opts.logLevel] ?? LogLevel.DEBUG,
+      ...(opts.logFile ? { logFile: opts.logFile } : {}),
+    };
+    const srv = new KbServerProcess(opts.db, undefined, undefined, loreLoggerOpts);
     try {
       await srv.start();
     } catch (err) {
