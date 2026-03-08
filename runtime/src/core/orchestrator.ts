@@ -1088,6 +1088,30 @@ export class MigrationOrchestrator {
             error: validationError,
           };
         }
+
+        // Re-number task IDs to ensure global uniqueness across groups.
+        // Each task-decomposer emits task-1, task-2, ... independently;
+        // without prefixing, IDs collide when merged.  Only re-number if
+        // an ID from this group already exists in a prior group's tasks.
+        const existingIds = new Set(allTasks.map(t => t.id));
+        const needsRemap = parsed.data.some(t => existingIds.has(t.id));
+        if (needsRemap) {
+          const idRemap = new Map<string, string>();
+          for (const task of parsed.data) {
+            const globalId = `task-${group.id}-${task.id.replace('task-', '')}`;
+            idRemap.set(task.id, globalId);
+            task.id = globalId;
+          }
+          // Update intra-group dependency references to use the new IDs
+          for (const task of parsed.data) {
+            task.dependencies = task.dependencies.map(dep => idRemap.get(dep) ?? dep);
+          }
+          this.logger.info(
+            `Group "${group.id}": remapped ${idRemap.size} task ID(s) to globally unique IDs ` +
+            `(e.g. task-1 → task-${group.id}-1)`,
+          );
+        }
+
         for (const task of parsed.data) {
           taskGroupMap[task.id] = groupIdx;
         }

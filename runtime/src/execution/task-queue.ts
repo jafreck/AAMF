@@ -162,20 +162,36 @@ export class TaskQueue {
       maxReadyGroup = this.computeMaxReadyGroup();
     }
 
+    // Pre-compute SCC-level external readiness: an SCC is ready only when
+    // ALL external dependencies of ALL its members are satisfied.  This
+    // ensures the SCC executes as an atomic unit.
+    const sccReady = new Map<number, boolean>();
+    for (const scc of this.sccs) {
+      const sccMembers = new Set(scc.members);
+      let allExternalDepsOk = true;
+      for (const memberId of scc.members) {
+        const member = this.tasks.get(memberId);
+        if (!member) continue;
+        for (const dep of member.dependencies) {
+          if (!sccMembers.has(dep) && !this.completed.has(dep)) {
+            allExternalDepsOk = false;
+            break;
+          }
+        }
+        if (!allExternalDepsOk) break;
+      }
+      sccReady.set(scc.id, allExternalDepsOk);
+    }
+
     const ready: MigrationTask[] = [];
     for (const [id, task] of this.tasks) {
       if (this.completed.has(id) || this.blocked.has(id)) continue;
 
-      // SCC gate: for tasks in an SCC, check external dependencies only
-      // (deps on tasks outside the SCC). Internal SCC deps are always
-      // considered satisfied since the SCC executes as an atomic unit.
+      // SCC gate: use the pre-computed SCC-level readiness check
       const scc = this.sccMembership.get(id);
       let depsOk: boolean;
       if (scc) {
-        const sccMembers = new Set(scc.members);
-        depsOk = task.dependencies.every(dep =>
-          sccMembers.has(dep) || this.completed.has(dep),
-        );
+        depsOk = sccReady.get(scc.id) ?? false;
       } else {
         depsOk = task.dependencies.every(dep => this.completed.has(dep));
       }
