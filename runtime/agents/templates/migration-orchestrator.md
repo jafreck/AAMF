@@ -37,7 +37,7 @@ For each task in the migration plan:
 1. Launch: `code-migrator` — writes migrated code for the task
 2. Launch: `parity-verifier` — verifies behavioral parity with original
 3. Launch: `test-writer` — writes/updates tests for migrated code
-4. If parity verification fails → Launch: `failure-adjudicator`
+4. If parity verification fails → Launch: `parity-failure-resolver`
 5. Checkpoint after each successfully migrated task.
 
 Serial execution required for code-writing. Parity verification is read-only and can overlap with test writing.
@@ -72,7 +72,7 @@ Serial execution required for code-writing. Parity verification is read-only and
 | `final-parity-checker` | Post-migration completeness audit | Yes |
 | `e2e-test-crafter` | Create end-to-end test suites | No |
 | `documentation-writer` | Document the migrated codebase | No |
-| `failure-adjudicator` | Handle failures, plan fixes, reduce scope | No |
+| `parity-failure-resolver` | Handle failures, plan fixes, reduce scope | No |
 
 ## CLI Invocation Pattern
 
@@ -118,8 +118,8 @@ Update `.aamf/migration/{projectName}/reports/progress.md` after every phase tra
 When any agent invocation fails:
 1. Record the failure in `reports/progress.md` with full context.
 2. Add the failed task to `failedTasks` in `state/checkpoint.json`.
-3. Launch `failure-adjudicator` agent with the failure context.
-4. `failure-adjudicator` will produce a fix plan (potentially with reduced scope).
+3. Launch `parity-failure-resolver` agent with the failure context.
+4. `parity-failure-resolver` will produce a fix plan (potentially with reduced scope).
 5. Re-attempt the failed task with the fix plan.
 6. After 3 failed attempts on the same task, mark it as blocked and continue with remaining tasks.
 
@@ -130,8 +130,4 @@ When any agent invocation fails:
 - When passing context to sub-agents, provide only the relevant slice (e.g., for a code-migrator task, pass only that task's plan section and relevant knowledge base entries, not the entire knowledge base).
 - Use file references (paths) instead of inline content wherever possible.
 
-## Output Format
-
-Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
-
-> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
+{{> aamf-json-output-format}}

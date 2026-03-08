@@ -953,7 +953,7 @@ describe('MigrationOrchestrator', () => {
         if (inv.agent === 'code-migrator') {
           return { exitCode: 1, success: false, error: 'Code migration failed' };
         }
-        if (inv.agent === 'failure-adjudicator') {
+        if (inv.agent === 'parity-failure-resolver') {
           return { exitCode: 1, success: false, error: 'Recovery failed' };
         }
         return {};
@@ -1815,7 +1815,7 @@ describe('MigrationOrchestrator', () => {
         if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
           return { exitCode: 1, success: false, error: 'Migration failed for task-001' };
         }
-        if (inv.agent === 'failure-adjudicator') {
+        if (inv.agent === 'parity-failure-resolver') {
           return { exitCode: 1, success: false, error: 'Recovery failed' };
         }
         return {};
@@ -1918,7 +1918,7 @@ describe('MigrationOrchestrator', () => {
       expect(result.success).toBe(true);
 
       const recoveryInvocation = mockLauncher.invocations.find(
-        (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+        (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
       );
       expect(recoveryInvocation).toBeDefined();
       const recoveryContext = JSON.parse(await readFile(recoveryInvocation!.contextFile, 'utf-8'));
@@ -1936,7 +1936,7 @@ describe('MigrationOrchestrator', () => {
       expect(Array.isArray(retryContext.payload?.remediationContext?.artifactPaths)).toBe(true);
     });
 
-    it('should invoke failure-adjudicator when parity-verifier finds critical issues', async () => {
+    it('should invoke parity-failure-resolver when parity-verifier finds critical issues', async () => {
       let parityCallCount = 0;
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'parity-verifier') {
@@ -2001,7 +2001,7 @@ describe('MigrationOrchestrator', () => {
       await orchestrator.run();
 
       const recoveryInvocations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+        (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
       );
       expect(recoveryInvocations.length).toBeGreaterThan(0);
 
@@ -2009,22 +2009,9 @@ describe('MigrationOrchestrator', () => {
       const recoveryContext = JSON.parse(await readFile(parityRecovery.contextFile, 'utf-8'));
       expect(recoveryContext.payload?.remediationContext?.failureKind).toBe('parity');
       expect(recoveryContext.payload?.remediationContext?.failureTarget?.taskId).toBe('task-001');
-
-      const remigrateCandidates = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.phase === 4,
-      );
-      let foundParityRemediation = false;
-      for (const inv of remigrateCandidates) {
-        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
-        if (ctx.payload?.remediationContext?.failureKind === 'parity') {
-          foundParityRemediation = true;
-          break;
-        }
-      }
-      expect(foundParityRemediation).toBe(true);
     });
 
-    it('should pass enriched context to code-migrator during parity recovery', async () => {
+    it('should pass enriched parity issues to parity-failure-resolver', async () => {
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'parity-verifier') {
           return {
@@ -2088,22 +2075,20 @@ describe('MigrationOrchestrator', () => {
 
       await orchestrator.run();
 
-      // Find the code-migrator invocation that has a parity remediationContext
-      const reMigrateCandidates = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.phase === 4,
+      // Find the parity-failure-resolver invocation
+      const resolverInvocations = mockLauncher.invocations.filter(
+        (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
       );
-      let reMigrateCtx: Record<string, unknown> | undefined;
-      for (const inv of reMigrateCandidates) {
-        const ctx = JSON.parse(await readFile(inv.contextFile, 'utf-8'));
-        if (ctx.payload?.remediationContext?.failureKind === 'parity') {
-          reMigrateCtx = ctx;
-          break;
-        }
-      }
-      expect(reMigrateCtx).toBeDefined();
+      expect(resolverInvocations.length).toBeGreaterThan(0);
+
+      const resolverInv = resolverInvocations[0]!;
+      const resolverCtx = JSON.parse(await readFile(resolverInv.contextFile, 'utf-8'));
+
+      // remediationContext should include parity failure info
+      const remediation = resolverCtx.payload?.remediationContext as Record<string, unknown>;
+      expect(remediation?.failureKind).toBe('parity');
 
       // failureSummary should be stripped from the agent-facing context
-      const remediation = reMigrateCtx!.payload?.remediationContext as Record<string, unknown>;
       expect(remediation?.failureSummary).toBeUndefined();
 
       // parityIssues should be passed in the remediationContext
@@ -2111,7 +2096,7 @@ describe('MigrationOrchestrator', () => {
       expect(Array.isArray(remediation?.parityIssues)).toBe(true);
 
       // failureReport should be an enriched summary string, not a file path
-      const failureReport = reMigrateCtx!.payload?.failureReport;
+      const failureReport = resolverCtx.payload?.failureReport;
       if (failureReport !== undefined) {
         expect(typeof failureReport).toBe('string');
       }
@@ -2164,9 +2149,9 @@ describe('MigrationOrchestrator', () => {
 
       const result = await orchestrator.run();
 
-      // No failure-adjudicator should be invoked for parity
+      // No parity-failure-resolver should be invoked for parity
       const recoveryForParity = mockLauncher.invocations.filter(
-        (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+        (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
       );
       expect(recoveryForParity).toHaveLength(0);
       expect(result.success).toBe(true);
@@ -2520,9 +2505,9 @@ describe('MigrationOrchestrator', () => {
       expect(result.blockedTasks).not.toContain('task-001');
     });
 
-    it('should terminally exhaust when failure-adjudicator emits no aamf-json during parity recovery', async () => {
+    it('should terminally exhaust when parity-failure-resolver emits no aamf-json during parity recovery', async () => {
       const launcherFn = createMockLauncher((inv) => {
-        if (inv.agent === 'failure-adjudicator') {
+        if (inv.agent === 'parity-failure-resolver') {
           return {
             exitCode: 1,
             success: false,
@@ -2594,7 +2579,7 @@ describe('MigrationOrchestrator', () => {
       expect(phase4?.error).toContain('parity-non-minor-exhausted');
 
       const recoveryInvocations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+        (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
       );
       expect(recoveryInvocations).toHaveLength(2);
 
@@ -2805,7 +2790,7 @@ describe('MigrationOrchestrator', () => {
         expect(result.success).toBe(true);
         // No remediation agents should have been invoked at wave-end
         const waveEndAdjudicator = mockLauncher.invocations.filter(
-          (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
         );
         expect(waveEndAdjudicator).toHaveLength(0);
       });
@@ -2873,7 +2858,7 @@ describe('MigrationOrchestrator', () => {
 
         // Remediation should have been triggered at wave-end
         const adjudicatorInvocations = mockLauncher.invocations.filter(
-          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
         );
         const codeMigratorInvocations = mockLauncher.invocations.filter(
           (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
@@ -2963,7 +2948,7 @@ describe('MigrationOrchestrator', () => {
         expect(result).toBeUndefined();
         // No remediation agents should have been invoked
         const adjudicators = mockLauncher.invocations.filter(
-          (i) => i.agent === 'failure-adjudicator',
+          (i) => i.agent === 'parity-failure-resolver',
         );
         expect(adjudicators).toHaveLength(0);
       });
@@ -3007,7 +2992,7 @@ describe('MigrationOrchestrator', () => {
 
         expect(result.success).toBe(true);
         const waveEndAdjudicator = mockLauncher.invocations.filter(
-          (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
         );
         expect(waveEndAdjudicator).toHaveLength(0);
       });
@@ -3055,7 +3040,7 @@ describe('MigrationOrchestrator', () => {
 
         // Should have triggered remediation (and then exhaustion since issues persist)
         const adjudicatorInvocations = mockLauncher.invocations.filter(
-          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
         );
         expect(adjudicatorInvocations.length).toBeGreaterThanOrEqual(1);
         expect(result.success).toBe(false);
@@ -3113,7 +3098,7 @@ describe('MigrationOrchestrator', () => {
         const result = await orchestrator.run();
 
         const adjudicatorInvocations = mockLauncher.invocations.filter(
-          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
         );
         expect(adjudicatorInvocations.length).toBeGreaterThanOrEqual(1);
         expect(result.success).toBe(false);
@@ -3163,7 +3148,7 @@ describe('MigrationOrchestrator', () => {
         // Build failure should take precedence; no parity remediation should occur
         expect(phase4?.error).toContain('wave-end build gate failed');
         const adjudicatorInvocations = mockLauncher.invocations.filter(
-          (i) => i.agent === 'failure-adjudicator' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
         );
         expect(adjudicatorInvocations).toHaveLength(0);
       });
@@ -3196,10 +3181,10 @@ describe('MigrationOrchestrator', () => {
 
         // Both tasks should have had remediation attempts
         const task1Adjudicator = mockLauncher.invocations.filter(
-          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-001' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
         );
         const task2Adjudicator = mockLauncher.invocations.filter(
-          (i) => i.agent === 'failure-adjudicator' && i.taskId === 'task-002' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-002' && i.phase === 4,
         );
         expect(task1Adjudicator.length).toBeGreaterThanOrEqual(1);
         expect(task2Adjudicator.length).toBeGreaterThanOrEqual(1);
@@ -3360,7 +3345,7 @@ describe('MigrationOrchestrator', () => {
       expect(Math.min(...validationStartedAt)).toBeGreaterThanOrEqual(Math.max(...migratorFinishedAt));
     });
 
-    it('should launch failure-adjudicator for wave validation failures before convergence retry', async () => {
+    it('should launch parity-failure-resolver for wave validation failures before convergence retry', async () => {
       const tasks: MigrationTask[] = [
         { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
         { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
@@ -3398,7 +3383,7 @@ describe('MigrationOrchestrator', () => {
       const result = await orchestrator.run();
       const migratorRuns = mockLauncher.invocations.filter(i => i.agent === 'code-migrator' && i.phase === 4);
       const waveAdjudicatorRuns = mockLauncher.invocations.filter(
-        (i) => i.agent === 'failure-adjudicator' && i.phase === 4 && i.taskId === 'wave-1',
+        (i) => i.agent === 'parity-failure-resolver' && i.phase === 4 && i.taskId === 'wave-1',
       );
       const waveRemigratorRuns = mockLauncher.invocations.filter(
         (i) => i.agent === 'code-migrator' && i.phase === 4 && i.taskId === 'wave-1',
@@ -3746,6 +3731,67 @@ Total usage est: 1 Premium requests
 
       const result = (orchestrator as any).rehydrateParityFromLog('task-001');
       expect(result).toBeUndefined();
+    });
+  });
+
+  // ─── Resolver Scope Reduction ───────────────────────────────────────
+
+  describe('resolverReducedScope', () => {
+    it('returns true when structuredOutput has scopeReduced: true', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: true,
+        structuredOutput: {
+          agent: 'parity-failure-resolver',
+          status: 'completed',
+          taskId: 'task-26',
+          failureType: 'parity',
+          attempts: 1,
+          scopeReduced: true,
+        },
+      };
+      expect((orchestrator as any).resolverReducedScope(agentResult)).toBe(true);
+    });
+
+    it('returns false when scopeReduced is false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: true,
+        structuredOutput: {
+          agent: 'parity-failure-resolver',
+          status: 'completed',
+          taskId: 'task-26',
+          failureType: 'parity',
+          attempts: 1,
+          scopeReduced: false,
+        },
+      };
+      expect((orchestrator as any).resolverReducedScope(agentResult)).toBe(false);
+    });
+
+    it('returns false when outputParsed is false', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = { outputParsed: false, structuredOutput: undefined };
+      expect((orchestrator as any).resolverReducedScope(agentResult)).toBe(false);
+    });
+
+    it('returns false when scopeReduced field is absent', async () => {
+      const launcherFn = createMockLauncher();
+      const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
+      const agentResult: Partial<AgentResult> = {
+        outputParsed: true,
+        structuredOutput: {
+          agent: 'parity-failure-resolver',
+          status: 'completed',
+          taskId: 'task-26',
+          failureType: 'parity',
+          attempts: 1,
+        },
+      };
+      expect((orchestrator as any).resolverReducedScope(agentResult)).toBe(false);
     });
   });
 
@@ -5238,7 +5284,7 @@ Total usage est: 1 Premium requests
       await writeMigrationPlan(progressDir);
       await orchestrator.run();
 
-      // No code-migrator invocation should have a modelOverride (except failure-adjudicator)
+      // No code-migrator invocation should have a modelOverride (except parity-failure-resolver)
       const migratorInvocations = mockLauncher.invocations.filter(
         (inv: AgentInvocation) => inv.agent === 'code-migrator',
       );

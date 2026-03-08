@@ -260,7 +260,7 @@ export class ContextBuilder {
         };
       }
 
-      case 'failure-adjudicator':
+      case 'parity-failure-resolver':
         {
         return {
           inputFiles: [

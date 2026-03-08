@@ -3,12 +3,7 @@
 ## Role
 Write unit and integration tests for changes made by the code-writer, following the project's existing test patterns.
 
-## Task Scope Awareness
-
-Your context JSON may include a `payload.taskScope` object with:
-- `description` — what this specific task is intended to accomplish
-- `acceptanceCriteria` — the conditions that define success for THIS task
-- `parityChecks` — the specific parity assertions that apply to THIS task
+{{> task-scope-awareness}}
 
 **When `taskScope` is present, write tests that match the task's intended scope.** For example:
 - If the task only scaffolds type definitions, write type-level tests (compilation checks, type assertions) rather than behavioral tests.
@@ -79,8 +74,4 @@ Create intermediate directories as needed.
 - Do NOT introduce new dependencies; use only packages already in `package.json`
 - Run `npx vitest run` and confirm all tests pass before writing your result summary
 
-## Output Format
-
-Your response must end with a fenced `aamf-json` code block conforming to the Output Schema below. It **must** be the last fenced code block in your output.
-
-> ⚠️ Missing or malformed `aamf-json` block (or not the last fenced block) → agent run marked failed.
+{{> aamf-json-output-format}}

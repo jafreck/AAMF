@@ -217,7 +217,7 @@ describe('RetryExecutor', () => {
       const executor = new RetryExecutor(launcher, logger);
 
       const recoveryInvocation: AgentInvocation = {
-        agent: 'failure-adjudicator',
+        agent: 'parity-failure-resolver',
         contextFile: '/tmp/recovery-ctx.json',
         progressDir: '/tmp/progress',
         phase: 4,
@@ -240,7 +240,7 @@ describe('RetryExecutor', () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
         callCount++;
         // Original attempts 1-2 fail, recovery succeeds, then original retry succeeds
-        if (inv.agent === 'failure-adjudicator') {
+        if (inv.agent === 'parity-failure-resolver') {
           return {
             agent: inv.agent,
             taskId: inv.taskId,
@@ -276,7 +276,7 @@ describe('RetryExecutor', () => {
       const executor = new RetryExecutor(launcher, logger);
 
       const recoveryInvocation: AgentInvocation = {
-        agent: 'failure-adjudicator',
+        agent: 'parity-failure-resolver',
         contextFile: '/tmp/recovery-ctx.json',
         progressDir: '/tmp/progress',
         phase: 4,
@@ -295,7 +295,7 @@ describe('RetryExecutor', () => {
     });
 
     it('should return failure when recovery also fails', async () => {
-      // Both code-migrator and failure-adjudicator always fail
+      // Both code-migrator and parity-failure-resolver always fail
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
         agent: inv.agent,
         taskId: inv.taskId,
@@ -310,7 +310,7 @@ describe('RetryExecutor', () => {
       const executor = new RetryExecutor(launcher, logger);
 
       const recoveryInvocation: AgentInvocation = {
-        agent: 'failure-adjudicator',
+        agent: 'parity-failure-resolver',
         contextFile: '/tmp/recovery.json',
         progressDir: '/tmp/progress',
         phase: 4,
@@ -454,18 +454,18 @@ describe('RetryExecutor', () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
         agent: inv.agent,
         taskId: inv.taskId,
-        exitCode: inv.agent === 'failure-adjudicator' ? 0 : 1,
-        success: inv.agent === 'failure-adjudicator',
+        exitCode: inv.agent === 'parity-failure-resolver' ? 0 : 1,
+        success: inv.agent === 'parity-failure-resolver',
         outputFiles: [],
         duration: 100,
-        error: inv.agent === 'failure-adjudicator' ? undefined : 'Failed',
+        error: inv.agent === 'parity-failure-resolver' ? undefined : 'Failed',
       });
 
       const logger = createSilentLogger(tempDir);
       const executor = new RetryExecutor(launcher, logger);
 
       const recoveryInvocation: AgentInvocation = {
-        agent: 'failure-adjudicator',
+        agent: 'parity-failure-resolver',
         contextFile: '/tmp/recovery.json',
         progressDir: '/tmp/progress',
         phase: 4,

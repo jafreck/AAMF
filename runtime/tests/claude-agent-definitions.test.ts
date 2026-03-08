@@ -10,13 +10,18 @@
  * - Generated files contain Input/Output Schema sections injected from the registry
  * - Both backends get identical body + schema content
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { readFile, readdir, rm, mkdtemp } from 'node:fs/promises';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { readFile, readdir, rm, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { ALL_AGENT_NAMES, AGENT_REGISTRY } from '../src/agents/registry.js';
-import { generateAgentDefinitions, stripSchemaSections } from '../src/agents/generator.js';
+import {
+  generateAgentDefinitions,
+  stripSchemaSections,
+  resolvePartials,
+  clearPartialsCache,
+} from '../src/agents/generator.js';
 
 const TEMPLATE_DIR = fileURLToPath(new URL('../agents/templates/', import.meta.url));
 
@@ -111,6 +116,21 @@ describe('Agent templates (runtime/agents/templates/)', () => {
 
       it('should NOT contain Output Schema sections (injected at generation)', () => {
         expect(content).not.toMatch(/##\s+Output Schema/);
+      });
+
+      it('should NOT contain inline duplicates of partial content', () => {
+        // If a template uses the lore-index-first-principle partial, the
+        // full 3-paragraph block should NOT also appear inline.
+        if (content.includes('{{> lore-index-first-principle}}')) {
+          expect(content).not.toContain(
+            'The AAMF runtime may start a **Lore** MCP server',
+          );
+        }
+        if (content.includes('{{> aamf-json-output-format}}')) {
+          expect(content).not.toContain(
+            'Missing or malformed `aamf-json` block',
+          );
+        }
       });
     });
   }
@@ -300,6 +320,22 @@ describe('generateAgentDefinitions()', () => {
       expect(copilotBody.trim(), `Body mismatch for "${agentName}"`).toBe(claudeBody.trim());
     }
   });
+
+  it('should contain no unresolved partial directives in generated output', async () => {
+    for (const agentName of ALL_AGENT_NAMES) {
+      const content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+      expect(content, `Unresolved partial in "${agentName}"`).not.toMatch(/\{\{>\s*[\w-]+\s*\}\}/);
+    }
+  });
+
+  it('should contain no unresolved placeholder variables in generated output', async () => {
+    for (const agentName of ALL_AGENT_NAMES) {
+      const content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+      // Match {{word}} but not {{> partial}}
+      const unresolvedVars = content.match(/\{\{(?!>)[\w]+\}\}/g);
+      expect(unresolvedVars, `Unresolved vars in "${agentName}": ${unresolvedVars}`).toBeNull();
+    }
+  });
 });
 
 // ─── stripSchemaSections unit tests ──────────────────────────────────────────
@@ -372,5 +408,76 @@ describe('parseFrontMatter helper', () => {
     const content = `---\ntools:\n  - Read\n  - Write\n---\nbody`;
     const { frontMatter } = parseFrontMatter(content);
     expect(frontMatter.tools).toEqual(['Read', 'Write']);
+  });
+});
+
+// ─── resolvePartials unit tests ──────────────────────────────────────────────
+
+describe('resolvePartials()', () => {
+  let tmpTemplateDir: string;
+
+  beforeAll(async () => {
+    tmpTemplateDir = await mkdtemp(join(tmpdir(), 'aamf-partials-'));
+    await mkdir(join(tmpTemplateDir, '_partials'), { recursive: true });
+    await writeFile(
+      join(tmpTemplateDir, '_partials', 'greeting.md'),
+      'Hello, world!',
+    );
+    await writeFile(
+      join(tmpTemplateDir, '_partials', 'parameterized.md'),
+      'Agent: {{agentName}}, Scope: {{scope}}',
+    );
+  });
+
+  afterEach(() => {
+    clearPartialsCache();
+  });
+
+  afterAll(async () => {
+    await rm(tmpTemplateDir, { recursive: true, force: true });
+  });
+
+  it('should return content unchanged when no partials are referenced', async () => {
+    const input = '# Title\n\nSome text.';
+    expect(await resolvePartials(input, tmpTemplateDir)).toBe(input);
+  });
+
+  it('should resolve a single partial directive', async () => {
+    const input = '# Title\n\n{{> greeting}}\n\nMore text.';
+    const result = await resolvePartials(input, tmpTemplateDir);
+    expect(result).toContain('Hello, world!');
+    expect(result).not.toContain('{{> greeting}}');
+  });
+
+  it('should resolve multiple partial directives', async () => {
+    const input = '{{> greeting}}\n\n{{> greeting}}';
+    const result = await resolvePartials(input, tmpTemplateDir);
+    expect(result).toBe('Hello, world!\n\nHello, world!');
+  });
+
+  it('should interpolate {{var}} placeholders after partial inclusion', async () => {
+    const input = '{{> parameterized}}';
+    const result = await resolvePartials(input, tmpTemplateDir, {
+      agentName: 'code-migrator',
+      scope: 'task-001',
+    });
+    expect(result).toBe('Agent: code-migrator, Scope: task-001');
+  });
+
+  it('should handle partial directives with surrounding whitespace', async () => {
+    const input = '  {{> greeting}}  ';
+    const result = await resolvePartials(input, tmpTemplateDir);
+    expect(result).toContain('Hello, world!');
+  });
+
+  it('should throw when a referenced partial does not exist', async () => {
+    const input = '{{> nonexistent}}';
+    await expect(resolvePartials(input, tmpTemplateDir)).rejects.toThrow();
+  });
+
+  it('should resolve partial-like text inline within a line', async () => {
+    const input = 'Some text {{> greeting}} more text';
+    const result = await resolvePartials(input, tmpTemplateDir);
+    expect(result).toBe('Some text Hello, world! more text');
   });
 });

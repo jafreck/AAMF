@@ -87,10 +87,10 @@ export const MigrationConfigSchema = z.object({
     maxBlockedTasks: z.number().int().min(0).default(1),
     qualityPolicy: z.enum(['strict', 'balanced', 'deferred-strict']).default('strict'),
     /**
-     * Maximum infrastructure-error retries before invoking failure-adjudicator.
+     * Maximum infrastructure-error retries before invoking parity-failure-resolver.
      * Infrastructure errors (file locks, timeouts, disk-full, OOM) are
      * retried with simple backoff — they don't consume `maxRetriesPerTask`
-     * budget and don't invoke the failure-adjudicator agent.
+     * budget and don't invoke the parity-failure-resolver agent.
      * Default: 3.
      */
     maxInfraRetries: z.number().int().min(0).max(10).default(3),

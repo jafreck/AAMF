@@ -97,7 +97,7 @@ function getKbFingerprintCompat(lore: LoreModule, db: unknown): string | undefin
  * infrastructure failure rather than a code-quality problem.
  *
  * These errors should be retried with simple backoff — they don't benefit
- * from the expensive failure-adjudicator agent pipeline.
+ * from the expensive parity-failure-resolver agent pipeline.
  */
 const INFRASTRUCTURE_ERROR_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: string }> = [
   // File lock contention (Cargo, NuGet, Gradle, pip, npm, generic)
@@ -1474,7 +1474,7 @@ export class MigrationOrchestrator {
   /**
    * Extract the task-scope fields (description, acceptanceCriteria, parityChecks)
    * from a {@link MigrationTask} as a payload fragment.  Every task-scoped agent
-   * (code-migrator, parity-verifier, test-writer, failure-adjudicator) receives
+   * (code-migrator, parity-verifier, test-writer, parity-failure-resolver) receives
    * this so it can calibrate its work to the task's intended scope rather than
    * assuming full source↔target equivalence.
    */
@@ -1959,9 +1959,9 @@ export class MigrationOrchestrator {
           );
           migratorInv.contextFile = retryContext;
 
-          // Escalate to failure-adjudicator agent
+          // Escalate to parity-failure-resolver agent
           const recoveryCtx = await this.contextBuilder.buildContext(
-            'failure-adjudicator',
+            'parity-failure-resolver',
             4,
             taskId,
             {
@@ -1974,7 +1974,7 @@ export class MigrationOrchestrator {
               remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
             },
           );
-          return this.buildInvocation('failure-adjudicator', recoveryCtx, 4, taskId);
+          return this.buildInvocation('parity-failure-resolver', recoveryCtx, 4, taskId);
         },
       });
 
@@ -2090,7 +2090,7 @@ export class MigrationOrchestrator {
           });
 
           const recoveryCtx = await this.contextBuilder.buildContext(
-            'failure-adjudicator',
+            'parity-failure-resolver',
             4,
             task.id,
             {
@@ -2103,39 +2103,27 @@ export class MigrationOrchestrator {
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
-          const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
+          const recoveryInv = this.buildInvocation('parity-failure-resolver', recoveryCtx, 4, task.id);
           const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
           this.recordTokens(recoveryResult, 4);
 
           if (!recoveryResult.success) {
-            this.logger.warn(`Failure-adjudicator failed for ${task.id} on attempt ${attempt}`);
+            this.logger.warn(`Parity-failure-resolver failed for ${task.id} on attempt ${attempt}`);
             continue;
           }
 
-          // Re-run code-migrator with enriched recovery context —
-          // parity report + adjudication analysis are wired as inputFiles
-          const reMigrateCtx = await this.contextBuilder.buildContext(
-            'code-migrator',
-            4,
-            task.id,
-            {
-              sourceFiles: task.sourceFiles,
-              targetFiles: task.targetFiles,
-              kbEntry: task.knowledgeBaseRef,
-              ...this.taskScopePayload(task),
-              remediationContext: toAgentRemediationContext(parityRemediation),
-            },
-          );
-          const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 4, task.id);
-          const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
-          this.recordTokens(reMigrateResult, 4);
-
-          if (!reMigrateResult.success) {
-            this.logger.warn(`Re-migration failed for ${task.id} on attempt ${attempt}`);
-            continue;
+          // If the resolver determined all remaining issues are outside the
+          // task's declared scope, accept the verdict and stop the retry loop.
+          if (this.resolverReducedScope(recoveryResult)) {
+            this.logger.info(
+              `Parity-failure-resolver adjudicated remaining issues as out-of-scope for ${task.id} — accepting verdict`,
+            );
+            parityPassed = true;
+            break;
           }
 
-          await this.commitForAgent('code-migrator', 4, task.id, task.name);
+          // Commit any fixes the resolver applied, then re-verify parity
+          await this.commitForAgent('parity-failure-resolver', 4, task.id, task.name);
 
           // Re-run parity-verifier
           const reParityCtx = await this.contextBuilder.buildContext(
@@ -3179,10 +3167,10 @@ export class MigrationOrchestrator {
    *
    * Infrastructure errors (file locks, OOM, network, etc.) are retried with
    * simple exponential backoff and do **not** consume the `maxRetriesPerTask`
-   * budget or invoke the expensive failure-adjudicator agent.
+   * budget or invoke the expensive parity-failure-resolver agent.
    *
    * Genuine code-quality failures go through the full recovery pipeline:
-   * `failure-adjudicator` → `code-migrator` → re-run command.
+   * `parity-failure-resolver` → `code-migrator` → re-run command.
    *
    * After exhausting all retry budgets Phase 4 fails fast with a terminal reason.
    *
@@ -3244,7 +3232,7 @@ export class MigrationOrchestrator {
     // fall through to the code-quality recovery loop (it may still help).
     if (cmdResult.success) return true;
 
-    // Code-quality recovery loop — full failure-adjudicator → code-migrator pipeline
+    // Code-quality recovery loop — full parity-failure-resolver → code-migrator pipeline
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (this.phase4Snapshot) {
         this.phase4Snapshot.commandRecoveryAttempts++;
@@ -3269,9 +3257,9 @@ export class MigrationOrchestrator {
         expectedSuccessCondition,
       });
 
-      // 1. Launch failure-adjudicator with the error output
+      // 1. Launch parity-failure-resolver with the error output
       const recoveryCtx = await this.contextBuilder.buildContext(
-        'failure-adjudicator',
+        'parity-failure-resolver',
         4,
         task.id,
         {
@@ -3285,12 +3273,12 @@ export class MigrationOrchestrator {
           remediationContext: toAgentRemediationContext(remediationContext),
         },
       );
-      const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
+      const recoveryInv = this.buildInvocation('parity-failure-resolver', recoveryCtx, 4, task.id);
       const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
       this.recordTokens(recoveryResult, 4);
 
       if (!recoveryResult.success) {
-        this.logger.warn(`Failure-adjudicator agent failed for ${task.id} on attempt ${attempt}`);
+        this.logger.warn(`Parity-failure-resolver agent failed for ${task.id} on attempt ${attempt}`);
         continue;
       }
 
@@ -3418,9 +3406,9 @@ export class MigrationOrchestrator {
           });
           parityRemediation.parityIssues = parityIssues;
 
-          // failure-adjudicator
+          // parity-failure-resolver
           const recoveryCtx = await this.contextBuilder.buildContext(
-            'failure-adjudicator',
+            'parity-failure-resolver',
             4,
             task.id,
             {
@@ -3433,7 +3421,7 @@ export class MigrationOrchestrator {
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
-          const recoveryInv = this.buildInvocation('failure-adjudicator', recoveryCtx, 4, task.id);
+          const recoveryInv = this.buildInvocation('parity-failure-resolver', recoveryCtx, 4, task.id);
           const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
           this.recordTokens(recoveryResult, 4);
 
@@ -3506,6 +3494,19 @@ export class MigrationOrchestrator {
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────
+
+  /**
+   * Check whether the parity-failure-resolver determined that remaining
+   * parity issues are out of the task's declared scope (`scopeReduced: true`).
+   *
+   * When the resolver applies scope-based adjudication it intentionally
+   * makes no code changes, so re-running parity-verifier would only
+   * re-discover the same out-of-scope gaps.
+   */
+  private resolverReducedScope(result: AgentResult): boolean {
+    if (!result.outputParsed || !result.structuredOutput) return false;
+    return (result.structuredOutput as Record<string, unknown>).scopeReduced === true;
+  }
 
   /**
    * Extract parity data from a parity-verifier AgentResult and store it
@@ -3909,7 +3910,7 @@ export class MigrationOrchestrator {
       'code-migrator',
       'parity-verifier',
       'test-writer',
-      'failure-adjudicator',
+      'parity-failure-resolver',
       'final-parity-checker',
       'e2e-test-crafter',
       'documentation-writer',
@@ -3924,8 +3925,8 @@ export class MigrationOrchestrator {
       ? this.kbDbPath
       : undefined;
 
-    // Failure-adjudicator model override takes precedence over routing
-    const failureRecoveryOverride = agent === 'failure-adjudicator'
+    // Parity-failure-resolver model override takes precedence over routing
+    const failureRecoveryOverride = agent === 'parity-failure-resolver'
       ? this.getFailureRecoveryModel()
       : undefined;
 
@@ -3933,7 +3934,7 @@ export class MigrationOrchestrator {
     let routingTier: ModelTier | undefined;
     let routingReason: string | undefined;
 
-    // Apply model routing when enabled and no failure-adjudicator override
+    // Apply model routing when enabled and no parity-failure-resolver override
     if (!failureRecoveryOverride && this.config.options.modelRouting?.enabled) {
       const decision = this.applyRoutingCaps(
         this.selectModelForInvocation(task, agent),

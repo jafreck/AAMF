@@ -22,7 +22,7 @@ export type AgentName =
   | 'code-migrator'
   | 'parity-verifier'
   | 'test-writer'
-  | 'failure-adjudicator'
+  | 'parity-failure-resolver'
   | 'final-parity-checker'
   | 'e2e-test-crafter'
   | 'documentation-writer'
@@ -275,7 +275,7 @@ export interface AgentRemediationContext {
   artifactPaths: string[];
   /** Condition that determines whether remediation was successful. */
   expectedSuccessCondition: string;
-  /** Path to the failure-adjudicator's analysis output, if available. */
+  /** Path to the parity-failure-resolver's analysis output, if available. */
   adjudicationReportPath?: string;
   /** Structured parity issues from the parity-verifier, if the failure is parity-related. */
   parityIssues?: Array<{
@@ -511,7 +511,7 @@ export interface PhaseResult {
  * Tracks a task that has failed during migration.
  *
  * Used by the orchestrator to decide whether to retry, escalate to
- * failure-adjudicator, or mark the task as terminal.
+ * parity-failure-resolver, or mark the task as terminal.
  */
 export interface FailedTask {
   /** The task that failed. */
@@ -523,7 +523,7 @@ export interface FailedTask {
   /** Error message from the most recent attempt. */
   lastError: string;
 
-  /** Whether the failure-adjudicator agent has already been invoked. */
+  /** Whether the parity-failure-resolver agent has already been invoked. */
   recoveryAttempted: boolean;
 }
 

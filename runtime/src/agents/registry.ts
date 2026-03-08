@@ -120,9 +120,9 @@ export const ParityVerifierSchema = AamfOutputBase.extend({
   })).default([]),
 });
 export const TestWriterSchema = AamfOutputBase.extend({ agent: z.literal('test-writer') });
-export const FailureAdjudicatorSchema = AamfOutputBase.extend({
-  agent: z.enum(['failure-adjudicator', 'failure-recovery']),
-}).transform((data) => ({ ...data, agent: 'failure-adjudicator' as const }));
+export const ParityFailureResolverSchema = AamfOutputBase.extend({
+  agent: z.enum(['parity-failure-resolver', 'failure-recovery']),
+}).transform((data) => ({ ...data, agent: 'parity-failure-resolver' as const }));
 export const FinalParityCheckerSchema = AamfOutputBase.extend({
   agent: z.literal('final-parity-checker'),
   fixes: z.array(z.object({
@@ -358,11 +358,11 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
     copilotTools: ['read', 'edit', 'search', 'execute'],
     claudeTools: CLAUDE_TOOLS,
   },
-  'failure-adjudicator': {
-    name: 'failure-adjudicator',
-    displayName: 'Failure Adjudicator',
+  'parity-failure-resolver': {
+    name: 'parity-failure-resolver',
+    displayName: 'Parity Failure Resolver',
     description: 'Diagnoses migration failures, evaluates competing fix strategies, and selects/executes the best recovery path.',
-    outputSchema: FailureAdjudicatorSchema,
+    outputSchema: ParityFailureResolverSchema,
     inputJsonSchema: inputSchema({
       extraRequired: ['taskId', 'failureType'],
       extraProperties: {
