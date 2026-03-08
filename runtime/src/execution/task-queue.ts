@@ -420,60 +420,34 @@ export class TaskQueue {
    * Select a non-overlapping batch from ready tasks.
    *
    * Tasks are considered overlapping when they share either a target file or
-   * a target directory — **unless** both tasks declare distinct `writeRegion`
-   * values for the shared file, in which case they can safely execute
-   * concurrently (each writes to its own region of the output).
+   * a target directory.
    */
   static selectNonOverlappingBatch(
     readyTasks: MigrationTask[],
     maxBatchSize: number,
   ): MigrationTask[] {
     const batch: MigrationTask[] = [];
-    // file → Set of claimed writeRegions (empty string = whole-file claim)
-    const claimedFileRegions = new Map<string, Set<string>>();
+    const claimedFiles = new Set<string>();
     const claimedDirs = new Set<string>();
 
     for (const task of readyTasks) {
       if (batch.length >= maxBatchSize) break;
 
-      let hasConflict = false;
+      const hasFileOverlap = task.targetFiles.some(f => claimedFiles.has(f));
+      if (hasFileOverlap) continue;
 
-      for (const f of task.targetFiles) {
-        const claimedRegions = claimedFileRegions.get(f);
-        if (!claimedRegions) continue; // file not yet claimed
-
-        if (!task.writeRegion || claimedRegions.has('')) {
-          hasConflict = true;
-          break;
-        }
-
-        if (claimedRegions.has(task.writeRegion)) {
-          hasConflict = true;
-          break;
-        }
-      }
-      if (hasConflict) continue;
-
-      // Directory overlap check (only for tasks without writeRegion)
-      if (!task.writeRegion) {
-        const taskDirs = new Set(
-          task.targetFiles.map(f => {
-            const lastSlash = f.lastIndexOf('/');
-            return lastSlash >= 0 ? f.substring(0, lastSlash) : '.';
-          }),
-        );
-        const hasDirOverlap = [...taskDirs].some(d => claimedDirs.has(d));
-        if (hasDirOverlap) continue;
-
-        for (const d of taskDirs) claimedDirs.add(d);
-      }
+      const taskDirs = new Set(
+        task.targetFiles.map(f => {
+          const lastSlash = f.lastIndexOf('/');
+          return lastSlash >= 0 ? f.substring(0, lastSlash) : '.';
+        }),
+      );
+      const hasDirOverlap = [...taskDirs].some(d => claimedDirs.has(d));
+      if (hasDirOverlap) continue;
 
       batch.push(task);
-      for (const f of task.targetFiles) {
-        const regions = claimedFileRegions.get(f) ?? new Set<string>();
-        regions.add(task.writeRegion ?? '');
-        claimedFileRegions.set(f, regions);
-      }
+      for (const f of task.targetFiles) claimedFiles.add(f);
+      for (const d of taskDirs) claimedDirs.add(d);
     }
 
     return batch;

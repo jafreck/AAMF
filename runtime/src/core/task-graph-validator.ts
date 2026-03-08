@@ -1,11 +1,9 @@
 /**
  * Task graph validation and dependency inference for the Phase 3 merge step.
  *
- * Provides three layers of protection:
+ * Provides two layers of protection:
  *   1. **Static validation** — structural checks on the merged task graph
- *   2. **Write-region conflict detection** — ensures tasks sharing a target file
- *      have non-overlapping write regions
- *   3. **Lore-powered dependency inference** — uses the KB symbol/call graph to
+ *   2. **Lore-powered dependency inference** — uses the KB symbol/call graph to
  *      detect missing dependency edges and inject them before Phase 4 execution
  */
 import type { MigrationTask } from '../agents/types.js';
@@ -126,61 +124,6 @@ export function validateTaskGraph(
           });
         }
       }
-    }
-  }
-
-  // 5. Write-region conflict detection for shared-file tasks
-  const tasksByTargetFile = new Map<string, MigrationTask[]>();
-  for (const task of tasks) {
-    for (const tf of task.targetFiles) {
-      const existing = tasksByTargetFile.get(tf) ?? [];
-      existing.push(task);
-      tasksByTargetFile.set(tf, existing);
-    }
-  }
-  for (const [file, sharingTasks] of tasksByTargetFile) {
-    if (sharingTasks.length <= 1) continue;
-    const withRegion = sharingTasks.filter(t => t.writeRegion);
-    const withoutRegion = sharingTasks.filter(t => !t.writeRegion);
-
-    // Tasks sharing a file without write regions — warn about overwrite risk
-    if (withoutRegion.length > 1) {
-      issues.push({
-        severity: 'warning',
-        code: 'shared-file-no-region',
-        message:
-          `${withoutRegion.length} tasks target "${file}" without writeRegion: ` +
-          `${withoutRegion.map(t => t.id).join(', ')}. ` +
-          `Sequential execution is enforced, but later tasks may overwrite earlier work.`,
-      });
-    }
-
-    // Mix of region and non-region tasks for the same file
-    if (withRegion.length > 0 && withoutRegion.length > 0) {
-      issues.push({
-        severity: 'error',
-        code: 'mixed-region-usage',
-        message:
-          `File "${file}" has tasks with writeRegion (${withRegion.map(t => t.id).join(', ')}) ` +
-          `and without (${withoutRegion.map(t => t.id).join(', ')}). ` +
-          `All tasks sharing a target file must either all use writeRegion or none.`,
-      });
-    }
-
-    // Duplicate write regions for the same file
-    const regionNames = new Set<string>();
-    for (const t of withRegion) {
-      if (t.writeRegion && regionNames.has(t.writeRegion)) {
-        issues.push({
-          severity: 'error',
-          code: 'duplicate-write-region',
-          message:
-            `Write region "${t.writeRegion}" is used by multiple tasks targeting "${file}". ` +
-            `Each writeRegion must be unique per target file.`,
-          taskId: t.id,
-        });
-      }
-      if (t.writeRegion) regionNames.add(t.writeRegion);
     }
   }
 

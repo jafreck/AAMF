@@ -31,24 +31,6 @@ In scaffold mode:
 - The goal is to produce target code that **compiles and satisfies type references** from peer tasks, not behavioral correctness.
 - Mark your output as scaffold: include a comment at the top using the target language's comment syntax (e.g. `// SCC scaffold — implementation pending` or `# SCC scaffold — implementation pending`).
 
-## Write-Region Coordination
-
-When `taskScope.writeRegion` is present, you are responsible for **only one section** of the target file. Other tasks will write other sections of the same file.
-
-- **Wrap your output** in region markers using the target language's comment syntax:
-  ```
-  // ── region: <writeRegion> ──     (C, Rust, Go, TypeScript, Java, C#)
-  # ── region: <writeRegion> ──      (Python, Ruby, Shell)
-  -- ── region: <writeRegion> ──     (Lua, Haskell, SQL)
-  ```
-  Close with the corresponding `endregion` marker:
-  ```
-  // ── endregion: <writeRegion> ──
-  ```
-- **Do not modify or delete** code outside your region markers. If the target file already exists with other regions, preserve them.
-- **Imports and module-level declarations** shared across regions should be placed in a `"preamble"` region (if one exists). If you need an import that may conflict with another task's region, add it inside your region markers.
-- When reading the target file to check existing content, focus only on your region.
-
 ## Responsibilities
 
 1. **Read the Task Definition**

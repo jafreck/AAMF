@@ -228,7 +228,6 @@ const TaskFileSchema = z.array(
         start: z.number().int().min(1),
         end: z.number().int().min(1),
       }),
-    writeRegion: z.string().min(1).optional(),
   }).strict(),
 );
 
@@ -1646,7 +1645,6 @@ export class MigrationOrchestrator {
         acceptanceCriteria: task.acceptanceCriteria,
         parityChecks: task.parityChecks,
         ...(task.lineRange ? { lineRange: task.lineRange } : {}),
-        ...(task.writeRegion ? { writeRegion: task.writeRegion } : {}),
       },
     };
   }

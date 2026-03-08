@@ -127,48 +127,6 @@ describe('TaskQueue.selectNonOverlappingBatch', () => {
     const batch = TaskQueue.selectNonOverlappingBatch(tasks, 3);
     expect(batch.map(t => t.id)).toEqual(['a', 'c']);
   });
-
-  it('should allow concurrent tasks with distinct writeRegions on the same file', () => {
-    const tasks = [
-      { ...makeTask('a'), targetFiles: ['src/codec.rs'], writeRegion: 'types' },
-      { ...makeTask('b'), targetFiles: ['src/codec.rs'], writeRegion: 'compress' },
-      { ...makeTask('c'), targetFiles: ['src/codec.rs'], writeRegion: 'decompress' },
-    ];
-
-    const batch = TaskQueue.selectNonOverlappingBatch(tasks, 3);
-    expect(batch.map(t => t.id)).toEqual(['a', 'b', 'c']);
-  });
-
-  it('should block tasks with duplicate writeRegions on the same file', () => {
-    const tasks = [
-      { ...makeTask('a'), targetFiles: ['src/codec.rs'], writeRegion: 'types' },
-      { ...makeTask('b'), targetFiles: ['src/codec.rs'], writeRegion: 'types' },
-    ];
-
-    const batch = TaskQueue.selectNonOverlappingBatch(tasks, 3);
-    expect(batch.map(t => t.id)).toEqual(['a']);
-  });
-
-  it('should block when mixing region and non-region tasks on the same file', () => {
-    const tasks = [
-      { ...makeTask('a'), targetFiles: ['src/codec.rs'], writeRegion: 'types' },
-      { ...makeTask('b'), targetFiles: ['src/codec.rs'] }, // no writeRegion
-    ];
-
-    const batch = TaskQueue.selectNonOverlappingBatch(tasks, 3);
-    expect(batch.map(t => t.id)).toEqual(['a']);
-  });
-
-  it('should not apply directory overlap check for writeRegion tasks', () => {
-    // Both target files in src/ dir, but with distinct regions — should be allowed
-    const tasks = [
-      { ...makeTask('a'), targetFiles: ['src/codec.rs'], writeRegion: 'types' },
-      { ...makeTask('b'), targetFiles: ['src/codec.rs'], writeRegion: 'impl' },
-    ];
-
-    const batch = TaskQueue.selectNonOverlappingBatch(tasks, 3);
-    expect(batch.map(t => t.id)).toEqual(['a', 'b']);
-  });
 });
 
 describe('TaskQueue group barrier', () => {

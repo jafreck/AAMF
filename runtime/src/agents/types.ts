@@ -405,19 +405,6 @@ export interface MigrationTask {
 
   /** Optional line range in the source file to scope the migration. */
   lineRange?: { start: number; end: number };
-
-  /**
-   * Optional write-region identifier for sub-file task coordination.
-   *
-   * When multiple tasks target the same output file, each task should declare
-   * a unique `writeRegion` name (e.g. `"types"`, `"compress_impl"`).  The
-   * code-migrator emits its output within region markers, and the orchestrator
-   * merges regions at commit time.
-   *
-   * When set, `selectNonOverlappingBatch` allows concurrent execution of tasks
-   * sharing a target file as long as their writeRegion values are distinct.
-   */
-  writeRegion?: string;
 }
 
 // ─── Module Groups ──────────────────────────────────────────────────────────

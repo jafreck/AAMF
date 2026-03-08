@@ -47,10 +47,6 @@ The same schema path is also provided in `inputFiles` so it is available even wh
   - Parity checks should assert properties the task's own code controls. If full behavioral equivalence depends on upstream work, note this explicitly: "Full round-trip parity depends on the compression-engine group; this task verifies call-site structure and error-path equivalence."
 - **No intra-wave dependencies**: tasks that will execute concurrently in the same wave (i.e., tasks with no dependency edges between them) must not require each other's output. If task A's acceptance criteria can only be met after task B completes, A must declare B in its `dependencies` array.
 - **Dependency ordering must match execution order**: if task B logically depends on task A's output (e.g., B calls APIs that A defines), B **must** list A in its `dependencies` — even if B is in a different source file. The runtime uses dependencies to schedule tasks; missing edges cause tasks to run before their prerequisites are ready, leading to guaranteed parity failures and wasted recovery budget.
-- **Shared-file coordination with `writeRegion`**: when multiple tasks target the **same output file** (e.g., splitting a large single-file module), each task **must** include a `writeRegion` field — a unique name identifying the section of the file it owns (e.g., `"types"`, `"compress_impl"`, `"decompress_impl"`). All tasks targeting the same file must either all use `writeRegion` or none.
-  - The code-migrator will emit output within region markers (`// ── region: <name> ──`) so the orchestrator can merge sections.
-  - Tasks with distinct `writeRegion` values for the same file can execute in parallel — this unlocks parallelism for single-file repos.
-  - If a source file maps to a single target file and you split it into multiple tasks, each task gets its own `writeRegion`.
 
 {{> aamf-json-output-format}}
 
