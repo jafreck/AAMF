@@ -30,6 +30,14 @@ export interface GenerateOptions {
   outputDir: string;
   /** Override template directory (for testing). */
   templateDir?: string;
+  /**
+   * Extra variables forwarded to `resolvePartials()` for `{{var}}` interpolation
+   * and `{{#if var}}…{{/if}}` conditional blocks.
+   *
+   * The runtime sets `loreEnabled: 'true'` when the Lore KB index is configured,
+   * allowing templates to conditionally include Lore-related guidance.
+   */
+  vars?: Record<string, string>;
 }
 
 // ─── Front Matter Builders ───────────────────────────────────────────────────
@@ -72,10 +80,13 @@ function defaultTemplateDir(): string {
 const partialsCache = new Map<string, string>();
 
 /**
- * Resolve `{{> partial-name}}` directives in a template body.
+ * Resolve `{{> partial-name}}` directives and `{{#if var}}…{{/if}}` conditional
+ * blocks in a template body.
  *
- * Directives may appear on their own line or inline within text. The
- * referenced file is read from `<templateDir>/_partials/<name>.md`.
+ * Conditional blocks are evaluated **before** partial expansion so that an
+ * entire `{{> partial}}` reference can be gated on a variable.  A block is
+ * retained when `vars[var]` is a non-empty string; otherwise the block
+ * (including its delimiters) is stripped.
  *
  * After inclusion, simple `{{key}}` placeholders in the resolved text are
  * replaced using the provided `vars` map.
@@ -85,17 +96,34 @@ export async function resolvePartials(
   templateDir: string,
   vars: Record<string, string> = {},
 ): Promise<string> {
+  // ── 1. Evaluate {{#if var}} … {{/if}} conditional blocks ──────────────
+  // Process innermost blocks first (body must NOT contain another {{#if}}).
+  // Iterate until no more blocks remain, peeling nesting from the inside out.
+  let resolved = content;
+  const INNER_IF = /\{\{#if\s+([\w-]+)\s*\}\}((?:(?!\{\{#if\b)[\s\S])*?)\{\{\/if\}\}/g;
+  while (INNER_IF.test(resolved)) {
+    INNER_IF.lastIndex = 0;
+    resolved = resolved.replace(INNER_IF, (_match, varName: string, body: string) => {
+      return vars[varName] ? body : '';
+    });
+    INNER_IF.lastIndex = 0;
+  }
+
+  // Clean up blank lines left by stripped conditional blocks
+  resolved = resolved.replace(/\n{3,}/g, '\n\n');
+
+  // ── 2. Expand {{> partial-name}} directives ──────────────────────────
   const partialsDir = join(templateDir, '_partials');
   const partialPattern = /\{\{>\s*([\w-]+)\s*\}\}/g;
 
   // Collect all partial references first to allow parallel reads
   const names = new Set<string>();
   let m: RegExpExecArray | null;
-  while ((m = partialPattern.exec(content)) !== null) {
+  while ((m = partialPattern.exec(resolved)) !== null) {
     if (m[1]) names.add(m[1]);
   }
 
-  if (names.size === 0) return content;
+  if (names.size === 0) return resolved;
 
   // Load partials (with caching)
   const loaded = new Map<string, string>();
@@ -114,7 +142,7 @@ export async function resolvePartials(
   );
 
   // Replace directives with loaded content
-  let result = content.replace(
+  let result = resolved.replace(
     /\{\{>\s*([\w-]+)\s*\}\}/g,
     (_match, name: string) => loaded.get(name) ?? _match,
   );
@@ -194,9 +222,11 @@ export async function generateAgentDefinitions(options: GenerateOptions): Promis
 
     const rawTemplate = await readFile(join(templateDir, templateFile), 'utf-8');
 
-    // Resolve {{> partial}} directives and {{var}} placeholders
+    // Resolve {{#if}}…{{/if}} conditionals, {{> partial}} directives,
+    // and {{var}} placeholders
     const templateContent = await resolvePartials(rawTemplate, templateDir, {
       agentName,
+      ...options.vars,
     });
 
     const frontMatter = backend === 'claude-code'

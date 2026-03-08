@@ -19,10 +19,28 @@ export class TaskQueue {
   private tasks: Map<string, MigrationTask> = new Map();
   private completed: Set<string> = new Set();
   private blocked: Set<string> = new Set();
+  /** SCC membership: taskId → set of other task IDs in the same SCC. */
+  private sccMembers: Map<string, Set<string>> = new Map();
 
   constructor(tasks: MigrationTask[]) {
     for (const task of tasks) {
       this.tasks.set(task.id, task);
+    }
+  }
+
+  /**
+   * Register strongly-connected components.
+   *
+   * SCC-internal dependencies are treated as pre-satisfied by {@link getReady}
+   * — all members of an SCC become ready once their *external* dependencies
+   * are complete.
+   */
+  setSCCs(sccs: string[][]): void {
+    for (const scc of sccs) {
+      const memberSet = new Set(scc);
+      for (const id of scc) {
+        this.sccMembers.set(id, memberSet);
+      }
     }
   }
 
@@ -51,12 +69,19 @@ export class TaskQueue {
     return this.blocked.has(taskId);
   }
 
-  /** Get tasks that are ready to execute (all dependencies satisfied). */
+  /** Get tasks that are ready to execute (all dependencies satisfied).
+   *  SCC-internal deps are treated as pre-satisfied (members released together). */
   getReady(): MigrationTask[] {
     const ready: MigrationTask[] = [];
     for (const [id, task] of this.tasks) {
       if (this.completed.has(id) || this.blocked.has(id)) continue;
-      const depsOk = task.dependencies.every(dep => this.completed.has(dep));
+      const sccSet = this.sccMembers.get(id);
+      const depsOk = task.dependencies.every(dep => {
+        if (this.completed.has(dep)) return true;
+        // SCC-internal deps are pre-satisfied
+        if (sccSet && sccSet.has(dep)) return true;
+        return false;
+      });
       if (depsOk) ready.push(task);
     }
     return ready;

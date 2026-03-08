@@ -119,11 +119,11 @@ describe('Agent templates (runtime/agents/templates/)', () => {
       });
 
       it('should NOT contain inline duplicates of partial content', () => {
-        // If a template uses the lore-index-first-principle partial, the
-        // full 3-paragraph block should NOT also appear inline.
-        if (content.includes('{{> lore-index-first-principle}}')) {
+        // Templates reference partials via {{> name}} inside {{#if}} blocks.
+        // The partial body itself should NOT also appear verbatim in the template.
+        if (content.includes('lore-index-first-principle')) {
           expect(content).not.toContain(
-            'The AAMF runtime may start a **Lore** MCP server',
+            'You have access to the **Lore** MCP server',
           );
         }
         if (content.includes('{{> aamf-json-output-format}}')) {
@@ -336,6 +336,82 @@ describe('generateAgentDefinitions()', () => {
       expect(unresolvedVars, `Unresolved vars in "${agentName}": ${unresolvedVars}`).toBeNull();
     }
   });
+
+  it('should contain no unresolved conditional blocks in generated output', async () => {
+    for (const agentName of ALL_AGENT_NAMES) {
+      const content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+      expect(content, `Unresolved {{#if}} in "${agentName}"`).not.toMatch(/\{\{#if\s+[\w-]+\}\}/);
+      expect(content, `Unresolved {{/if}} in "${agentName}"`).not.toContain('{{/if}}');
+    }
+  });
+});
+
+// ─── Conditional Lore Injection Tests ────────────────────────────────────────
+
+describe('generateAgentDefinitions() with loreEnabled', () => {
+  let loreDirEnabled: string;
+  let loreDirDisabled: string;
+
+  beforeAll(async () => {
+    loreDirEnabled = await mkdtemp(join(tmpdir(), 'aamf-lore-on-'));
+    loreDirDisabled = await mkdtemp(join(tmpdir(), 'aamf-lore-off-'));
+
+    await generateAgentDefinitions({
+      backend: 'copilot',
+      outputDir: loreDirEnabled,
+      templateDir: TEMPLATE_DIR,
+      vars: { loreEnabled: 'true' },
+    });
+
+    await generateAgentDefinitions({
+      backend: 'copilot',
+      outputDir: loreDirDisabled,
+      templateDir: TEMPLATE_DIR,
+      // No loreEnabled var → conditional blocks stripped
+    });
+  });
+
+  afterAll(async () => {
+    await rm(loreDirEnabled, { recursive: true, force: true });
+    await rm(loreDirDisabled, { recursive: true, force: true });
+  });
+
+  it('should include Lore guidance when loreEnabled is set', async () => {
+    // code-migrator is a KB_AWARE agent with the lore partial
+    const content = await readFile(join(loreDirEnabled, 'code-migrator.agent.md'), 'utf-8');
+    expect(content).toContain('Lore Code-Intelligence Server (MANDATORY)');
+    expect(content).toContain('lore_search');
+    expect(content).toContain('lore_lookup');
+    expect(content).toContain('lore_graph');
+  });
+
+  it('should exclude Lore guidance when loreEnabled is not set', async () => {
+    const content = await readFile(join(loreDirDisabled, 'code-migrator.agent.md'), 'utf-8');
+    expect(content).not.toContain('Lore Code-Intelligence Server');
+    expect(content).not.toContain('lore_search');
+    expect(content).not.toContain('lore_lookup');
+  });
+
+  it('should include Lore guidance in all KB-aware agent templates when enabled', async () => {
+    const kbAwareAgents = [
+      'impact-assessor', 'knowledge-builder', 'migration-planner', 'adjudicator',
+      'code-migrator', 'parity-verifier', 'test-writer', 'parity-failure-resolver',
+      'final-parity-checker', 'e2e-test-crafter', 'documentation-writer',
+      'idiomatic-reviewer', 'idiomatic-refactorer', 'task-decomposer',
+    ];
+    for (const agent of kbAwareAgents) {
+      const content = await readFile(join(loreDirEnabled, `${agent}.agent.md`), 'utf-8');
+      expect(content, `${agent} should contain Lore guidance`).toContain('Lore Code-Intelligence Server (MANDATORY)');
+    }
+  });
+
+  it('should not contain any unresolved conditional blocks when loreEnabled is set', async () => {
+    for (const agentName of ALL_AGENT_NAMES) {
+      const content = await readFile(join(loreDirEnabled, `${agentName}.agent.md`), 'utf-8');
+      expect(content, `Unresolved {{#if}} in "${agentName}"`).not.toMatch(/\{\{#if\s+[\w-]+\}\}/);
+      expect(content, `Unresolved {{/if}} in "${agentName}"`).not.toContain('{{/if}}');
+    }
+  });
 });
 
 // ─── stripSchemaSections unit tests ──────────────────────────────────────────
@@ -479,5 +555,67 @@ describe('resolvePartials()', () => {
     const input = 'Some text {{> greeting}} more text';
     const result = await resolvePartials(input, tmpTemplateDir);
     expect(result).toBe('Some text Hello, world! more text');
+  });
+
+  // ─── {{#if var}} conditional block tests ─────────────────────────────
+
+  it('should retain {{#if}} block content when variable is truthy', async () => {
+    const input = 'Before\n{{#if flag}}Included\n{{/if}}\nAfter';
+    const result = await resolvePartials(input, tmpTemplateDir, { flag: 'true' });
+    expect(result).toContain('Included');
+    expect(result).toContain('Before');
+    expect(result).toContain('After');
+    expect(result).not.toContain('{{#if');
+    expect(result).not.toContain('{{/if}}');
+  });
+
+  it('should strip {{#if}} block content when variable is missing', async () => {
+    const input = 'Before\n{{#if flag}}Removed\n{{/if}}\nAfter';
+    const result = await resolvePartials(input, tmpTemplateDir);
+    expect(result).not.toContain('Removed');
+    expect(result).toContain('Before');
+    expect(result).toContain('After');
+    expect(result).not.toContain('{{#if');
+    expect(result).not.toContain('{{/if}}');
+  });
+
+  it('should strip {{#if}} block content when variable is empty string', async () => {
+    const input = 'Before\n{{#if flag}}Removed\n{{/if}}\nAfter';
+    const result = await resolvePartials(input, tmpTemplateDir, { flag: '' });
+    expect(result).not.toContain('Removed');
+  });
+
+  it('should handle nested {{#if}} blocks', async () => {
+    const input = '{{#if a}}A-start {{#if b}}B-inner{{/if}} A-end{{/if}}';
+    const result = await resolvePartials(input, tmpTemplateDir, { a: 'yes', b: 'yes' });
+    expect(result).toContain('A-start');
+    expect(result).toContain('B-inner');
+    expect(result).toContain('A-end');
+  });
+
+  it('should strip inner block when nested variable is missing', async () => {
+    const input = '{{#if a}}A-start {{#if b}}B-inner{{/if}} A-end{{/if}}';
+    const result = await resolvePartials(input, tmpTemplateDir, { a: 'yes' });
+    expect(result).toContain('A-start');
+    expect(result).not.toContain('B-inner');
+    expect(result).toContain('A-end');
+  });
+
+  it('should expand partial inside a conditional block when variable is truthy', async () => {
+    const input = '{{#if flag}}\n{{> greeting}}\n{{/if}}';
+    const result = await resolvePartials(input, tmpTemplateDir, { flag: 'true' });
+    expect(result).toContain('Hello, world!');
+  });
+
+  it('should skip partial inside a conditional block when variable is missing', async () => {
+    const input = '{{#if flag}}\n{{> greeting}}\n{{/if}}';
+    const result = await resolvePartials(input, tmpTemplateDir);
+    expect(result).not.toContain('Hello, world!');
+  });
+
+  it('should not leave excessive blank lines after stripping conditional blocks', async () => {
+    const input = 'A\n\n{{#if flag}}\nRemoved\n{{/if}}\n\nB';
+    const result = await resolvePartials(input, tmpTemplateDir);
+    expect(result).not.toMatch(/\n{3,}/);
   });
 });

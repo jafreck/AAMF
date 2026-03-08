@@ -42,6 +42,7 @@ import { ReportGenerator } from '../observability/report-generator.js';
 import type { InvocationMetric } from '../agents/types.js';
 import { z } from 'zod';
 import { buildRuntimePaths } from './runtime-paths.js';
+import { buildTaskGraph, findSCCs } from './task-graph-builder.js';
 
 const loadLore = () => import('@aamf/lore');
 const loadKbServerProcess = () => import('./kb-server-process.js');
@@ -210,14 +211,17 @@ export class MigrationError extends Error {
 /** Default timeout for the KB indexing phase when no phaseTimeouts[0] is configured (5 minutes). */
 const DEFAULT_INDEX_TIMEOUT_MS = 5 * 60_000;
 
+/** Accept both legacy `task-NNN` and Lore-computed `task-N-N` IDs. */
+const TASK_ID_RE = /^task-\d+(-\d+)?$/;
+
 const TaskFileSchema = z.array(
   z.object({
-    id: z.string().regex(/^task-\d+$/),
+    id: z.string().regex(TASK_ID_RE),
     name: z.string().min(1),
     sourceFiles: z.array(z.string().min(1)).min(1),
     targetFiles: z.array(z.string().min(1)).min(1),
     knowledgeBaseRef: z.string().min(1),
-    dependencies: z.array(z.string().regex(/^task-\d+$/)),
+    dependencies: z.array(z.string().regex(TASK_ID_RE)),
     complexity: z.enum(['simple', 'moderate', 'complex']),
     description: z.string().min(1),
     acceptanceCriteria: z.array(z.string().min(1)).min(1),
@@ -226,7 +230,8 @@ const TaskFileSchema = z.array(
       .object({
         start: z.number().int().min(1),
         end: z.number().int().min(1),
-      }),
+      })
+      .optional(),
   }).strict(),
 );
 
@@ -954,27 +959,114 @@ export class MigrationOrchestrator {
       this.logger.info('Resuming Phase 3 — step 3a already complete, skipping migration-planner');
     }
 
-    // ── Step 3b: parallel task-decomposer × N (one per module group) ──────
-    //   Each invocation reads strategy.md + its group's analysis files and
-    //   emits planning/tasks-<group>.json.  Completed groups are tracked in
-    //   the checkpoint so partial failures can be retried cheaply on resume.
-    if (!(await fileExists(groupsFile))) {
+    // ── Step 3b: deterministic task graph from Lore KB ─────────────────────
+    //   Instead of running N × task-decomposer agents (which produced incorrect
+    //   dependency ordering and duplicate task IDs), we build the task graph
+    //   deterministically from the Lore symbol graph.
+    //
+    //   Fallback: if the KB database is not available (e.g. Phase 0 was skipped
+    //   or KB indexing is disabled), fall back to legacy groups.json +
+    //   task-decomposer path if groups.json exists, or fail with a clear error.
+    let allTasks: MigrationTask[];
+    let taskGraphSCCs: string[][] = [];
+
+    if (await fileExists(this.kbDbPath)) {
+      this.logger.info('Step 3b: building task graph from Lore KB (deterministic symbol-graph analysis)');
+      try {
+        const graphResult = await buildTaskGraph({
+          kbDbPath: this.kbDbPath,
+          sourceRoot: this.config.source.path,
+          maxLinesPerTask: this.config.options.maxLinesPerTask,
+          targetLanguage: this.config.target.language,
+          outputPath: this.config.target.outputPath,
+        });
+        allTasks = graphResult.tasks;
+        taskGraphSCCs = graphResult.sccs;
+
+        if (taskGraphSCCs.length > 0) {
+          this.logger.info(
+            `Detected ${taskGraphSCCs.length} SCC(s) with cyclic deps — will use two-pass scaffold execution`,
+          );
+        }
+        this.logger.info(
+          `Task graph built: ${allTasks.length} task(s) from Lore KB with ${allTasks.reduce((n, t) => n + t.dependencies.length, 0)} dependency edge(s)`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Failed to build task graph from Lore KB: ${msg}`);
+        return {
+          phase: 3,
+          name: 'Migration Planning',
+          success: false,
+          duration: Date.now() - start,
+          error: `Lore task-graph build failed: ${msg}`,
+        };
+      }
+    } else if (await fileExists(groupsFile)) {
+      // Legacy fallback: groups.json + task-decomposer path
+      this.logger.warn(
+        'KB database not found — falling back to legacy groups.json + task-decomposer path',
+      );
+      const legacyResult = await this.executePhase3bLegacy(start, planningDir, groupsFile, strategyFile);
+      if (!legacyResult.success) return legacyResult.phaseResult;
+      allTasks = legacyResult.tasks;
+    } else if (await fileExists(mergedTasksFile)) {
+      // Resume path: tasks-merged.json already exists from a prior run
+      this.logger.info('Step 3b: loading existing tasks-merged.json (prior run)');
+      allTasks = await readJson<MigrationTask[]>(mergedTasksFile);
+    } else {
       return {
         phase: 3,
         name: 'Migration Planning',
         success: false,
         duration: Date.now() - start,
-        error: 'planning/groups.json not found — migration-planner did not emit module groups',
+        error: 'Neither KB database nor planning/groups.json found — cannot decompose tasks',
       };
     }
 
+    this.logger.info(
+      `Step 3b complete: ${allTasks.length} task(s) → ${mergedTasksFile}`,
+    );
+    await atomicWrite(mergedTasksFile, JSON.stringify(allTasks, null, 2));
+
+    // Make merged tasks available to Phase 4 via the in-memory structuredOutput
+    // path (avoids a redundant file read when phases run back-to-back).
+    // Also persist SCC information so Phase 4 can do two-pass scaffold execution.
+    this.phase3PlanResult = {
+      agent: 'task-graph-builder',
+      exitCode: 0,
+      success: true,
+      outputFiles: [mergedTasksFile],
+      duration: Date.now() - start,
+      outputParsed: true,
+      structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs },
+    };
+
+    return {
+      phase: 3,
+      name: 'Migration Planning',
+      success: true,
+      outputPath: mergedTasksFile,
+      duration: Date.now() - start,
+    };
+  }
+
+  // ─── Phase 3b Legacy: task-decomposer agents ─────────────────────────
+  //   Retained as a fallback when the KB database is not available.
+
+  private async executePhase3bLegacy(
+    start: number,
+    planningDir: string,
+    groupsFile: string,
+    strategyFile: string,
+  ): Promise<{ success: true; tasks: MigrationTask[] } | { success: false; phaseResult: PhaseResult }> {
     const groups = await readJson<ModuleGroup[]>(groupsFile);
     const completedGroups = new Set(this.checkpoint.getState().completedPhase3Groups ?? []);
     const remainingGroups = groups.filter(g => !completedGroups.has(g.id));
 
     if (remainingGroups.length > 0) {
       this.logger.info(
-        `Step 3b: running task-decomposer for ${remainingGroups.length} of ${groups.length} ` +
+        `Step 3b (legacy): running task-decomposer for ${remainingGroups.length} of ${groups.length} ` +
         `module group(s) in parallel (${completedGroups.size} already complete)`,
       );
 
@@ -1041,24 +1133,23 @@ export class MigrationOrchestrator {
           .map(f => `${f.id} (${f.reason}; attempts=${f.attempts})`)
           .join('; ');
         return {
-          phase: 3,
-          name: 'Migration Planning',
           success: false,
-          duration: Date.now() - start,
-          error:
-            `task-decomposer failed for ${failedGroupIds.length} group(s): ${failedGroupIds.join(', ')}. ` +
-            `Details: ${details}`,
+          phaseResult: {
+            phase: 3,
+            name: 'Migration Planning',
+            success: false,
+            duration: Date.now() - start,
+            error:
+              `task-decomposer failed for ${failedGroupIds.length} group(s): ${failedGroupIds.join(', ')}. ` +
+              `Details: ${details}`,
+          },
         };
       }
     } else {
-      this.logger.info('Step 3b: all module groups already task-decomposed, proceeding to merge');
+      this.logger.info('Step 3b (legacy): all module groups already task-decomposed, proceeding to merge');
     }
 
-    // ── Merge all tasks-<group>.json → planning/tasks-merged.json ─────────
-    //   The orchestrator reassembles individual group task lists into a single
-    //   ordered array.  Phase 4 reads this via structuredOutput (preferred)
-    //   or by loading the file directly (fallback on resume without in-memory
-    //   state).
+    // Merge all tasks-<group>.json
     const allTasks: MigrationTask[] = [];
     for (const group of groups) {
       const taskFile = join(planningDir, `tasks-${group.id}.json`);
@@ -1078,11 +1169,14 @@ export class MigrationOrchestrator {
             `Schema validation failed: ${issueSummary}`;
           this.logger.error(validationError);
           return {
-            phase: 3,
-            name: 'Migration Planning',
             success: false,
-            duration: Date.now() - start,
-            error: validationError,
+            phaseResult: {
+              phase: 3,
+              name: 'Migration Planning',
+              success: false,
+              duration: Date.now() - start,
+              error: validationError,
+            },
           };
         }
         allTasks.push(...parsed.data);
@@ -1093,30 +1187,7 @@ export class MigrationOrchestrator {
       }
     }
 
-    this.logger.info(
-      `Merged ${allTasks.length} task(s) across ${groups.length} module group(s) → ${mergedTasksFile}`,
-    );
-    await atomicWrite(mergedTasksFile, JSON.stringify(allTasks, null, 2));
-
-    // Make merged tasks available to Phase 4 via the in-memory structuredOutput
-    // path (avoids a redundant file read when phases run back-to-back).
-    this.phase3PlanResult = {
-      agent: 'task-decomposer',
-      exitCode: 0,
-      success: true,
-      outputFiles: [mergedTasksFile],
-      duration: Date.now() - start,
-      outputParsed: true,
-      structuredOutput: { tasks: allTasks },
-    };
-
-    return {
-      phase: 3,
-      name: 'Migration Planning',
-      success: true,
-      outputPath: mergedTasksFile,
-      duration: Date.now() - start,
-    };
+    return { success: true, tasks: allTasks };
   }
 
   // ─── Phase 4: Iterative Migration ────────────────────────────────────
@@ -1210,11 +1281,39 @@ export class MigrationOrchestrator {
       }
     }
 
-    // 2. Topological sort
-    const sortedTasks = TaskQueue.topologicalSort(tasks);
+    // 2. Topological sort — SCC-aware when Lore produced cycle groups
+    //    For tasks with cyclic dependencies (SCCs), we collapse SCC-internal
+    //    edges before sorting to avoid the "circular dependency" error.
+    //    SCC members share external deps and are released together.
+    const sccs: string[][] =
+      (this.phase3PlanResult?.structuredOutput?.['sccs'] as string[][] | undefined) ?? [];
+    const sccMembership = new Map<string, string[]>(); // taskId → SCC members
+    for (const scc of sccs) {
+      for (const id of scc) sccMembership.set(id, scc);
+    }
 
-    // 3. Build queue, apply checkpoint
+    let sortedTasks: MigrationTask[];
+    if (sccs.length > 0) {
+      // Remove SCC-internal edges before sorting
+      const tasksForSort = tasks.map(t => {
+        const myScc = sccMembership.get(t.id);
+        if (!myScc) return t;
+        const sccSet = new Set(myScc);
+        return { ...t, dependencies: t.dependencies.filter(d => !sccSet.has(d)) };
+      });
+      sortedTasks = TaskQueue.topologicalSort(tasksForSort);
+      // Restore original dependency arrays (queue uses them for getReady)
+      const origMap = new Map(tasks.map(t => [t.id, t]));
+      sortedTasks = sortedTasks.map(t => origMap.get(t.id) ?? t);
+    } else {
+      sortedTasks = TaskQueue.topologicalSort(tasks);
+    }
+
+    // 3. Build queue, apply checkpoint, register SCCs
     const queue = new TaskQueue(sortedTasks);
+    if (sccs.length > 0) {
+      queue.setSCCs(sccs);
+    }
     const checkpointState = this.checkpoint.getState();
     queue.markCompleted(checkpointState.completedTasks);
     this.progress.setTotalTasks(sortedTasks.length);
