@@ -45,7 +45,7 @@ Use KB markdown for synthesized architecture, risk, and migration context — no
 ### 4. Aggregate Results
 - After all `test-writer` invocations complete, collect their results
 - Run the full E2E test suite to verify tests work together (no conflicts, shared state issues)
-- Report any application-level failures as migration issues for `failure-adjudicator`
+- Report any application-level failures as migration issues for `parity-failure-resolver`
 
 ## Test Scenario Categories
 
@@ -138,7 +138,7 @@ copilot --agent test-writer \
 ## Constraints
 
 - Tests must be runnable against the migrated codebase — no tests against the source.
-- Do not fix application bugs found during E2E testing — report them for `failure-adjudicator`.
+- Do not fix application bugs found during E2E testing — report them for `parity-failure-resolver`.
 - Write practical, maintainable test plans — not exhaustive coverage of every possible input combination.
 - Each suite should be scoped so a single `test-writer` can handle it without context saturation (aim for <10 scenarios per suite).
 - The full E2E suite should run in a reasonable time (<5 minutes if possible).

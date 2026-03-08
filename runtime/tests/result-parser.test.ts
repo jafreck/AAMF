@@ -19,7 +19,7 @@ import {
   CodeMigratorSchema,
   ParityVerifierSchema,
   TestWriterSchema,
-  FailureAdjudicatorSchema,
+  ParityFailureResolverSchema,
   FinalParityCheckerSchema,
   E2eTestCrafterSchema,
   DocumentationWriterSchema,
@@ -453,12 +453,12 @@ Here are the tasks:
       expect(() => TestWriterSchema.parse({ status: 'completed', agent: 'test-writer' })).not.toThrow();
     });
 
-    it('should validate FailureAdjudicatorSchema with canonical id', () => {
-      expect(() => FailureAdjudicatorSchema.parse({ status: 'completed', agent: 'failure-adjudicator' })).not.toThrow();
+    it('should validate ParityFailureResolverSchema with canonical id', () => {
+      expect(() => ParityFailureResolverSchema.parse({ status: 'completed', agent: 'parity-failure-resolver' })).not.toThrow();
     });
 
-    it('should validate FailureAdjudicatorSchema with legacy alias', () => {
-      expect(() => FailureAdjudicatorSchema.parse({ status: 'completed', agent: 'failure-recovery' })).not.toThrow();
+    it('should validate ParityFailureResolverSchema with legacy alias', () => {
+      expect(() => ParityFailureResolverSchema.parse({ status: 'completed', agent: 'failure-recovery' })).not.toThrow();
     });
 
     it('should validate FinalParityCheckerSchema', () => {
@@ -606,21 +606,21 @@ intermediate text
       expect(result.parsed).toBe(true);
     });
 
-    it('should parse failure-adjudicator aamf-json with canonical agent id', () => {
-      const stdout = '```aamf-json\n{"status":"completed","agent":"failure-adjudicator"}\n```';
-      const result = parseAamfOutput(stdout, FailureAdjudicatorSchema);
+    it('should parse parity-failure-resolver aamf-json with canonical agent id', () => {
+      const stdout = '```aamf-json\n{"status":"completed","agent":"parity-failure-resolver"}\n```';
+      const result = parseAamfOutput(stdout, ParityFailureResolverSchema);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
-        expect(result.data.agent).toBe('failure-adjudicator');
+        expect(result.data.agent).toBe('parity-failure-resolver');
       }
     });
 
-    it('should parse failure-adjudicator aamf-json with legacy failure-recovery id', () => {
+    it('should parse parity-failure-resolver aamf-json with legacy failure-recovery id', () => {
       const stdout = '```aamf-json\n{"status":"completed","agent":"failure-recovery"}\n```';
-      const result = parseAamfOutput(stdout, FailureAdjudicatorSchema);
+      const result = parseAamfOutput(stdout, ParityFailureResolverSchema);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
-        expect(result.data.agent).toBe('failure-adjudicator');
+        expect(result.data.agent).toBe('parity-failure-resolver');
       }
     });
 

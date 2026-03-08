@@ -420,26 +420,26 @@ describe('AgentLauncher', () => {
       expect(result.parseError).toBeUndefined();
     });
 
-    it('should parse aamf-json output for failure-adjudicator invocations', async () => {
-      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'failure-adjudicator' });
-      const script = await createScript('valid-aamf-failure-adjudicator.sh', [
+    it('should parse aamf-json output for parity-failure-resolver invocations', async () => {
+      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'parity-failure-resolver' });
+      const script = await createScript('valid-aamf-parity-failure-resolver.sh', [
         `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
         'exit 0',
       ].join('\n'));
       const launcher = makeLauncher(script);
-      const { contextFile, progressDir } = await prepareInvocation('aamf-failure-adjudicator-001');
+      const { contextFile, progressDir } = await prepareInvocation('aamf-parity-failure-resolver-001');
 
       const result = await launcher.launchAgent({
-        agent: 'failure-adjudicator',
+        agent: 'parity-failure-resolver',
         contextFile,
         progressDir,
         phase: 4,
-        taskId: 'aamf-failure-adjudicator-001',
+        taskId: 'aamf-parity-failure-resolver-001',
       });
 
       expect(result.success).toBe(true);
       expect(result.outputParsed).toBe(true);
-      expect(result.structuredOutput?.agent).toBe('failure-adjudicator');
+      expect(result.structuredOutput?.agent).toBe('parity-failure-resolver');
     });
 
     it('should leave success unchanged and set outputParsed: false when no aamf-json block is emitted', async () => {

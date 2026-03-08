@@ -82,7 +82,7 @@ If you encounter something you cannot migrate correctly:
    - Why it's difficult to migrate
    - Your best-effort attempt
    - What needs human review or a different approach
-4. The orchestrator will route this to `failure-adjudicator` if needed
+4. The orchestrator will route this to `parity-failure-resolver` if needed
 
 ## Sub-Agents (launched via CLI)
 
@@ -90,12 +90,12 @@ If you encounter something you cannot migrate correctly:
 |-------|---------|
 | `parity-verifier` | Verify behavioral parity after writing code |
 | `test-writer` | Write tests for the migrated code |
-| `failure-adjudicator` | Handle migration difficulties or failures |
+| `parity-failure-resolver` | Handle migration difficulties or failures |
 
 After writing migrated code:
 1. Launch `parity-verifier` to verify behavioral equivalence
 2. If parity passes, launch `test-writer` to create tests
-3. If parity fails, launch `failure-adjudicator` to diagnose and fix
+3. If parity fails, launch `parity-failure-resolver` to diagnose and fix
 
 ## Output
 

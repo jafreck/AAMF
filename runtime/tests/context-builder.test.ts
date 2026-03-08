@@ -586,8 +586,8 @@ describe('ContextBuilder', () => {
       expect(context.payload?.testType).toBe('e2e');
     });
 
-    it('should route failure-adjudicator with source/target (no failureReport in inputFiles)', async () => {
-      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
+    it('should route parity-failure-resolver with source/target (no failureReport in inputFiles)', async () => {
+      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -603,8 +603,8 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe('/tmp/target');
     });
 
-    it('should include taskScope in failure-adjudicator payload when provided', async () => {
-      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
+    it('should include taskScope in parity-failure-resolver payload when provided', async () => {
+      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: 'Parity failed',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -654,8 +654,8 @@ describe('ContextBuilder', () => {
       expect(context.payload?.taskScope).toBeUndefined();
     });
 
-    it('should preserve remediation payload fields in failure-adjudicator payload', async () => {
-      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
+    it('should preserve remediation payload fields in parity-failure-resolver payload', async () => {
+      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -684,7 +684,7 @@ describe('ContextBuilder', () => {
         ' --> examples/common.rs:256:2',
       ].join('\n');
 
-      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'wave-1', {
+      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'wave-1', {
         failureReport: inlineFailure,
         failureType: 'test',
         sourceFile: 'examples/common.h',
@@ -699,8 +699,8 @@ describe('ContextBuilder', () => {
       expect(context.payload?.failureType).toBe('test');
     });
 
-    it('should support legacy remediation alias in failure-adjudicator payload', async () => {
-      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
+    it('should support legacy remediation alias in parity-failure-resolver payload', async () => {
+      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -719,7 +719,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should omit remediationContext when nested remediation payload is not an object', async () => {
-      const contextPath = await builder.buildContext('failure-adjudicator', 4, 'task-001', {
+      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',

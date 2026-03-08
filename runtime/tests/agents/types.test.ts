@@ -258,13 +258,13 @@ describe('AgentInvocation', () => {
     expect(inv.timeout).toBe(60_000);
   });
 
-  it('should accept failure-adjudicator as a valid agent name', () => {
+  it('should accept parity-failure-resolver as a valid agent name', () => {
     const inv: AgentInvocation = {
-      agent: 'failure-adjudicator',
+      agent: 'parity-failure-resolver',
       contextFile: '/tmp/context.json',
       progressDir: '/tmp/progress',
     };
-    expect(inv.agent).toBe('failure-adjudicator');
+    expect(inv.agent).toBe('parity-failure-resolver');
   });
 
   it('should support optional mcpConfig field', () => {

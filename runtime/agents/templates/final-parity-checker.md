@@ -81,7 +81,7 @@ This agent inevitably needs to scan a large codebase. Manage context aggressivel
 
 - This is a **read-only** agent. Do not fix any issues — only report them.
 - Be thorough but systematic — use automated scanning (grep, find, compiler) before manual inspection.
-- The orchestrator will route any failures back through `code-migrator` + `failure-adjudicator` for fixes.
+- The orchestrator will route any failures back through `code-migrator` + `parity-failure-resolver` for fixes.
 - Prioritize issues by severity: missing functionality > stubs > pattern inconsistency.
 
 ## Output Format

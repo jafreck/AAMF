@@ -22,14 +22,14 @@ export interface RetryOptions {
 export type RetryResult = AgentResult & {
   /** Total number of attempts made (including the initial attempt and any recovery). */
   attempts: number;
-  /** Whether a failure-adjudicator escalation was attempted. */
+  /** Whether a parity-failure-resolver escalation was attempted. */
   recoveryAttempted: boolean;
   /** Whether this successful result came from a retry (i.e. not the first attempt). */
   wasRetry: boolean;
 };
 
 /**
- * Executes agent invocations with retry logic and optional failure-adjudicator escalation.
+ * Executes agent invocations with retry logic and optional parity-failure-resolver escalation.
  *
  * When all retry attempts are exhausted, the executor can optionally invoke an
  * `onExhausted` callback to produce a recovery invocation. If recovery succeeds,
@@ -111,7 +111,7 @@ export class RetryExecutor {
     if (options.onExhausted && invocation.taskId) {
       const recoveryInvocation = await options.onExhausted(invocation.taskId, lastResult?.error ?? 'unknown');
       if (recoveryInvocation) {
-        this.logger.info(`Attempting failure-adjudicator for ${invocation.taskId}`);
+        this.logger.info(`Attempting parity-failure-resolver for ${invocation.taskId}`);
         recoveryAttempted = true;
         const recoveryResult = await this.launcher(recoveryInvocation);
         if (recoveryResult.success) {
