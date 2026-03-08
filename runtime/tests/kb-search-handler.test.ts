@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
-import { handler, type SearchArgs, type SearchResult } from '@aamf/lore/kb-server/tools/search';
+import { handler, type SearchArgs, type SearchResult } from '@aamf/lore/lore-server/tools/search';
 import type { EmbeddingProvider } from '@aamf/lore';
 
 /**

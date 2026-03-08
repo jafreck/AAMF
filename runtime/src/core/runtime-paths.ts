@@ -33,6 +33,7 @@ export interface RuntimePaths {
   competingStrategiesFile: string;
   finalParityReportFile: string;
   idiomaticReviewReportFile: string;
+  loreLogFile: string;
 }
 
 export function buildRuntimePaths(projectRoot: string, projectName: string): RuntimePaths {
@@ -80,5 +81,6 @@ export function buildRuntimePaths(projectRoot: string, projectName: string): Run
     competingStrategiesFile: join(artifactsPlanningDir, 'competing-strategies.md'),
     finalParityReportFile: join(artifactsParityDir, 'final-parity-report.md'),
     idiomaticReviewReportFile: join(artifactsParityDir, 'idiomatic-review-report.md'),
+    loreLogFile: join(logsRuntimeDir, 'lore.log'),
   };
 }

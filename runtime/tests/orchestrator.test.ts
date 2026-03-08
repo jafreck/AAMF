@@ -618,7 +618,7 @@ describe('MigrationOrchestrator', () => {
         const dbPath = join(tempDir, '.aamf', 'migration', 'test-project', 'kb.db');
         await mkdir(join(tempDir, '.aamf', 'migration', 'test-project'), { recursive: true });
         const db = dbMod.openDb(dbPath);
-        dbMod.setKbMeta(db, 'source_fingerprint', currentFingerprint);
+        dbMod.setLoreMeta(db, 'source_fingerprint', currentFingerprint);
         db.close();
 
         buildSpy.mockClear();
@@ -658,7 +658,7 @@ describe('MigrationOrchestrator', () => {
         const dbPath = join(tempDir, '.aamf', 'migration', 'test-project', 'kb.db');
         await mkdir(join(tempDir, '.aamf', 'migration', 'test-project'), { recursive: true });
         const db = dbMod.openDb(dbPath);
-        dbMod.setKbMeta(db, 'source_fingerprint', 'old-fp');
+        dbMod.setLoreMeta(db, 'source_fingerprint', 'old-fp');
         db.close();
 
         const { orchestrator, checkpoint } = await setupOrchestrator(tempDir, launcherFn);
@@ -755,7 +755,7 @@ describe('MigrationOrchestrator', () => {
         const dbPath = join(tempDir, '.aamf', 'migration', 'test-project', 'kb.db');
         await mkdir(join(tempDir, '.aamf', 'migration', 'test-project'), { recursive: true });
         const db = dbMod.openDb(dbPath);
-        dbMod.setKbMeta(db, 'source_fingerprint', currentFingerprint);
+        dbMod.setLoreMeta(db, 'source_fingerprint', currentFingerprint);
         db.close();
 
         buildSpy.mockClear();

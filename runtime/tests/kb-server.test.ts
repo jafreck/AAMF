@@ -14,12 +14,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { IndexBuilder, openReadOnly } from '@aamf/lore';
 import type { Database } from '@aamf/lore';
-import { handler as lookupHandler } from '@aamf/lore/kb-server/tools/lookup';
-import { handler as graphHandler } from '@aamf/lore/kb-server/tools/graph';
-import { handler as searchHandler } from '@aamf/lore/kb-server/tools/search';
-import { handler as snippetHandler } from '@aamf/lore/kb-server/tools/snippet';
-import { handler as metricsHandler } from '@aamf/lore/kb-server/tools/metrics';
-import { handler as writebackHandler } from '@aamf/lore/kb-server/tools/writeback';
+import { handler as lookupHandler } from '@aamf/lore/lore-server/tools/lookup';
+import { handler as graphHandler } from '@aamf/lore/lore-server/tools/graph';
+import { handler as searchHandler } from '@aamf/lore/lore-server/tools/search';
+import { handler as snippetHandler } from '@aamf/lore/lore-server/tools/snippet';
+import { handler as metricsHandler } from '@aamf/lore/lore-server/tools/metrics';
+import { handler as writebackHandler } from '@aamf/lore/lore-server/tools/writeback';
 
 // ─── Fixture setup ────────────────────────────────────────────────────────────
 
@@ -55,20 +55,20 @@ afterAll(async () => {
 // ─── lore_lookup ────────────────────────────────────────────────────────────────
 
 describe('lookup handler', () => {
-  it('returns an array result for kind="symbol" with a known name', () => {
-    const result = lookupHandler(db, { kind: 'symbol', query: 'Calculator' });
+  it('returns an array result for kind="symbol" with a known name', async () => {
+    const result = await lookupHandler(db, { kind: 'symbol', query: 'Calculator' });
     expect(result).toHaveProperty('results');
     expect(Array.isArray(result.results)).toBe(true);
     expect(result.results.length).toBeGreaterThan(0);
   });
 
-  it('returns an empty array for an unknown symbol', () => {
-    const result = lookupHandler(db, { kind: 'symbol', query: '__nonexistent_xyz__' });
+  it('returns an empty array for an unknown symbol', async () => {
+    const result = await lookupHandler(db, { kind: 'symbol', query: '__nonexistent_xyz__' });
     expect(result.results).toHaveLength(0);
   });
 
-  it('returns file rows for kind="file" with an empty query', () => {
-    const result = lookupHandler(db, { kind: 'file', query: '' });
+  it('returns file rows for kind="file" with an empty query', async () => {
+    const result = await lookupHandler(db, { kind: 'file', query: '' });
     expect(Array.isArray(result.results)).toBe(true);
     // Should have at least one file (the fixture has 5 .py files).
     expect(result.results.length).toBeGreaterThan(0);
