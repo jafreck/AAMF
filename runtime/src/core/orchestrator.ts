@@ -26,7 +26,7 @@ import { ContextBuilder } from '../agents/context-builder.js';
 import { parseMigrationPlan, parseE2eTestPlan } from '../agents/plan-parser.js';
 import { MigrationConfig } from '../config/schema.js';
 import { ParallelExecutor } from '../execution/parallel-executor.js';
-import { TaskQueue, type GroupBarrier } from '../execution/task-queue.js';
+import { TaskQueue, type GroupBarrier, type SCCInfo } from '../execution/task-queue.js';
 import { RetryExecutor } from '../execution/retry.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
@@ -1286,13 +1286,26 @@ export class MigrationOrchestrator {
       }
     }
 
-    // 2. Topological sort
-    const sortedTasks = TaskQueue.topologicalSort(tasks);
+    // 2. Topological sort (with SCC detection for cyclic dependencies)
+    const { sorted: sortedTasks, sccs } = TaskQueue.topologicalSortWithSCCs(tasks);
 
     // 3. Build queue, apply checkpoint
     const queue = new TaskQueue(sortedTasks);
 
-    // 3a. Apply group-barrier execution order.
+    // 3a. Register SCCs for two-pass execution
+    if (sccs.length > 0) {
+      queue.setSCCs(sccs);
+      const totalSCCTasks = sccs.reduce((sum, scc) => sum + scc.members.length, 0);
+      this.logger.info(
+        `Detected ${sccs.length} strongly connected component(s) involving ${totalSCCTasks} task(s) — ` +
+        `will use two-pass execution (scaffold → implement)`,
+      );
+      for (const scc of sccs) {
+        this.logger.info(`  SCC ${scc.id}: ${scc.members.join(', ')}`);
+      }
+    }
+
+    // 3b. Apply group-barrier execution order.
     //     Prefer in-memory data from Phase 3; fall back to persisted artifact on resume.
     const groupBarrier = await this.loadGroupBarrier();
     if (groupBarrier) {
@@ -1386,17 +1399,77 @@ export class MigrationOrchestrator {
         phase4Parallelism,
       );
 
-      this.logger.info(`Executing batch of ${batch.length} task(s) in parallel (${readyTasks.length} ready)`);
+      // Check if any tasks in the batch belong to an SCC that needs two-pass execution.
+      // If so, separate them and run the SCC scaffold/implement passes.
+      const sccBatches = new Map<number, MigrationTask[]>();
+      const nonSCCTasks: MigrationTask[] = [];
+      for (const task of batch) {
+        const scc = queue.getSCC(task.id);
+        if (scc) {
+          const existing = sccBatches.get(scc.id) ?? [];
+          existing.push(task);
+          sccBatches.set(scc.id, existing);
+        } else {
+          nonSCCTasks.push(task);
+        }
+      }
 
-      // Execute batch concurrently
-      const batchPromises = batch.map(task => this.executeTask(task, retryExec, queue, completedDurationsMs));
-      const batchResults = await Promise.allSettled(batchPromises);
-      const terminalExhaustion = batchResults.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === 'rejected' && result.reason instanceof TerminalExhaustionError,
-      );
-      if (terminalExhaustion) {
-        return this.buildPhase4TerminalResult(start, queue, terminalExhaustion.reason);
+      // Execute SCC batches with two-pass approach
+      for (const [sccId, sccTasks] of sccBatches) {
+        const sccPhase = queue.getSCCPhase(sccTasks[0].id);
+        if (sccPhase === 'scaffold') {
+          this.logger.info(
+            `SCC ${sccId} scaffold pass: ${sccTasks.length} task(s) — emitting type stubs and signatures`,
+          );
+          // Pass 1: scaffold — run code-migrator with scaffoldOnly directive
+          const scaffoldPromises = sccTasks.map(task =>
+            this.executeTask(task, retryExec, queue, completedDurationsMs, 'per-task', undefined, true),
+          );
+          const scaffoldResults = await Promise.allSettled(scaffoldPromises);
+          const scaffoldExhaustion = scaffoldResults.find(
+            (r): r is PromiseRejectedResult =>
+              r.status === 'rejected' && r.reason instanceof TerminalExhaustionError,
+          );
+          if (scaffoldExhaustion) {
+            return this.buildPhase4TerminalResult(start, queue, scaffoldExhaustion.reason);
+          }
+
+          // Mark scaffold done — next iteration will pick up the implement pass
+          queue.markSCCScaffoldDone(sccId);
+          this.logger.info(`SCC ${sccId} scaffold pass complete — proceeding to implementation`);
+
+          // Do NOT mark tasks as complete yet — they need the implement pass
+        } else {
+          // Pass 2: implement — run code-migrator normally (stubs from pass 1 are in place)
+          this.logger.info(
+            `SCC ${sccId} implementation pass: ${sccTasks.length} task(s)`,
+          );
+          const implPromises = sccTasks.map(task =>
+            this.executeTask(task, retryExec, queue, completedDurationsMs),
+          );
+          const implResults = await Promise.allSettled(implPromises);
+          const implExhaustion = implResults.find(
+            (r): r is PromiseRejectedResult =>
+              r.status === 'rejected' && r.reason instanceof TerminalExhaustionError,
+          );
+          if (implExhaustion) {
+            return this.buildPhase4TerminalResult(start, queue, implExhaustion.reason);
+          }
+        }
+      }
+
+      // Execute non-SCC tasks normally
+      if (nonSCCTasks.length > 0) {
+        this.logger.info(`Executing batch of ${nonSCCTasks.length} task(s) in parallel (${readyTasks.length} ready)`);
+        const batchPromises = nonSCCTasks.map(task => this.executeTask(task, retryExec, queue, completedDurationsMs));
+        const batchResults = await Promise.allSettled(batchPromises);
+        const terminalExhaustion = batchResults.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === 'rejected' && result.reason instanceof TerminalExhaustionError,
+        );
+        if (terminalExhaustion) {
+          return this.buildPhase4TerminalResult(start, queue, terminalExhaustion.reason);
+        }
       }
 
       // Check blocked-task policy
@@ -1917,8 +1990,10 @@ export class MigrationOrchestrator {
     completedDurationsMs: number[],
     mode: 'per-task' | 'wave-migration' = 'per-task',
     remediationContext?: RemediationContext,
+    scaffoldOnly?: boolean,
   ): Promise<{ migrated: boolean; durationMs?: number }> {
-    this.logger.event({ type: 'task-started', taskId: task.id, name: task.name });
+    const phaseLabel = scaffoldOnly ? ` [scaffold]` : '';
+    this.logger.event({ type: 'task-started', taskId: task.id, name: task.name + phaseLabel });
     await this.checkpoint.setCurrentTask(task.id);
     await this.progress.updateTask(task.id, 'in-progress');
 
@@ -1932,7 +2007,7 @@ export class MigrationOrchestrator {
     let completionEventDurationMs = Date.now() - taskStartMs;
 
     // a. Code migration with retry
-    if (!this.hasPhase4Substep(task.id, 'migrator')) {
+    if (!this.hasPhase4Substep(task.id, scaffoldOnly ? 'scaffold' : 'migrator')) {
       const migratorCtx = await this.contextBuilder.buildContext(
         'code-migrator',
         4,
@@ -1942,6 +2017,7 @@ export class MigrationOrchestrator {
           targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef,
           ...this.taskScopePayload(task),
+          ...(scaffoldOnly ? { scaffoldOnly: true } : {}),
           ...(remediationContext ? { remediationContext: toAgentRemediationContext(remediationContext) } : {}),
         },
       );
@@ -2080,7 +2156,17 @@ export class MigrationOrchestrator {
       }
 
       completionEventDurationMs = migratorResult.duration;
-      await this.markPhase4Substep(task.id, 'migrator');
+      await this.markPhase4Substep(task.id, scaffoldOnly ? 'scaffold' : 'migrator');
+    }
+
+    // For scaffold-only pass (SCC phase 1), stop after code-migrator.
+    // The implementation pass will re-run the migrator and proceed to parity/tests.
+    if (scaffoldOnly) {
+      if (!this.hasPhase4Substep(task.id, 'scaffold-commit')) {
+        await this.commitForAgent('code-migrator', 4, task.id, `${task.name} [scaffold]`);
+        await this.markPhase4Substep(task.id, 'scaffold-commit');
+      }
+      return { migrated: true, durationMs: completionEventDurationMs };
     }
 
     if (!this.hasPhase4Substep(task.id, 'migrator-commit')) {

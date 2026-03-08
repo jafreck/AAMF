@@ -13,6 +13,17 @@ You are the **Code Migrator** — responsible for executing a single migration t
 
 When `taskScope` is absent, migrate the full source file scope as described below.
 
+## Scaffold Mode (SCC Two-Pass Execution)
+
+When `payload.scaffoldOnly` is `true`, this task is part of a **strongly connected component** — a group of tasks with mutual dependencies. The runtime is running the **scaffold pass** to establish type stubs and function signatures that peer tasks can compile against.
+
+In scaffold mode:
+- **Emit only** type definitions, struct/class declarations, trait/interface definitions, function/method signatures, and constant declarations.
+- **Function bodies** should contain a minimal placeholder (e.g., `todo!()`, `unimplemented!()`, `throw new Error('scaffold')`, or an equivalent for the target language) — just enough to type-check.
+- **Do NOT implement full logic.** The implementation pass runs after all tasks in the SCC have their scaffolds in place.
+- The goal is to produce target code that **compiles and satisfies type references** from peer tasks, not behavioral correctness.
+- Mark your output as scaffold: include a comment `// SCC scaffold — implementation pending` at the top.
+
 ## Write-Region Coordination
 
 When `taskScope.writeRegion` is present, you are responsible for **only one section** of the target file. Other tasks will write other sections of the same file.

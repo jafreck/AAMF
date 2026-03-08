@@ -91,9 +91,11 @@ describe('TaskQueue.topologicalSort', () => {
     expect(ids.indexOf('b')).toBeLessThan(ids.indexOf('c'));
   });
 
-  it('should detect circular dependencies', () => {
+  it('should handle circular dependencies via SCC condensation', () => {
     const tasks = [makeTask('a', ['b']), makeTask('b', ['a'])];
-    expect(() => TaskQueue.topologicalSort(tasks)).toThrow(/[Cc]ircular/);
+    // No longer throws — uses SCC-based scheduling
+    const sorted = TaskQueue.topologicalSort(tasks);
+    expect(sorted).toHaveLength(2);
   });
 
   it('should handle tasks with no dependencies', () => {
@@ -242,5 +244,124 @@ describe('TaskQueue group barrier', () => {
     const queue = new TaskQueue(tasks);
     // No setGroupBarrier call — all independent tasks should be ready
     expect(queue.getReady().map(t => t.id).sort()).toEqual(['task-1', 'task-2', 'task-3']);
+  });
+});
+
+describe('TaskQueue SCC handling', () => {
+  it('findSCCs should detect a simple 2-node cycle', () => {
+    const tasks = [
+      makeTask('task-1', ['task-2']),
+      makeTask('task-2', ['task-1']),
+    ];
+    const sccs = TaskQueue.findSCCs(tasks);
+    const multiMember = sccs.filter(s => s.members.length > 1);
+    expect(multiMember).toHaveLength(1);
+    expect(multiMember[0].members.sort()).toEqual(['task-1', 'task-2']);
+  });
+
+  it('findSCCs should detect a 3-node cycle', () => {
+    const tasks = [
+      makeTask('task-1', ['task-2']),
+      makeTask('task-2', ['task-3']),
+      makeTask('task-3', ['task-1']),
+    ];
+    const sccs = TaskQueue.findSCCs(tasks);
+    const multiMember = sccs.filter(s => s.members.length > 1);
+    expect(multiMember).toHaveLength(1);
+    expect(multiMember[0].members.sort()).toEqual(['task-1', 'task-2', 'task-3']);
+  });
+
+  it('findSCCs should return singletons for acyclic graphs', () => {
+    const tasks = [
+      makeTask('task-1'),
+      makeTask('task-2', ['task-1']),
+      makeTask('task-3', ['task-2']),
+    ];
+    const sccs = TaskQueue.findSCCs(tasks);
+    expect(sccs.every(s => s.members.length === 1)).toBe(true);
+  });
+
+  it('topologicalSort should handle cycles without throwing', () => {
+    const tasks = [
+      makeTask('task-1', ['task-2']),
+      makeTask('task-2', ['task-1']),
+      makeTask('task-3'), // independent
+    ];
+    // Should not throw — uses SCC condensation
+    const sorted = TaskQueue.topologicalSort(tasks);
+    expect(sorted).toHaveLength(3);
+  });
+
+  it('topologicalSortWithSCCs should return SCC metadata', () => {
+    const tasks = [
+      makeTask('task-1', ['task-2']),
+      makeTask('task-2', ['task-1']),
+      makeTask('task-3', ['task-1']),
+    ];
+    const { sorted, sccs } = TaskQueue.topologicalSortWithSCCs(tasks);
+    expect(sorted).toHaveLength(3);
+    expect(sccs).toHaveLength(1);
+    expect(sccs[0].members.sort()).toEqual(['task-1', 'task-2']);
+  });
+
+  it('getReady should release all SCC members when external deps are met', () => {
+    const tasks = [
+      makeTask('task-1', ['task-2', 'task-3']), // in SCC with task-2, also depends on task-3
+      makeTask('task-2', ['task-1', 'task-3']), // in SCC with task-1, also depends on task-3
+      makeTask('task-3'),                        // external dep of the SCC
+    ];
+
+    const { sccs } = TaskQueue.topologicalSortWithSCCs(tasks);
+    const queue = new TaskQueue(tasks);
+    queue.setSCCs(sccs);
+
+    // task-3 has no deps, should be ready. SCC tasks wait for task-3.
+    const ready1 = queue.getReady().map(t => t.id);
+    expect(ready1).toEqual(['task-3']);
+
+    // After completing task-3, SCC members become ready (internal deps ignored)
+    queue.complete('task-3');
+    const ready2 = queue.getReady().map(t => t.id).sort();
+    expect(ready2).toEqual(['task-1', 'task-2']);
+  });
+
+  it('getSCCPhase should return scaffold before markSCCScaffoldDone', () => {
+    const tasks = [
+      makeTask('task-1', ['task-2']),
+      makeTask('task-2', ['task-1']),
+    ];
+    const { sccs } = TaskQueue.topologicalSortWithSCCs(tasks);
+    const queue = new TaskQueue(tasks);
+    queue.setSCCs(sccs);
+
+    expect(queue.getSCCPhase('task-1')).toBe('scaffold');
+    expect(queue.getSCCPhase('task-2')).toBe('scaffold');
+
+    queue.markSCCScaffoldDone(sccs[0].id);
+
+    expect(queue.getSCCPhase('task-1')).toBe('implement');
+    expect(queue.getSCCPhase('task-2')).toBe('implement');
+  });
+
+  it('getSCCPhase should return undefined for non-SCC tasks', () => {
+    const tasks = [makeTask('task-1')];
+    const queue = new TaskQueue(tasks);
+    expect(queue.getSCCPhase('task-1')).toBeUndefined();
+  });
+
+  it('condensed sort should order SCC after its external deps', () => {
+    // task-3 depends on nothing. task-1 and task-2 form an SCC.
+    // task-1 also depends on task-3 (external).
+    const tasks = [
+      makeTask('task-1', ['task-2', 'task-3']),
+      makeTask('task-2', ['task-1']),
+      makeTask('task-3'),
+    ];
+    const sorted = TaskQueue.topologicalSort(tasks);
+    const ids = sorted.map(t => t.id);
+
+    // task-3 must come before the SCC members
+    expect(ids.indexOf('task-3')).toBeLessThan(ids.indexOf('task-1'));
+    expect(ids.indexOf('task-3')).toBeLessThan(ids.indexOf('task-2'));
   });
 });

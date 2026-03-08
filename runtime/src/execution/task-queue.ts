@@ -24,18 +24,46 @@ export interface GroupBarrier {
 }
 
 /**
+ * A strongly connected component (SCC) in the task dependency graph.
+ *
+ * Tasks within an SCC have mutual dependencies and cannot be topologically
+ * ordered relative to each other.  The orchestrator handles SCCs with a
+ * two-pass approach: scaffold first (type stubs/signatures), then full
+ * implementation once all mutual dependencies are available.
+ */
+export interface SCCInfo {
+  /** Unique SCC identifier (index in the SCC list). */
+  id: number;
+  /** Task IDs that form this SCC. */
+  members: string[];
+}
+
+/** Execution phase for SCC tasks. */
+export type SCCPhase = 'scaffold' | 'implement';
+
+/**
  * Dependency-aware task queue for Phase 4 execution.
  *
  * Tracks task completion and blocked status, and determines which tasks
  * are ready based on dependency satisfaction. Supports checkpoint resume,
- * topological sorting with cycle detection, and group-barrier enforcement
- * for cross-group ordering.
+ * topological sorting with SCC handling for cyclic dependencies,
+ * group-barrier enforcement for cross-group ordering, and two-pass SCC
+ * execution.
  */
 export class TaskQueue {
   private tasks: Map<string, MigrationTask> = new Map();
   private completed: Set<string> = new Set();
   private blocked: Set<string> = new Set();
   private groupBarrier?: GroupBarrier;
+
+  /** Maps task ID to SCC info for tasks in multi-member SCCs. */
+  private sccMembership: Map<string, SCCInfo> = new Map();
+
+  /** Tracks which SCCs have completed their scaffold pass. */
+  private sccScaffoldDone: Set<number> = new Set();
+
+  /** All SCCs with >1 member (the ones that need two-pass execution). */
+  private sccs: SCCInfo[] = [];
 
   constructor(tasks: MigrationTask[]) {
     for (const task of tasks) {
@@ -53,6 +81,50 @@ export class TaskQueue {
    */
   setGroupBarrier(barrier: GroupBarrier): void {
     this.groupBarrier = barrier;
+  }
+
+  /**
+   * Register SCC information computed during the topological sort.
+   * The orchestrator needs this to execute SCCs with the two-pass approach.
+   */
+  setSCCs(sccs: SCCInfo[]): void {
+    this.sccs = sccs;
+    this.sccMembership.clear();
+    for (const scc of sccs) {
+      for (const id of scc.members) {
+        this.sccMembership.set(id, scc);
+      }
+    }
+  }
+
+  /** Get all multi-member SCCs. */
+  getSCCs(): SCCInfo[] {
+    return this.sccs;
+  }
+
+  /** Get the SCC a task belongs to (undefined if not in a multi-member SCC). */
+  getSCC(taskId: string): SCCInfo | undefined {
+    return this.sccMembership.get(taskId);
+  }
+
+  /** Mark an SCC's scaffold pass as complete. */
+  markSCCScaffoldDone(sccId: number): void {
+    this.sccScaffoldDone.add(sccId);
+  }
+
+  /** Check if an SCC's scaffold pass is complete. */
+  isSCCScaffoldDone(sccId: number): boolean {
+    return this.sccScaffoldDone.has(sccId);
+  }
+
+  /**
+   * Get the current execution phase for a task in an SCC.
+   * Returns undefined for tasks not in an SCC.
+   */
+  getSCCPhase(taskId: string): SCCPhase | undefined {
+    const scc = this.sccMembership.get(taskId);
+    if (!scc) return undefined;
+    return this.sccScaffoldDone.has(scc.id) ? 'implement' : 'scaffold';
   }
 
   /** Mark tasks as already completed (from checkpoint resume). */
@@ -93,7 +165,20 @@ export class TaskQueue {
     const ready: MigrationTask[] = [];
     for (const [id, task] of this.tasks) {
       if (this.completed.has(id) || this.blocked.has(id)) continue;
-      const depsOk = task.dependencies.every(dep => this.completed.has(dep));
+
+      // SCC gate: for tasks in an SCC, check external dependencies only
+      // (deps on tasks outside the SCC). Internal SCC deps are always
+      // considered satisfied since the SCC executes as an atomic unit.
+      const scc = this.sccMembership.get(id);
+      let depsOk: boolean;
+      if (scc) {
+        const sccMembers = new Set(scc.members);
+        depsOk = task.dependencies.every(dep =>
+          sccMembers.has(dep) || this.completed.has(dep),
+        );
+      } else {
+        depsOk = task.dependencies.every(dep => this.completed.has(dep));
+      }
       if (!depsOk) continue;
 
       // Group barrier gate: skip tasks from groups beyond the ready frontier
@@ -149,14 +234,49 @@ export class TaskQueue {
   }
 
   /**
-   * Perform a topological sort of all tasks.
-   * @throws {Error} If a circular dependency is detected.
+   * Perform a topological sort of all tasks, handling cycles via SCC condensation.
+   *
+   * 1. Finds all strongly connected components (Tarjan's algorithm)
+   * 2. Condenses the graph: each SCC becomes a single node
+   * 3. Topologically sorts the condensed DAG (always acyclic)
+   * 4. Expands back: tasks within an SCC are grouped together
+   *
+   * When no cycles exist, falls back to the standard DFS sort for efficiency.
    */
   static topologicalSort(tasks: MigrationTask[]): MigrationTask[] {
+    return TaskQueue.topologicalSortWithSCCs(tasks).sorted;
+  }
+
+  /**
+   * Extended topological sort that also returns SCC information.
+   * The orchestrator uses this to detect and handle cyclic task groups.
+   */
+  static topologicalSortWithSCCs(tasks: MigrationTask[]): {
+    sorted: MigrationTask[];
+    sccs: SCCInfo[];
+  } {
+    const allSCCs = TaskQueue.findSCCs(tasks);
+    const multiMemberSCCs = allSCCs.filter(scc => scc.members.length > 1);
+
+    if (multiMemberSCCs.length === 0) {
+      return { sorted: TaskQueue.standardTopoSort(tasks), sccs: [] };
+    }
+
+    return {
+      sorted: TaskQueue.condensedTopoSort(tasks, allSCCs),
+      sccs: multiMemberSCCs,
+    };
+  }
+
+  /**
+   * Standard DFS topological sort — throws on cycles.
+   * Used as fast path when no SCCs exist.
+   */
+  private static standardTopoSort(tasks: MigrationTask[]): MigrationTask[] {
     const taskMap = new Map(tasks.map(t => [t.id, t]));
     const visited = new Set<string>();
     const result: MigrationTask[] = [];
-    const visiting = new Set<string>(); // for cycle detection
+    const visiting = new Set<string>();
 
     function visit(id: string): void {
       if (visited.has(id)) return;
@@ -174,6 +294,126 @@ export class TaskQueue {
 
     for (const task of tasks) visit(task.id);
     return result;
+  }
+
+  /**
+   * SCC-condensed topological sort.
+   * Groups SCC members together and sorts the condensed DAG.
+   */
+  private static condensedTopoSort(
+    tasks: MigrationTask[],
+    sccs: SCCInfo[],
+  ): MigrationTask[] {
+    const taskMap = new Map(tasks.map(t => [t.id, t]));
+
+    // Map each task to its SCC index
+    const taskToSCC = new Map<string, number>();
+    for (const scc of sccs) {
+      for (const id of scc.members) {
+        taskToSCC.set(id, scc.id);
+      }
+    }
+
+    // Build condensed adjacency: SCC → Set<SCC> (external deps only)
+    const sccAdj = new Map<number, Set<number>>();
+    for (const scc of sccs) {
+      sccAdj.set(scc.id, new Set());
+    }
+    for (const task of tasks) {
+      const fromSCC = taskToSCC.get(task.id)!;
+      for (const dep of task.dependencies) {
+        const toSCC = taskToSCC.get(dep);
+        if (toSCC !== undefined && toSCC !== fromSCC) {
+          sccAdj.get(fromSCC)!.add(toSCC);
+        }
+      }
+    }
+
+    // Topo-sort the condensed DAG (guaranteed acyclic)
+    const visited = new Set<number>();
+    const sortedSCCIds: number[] = [];
+
+    function visitSCC(sccId: number): void {
+      if (visited.has(sccId)) return;
+      visited.add(sccId);
+      for (const dep of sccAdj.get(sccId) ?? []) {
+        visitSCC(dep);
+      }
+      sortedSCCIds.push(sccId);
+    }
+
+    for (const scc of sccs) visitSCC(scc.id);
+
+    // Expand: replace each SCC index with its member tasks
+    const sccById = new Map(sccs.map(s => [s.id, s]));
+    const result: MigrationTask[] = [];
+    for (const sccId of sortedSCCIds) {
+      const scc = sccById.get(sccId)!;
+      for (const id of scc.members) {
+        const task = taskMap.get(id);
+        if (task) result.push(task);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Find all strongly connected components using Tarjan's algorithm.
+   *
+   * Returns every SCC including singletons.  Multi-member SCCs represent
+   * cycles that need two-pass (scaffold → implement) execution.
+   */
+  static findSCCs(tasks: MigrationTask[]): SCCInfo[] {
+    const taskMap = new Map(tasks.map(t => [t.id, t]));
+
+    let index = 0;
+    const indices = new Map<string, number>();
+    const lowlinks = new Map<string, number>();
+    const onStack = new Set<string>();
+    const stack: string[] = [];
+    const sccs: SCCInfo[] = [];
+    let sccCounter = 0;
+
+    function strongconnect(v: string): void {
+      indices.set(v, index);
+      lowlinks.set(v, index);
+      index++;
+      stack.push(v);
+      onStack.add(v);
+
+      const task = taskMap.get(v);
+      if (task) {
+        for (const w of task.dependencies) {
+          if (!taskMap.has(w)) continue; // skip orphan deps
+          if (!indices.has(w)) {
+            strongconnect(w);
+            lowlinks.set(v, Math.min(lowlinks.get(v)!, lowlinks.get(w)!));
+          } else if (onStack.has(w)) {
+            lowlinks.set(v, Math.min(lowlinks.get(v)!, indices.get(w)!));
+          }
+        }
+      }
+
+      // If v is a root node, pop the SCC
+      if (lowlinks.get(v) === indices.get(v)) {
+        const members: string[] = [];
+        let w: string;
+        do {
+          w = stack.pop()!;
+          onStack.delete(w);
+          members.push(w);
+        } while (w !== v);
+        sccs.push({ id: sccCounter++, members });
+      }
+    }
+
+    for (const task of tasks) {
+      if (!indices.has(task.id)) {
+        strongconnect(task.id);
+      }
+    }
+
+    return sccs;
   }
 
   /**
@@ -203,18 +443,14 @@ export class TaskQueue {
         if (!claimedRegions) continue; // file not yet claimed
 
         if (!task.writeRegion || claimedRegions.has('')) {
-          // Either this task has no region (whole-file), or the file was
-          // already claimed as whole-file — conflict.
           hasConflict = true;
           break;
         }
 
         if (claimedRegions.has(task.writeRegion)) {
-          // Same region already claimed — conflict.
           hasConflict = true;
           break;
         }
-        // Different regions on the same file — no conflict, allow it.
       }
       if (hasConflict) continue;
 
@@ -229,7 +465,6 @@ export class TaskQueue {
         const hasDirOverlap = [...taskDirs].some(d => claimedDirs.has(d));
         if (hasDirOverlap) continue;
 
-        // Claim directories only for non-region tasks
         for (const d of taskDirs) claimedDirs.add(d);
       }
 

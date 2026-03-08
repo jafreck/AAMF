@@ -453,23 +453,20 @@ function runInference(
             e => cycleSet.has(e.from) && cycleSet.has(e.to),
           );
           const cycleStr = cycle.join(' → ');
+          // Cycles are expected in real-world codebases with mutual module
+          // dependencies.  The runtime handles them via SCC-based two-pass
+          // execution (scaffold then implement), so this is informational.
           issues.push({
-            severity: 'error',
+            severity: 'warning',
             code: 'inferred-cycle',
             message:
-              `Dependency inference created a cycle: ${cycleStr}. ` +
+              `Dependency inference detected a cycle: ${cycleStr}. ` +
               `Injected edges in cycle: ${cycleInjected.map(e => `${e.from}→${e.to} (${e.reason})`).join('; ')}. ` +
-              `The task decomposer should restructure tasks to break this cycle.`,
+              `The runtime will handle this via SCC two-pass execution (scaffold → implement).`,
           });
 
-          // Remove the injected edges that caused the cycle and restore original deps
-          for (const edge of cycleInjected) {
-            const t = taskById.get(edge.from);
-            if (t) {
-              t.dependencies = t.dependencies.filter(d => d !== edge.to);
-            }
-          }
-          break; // stop after first cycle — removing it may resolve others
+          // Keep the injected edges — the SCC scheduler handles cycles.
+          break;
         }
       }
     } catch (err) {
