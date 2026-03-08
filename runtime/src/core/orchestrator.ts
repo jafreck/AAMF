@@ -983,7 +983,7 @@ export class MigrationOrchestrator {
     // path (avoids a redundant file read when phases run back-to-back).
     // Also persist SCC information so Phase 4 can do two-pass scaffold execution.
     this.phase3PlanResult = {
-      agent: 'task-graph-builder',
+      agent: 'migration-planner',
       exitCode: 0,
       success: true,
       outputFiles: [mergedTasksFile],
