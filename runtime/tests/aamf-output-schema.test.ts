@@ -8,7 +8,7 @@ import {
   CodeMigratorSchema,
   ParityVerifierSchema,
   TestWriterSchema,
-  FailureAdjudicatorSchema,
+  ParityFailureResolverSchema,
   FinalParityCheckerSchema,
   E2eTestCrafterSchema,
   DocumentationWriterSchema,
@@ -122,22 +122,22 @@ describe('Per-agent output schemas', () => {
     });
   });
 
-  describe('FailureAdjudicatorSchema', () => {
-    it('accepts canonical failure-adjudicator output', () => {
+  describe('ParityFailureResolverSchema', () => {
+    it('accepts canonical parity-failure-resolver output', () => {
       expect(() =>
-        FailureAdjudicatorSchema.parse({ status: VALID_STATUS, agent: 'failure-adjudicator' }),
+        ParityFailureResolverSchema.parse({ status: VALID_STATUS, agent: 'parity-failure-resolver' }),
       ).not.toThrow();
     });
 
     it('accepts legacy failure-recovery output for compatibility', () => {
       expect(() =>
-        FailureAdjudicatorSchema.parse({ status: VALID_STATUS, agent: 'failure-recovery' }),
+        ParityFailureResolverSchema.parse({ status: VALID_STATUS, agent: 'failure-recovery' }),
       ).not.toThrow();
     });
 
     it('rejects wrong agent literal', () => {
       expect(() =>
-        FailureAdjudicatorSchema.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
+        ParityFailureResolverSchema.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
       ).toThrow();
     });
   });

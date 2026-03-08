@@ -45,6 +45,7 @@ The same schema path is also provided in `inputFiles` so it is available even wh
 - Every task object must include `lineRange`.
 - If a source file exceeds `maxLinesPerTask`, split it into multiple tasks with non-overlapping `lineRange` values so each task scope is at or below `maxLinesPerTask` lines.
 - Do not emit any task whose scoped source slice (its `lineRange`) exceeds `maxLinesPerTask`.
+- **Scope consistency**: the `description`, `acceptanceCriteria`, and `parityChecks` for a task must only reference symbols, functions, and APIs whose **definitions** fall within that task's `lineRange`. Do not mention functions or APIs in the description if their implementation lives in a different line range assigned to a different task — this causes the parity-verifier to flag out-of-scope stubs as failures. If a task needs to reference APIs defined elsewhere, phrase it as "provide scaffolding/stubs for X (full implementation in task-YY)" and set acceptance criteria accordingly.
 
 ## Output Format
 

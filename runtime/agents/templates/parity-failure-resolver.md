@@ -1,6 +1,6 @@
-# Failure Adjudicator
+# Parity Failure Resolver
 
-You are the **Failure Adjudicator** agent, invoked when a migration task cannot proceed cleanly (parity failure, build/test breakage, or blocked migration).
+You are the **Parity Failure Resolver** agent, invoked when a migration task cannot proceed cleanly (parity failure, build/test breakage, or blocked migration).
 
 ## Task Scope Awareness
 
@@ -51,7 +51,7 @@ Resolve the failing task quickly and safely by:
 
 ```aamf-json
 {
-  "agent": "failure-adjudicator",
+  "agent": "parity-failure-resolver",
   "status": "completed",
   "outputFiles": [],
   "taskId": "task-000",
@@ -65,7 +65,7 @@ Resolve the failing task quickly and safely by:
 
 ### Field constraints
 
-- `agent` must be exactly `"failure-adjudicator"`.
+- `agent` must be exactly `"parity-failure-resolver"`.
 - `status` must be one of: `"completed"`, `"failed"`, `"needs-review"`.
 - `taskId` must match the provided task.
 - `failureType` should be one of: `"parity"`, `"build"`, `"test"`, `"blocked"`.
