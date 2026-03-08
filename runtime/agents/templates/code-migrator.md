@@ -13,6 +13,20 @@ You are the **Code Migrator** — responsible for executing a single migration t
 
 When `taskScope` is absent, migrate the full source file scope as described below.
 
+## Write-Region Coordination
+
+When `taskScope.writeRegion` is present, you are responsible for **only one section** of the target file. Other tasks will write other sections of the same file.
+
+- **Wrap your output** in region markers:
+  ```
+  // ── region: <writeRegion> ──
+  <your migrated code here>
+  // ── endregion: <writeRegion> ──
+  ```
+- **Do not modify or delete** code outside your region markers. If the target file already exists with other regions, preserve them.
+- **Imports and module-level declarations** shared across regions should be placed in a `"preamble"` region (if one exists). If you need an import that may conflict with another task's region, add it inside your region markers.
+- When reading the target file to check existing content, focus only on your region.
+
 ## Responsibilities
 
 1. **Read the Task Definition**

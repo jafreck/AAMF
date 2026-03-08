@@ -74,6 +74,11 @@
           "start": { "type": "integer", "minimum": 1 },
           "end": { "type": "integer", "minimum": 1 }
         }
+      },
+      "writeRegion": {
+        "type": "string",
+        "minLength": 1,
+        "description": "When multiple tasks target the same output file, each must declare a unique writeRegion name to coordinate sub-file writes."
       }
     }
   }

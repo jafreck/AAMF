@@ -180,34 +180,65 @@ export class TaskQueue {
    * Select a non-overlapping batch from ready tasks.
    *
    * Tasks are considered overlapping when they share either a target file or
-   * a target directory.
+   * a target directory — **unless** both tasks declare distinct `writeRegion`
+   * values for the shared file, in which case they can safely execute
+   * concurrently (each writes to its own region of the output).
    */
   static selectNonOverlappingBatch(
     readyTasks: MigrationTask[],
     maxBatchSize: number,
   ): MigrationTask[] {
     const batch: MigrationTask[] = [];
-    const claimedFiles = new Set<string>();
+    // file → Set of claimed writeRegions (empty string = whole-file claim)
+    const claimedFileRegions = new Map<string, Set<string>>();
     const claimedDirs = new Set<string>();
 
     for (const task of readyTasks) {
       if (batch.length >= maxBatchSize) break;
 
-      const hasFileOverlap = task.targetFiles.some(f => claimedFiles.has(f));
-      if (hasFileOverlap) continue;
+      let hasConflict = false;
 
-      const taskDirs = new Set(
-        task.targetFiles.map(f => {
-          const lastSlash = f.lastIndexOf('/');
-          return lastSlash >= 0 ? f.substring(0, lastSlash) : '.';
-        }),
-      );
-      const hasDirOverlap = [...taskDirs].some(d => claimedDirs.has(d));
-      if (hasDirOverlap) continue;
+      for (const f of task.targetFiles) {
+        const claimedRegions = claimedFileRegions.get(f);
+        if (!claimedRegions) continue; // file not yet claimed
+
+        if (!task.writeRegion || claimedRegions.has('')) {
+          // Either this task has no region (whole-file), or the file was
+          // already claimed as whole-file — conflict.
+          hasConflict = true;
+          break;
+        }
+
+        if (claimedRegions.has(task.writeRegion)) {
+          // Same region already claimed — conflict.
+          hasConflict = true;
+          break;
+        }
+        // Different regions on the same file — no conflict, allow it.
+      }
+      if (hasConflict) continue;
+
+      // Directory overlap check (only for tasks without writeRegion)
+      if (!task.writeRegion) {
+        const taskDirs = new Set(
+          task.targetFiles.map(f => {
+            const lastSlash = f.lastIndexOf('/');
+            return lastSlash >= 0 ? f.substring(0, lastSlash) : '.';
+          }),
+        );
+        const hasDirOverlap = [...taskDirs].some(d => claimedDirs.has(d));
+        if (hasDirOverlap) continue;
+
+        // Claim directories only for non-region tasks
+        for (const d of taskDirs) claimedDirs.add(d);
+      }
 
       batch.push(task);
-      for (const f of task.targetFiles) claimedFiles.add(f);
-      for (const d of taskDirs) claimedDirs.add(d);
+      for (const f of task.targetFiles) {
+        const regions = claimedFileRegions.get(f) ?? new Set<string>();
+        regions.add(task.writeRegion ?? '');
+        claimedFileRegions.set(f, regions);
+      }
     }
 
     return batch;

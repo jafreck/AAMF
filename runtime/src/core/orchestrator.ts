@@ -30,6 +30,7 @@ import { TaskQueue, type GroupBarrier } from '../execution/task-queue.js';
 import { RetryExecutor } from '../execution/retry.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
+import { validateTaskGraph, inferDependencies } from './task-graph-validator.js';
 import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite, readJson, ensureDir } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
@@ -227,6 +228,7 @@ const TaskFileSchema = z.array(
         start: z.number().int().min(1),
         end: z.number().int().min(1),
       }),
+    writeRegion: z.string().min(1).optional(),
   }).strict(),
 );
 
@@ -1101,6 +1103,70 @@ export class MigrationOrchestrator {
     this.logger.info(
       `Merged ${allTasks.length} task(s) across ${groups.length} module group(s) → ${mergedTasksFile}`,
     );
+
+    // ── Validate the merged task graph ────────────────────────────────────
+    const validationIssues = validateTaskGraph(allTasks, taskGroupMap, groups.length);
+    const validationErrors = validationIssues.filter(i => i.severity === 'error');
+    const validationWarnings = validationIssues.filter(i => i.severity === 'warning');
+
+    for (const w of validationWarnings) {
+      this.logger.warn(`Task graph warning [${w.code}]: ${w.message}`);
+    }
+    if (validationErrors.length > 0) {
+      const errorSummary = validationErrors
+        .map(e => `[${e.code}] ${e.message}`)
+        .join('\n  ');
+      this.logger.error(`Task graph validation failed with ${validationErrors.length} error(s):\n  ${errorSummary}`);
+      return {
+        phase: 3,
+        name: 'Migration Planning',
+        success: false,
+        duration: Date.now() - start,
+        error: `Task graph validation failed: ${validationErrors[0].message}`,
+      };
+    }
+
+    // ── Lore-powered dependency inference ─────────────────────────────────
+    if (await fileExists(this.kbDbPath)) {
+      const inferenceResult = await inferDependencies(
+        allTasks,
+        taskGroupMap,
+        this.kbDbPath,
+        this.config.source.path,
+        this.logger,
+      );
+
+      const inferenceErrors = inferenceResult.issues.filter(i => i.severity === 'error');
+      const inferenceWarnings = inferenceResult.issues.filter(i => i.severity === 'warning');
+
+      for (const w of inferenceWarnings) {
+        this.logger.warn(`Dependency inference warning [${w.code}]: ${w.message}`);
+      }
+
+      if (inferenceResult.injectedEdges.length > 0) {
+        this.logger.info(
+          `Dependency inference injected ${inferenceResult.injectedEdges.length} edge(s): ` +
+          inferenceResult.injectedEdges.map(e => `${e.from}→${e.to}`).join(', '),
+        );
+      }
+
+      if (inferenceErrors.length > 0) {
+        const errorSummary = inferenceErrors
+          .map(e => `[${e.code}] ${e.message}`)
+          .join('\n  ');
+        this.logger.error(`Dependency inference found ${inferenceErrors.length} error(s):\n  ${errorSummary}`);
+        return {
+          phase: 3,
+          name: 'Migration Planning',
+          success: false,
+          duration: Date.now() - start,
+          error: `Dependency inference failed: ${inferenceErrors[0].message}`,
+        };
+      }
+    } else {
+      this.logger.info('KB database not available — skipping Lore dependency inference');
+    }
+
     await atomicWrite(mergedTasksFile, JSON.stringify(allTasks, null, 2));
 
     // Persist the task→group mapping so Phase 4 can enforce group-barrier
@@ -1507,6 +1573,7 @@ export class MigrationOrchestrator {
         acceptanceCriteria: task.acceptanceCriteria,
         parityChecks: task.parityChecks,
         ...(task.lineRange ? { lineRange: task.lineRange } : {}),
+        ...(task.writeRegion ? { writeRegion: task.writeRegion } : {}),
       },
     };
   }
