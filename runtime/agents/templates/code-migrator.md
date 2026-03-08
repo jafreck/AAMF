@@ -15,23 +15,34 @@ When `taskScope` is absent, migrate the full source file scope as described belo
 
 ## Scaffold Mode (SCC Two-Pass Execution)
 
-When `payload.scaffoldOnly` is `true`, this task is part of a **strongly connected component** — a group of tasks with mutual dependencies. The runtime is running the **scaffold pass** to establish type stubs and function signatures that peer tasks can compile against.
+When `payload.scaffoldOnly` is `true`, this task is part of a **strongly connected component** — a group of tasks with mutual dependencies. The runtime is running the **scaffold pass** to establish type stubs and function signatures that peer tasks can compile/type-check against.
 
 In scaffold mode:
-- **Emit only** type definitions, struct/class declarations, trait/interface definitions, function/method signatures, and constant declarations.
-- **Function bodies** should contain a minimal placeholder (e.g., `todo!()`, `unimplemented!()`, `throw new Error('scaffold')`, or an equivalent for the target language) — just enough to type-check.
+- **Emit only** type definitions, struct/class/interface declarations, function/method signatures, and constant declarations — using the target language's idioms.
+- **Function bodies** should contain a minimal placeholder that satisfies the type system. Use the target language's idiomatic stub pattern:
+  - Rust: `todo!()` or `unimplemented!()`
+  - TypeScript/JavaScript: `throw new Error('scaffold')`
+  - Python: `raise NotImplementedError()`
+  - Go: `panic("scaffold")`
+  - C#/Java: `throw new NotImplementedException()` / `throw new UnsupportedOperationException()`
+  - C/C++: `abort()` with a comment
+  - For any other language, use the closest equivalent that compiles.
 - **Do NOT implement full logic.** The implementation pass runs after all tasks in the SCC have their scaffolds in place.
 - The goal is to produce target code that **compiles and satisfies type references** from peer tasks, not behavioral correctness.
-- Mark your output as scaffold: include a comment `// SCC scaffold — implementation pending` at the top.
+- Mark your output as scaffold: include a comment at the top using the target language's comment syntax (e.g. `// SCC scaffold — implementation pending` or `# SCC scaffold — implementation pending`).
 
 ## Write-Region Coordination
 
 When `taskScope.writeRegion` is present, you are responsible for **only one section** of the target file. Other tasks will write other sections of the same file.
 
-- **Wrap your output** in region markers:
+- **Wrap your output** in region markers using the target language's comment syntax:
   ```
-  // ── region: <writeRegion> ──
-  <your migrated code here>
+  // ── region: <writeRegion> ──     (C, Rust, Go, TypeScript, Java, C#)
+  # ── region: <writeRegion> ──      (Python, Ruby, Shell)
+  -- ── region: <writeRegion> ──     (Lua, Haskell, SQL)
+  ```
+  Close with the corresponding `endregion` marker:
+  ```
   // ── endregion: <writeRegion> ──
   ```
 - **Do not modify or delete** code outside your region markers. If the target file already exists with other regions, preserve them.
