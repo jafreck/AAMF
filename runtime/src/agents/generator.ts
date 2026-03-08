@@ -92,7 +92,7 @@ export async function resolvePartials(
   const names = new Set<string>();
   let m: RegExpExecArray | null;
   while ((m = partialPattern.exec(content)) !== null) {
-    names.add(m[1]);
+    if (m[1]) names.add(m[1]);
   }
 
   if (names.size === 0) return content;
