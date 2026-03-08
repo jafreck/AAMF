@@ -26,7 +26,7 @@ import { ContextBuilder } from '../agents/context-builder.js';
 import { parseMigrationPlan, parseE2eTestPlan } from '../agents/plan-parser.js';
 import { MigrationConfig } from '../config/schema.js';
 import { ParallelExecutor } from '../execution/parallel-executor.js';
-import { TaskQueue } from '../execution/task-queue.js';
+import { TaskQueue, type GroupBarrier } from '../execution/task-queue.js';
 import { RetryExecutor } from '../execution/retry.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
@@ -1060,7 +1060,9 @@ export class MigrationOrchestrator {
     //   or by loading the file directly (fallback on resume without in-memory
     //   state).
     const allTasks: MigrationTask[] = [];
-    for (const group of groups) {
+    const taskGroupMap: Record<string, number> = {};
+    for (let groupIdx = 0; groupIdx < groups.length; groupIdx++) {
+      const group = groups[groupIdx];
       const taskFile = join(planningDir, `tasks-${group.id}.json`);
       if (await fileExists(taskFile)) {
         const groupTasksRaw = await readJson<unknown>(taskFile);
@@ -1085,6 +1087,9 @@ export class MigrationOrchestrator {
             error: validationError,
           };
         }
+        for (const task of parsed.data) {
+          taskGroupMap[task.id] = groupIdx;
+        }
         allTasks.push(...parsed.data);
       } else {
         this.logger.warn(
@@ -1098,6 +1103,11 @@ export class MigrationOrchestrator {
     );
     await atomicWrite(mergedTasksFile, JSON.stringify(allTasks, null, 2));
 
+    // Persist the task→group mapping so Phase 4 can enforce group-barrier
+    // execution order on resume (when in-memory state is not available).
+    const taskGroupMapFile = join(planningDir, 'task-group-map.json');
+    await atomicWrite(taskGroupMapFile, JSON.stringify({ groupCount: groups.length, taskGroupMap }, null, 2));
+
     // Make merged tasks available to Phase 4 via the in-memory structuredOutput
     // path (avoids a redundant file read when phases run back-to-back).
     this.phase3PlanResult = {
@@ -1107,7 +1117,7 @@ export class MigrationOrchestrator {
       outputFiles: [mergedTasksFile],
       duration: Date.now() - start,
       outputParsed: true,
-      structuredOutput: { tasks: allTasks },
+      structuredOutput: { tasks: allTasks, taskGroupMap, groupCount: groups.length },
     };
 
     return {
@@ -1215,6 +1225,18 @@ export class MigrationOrchestrator {
 
     // 3. Build queue, apply checkpoint
     const queue = new TaskQueue(sortedTasks);
+
+    // 3a. Apply group-barrier execution order.
+    //     Prefer in-memory data from Phase 3; fall back to persisted artifact on resume.
+    const groupBarrier = await this.loadGroupBarrier();
+    if (groupBarrier) {
+      queue.setGroupBarrier(groupBarrier);
+      this.logger.info(
+        `Group-barrier enforcement enabled: ${groupBarrier.groupCount} group(s), ` +
+        `${groupBarrier.taskToGroupIndex.size} task(s) mapped`,
+      );
+    }
+
     const checkpointState = this.checkpoint.getState();
     queue.markCompleted(checkpointState.completedTasks);
     this.progress.setTotalTasks(sortedTasks.length);
@@ -3506,6 +3528,47 @@ export class MigrationOrchestrator {
   private resolverReducedScope(result: AgentResult): boolean {
     if (!result.outputParsed || !result.structuredOutput) return false;
     return (result.structuredOutput as Record<string, unknown>).scopeReduced === true;
+  }
+
+  /**
+   * Load the task→group mapping for group-barrier enforcement.
+   *
+   * Prefers in-memory data from Phase 3 (available when phases run
+   * back-to-back).  Falls back to the persisted `task-group-map.json`
+   * artifact on resume.
+   *
+   * Returns `undefined` when the mapping is unavailable (e.g., legacy
+   * plans that pre-date group barriers), in which case Phase 4 runs
+   * without cross-group ordering enforcement.
+   */
+  private async loadGroupBarrier(): Promise<GroupBarrier | undefined> {
+    // In-memory path (Phase 3 just completed in this process)
+    const so = this.phase3PlanResult?.structuredOutput as
+      | Record<string, unknown>
+      | undefined;
+    if (so?.taskGroupMap && typeof so.groupCount === 'number') {
+      const raw = so.taskGroupMap as Record<string, number>;
+      return {
+        taskToGroupIndex: new Map(Object.entries(raw)),
+        groupCount: so.groupCount as number,
+      };
+    }
+
+    // Persisted artifact path (resume)
+    const mapFile = join(this.paths.artifactsPlanningDir, 'task-group-map.json');
+    if (await fileExists(mapFile)) {
+      try {
+        const data = await readJson<{ groupCount: number; taskGroupMap: Record<string, number> }>(mapFile);
+        return {
+          taskToGroupIndex: new Map(Object.entries(data.taskGroupMap)),
+          groupCount: data.groupCount,
+        };
+      } catch {
+        this.logger.warn('Failed to parse task-group-map.json — group-barrier enforcement disabled');
+      }
+    }
+
+    return undefined;
   }
 
   /**

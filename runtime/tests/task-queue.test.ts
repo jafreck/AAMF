@@ -126,3 +126,79 @@ describe('TaskQueue.selectNonOverlappingBatch', () => {
     expect(batch.map(t => t.id)).toEqual(['a', 'c']);
   });
 });
+
+describe('TaskQueue group barrier', () => {
+  it('should hold back tasks from later groups until earlier groups settle', () => {
+    // Three tasks, no intra-task dependencies, across two groups
+    const tasks = [makeTask('task-1'), makeTask('task-2'), makeTask('task-3')];
+    const queue = new TaskQueue(tasks);
+    queue.setGroupBarrier({
+      taskToGroupIndex: new Map([['task-1', 0], ['task-2', 0], ['task-3', 1]]),
+      groupCount: 2,
+    });
+
+    // Only group 0 tasks should be ready
+    expect(queue.getReady().map(t => t.id).sort()).toEqual(['task-1', 'task-2']);
+
+    // After completing group 0, group 1 becomes ready
+    queue.complete('task-1');
+    queue.complete('task-2');
+    expect(queue.getReady().map(t => t.id)).toEqual(['task-3']);
+  });
+
+  it('should allow later group tasks when earlier group tasks are blocked', () => {
+    const tasks = [makeTask('task-1'), makeTask('task-2')];
+    const queue = new TaskQueue(tasks);
+    queue.setGroupBarrier({
+      taskToGroupIndex: new Map([['task-1', 0], ['task-2', 1]]),
+      groupCount: 2,
+    });
+
+    // Block the only group-0 task — group 1 should become unblocked
+    queue.markBlocked('task-1');
+    expect(queue.getReady().map(t => t.id)).toEqual(['task-2']);
+  });
+
+  it('should respect both dependencies and group barriers', () => {
+    // task-2 depends on task-1, both in group 0; task-3 in group 1
+    const tasks = [makeTask('task-1'), makeTask('task-2', ['task-1']), makeTask('task-3')];
+    const queue = new TaskQueue(tasks);
+    queue.setGroupBarrier({
+      taskToGroupIndex: new Map([['task-1', 0], ['task-2', 0], ['task-3', 1]]),
+      groupCount: 2,
+    });
+
+    // Only task-1 ready (task-2 blocked by dep, task-3 blocked by group)
+    expect(queue.getReady().map(t => t.id)).toEqual(['task-1']);
+
+    queue.complete('task-1');
+    // Now task-2 ready (dep satisfied); task-3 still blocked by group
+    expect(queue.getReady().map(t => t.id)).toEqual(['task-2']);
+
+    queue.complete('task-2');
+    // Group 0 complete — task-3 now ready
+    expect(queue.getReady().map(t => t.id)).toEqual(['task-3']);
+  });
+
+  it('should handle three groups sequentially', () => {
+    const tasks = [makeTask('task-1'), makeTask('task-2'), makeTask('task-3')];
+    const queue = new TaskQueue(tasks);
+    queue.setGroupBarrier({
+      taskToGroupIndex: new Map([['task-1', 0], ['task-2', 1], ['task-3', 2]]),
+      groupCount: 3,
+    });
+
+    expect(queue.getReady().map(t => t.id)).toEqual(['task-1']);
+    queue.complete('task-1');
+    expect(queue.getReady().map(t => t.id)).toEqual(['task-2']);
+    queue.complete('task-2');
+    expect(queue.getReady().map(t => t.id)).toEqual(['task-3']);
+  });
+
+  it('should release all tasks when no group barrier is set', () => {
+    const tasks = [makeTask('task-1'), makeTask('task-2'), makeTask('task-3')];
+    const queue = new TaskQueue(tasks);
+    // No setGroupBarrier call — all independent tasks should be ready
+    expect(queue.getReady().map(t => t.id).sort()).toEqual(['task-1', 'task-2', 'task-3']);
+  });
+});

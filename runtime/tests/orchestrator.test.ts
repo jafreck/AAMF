@@ -135,6 +135,16 @@ async function writePhase3PlanningArtifacts(
   const group = { id: 'core', name: 'Core', analysisFiles: [] };
   await writeFile(join(planningDir, 'groups.json'), JSON.stringify([group], null, 2));
   await writeFile(join(planningDir, 'tasks-core.json'), JSON.stringify(tasks, null, 2));
+
+  // Write the task→group mapping so Phase 4 can enforce group-barrier order on resume.
+  const taskGroupMap: Record<string, number> = {};
+  for (const task of tasks) {
+    taskGroupMap[task.id] = 0; // all tasks in the single "core" group
+  }
+  await writeFile(
+    join(planningDir, 'task-group-map.json'),
+    JSON.stringify({ groupCount: 1, taskGroupMap }, null, 2),
+  );
 }
 
 /** Write a final-parity-report.md with fix entries. */
