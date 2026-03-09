@@ -226,7 +226,7 @@ describe('ContextBuilder', () => {
       );
       expect(schemaFile).toBeDefined();
       expect(context.payload?.taskSchemaPath).toBe(schemaFile);
-      expect(context.payload?.maxLinesPerTask).toBe(500);
+      expect(context.payload?.maxLinesPerTask).toBe(1000);
       expect(context.inputFiles).toContain('/tmp/strategy.md');
       expect(context.inputFiles).toContain('/tmp/kb-core.md');
     });
