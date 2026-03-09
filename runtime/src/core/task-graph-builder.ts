@@ -88,7 +88,7 @@ export async function buildDependencySummary(
       id: s.id, name: s.name, kind: s.kind,
       fileId: s.file_id, startLine: s.start_line, endLine: s.end_line,
     }));
-    const callRefs = querySymbolRefs(db);
+    const callRefs = queryResolvedEdges(db);
     const typeRefs = queryTypeRefs(db);
 
     // Cluster symbols
@@ -215,7 +215,7 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
       return { tasks, sccs: [], compilationUnits: compilationUnits ?? [] };
     }
 
-    const callRefs = querySymbolRefs(db);
+    const callRefs = queryResolvedEdges(db);
     const typeRefs = queryTypeRefs(db);
 
     // Cluster symbols into tasks
@@ -376,14 +376,29 @@ function clusterSymbols(
   };
   for (const sym of symbols) ensureEdges(sym.id);
 
-  // Add call edges
+  // Add call edges — use Lore's pre-resolved callee_id when available.
+  // Falls back to name-based matching only for unresolved edges.
   for (const ref of callRefs) {
     if (!symMap.has(ref.callerSymbolId)) continue;
-    const calleeIds = nameToIds.get(ref.calleeName) ?? [];
-    for (const calleeId of calleeIds) {
-      if (calleeId !== ref.callerSymbolId && symMap.has(calleeId)) {
+
+    if (ref.calleeId != null && symMap.has(ref.calleeId)) {
+      // Lore already resolved this edge (LSP, same-file, or unique name)
+      if (ref.calleeId !== ref.callerSymbolId) {
         ensureEdges(ref.callerSymbolId);
-        edges.get(ref.callerSymbolId)!.add(calleeId);
+        edges.get(ref.callerSymbolId)!.add(ref.calleeId);
+      }
+    } else {
+      // Fallback: name-based resolution (only for edges Lore couldn't resolve)
+      const calleeIds = nameToIds.get(ref.calleeName) ?? [];
+      // Prefer same-file matches to avoid false cross-file edges
+      const callerFileId = ref.callerFileId;
+      const localCallees = calleeIds.filter(id => symMap.get(id)?.fileId === callerFileId);
+      const resolvedIds = localCallees.length > 0 ? localCallees : calleeIds;
+      for (const calleeId of resolvedIds) {
+        if (calleeId !== ref.callerSymbolId && symMap.has(calleeId)) {
+          ensureEdges(ref.callerSymbolId);
+          edges.get(ref.callerSymbolId)!.add(calleeId);
+        }
       }
     }
   }
@@ -1022,6 +1037,10 @@ interface CallRefRow {
   callerSymbolId: number; callerFileId: number;
   callerStartLine: number; callerEndLine: number;
   calleeName: string;
+  /** Resolved callee symbol ID (null if unresolved). Lore v0.3.0+. */
+  calleeId: number | null;
+  /** Resolved callee file ID (null if unresolved). Lore v0.3.0+. */
+  calleeFileId: number | null;
 }
 
 interface TypeRefRow {
@@ -1029,18 +1048,69 @@ interface TypeRefRow {
   typeName: string; refLine: number;
 }
 
-function querySymbolRefs(db: import('better-sqlite3').Database): CallRefRow[] {
+/**
+ * Load pre-resolved call-graph edges.
+ *
+ * Prefers Lore v0.3.0's denormalized columns on `symbol_refs` (file_id,
+ * resolution_method) when available, falling back to a JOIN through `symbols`
+ * for older schemas.  When resolution_method is present, only edges resolved
+ * via high-confidence methods (LSP, same-file, globally unique) are returned.
+ */
+function queryResolvedEdges(
+  db: import('better-sqlite3').Database,
+): CallRefRow[] {
+  // Detect whether the v0.3.0 columns exist
+  const cols = db.prepare('PRAGMA table_info(symbol_refs)').all() as Array<{ name: string }>;
+  const hasFileId = cols.some(c => c.name === 'file_id');
+  const hasResolutionMethod = cols.some(c => c.name === 'resolution_method');
+
+  if (hasFileId && hasResolutionMethod) {
+    // Lore v0.3.0+: use denormalized file_id and filter by resolution confidence
+    const rows = db.prepare(`
+      SELECT sr.caller_id, sr.file_id AS caller_file_id,
+             sr.callee_id, sr.callee_name,
+             cs.file_id AS callee_file_id
+      FROM symbol_refs sr
+      LEFT JOIN symbols cs ON sr.callee_id = cs.id
+      WHERE sr.callee_id IS NOT NULL
+        AND sr.resolution_method IN ('lsp_definition', 'name_same_file', 'name_unique')
+    `).all() as Array<{
+      caller_id: number; caller_file_id: number;
+      callee_id: number | null; callee_name: string;
+      callee_file_id: number | null;
+    }>;
+    return rows.map(r => ({
+      callerSymbolId: r.caller_id,
+      callerFileId: r.caller_file_id,
+      callerStartLine: 0,
+      callerEndLine: 0,
+      calleeName: r.callee_name,
+      calleeId: r.callee_id,
+      calleeFileId: r.callee_file_id,
+    }));
+  }
+
+  // Fallback for older schemas: JOIN through symbols to get file_id
   const rows = db.prepare(`
-    SELECT s.id AS caller_symbol_id, s.file_id, s.start_line, s.end_line, sr.callee_name
-    FROM symbol_refs sr JOIN symbols s ON sr.caller_id = s.id
+    SELECT s.id AS caller_symbol_id, s.file_id AS caller_file_id,
+           sr.callee_id, sr.callee_name,
+           cs.file_id AS callee_file_id
+    FROM symbol_refs sr
+    JOIN symbols s ON sr.caller_id = s.id
+    LEFT JOIN symbols cs ON sr.callee_id = cs.id
   `).all() as Array<{
-    caller_symbol_id: number; file_id: number;
-    start_line: number; end_line: number; callee_name: string;
+    caller_symbol_id: number; caller_file_id: number;
+    callee_id: number | null; callee_name: string;
+    callee_file_id: number | null;
   }>;
   return rows.map(r => ({
-    callerSymbolId: r.caller_symbol_id, callerFileId: r.file_id,
-    callerStartLine: r.start_line, callerEndLine: r.end_line,
+    callerSymbolId: r.caller_symbol_id,
+    callerFileId: r.caller_file_id,
+    callerStartLine: 0,
+    callerEndLine: 0,
     calleeName: r.callee_name,
+    calleeId: r.callee_id,
+    calleeFileId: r.callee_file_id,
   }));
 }
 
