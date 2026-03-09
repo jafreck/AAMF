@@ -284,10 +284,10 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
         dependencies: [], // populated below
         complexity: isStubs ? 'simple' : estimateComplexity(cluster.totalLines),
         description: isStubs
-          ? `Emit type signatures and function stubs for ${symbolNames.length} symbols`
+          ? `Emit type signatures and placeholder function bodies for ${symbolNames.length} symbols`
           : describeCluster(cluster, fileIdToPath),
         acceptanceCriteria: isStubs
-          ? ['All type definitions and function signatures are present', 'All function bodies are todo!()/unimplemented!()']
+          ? ['All type definitions and function signatures are present', 'All function bodies are placeholders (no real implementation)']
           : buildAcceptanceCriteria(cluster),
         parityChecks: isStubs
           ? ['Type signatures match source definitions']
