@@ -185,10 +185,10 @@ describe('buildTaskGraph', () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);
     const f1 = insertFile(db, 'src/base.c');
-    const baseFn = insertSymbol(db, f1, 'base_fn', 'function', 1, 20);
+    const baseFn = insertSymbol(db, f1, 'base_fn', 'function', 1, 80);
     const f2 = insertFile(db, 'src/app.c');
-    const appFn = insertSymbol(db, f2, 'app_fn', 'function', 1, 20);
-    // app calls base (one-directional → not enough for merge)
+    const appFn = insertSymbol(db, f2, 'app_fn', 'function', 1, 80);
+    // app calls base (one-directional, cross-file → stays separate)
     insertRef(db, appFn, 'base_fn', 5, baseFn);
     db.close();
 
@@ -204,9 +204,9 @@ describe('buildTaskGraph', () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);
     const f1 = insertFile(db, 'src/types.c');
-    insertSymbol(db, f1, 'Config', 'struct', 1, 15);
+    insertSymbol(db, f1, 'Config', 'struct', 1, 60);
     const f2 = insertFile(db, 'src/app.c');
-    const appFn = insertSymbol(db, f2, 'run', 'function', 1, 30);
+    const appFn = insertSymbol(db, f2, 'run', 'function', 1, 80);
     insertTypeRef(db, f2, 'Config', 5, appFn);
     db.close();
 
@@ -250,9 +250,9 @@ describe('buildTaskGraph', () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);
     const f1 = insertFile(db, 'src/core.c');
-    insertSymbol(db, f1, 'core_fn', 'function', 1, 20);
+    insertSymbol(db, f1, 'core_fn', 'function', 1, 80);
     const f2 = insertFile(db, 'src/util.c');
-    insertSymbol(db, f2, 'util_fn', 'function', 1, 20);
+    insertSymbol(db, f2, 'util_fn', 'function', 1, 80);
     db.close();
 
     const units: CompilationUnit[] = [
@@ -270,9 +270,9 @@ describe('buildTaskGraph', () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);
     const f1 = insertFile(db, 'src/base.c');
-    const baseSym = insertSymbol(db, f1, 'base_fn', 'function', 1, 20);
+    const baseSym = insertSymbol(db, f1, 'base_fn', 'function', 1, 80);
     const f2 = insertFile(db, 'src/app.c');
-    const appSym = insertSymbol(db, f2, 'app_fn', 'function', 1, 20);
+    const appSym = insertSymbol(db, f2, 'app_fn', 'function', 1, 80);
     insertRef(db, appSym, 'base_fn', 5, baseSym);
     db.close();
 
@@ -315,12 +315,12 @@ describe('buildTaskGraph', () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);
     const fc = insertFile(db, 'src/c.c');
-    const fnC = insertSymbol(db, fc, 'fn_c', 'function', 1, 20);
+    const fnC = insertSymbol(db, fc, 'fn_c', 'function', 1, 60);
     const fb = insertFile(db, 'src/b.c');
-    const fnB = insertSymbol(db, fb, 'fn_b', 'function', 1, 20);
+    const fnB = insertSymbol(db, fb, 'fn_b', 'function', 1, 60);
     insertRef(db, fnB, 'fn_c', 5, fnC);
     const fa = insertFile(db, 'src/a.c');
-    const fnA = insertSymbol(db, fa, 'fn_a', 'function', 1, 20);
+    const fnA = insertSymbol(db, fa, 'fn_a', 'function', 1, 60);
     insertRef(db, fnA, 'fn_b', 5, fnB);
     db.close();
 

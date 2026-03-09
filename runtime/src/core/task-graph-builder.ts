@@ -468,50 +468,40 @@ function clusterSymbols(
     }
   }
 
-  // Step 3: Greedy merge — merge the pair with the highest bidirectional
-  // edge weight, as long as merged size ≤ maxLines
-  let changed = true;
-  while (changed) {
-    changed = false;
+  // Step 3: Greedy merge — two passes:
+  //   Pass A: merge same-file clusters with ≥1 edge (directional OK)
+  //   Pass B: merge cross-file clusters with ≥2 bidirectional edges
+  // Both passes respect maxLines.
 
-    // Find the pair with the highest mutual edge weight
-    let bestPair: [string, string] | undefined;
-    let bestWeight = 0;
+  // Helper: get the set of file IDs a cluster spans
+  const clusterFileIds = (cluster: Cluster): Set<number> => {
+    const s = new Set<number>();
+    for (const sym of cluster.symbols) s.add(sym.fileId);
+    return s;
+  };
 
-    for (const [from, targets] of interClusterEdges) {
-      for (const [to, weight] of targets) {
-        if (!clusterMap.has(from) || !clusterMap.has(to)) continue;
-        // Bidirectional weight
-        const reverseWeight = interClusterEdges.get(to)?.get(from) ?? 0;
-        const totalWeight = weight + reverseWeight;
-        if (totalWeight <= bestWeight) continue;
-
-        // Check size constraint
-        const fromCluster = clusterMap.get(from)!;
-        const toCluster = clusterMap.get(to)!;
-        if (fromCluster.totalLines + toCluster.totalLines > maxLines) continue;
-
-        bestWeight = totalWeight;
-        bestPair = [from, to];
-      }
+  // Helper: check if two clusters share at least one file
+  const shareFile = (a: Cluster, b: Cluster): boolean => {
+    const aFiles = clusterFileIds(a);
+    for (const sym of b.symbols) {
+      if (aFiles.has(sym.fileId)) return true;
     }
+    return false;
+  };
 
-    if (!bestPair || bestWeight < 2) break; // Only merge if at least 2 edges connect them
-
-    const [keepId, mergeId] = bestPair;
+  // Merge function shared by both passes
+  const mergeClusters = (keepId: string, mergeId: string) => {
     const keepCluster = clusterMap.get(keepId)!;
     const mergeCluster = clusterMap.get(mergeId)!;
 
-    // Merge symbols
     keepCluster.symbols.push(...mergeCluster.symbols);
     keepCluster.totalLines = computeClusterLines(keepCluster.symbols);
 
-    // Update symbol → cluster mapping
     for (const sym of mergeCluster.symbols) {
       symbolToCluster.set(sym.id, keepId);
     }
 
-    // Rewire edges: redirect all edges to/from mergeId to keepId
+    // Rewire edges
     const mergedTargets = interClusterEdges.get(mergeId);
     if (mergedTargets) {
       for (const [target, w] of mergedTargets) {
@@ -521,8 +511,6 @@ function clusterSymbols(
         keepTargets.set(target, (keepTargets.get(target) ?? 0) + w);
       }
     }
-
-    // Redirect inbound edges from mergeId to keepId
     for (const [from, targets] of interClusterEdges) {
       if (from === mergeId) continue;
       const w = targets.get(mergeId);
@@ -533,15 +521,132 @@ function clusterSymbols(
         }
       }
     }
-
-    // Remove self-edges on keepId
     interClusterEdges.get(keepId)?.delete(keepId);
-
-    // Remove merged cluster
     interClusterEdges.delete(mergeId);
     clusterMap.delete(mergeId);
+  };
 
+  // Pass A: same-file merging (≥1 edge, any direction)
+  let changed = true;
+  while (changed) {
+    changed = false;
+    let bestPair: [string, string] | undefined;
+    let bestWeight = 0;
+
+    for (const [from, targets] of interClusterEdges) {
+      for (const [to, weight] of targets) {
+        if (!clusterMap.has(from) || !clusterMap.has(to)) continue;
+        const fromCluster = clusterMap.get(from)!;
+        const toCluster = clusterMap.get(to)!;
+
+        // Only same-file pairs in this pass
+        if (!shareFile(fromCluster, toCluster)) continue;
+        if (fromCluster.totalLines + toCluster.totalLines > maxLines) continue;
+
+        const reverseWeight = interClusterEdges.get(to)?.get(from) ?? 0;
+        const totalWeight = weight + reverseWeight;
+        if (totalWeight > bestWeight) {
+          bestWeight = totalWeight;
+          bestPair = [from, to];
+        }
+      }
+    }
+
+    if (!bestPair || bestWeight < 1) break;
+    mergeClusters(bestPair[0], bestPair[1]);
     changed = true;
+  }
+
+  // Pass B: cross-file merging (≥2 bidirectional edges)
+  changed = true;
+  while (changed) {
+    changed = false;
+    let bestPair: [string, string] | undefined;
+    let bestWeight = 0;
+
+    for (const [from, targets] of interClusterEdges) {
+      for (const [to, weight] of targets) {
+        if (!clusterMap.has(from) || !clusterMap.has(to)) continue;
+        const fromCluster = clusterMap.get(from)!;
+        const toCluster = clusterMap.get(to)!;
+        if (fromCluster.totalLines + toCluster.totalLines > maxLines) continue;
+
+        const reverseWeight = interClusterEdges.get(to)?.get(from) ?? 0;
+        const totalWeight = weight + reverseWeight;
+        if (totalWeight <= bestWeight) continue;
+        if (totalWeight < 2) continue; // require ≥2 for cross-file
+
+        bestWeight = totalWeight;
+        bestPair = [from, to];
+      }
+    }
+
+    if (!bestPair) break;
+    mergeClusters(bestPair[0], bestPair[1]);
+    changed = true;
+  }
+
+  // Step 4: Absorb undersized clusters (< minLines) into their
+  // most-connected neighbor.  This prevents 5-line leaf functions
+  // from being individual tasks.
+  const MIN_LINES_PER_TASK = 50;
+  changed = true;
+  while (changed) {
+    changed = false;
+    for (const [cid, cluster] of clusterMap) {
+      if (cluster.totalLines >= MIN_LINES_PER_TASK) continue;
+
+      // Find the neighbor with the most edges to/from this cluster
+      let bestNeighbor: string | undefined;
+      let bestEdgeCount = 0;
+
+      // Check outbound edges
+      const outbound = interClusterEdges.get(cid);
+      if (outbound) {
+        for (const [target, w] of outbound) {
+          if (!clusterMap.has(target)) continue;
+          const targetCluster = clusterMap.get(target)!;
+          if (cluster.totalLines + targetCluster.totalLines > maxLines) continue;
+          const reverseW = interClusterEdges.get(target)?.get(cid) ?? 0;
+          if (w + reverseW > bestEdgeCount) {
+            bestEdgeCount = w + reverseW;
+            bestNeighbor = target;
+          }
+        }
+      }
+
+      // Check inbound edges
+      for (const [from, targets] of interClusterEdges) {
+        if (from === cid || !clusterMap.has(from)) continue;
+        const w = targets.get(cid);
+        if (w == null) continue;
+        const fromCluster = clusterMap.get(from)!;
+        if (cluster.totalLines + fromCluster.totalLines > maxLines) continue;
+        const reverseW = outbound?.get(from) ?? 0;
+        if (w + reverseW > bestEdgeCount) {
+          bestEdgeCount = w + reverseW;
+          bestNeighbor = from;
+        }
+      }
+
+      // Also try same-file merging for disconnected small symbols
+      if (!bestNeighbor) {
+        for (const [otherId, otherCluster] of clusterMap) {
+          if (otherId === cid) continue;
+          if (cluster.totalLines + otherCluster.totalLines > maxLines) continue;
+          if (shareFile(cluster, otherCluster)) {
+            bestNeighbor = otherId;
+            break;
+          }
+        }
+      }
+
+      if (bestNeighbor) {
+        mergeClusters(bestNeighbor, cid);
+        changed = true;
+        break; // restart iteration since clusterMap changed
+      }
+    }
   }
 
   // Compute final inter-cluster dependencies (directed)
