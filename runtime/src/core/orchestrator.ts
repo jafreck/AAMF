@@ -2,6 +2,7 @@ import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { readdir, readFile, unlink } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import pLimit from 'p-limit';
 import { PHASES, PhaseDefinition } from './phase-registry.js';
 import { CheckpointManager } from './checkpoint.js';
@@ -676,6 +677,18 @@ export class MigrationOrchestrator {
           ? `, servers: ${Object.keys(lspSettings.servers).join(', ')}`
           : '') + ')',
       );
+
+      // Pre-flight: validate LSP server commands are available
+      for (const [lang, srv] of Object.entries(lspSettings.servers)) {
+        try {
+          execFileSync('which', [srv.command], { stdio: 'pipe' });
+        } catch {
+          this.logger.warn(
+            `LSP server '${srv.command}' for language '${lang}' was not found on PATH — ` +
+            `LSP enrichment for ${lang} will fail. Install it or set lsp.enabled=false.`,
+          );
+        }
+      }
     }
 
     const builder = new lore.IndexBuilder(
@@ -708,11 +721,36 @@ export class MigrationOrchestrator {
 
     let lastErr: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Progress heartbeat — warn when the build is taking long so it's
+      // clear the process hasn't crashed, and hint at what may be blocking.
+      const heartbeatTimers: ReturnType<typeof setTimeout>[] = [];
+      const halfTimeout = Math.round(timeout / 2);
+      heartbeatTimers.push(
+        setTimeout(() => {
+          this.logger.warn(
+            `KB index build still running after ${Math.round(halfTimeout / 1000)}s ` +
+            `(timeout: ${Math.round(timeout / 1000)}s)` +
+            (lspSettings ? ' — the LSP server may still be indexing the project. ' +
+              'Consider increasing phaseTimeouts[0] or disabling LSP (lsp.enabled=false) to use tree-sitter only.'
+              : ''),
+          );
+        }, halfTimeout),
+      );
+      const clearHeartbeat = () => heartbeatTimers.forEach(t => clearTimeout(t));
+
       try {
         await Promise.race([
-          builder.build(),
+          builder.build().finally(clearHeartbeat),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('KB index timeout')), timeout),
+            setTimeout(() => {
+              clearHeartbeat();
+              const msg = lspSettings
+                ? `KB index timed out after ${Math.round(timeout / 1000)}s — the LSP server may be stalled. ` +
+                  `Verify the LSP server can index the project, increase phaseTimeouts[0], ` +
+                  `or set lsp.enabled=false to fall back to tree-sitter-only indexing.`
+                : `KB index timed out after ${Math.round(timeout / 1000)}s`;
+              reject(new Error(msg));
+            }, timeout),
           ),
         ]);
         const checkpointState = this.checkpoint.getState();

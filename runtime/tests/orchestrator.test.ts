@@ -471,7 +471,7 @@ describe('MigrationOrchestrator', () => {
 
         expect(result.phase).toBe(0);
         expect(result.success).toBe(false);
-        expect(result.error).toBe('KB index timeout');
+        expect(result.error).toContain('KB index timed out');
       } finally {
         buildSpy.mockRestore();
       }
