@@ -696,24 +696,6 @@ export class MigrationOrchestrator {
       { lsp: lspSettings },
     );
 
-    // Remove the stale DB before rebuilding.  vec0 virtual tables (symbol_embeddings)
-    // do not support INSERT OR REPLACE — inserting a duplicate rowid raises a
-    // UNIQUE constraint error.  Deleting the file is the simplest guarantee that
-    // the rebuild starts from a clean slate.
-    if (await fileExists(this.kbDbPath)) {
-      try {
-        await unlink(this.kbDbPath);
-        // Also remove WAL / SHM sidecar files if present.
-        await unlink(this.kbDbPath + '-wal').catch(() => {});
-        await unlink(this.kbDbPath + '-shm').catch(() => {});
-        this.logger.info('Removed stale KB database before rebuild');
-      } catch (err) {
-        this.logger.warn(
-          `Failed to remove stale KB database: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-
     const maxAttempts = this.config.options.maxRetriesPerTask;
     const timeout =
       this.config.agentBackend.phaseTimeouts?.[0] ??
@@ -721,6 +703,24 @@ export class MigrationOrchestrator {
 
     let lastErr: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // Remove the stale DB before each attempt.  vec0 virtual tables
+      // (symbol_embeddings) do not support INSERT OR REPLACE — inserting a
+      // duplicate rowid raises a UNIQUE constraint error.  Deleting the file is
+      // the simplest guarantee that each attempt starts from a clean slate.
+      if (await fileExists(this.kbDbPath)) {
+        try {
+          await unlink(this.kbDbPath);
+          // Also remove WAL / SHM sidecar files if present.
+          await unlink(this.kbDbPath + '-wal').catch(() => {});
+          await unlink(this.kbDbPath + '-shm').catch(() => {});
+          this.logger.info('Removed stale KB database before rebuild');
+        } catch (err) {
+          this.logger.warn(
+            `Failed to remove stale KB database: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       // Progress heartbeat — warn when the build is taking long so it's
       // clear the process hasn't crashed, and hint at what may be blocking.
       const heartbeatTimers: ReturnType<typeof setTimeout>[] = [];
