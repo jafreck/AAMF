@@ -405,11 +405,49 @@ export interface MigrationTask {
 
   /** Optional line range in the source file to scope the migration. */
   lineRange?: { start: number; end: number };
+
+  /**
+   * Compilation unit this task belongs to.  Set by the task-graph-builder when
+   * a `compilation-units.json` artifact is available from the migration-planner.
+   * Build checks only run at compilation-unit boundaries.
+   */
+  compilationUnit?: string;
+}
+
+// ─── Compilation Units ──────────────────────────────────────────────────────
+
+/**
+ * A target compilation unit (crate, package, project) that groups related
+ * source files into a buildable boundary.  Emitted by `migration-planner`
+ * in `planning/compilation-units.json`.
+ *
+ * The runtime validates cross-unit dependencies against the Lore symbol graph
+ * and only runs build checks when all tasks in a unit are complete.
+ */
+export interface CompilationUnit {
+  /** Stable identifier, e.g. `"core"`, `"dict-builder"`. */
+  id: string;
+
+  /** Human-readable name for the compilation unit. */
+  name: string;
+
+  /** Target path for the compilation unit (e.g. `"crates/zstd-core"`). */
+  targetPath: string;
+
+  /** Source files that belong to this unit. */
+  sourceFiles: string[];
+
+  /** IDs of other compilation units this one depends on. */
+  dependsOn: string[];
+
+  /** Agent's rationale for this grouping. */
+  rationale?: string;
 }
 
 // ─── Module Groups ──────────────────────────────────────────────────────────
 
 /**
+ * @deprecated Use {@link CompilationUnit} instead.
  * A logical grouping of related source modules, emitted by `migration-planner`
  * in `planning/groups.json`.
  *

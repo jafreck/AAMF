@@ -13,6 +13,7 @@ import {
   AgentName,
   MigrationResult,
   MigrationTask,
+  CompilationUnit,
   PhaseResult,
   RoutingDecision,
   ModelTier,
@@ -40,7 +41,7 @@ import type { Phase4MetricsSnapshot } from '../observability/metrics-collector.j
 import { ReportGenerator } from '../observability/report-generator.js';
 import type { InvocationMetric } from '../agents/types.js';
 import { buildRuntimePaths } from './runtime-paths.js';
-import { buildTaskGraph, findSCCs } from './task-graph-builder.js';
+import { buildTaskGraph, buildDependencySummary, findSCCs } from './task-graph-builder.js';
 
 const loadLore = () => import('@aamf/lore');
 const loadKbServerProcess = () => import('./kb-server-process.js');
@@ -848,11 +849,28 @@ export class MigrationOrchestrator {
     const mergedTasksFile = join(planningDir, 'tasks-merged.json');
 
     // ── Step 3a: migration-planner (fast, serial) ──────────────────────────
-    //   Reads the knowledge base and emits planning/groups.json +
-    //   planning/strategy.md.  Expected to take ~5-10 min.
-    //   Pre-create the planning directory so the agent can write files into it
-    //   (migration-planner does not have shell/execute access to mkdir itself).
+    //   Reads the knowledge base and emits planning/strategy.md +
+    //   planning/compilation-units.json.  Pre-create the planning directory.
     await ensureDir(planningDir);
+
+    // Pre-compute the dependency summary from Lore KB so the planner can
+    // make informed compilation-unit grouping decisions.
+    const depSummaryFile = join(planningDir, 'dependency-summary.json');
+    if (await fileExists(this.kbDbPath) && !(await fileExists(depSummaryFile))) {
+      this.logger.info('Computing dependency summary from Lore KB for migration-planner…');
+      try {
+        const depSummary = await buildDependencySummary(this.kbDbPath);
+        await atomicWrite(depSummaryFile, JSON.stringify(depSummary, null, 2));
+        this.logger.info(
+          `Dependency summary: ${depSummary.fileCount} files, ${depSummary.totalLines} lines, ` +
+          `${depSummary.connectedComponents.length} connected component(s), ${depSummary.sccs.length} SCC(s)`,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Failed to compute dependency summary: ${msg} — planner will proceed without it`);
+      }
+    }
+
     const checkpointState = this.checkpoint.getState();
     if (!checkpointState.phase3aComplete) {
       const planContext = await this.contextBuilder.buildContext('migration-planner', 3);
@@ -927,6 +945,19 @@ export class MigrationOrchestrator {
     //   On resume, tasks-merged.json from a prior run is accepted directly.
     let allTasks: MigrationTask[];
     let taskGraphSCCs: string[][] = [];
+    let compilationUnits: CompilationUnit[] = [];
+
+    // Read compilation-units.json from planner output if available
+    const compilationUnitsFile = join(planningDir, 'compilation-units.json');
+    if (await fileExists(compilationUnitsFile)) {
+      try {
+        compilationUnits = await readJson<CompilationUnit[]>(compilationUnitsFile);
+        this.logger.info(`Loaded ${compilationUnits.length} compilation unit(s) from planner`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Failed to parse compilation-units.json: ${msg} — proceeding without unit boundaries`);
+      }
+    }
 
     if (await fileExists(mergedTasksFile)) {
       // Resume path: tasks-merged.json already exists from a prior run
@@ -941,9 +972,11 @@ export class MigrationOrchestrator {
           maxLinesPerTask: this.config.options.maxLinesPerTask,
           targetLanguage: this.config.target.language,
           outputPath: this.config.target.outputPath,
+          compilationUnits: compilationUnits.length > 0 ? compilationUnits : undefined,
         });
         allTasks = graphResult.tasks;
         taskGraphSCCs = graphResult.sccs;
+        compilationUnits = graphResult.compilationUnits;
 
         if (taskGraphSCCs.length > 0) {
           this.logger.info(
@@ -989,7 +1022,7 @@ export class MigrationOrchestrator {
       outputFiles: [mergedTasksFile],
       duration: Date.now() - start,
       outputParsed: true,
-      structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs },
+      structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs, compilationUnits },
     };
 
     return {
@@ -2191,21 +2224,32 @@ export class MigrationOrchestrator {
     }
 
     // c3. Run build command if configured
+    //     When compilation units are in use, build checks only run once all
+    //     tasks in the same unit are complete (the build can only succeed
+    //     when the entire compilation unit is finished).
     if (this.config.target.buildCommand) {
       if (!this.hasPhase4Substep(task.id, 'build')) {
-        if (gateMode === 'enforce') {
-          const buildOk = await this.runCommandWithRecovery(
-            'build', this.config.target.buildCommand, task, queue,
-          );
-          if (!buildOk) return { migrated: false };
-          await this.markPhase4Substep(task.id, 'build');
-        } else if (gateMode === 'advisory') {
-          const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
-          if (!buildResult.success) {
-            this.logger.warn(
-              `Build check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${buildResult.error ?? 'unknown error'}`,
+        const shouldBuild = this.shouldRunBuildCheck(task, queue);
+        if (shouldBuild) {
+          if (gateMode === 'enforce') {
+            const buildOk = await this.runCommandWithRecovery(
+              'build', this.config.target.buildCommand, task, queue,
             );
+            if (!buildOk) return { migrated: false };
+            await this.markPhase4Substep(task.id, 'build');
+          } else if (gateMode === 'advisory') {
+            const buildResult = await this.runCommand('build', this.config.target.buildCommand, task.id);
+            if (!buildResult.success) {
+              this.logger.warn(
+                `Build check failed for ${task.id}, deferring strict enforcement to wave-end gate (qualityPolicy=${this.config.options.qualityPolicy}): ${buildResult.error ?? 'unknown error'}`,
+              );
+            }
+            await this.markPhase4Substep(task.id, 'build');
           }
+        } else {
+          this.logger.info(
+            `Deferring build check for ${task.id} — compilation unit "${task.compilationUnit}" has remaining tasks`,
+          );
           await this.markPhase4Substep(task.id, 'build');
         }
       }
@@ -3254,6 +3298,29 @@ export class MigrationOrchestrator {
     if (policy === 'balanced') return 'advisory';
     if (policy === 'deferred-strict') return 'advisory';
     return 'skip';
+  }
+
+  /**
+   * Determine whether a build check should run after completing `task`.
+   *
+   * - If the task has no `compilationUnit`, always run the build check.
+   * - If it does, only run when all other tasks in the same compilation unit
+   *   are already completed in the queue.  This ensures the build sees a
+   *   complete compilation unit rather than failing on missing symbols.
+   */
+  private shouldRunBuildCheck(task: MigrationTask, queue: TaskQueue): boolean {
+    if (!task.compilationUnit) return true;
+
+    // Check if all tasks in the same compilation unit are completed
+    const allIds = queue.getAllTaskIds();
+    for (const id of allIds) {
+      if (id === task.id) continue;
+      const other = queue.getTask(id);
+      if (other?.compilationUnit === task.compilationUnit && !queue.isTaskCompleted(id)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private async runWaveEndQualityGates(waveTasks: MigrationTask[] = [], waveNumber?: number): Promise<string | undefined> {

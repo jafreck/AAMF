@@ -165,14 +165,18 @@ export class ContextBuilder {
           outputPath: kbDir,
         };
 
-      case 'migration-planner':
+      case 'migration-planner': {
+        const planningDir = join(this.progressDir, 'artifacts', 'planning');
+        const depSummaryPath = join(planningDir, 'dependency-summary.json');
         return {
-          inputFiles: [join(kbDir, 'index.md'), impactAssessment],
-          outputPath: join(this.progressDir, 'artifacts', 'planning'),
+          inputFiles: [join(kbDir, 'index.md'), impactAssessment, depSummaryPath],
+          outputPath: planningDir,
           agentPayload: {
             executionStrategy: this.buildExecutionStrategy(),
+            dependencySummaryPath: depSummaryPath,
           },
         };
+      }
 
       case 'task-decomposer': {
         const strategyFile = String(payload?.strategyFile ?? join(this.progressDir, 'artifacts', 'planning', 'strategy.md'));
