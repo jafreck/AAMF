@@ -655,7 +655,33 @@ export class MigrationOrchestrator {
       }
     }
 
-    const builder = new lore.IndexBuilder(this.kbDbPath, walkerConfig, this.embedder);
+    // Build LSP settings from config if enabled
+    const lspConfig = this.config.options.kbIndex?.lsp;
+    const lspSettings = lspConfig?.enabled ? {
+      enabled: true as const,
+      requestTimeoutMs: lspConfig.requestTimeoutMs ?? 5000,
+      servers: lspConfig.servers
+        ? Object.fromEntries(
+            Object.entries(lspConfig.servers).map(([lang, srv]) => [
+              lang, { command: srv.command, args: srv.args ?? [] },
+            ]),
+          )
+        : {},
+    } : undefined;
+
+    if (lspSettings) {
+      this.logger.info(
+        `LSP integration enabled (timeout: ${lspSettings.requestTimeoutMs}ms` +
+        (Object.keys(lspSettings.servers).length > 0
+          ? `, servers: ${Object.keys(lspSettings.servers).join(', ')}`
+          : '') + ')',
+      );
+    }
+
+    const builder = new lore.IndexBuilder(
+      this.kbDbPath, walkerConfig, this.embedder,
+      { lsp: lspSettings },
+    );
 
     // Remove the stale DB before rebuilding.  vec0 virtual tables (symbol_embeddings)
     // do not support INSERT OR REPLACE — inserting a duplicate rowid raises a

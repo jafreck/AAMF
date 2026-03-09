@@ -53,6 +53,12 @@
       "enabled": true,
       "embeddings": {
         "enabled": true
+      },
+      "lsp": {
+        "enabled": true,
+        "servers": {
+          "c": { "command": "clangd", "args": ["--compile-commands-dir=zstd-src/zstd-1.5.7/build"] }
+        }
       }
     }
   },
@@ -60,7 +66,7 @@
     "runtime": "copilot",
     "cliCommand": "copilot",
     "model": "claude-opus-4.6",
-    "failureRecoveryModel": "gpt-5.3-codex",
+    "failureRecoveryModel": "claude-opus-4.6",
     "agentDir": "../../../../.github/agents",
     "timeout": 3600000
   }

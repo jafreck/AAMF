@@ -134,6 +134,31 @@ export const MigrationConfigSchema = z.object({
         /** Path to the Python binary with sentence-transformers installed. */
         pythonBin: z.string().default('python3'),
       }).optional(),
+      /**
+       * LSP integration for the Lore indexer.
+       * When enabled, Lore starts language servers (e.g. clangd for C/C++,
+       * typescript-language-server for TS) to resolve cross-file symbol
+       * references, type definitions, and call targets with full semantic
+       * accuracy — beyond what tree-sitter can provide alone.
+       */
+      lsp: z.object({
+        /** Enable LSP-powered symbol resolution during indexing. Default: false. */
+        enabled: z.boolean().default(false),
+        /** Timeout in ms for each LSP request (hover, definition, references). */
+        requestTimeoutMs: z.number().int().min(500).default(5000),
+        /**
+         * Override default language server commands.
+         * Keys are language identifiers (e.g. 'c', 'typescript').
+         * Values specify the command and args to launch the server.
+         * For C/C++ with clangd, pass --compile-commands-dir in args
+         * to point to the directory containing compile_commands.json.
+         * Example: `{ "c": { "command": "clangd", "args": ["--compile-commands-dir=/path/to/build"] } }`
+         */
+        servers: z.record(z.string(), z.object({
+          command: z.string(),
+          args: z.array(z.string()).default([]),
+        })).optional(),
+      }).optional(),
     }).optional(),
     /**
      * When `true`, AAMF preserves the `.aamf` checkpoint directory and the
