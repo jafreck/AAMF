@@ -268,20 +268,30 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
 
       const symbolNames = cluster.symbols.map(s => s.name);
       const repNames = symbolNames.slice(0, 5).join(', ');
+      const isStubs = cluster.isStubs === true;
+      const taskName = isStubs
+        ? `[stubs] ${repNames}${symbolNames.length > 5 ? ` (+${symbolNames.length - 5})` : ''}`
+        : cluster.symbols.length === 1
+          ? cluster.symbols[0]!.name
+          : `${repNames}${symbolNames.length > 5 ? ` (+${symbolNames.length - 5})` : ''}`;
 
       tasks.push({
         id: taskId,
-        name: cluster.symbols.length === 1
-          ? cluster.symbols[0]!.name
-          : `${repNames}${symbolNames.length > 5 ? ` (+${symbolNames.length - 5})` : ''}`,
+        name: taskName,
         sourceFiles,
         targetFiles: uniqueTargets,
         knowledgeBaseRef: sourceFiles.map(f => `kb/${f}`).join(', '),
         dependencies: [], // populated below
-        complexity: estimateComplexity(cluster.totalLines),
-        description: describeCluster(cluster, fileIdToPath),
-        acceptanceCriteria: buildAcceptanceCriteria(cluster),
-        parityChecks: buildParityChecks(cluster),
+        complexity: isStubs ? 'simple' : estimateComplexity(cluster.totalLines),
+        description: isStubs
+          ? `Emit type signatures and function stubs for ${symbolNames.length} symbols`
+          : describeCluster(cluster, fileIdToPath),
+        acceptanceCriteria: isStubs
+          ? ['All type definitions and function signatures are present', 'All function bodies are todo!()/unimplemented!()']
+          : buildAcceptanceCriteria(cluster),
+        parityChecks: isStubs
+          ? ['Type signatures match source definitions']
+          : buildParityChecks(cluster),
         ...(lineRange ? { lineRange } : {}),
         ...(unitId ? { compilationUnit: unitId } : {}),
       });
@@ -327,6 +337,10 @@ interface Cluster {
   totalLines: number;
   /** Cluster IDs this cluster depends on (outbound edges). */
   dependencies: Set<string>;
+  /** True if this is a stubs-only cluster from SCC splitting. */
+  isStubs?: boolean;
+  /** If this cluster was split from an SCC, the SCC group identifier. */
+  sccGroup?: string;
 }
 
 /**
@@ -420,27 +434,43 @@ function clusterSymbols(
   }
   const symbolSCCs = findSCCs(symIds, symAdj);
 
-  // Step 2: Build initial clusters — one per SCC, one per non-SCC symbol
+  // Step 2: Build initial clusters — one per SCC, one per non-SCC symbol.
+  //         Oversized SCCs (> maxLines) are split into a stubs cluster +
+  //         sequential implementation chunks.
   const symbolToCluster = new Map<number, string>();
   const clusterMap = new Map<string, Cluster>();
   let clusterCounter = 0;
 
-  // SCC clusters
+  // SCC clusters — with splitting for oversized ones
   for (const scc of symbolSCCs) {
-    const clusterId = `c${clusterCounter++}`;
     const clusterSyms: SymbolInfo[] = [];
     for (const sid of scc) {
       const sym = symMap.get(parseInt(sid));
-      if (sym) {
-        clusterSyms.push(sym);
-        symbolToCluster.set(sym.id, clusterId);
-      }
+      if (sym) clusterSyms.push(sym);
     }
     const totalLines = computeClusterLines(clusterSyms);
-    clusterMap.set(clusterId, {
-      id: clusterId, symbols: clusterSyms, totalLines,
-      dependencies: new Set(),
-    });
+
+    if (totalLines <= maxLines || clusterSyms.length <= 1) {
+      // Fits in one cluster — no splitting needed
+      const clusterId = `c${clusterCounter++}`;
+      for (const sym of clusterSyms) symbolToCluster.set(sym.id, clusterId);
+      clusterMap.set(clusterId, {
+        id: clusterId, symbols: clusterSyms, totalLines,
+        dependencies: new Set(),
+      });
+    } else {
+      // Oversized SCC: split into stubs + implementation chunks
+      const subClusters = splitOversizedSCC(
+        clusterSyms, edges, maxLines, clusterCounter,
+      );
+      for (const sub of subClusters) {
+        clusterMap.set(sub.id, sub);
+        for (const sym of sub.symbols) {
+          symbolToCluster.set(sym.id, sub.id);
+        }
+      }
+      clusterCounter += subClusters.length;
+    }
   }
 
   // Singleton clusters for non-SCC symbols
@@ -471,7 +501,27 @@ function clusterSymbols(
   // Step 3: Greedy merge — two passes:
   //   Pass A: merge same-file clusters with ≥1 edge (directional OK)
   //   Pass B: merge cross-file clusters with ≥2 bidirectional edges
-  // Both passes respect maxLines.
+  // Both passes respect maxLines using line SPAN (not deduplicated line count).
+
+  // Line span = max(endLine) - min(startLine) + 1 per file, summed.
+  // This measures the actual source range the agent must read, including
+  // inter-function gaps (comments, blank lines).
+  const computeLineSpan = (syms: SymbolInfo[]): number => {
+    if (syms.length === 0) return 0;
+    const byFile = new Map<number, { min: number; max: number }>();
+    for (const s of syms) {
+      const existing = byFile.get(s.fileId);
+      if (existing) {
+        existing.min = Math.min(existing.min, s.startLine);
+        existing.max = Math.max(existing.max, s.endLine);
+      } else {
+        byFile.set(s.fileId, { min: s.startLine, max: s.endLine });
+      }
+    }
+    let total = 0;
+    for (const { min, max } of byFile.values()) total += max - min + 1;
+    return total;
+  };
 
   // Helper: get the set of file IDs a cluster spans
   const clusterFileIds = (cluster: Cluster): Set<number> => {
@@ -527,6 +577,8 @@ function clusterSymbols(
   };
 
   // Pass A: same-file merging (≥1 edge, any direction)
+  // Use actual merged size (computeClusterLines) not sum, since same-file
+  // symbols have overlapping line ranges.
   let changed = true;
   while (changed) {
     changed = false;
@@ -541,7 +593,10 @@ function clusterSymbols(
 
         // Only same-file pairs in this pass
         if (!shareFile(fromCluster, toCluster)) continue;
-        if (fromCluster.totalLines + toCluster.totalLines > maxLines) continue;
+
+        // Check actual merged span (not deduplicated line count)
+        const mergedSpan = computeLineSpan([...fromCluster.symbols, ...toCluster.symbols]);
+        if (mergedSpan > maxLines) continue;
 
         const reverseWeight = interClusterEdges.get(to)?.get(from) ?? 0;
         const totalWeight = weight + reverseWeight;
@@ -569,7 +624,7 @@ function clusterSymbols(
         if (!clusterMap.has(from) || !clusterMap.has(to)) continue;
         const fromCluster = clusterMap.get(from)!;
         const toCluster = clusterMap.get(to)!;
-        if (fromCluster.totalLines + toCluster.totalLines > maxLines) continue;
+        if (computeLineSpan([...fromCluster.symbols, ...toCluster.symbols]) > maxLines) continue;
 
         const reverseWeight = interClusterEdges.get(to)?.get(from) ?? 0;
         const totalWeight = weight + reverseWeight;
@@ -606,7 +661,7 @@ function clusterSymbols(
         for (const [target, w] of outbound) {
           if (!clusterMap.has(target)) continue;
           const targetCluster = clusterMap.get(target)!;
-          if (cluster.totalLines + targetCluster.totalLines > maxLines) continue;
+          if (computeLineSpan([...cluster.symbols, ...targetCluster.symbols]) > maxLines) continue;
           const reverseW = interClusterEdges.get(target)?.get(cid) ?? 0;
           if (w + reverseW > bestEdgeCount) {
             bestEdgeCount = w + reverseW;
@@ -621,7 +676,7 @@ function clusterSymbols(
         const w = targets.get(cid);
         if (w == null) continue;
         const fromCluster = clusterMap.get(from)!;
-        if (cluster.totalLines + fromCluster.totalLines > maxLines) continue;
+        if (computeLineSpan([...cluster.symbols, ...fromCluster.symbols]) > maxLines) continue;
         const reverseW = outbound?.get(from) ?? 0;
         if (w + reverseW > bestEdgeCount) {
           bestEdgeCount = w + reverseW;
@@ -633,7 +688,7 @@ function clusterSymbols(
       if (!bestNeighbor) {
         for (const [otherId, otherCluster] of clusterMap) {
           if (otherId === cid) continue;
-          if (cluster.totalLines + otherCluster.totalLines > maxLines) continue;
+          if (computeLineSpan([...cluster.symbols, ...otherCluster.symbols]) > maxLines) continue;
           if (shareFile(cluster, otherCluster)) {
             bestNeighbor = otherId;
             break;
@@ -647,6 +702,37 @@ function clusterSymbols(
         break; // restart iteration since clusterMap changed
       }
     }
+  }
+
+  // Step 5: Split any oversized clusters that grew past maxLines during
+  // merging.  Uses computeLineSpan (already defined in Step 3) to measure
+  // actual source range including inter-function gaps.
+  const oversizedIds = [...clusterMap.entries()]
+    .filter(([_, c]) => computeLineSpan(c.symbols) > maxLines && c.symbols.length > 1)
+    .map(([id]) => id);
+
+  for (const oversizedId of oversizedIds) {
+    const cluster = clusterMap.get(oversizedId);
+    if (!cluster) continue;
+
+    const subClusters = splitOversizedSCC(
+      cluster.symbols, edges, maxLines, clusterCounter,
+    );
+    // Remove the oversized cluster
+    clusterMap.delete(oversizedId);
+
+    // Add the sub-clusters
+    for (const sub of subClusters) {
+      // Preserve any external dependencies the oversized cluster had
+      for (const dep of cluster.dependencies) {
+        if (!sub.dependencies.has(dep)) sub.dependencies.add(dep);
+      }
+      clusterMap.set(sub.id, sub);
+      for (const sym of sub.symbols) {
+        symbolToCluster.set(sym.id, sub.id);
+      }
+    }
+    clusterCounter += subClusters.length;
   }
 
   // Compute final inter-cluster dependencies (directed)
@@ -699,6 +785,122 @@ function computeClusterLines(symbols: SymbolInfo[]): number {
   }
 
   return total;
+}
+
+// ─── SCC Splitting ───────────────────────────────────────────────────────────
+
+/**
+ * Split an oversized SCC into a stubs cluster + sequential implementation
+ * chunks.  The stubs cluster contains all symbols (placeholder — the agent
+ * emits only signatures/type defs).  Each implementation chunk contains
+ * ≤maxLines of symbol bodies, ordered by a greedy walk of the internal
+ * acyclic edges.  Each chunk depends on the stubs cluster and on the
+ * preceding chunk.
+ */
+function splitOversizedSCC(
+  symbols: SymbolInfo[],
+  allEdges: Map<number, Set<number>>,
+  maxLines: number,
+  counterStart: number,
+): Cluster[] {
+  const sccSymIds = new Set(symbols.map(s => s.id));
+
+  // Build SCC-internal acyclic edge subset: remove back-edges by DFS
+  // to get a partial ordering we can use for chunking.
+  const internalAdj = new Map<number, number[]>();
+  for (const sym of symbols) internalAdj.set(sym.id, []);
+  for (const sym of symbols) {
+    const tos = allEdges.get(sym.id);
+    if (!tos) continue;
+    for (const to of tos) {
+      if (sccSymIds.has(to) && to !== sym.id) {
+        internalAdj.get(sym.id)!.push(to);
+      }
+    }
+  }
+
+  // DFS ordering — gives us a usable sequence even with cycles
+  const visited = new Set<number>();
+  const ordered: SymbolInfo[] = [];
+  const symMap = new Map(symbols.map(s => [s.id, s]));
+
+  function dfs(id: number): void {
+    if (visited.has(id)) return;
+    visited.add(id);
+    for (const to of (internalAdj.get(id) ?? [])) {
+      dfs(to);
+    }
+    ordered.push(symMap.get(id)!);
+  }
+
+  // Start from symbols with the most outbound edges (likely entry points)
+  const sortedByOutDegree = [...symbols].sort((a, b) =>
+    (internalAdj.get(b.id)?.length ?? 0) - (internalAdj.get(a.id)?.length ?? 0),
+  );
+  for (const sym of sortedByOutDegree) dfs(sym.id);
+  ordered.reverse(); // DFS post-order reversed → approximate topo order
+
+  // Stubs cluster — all symbols, but marked as stubs (small estimated size)
+  const stubsId = `c${counterStart}`;
+  const sccGroupId = `scc-${counterStart}`;
+  // Estimate stub size as ~3 lines per symbol (signature + empty body)
+  const stubsLines = Math.max(symbols.length * 3, 50);
+  const stubsCluster: Cluster = {
+    id: stubsId,
+    symbols: [...symbols], // all symbols — agent knows to emit stubs only
+    totalLines: stubsLines,
+    dependencies: new Set(),
+    isStubs: true,
+    sccGroup: sccGroupId,
+  };
+
+  // Chunk the ordered symbols into implementation sub-clusters
+  const chunks: Cluster[] = [stubsCluster];
+  let chunkIdx = 1;
+  let currentSymbols: SymbolInfo[] = [];
+  let currentLines = 0;
+
+  for (const sym of ordered) {
+    const symLines = sym.endLine - sym.startLine + 1;
+    if (currentLines + symLines > maxLines && currentSymbols.length > 0) {
+      const chunkId = `c${counterStart + chunkIdx}`;
+      const chunk: Cluster = {
+        id: chunkId,
+        symbols: currentSymbols,
+        totalLines: computeClusterLines(currentSymbols),
+        dependencies: new Set([stubsId]),
+        sccGroup: sccGroupId,
+      };
+      // Each chunk depends on the previous chunk for sequential ordering
+      if (chunkIdx > 1) {
+        chunk.dependencies.add(`c${counterStart + chunkIdx - 1}`);
+      }
+      chunks.push(chunk);
+      chunkIdx++;
+      currentSymbols = [];
+      currentLines = 0;
+    }
+    currentSymbols.push(sym);
+    currentLines += symLines;
+  }
+
+  // Flush remaining
+  if (currentSymbols.length > 0) {
+    const chunkId = `c${counterStart + chunkIdx}`;
+    const chunk: Cluster = {
+      id: chunkId,
+      symbols: currentSymbols,
+      totalLines: computeClusterLines(currentSymbols),
+      dependencies: new Set([stubsId]),
+      sccGroup: sccGroupId,
+    };
+    if (chunkIdx > 1) {
+      chunk.dependencies.add(`c${counterStart + chunkIdx - 1}`);
+    }
+    chunks.push(chunk);
+  }
+
+  return chunks;
 }
 
 // ─── DB Queries ──────────────────────────────────────────────────────────────
