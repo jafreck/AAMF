@@ -691,6 +691,14 @@ export class MigrationOrchestrator {
       }
     }
 
+    // Initialise the Lore-internal logger so the index build writes progress
+    // (walk, LSP enrichment, embedding, final stats) to lore.log.
+    const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
+    lore.initLogger({
+      level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
+      logFile: this.paths.loreLogFile,
+    });
+
     const builder = new lore.IndexBuilder(
       this.kbDbPath, walkerConfig, this.embedder,
       { lsp: lspSettings },
