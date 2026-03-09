@@ -859,7 +859,10 @@ export class MigrationOrchestrator {
     if (await fileExists(this.kbDbPath) && !(await fileExists(depSummaryFile))) {
       this.logger.info('Computing dependency summary from Lore KB for migration-planner…');
       try {
-        const depSummary = await buildDependencySummary(this.kbDbPath);
+        const depSummary = await buildDependencySummary(
+          this.kbDbPath,
+          this.config.options.maxLinesPerTask,
+        );
         await atomicWrite(depSummaryFile, JSON.stringify(depSummary, null, 2));
         this.logger.info(
           `Dependency summary: ${depSummary.fileCount} files, ${depSummary.totalLines} lines, ` +

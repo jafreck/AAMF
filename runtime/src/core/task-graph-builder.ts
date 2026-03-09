@@ -1,75 +1,78 @@
 /**
- * Deterministic symbol-graph-based task decomposition for AAMF.
+ * Call-graph-clustering task decomposition for AAMF.
  *
- * Reads the Lore knowledge-base SQLite DB, splits source files into tasks
- * respecting `maxLinesPerTask`, builds dependency edges from both `symbol_refs`
- * (function calls) and `type_refs` (type usage), detects SCCs, and optionally
- * assigns tasks to agent-defined compilation units.
+ * Uses the Lore knowledge-base symbol graph (symbol_refs + type_refs) to
+ * cluster tightly-coupled symbols into migration tasks.  Language-agnostic:
+ * works on function calls, type references, and method dispatch equally.
+ *
+ * Algorithm:
+ *   1. Load all symbols and edges (symbol_refs + type_refs)
+ *   2. Contract SCCs — mutually-dependent symbols must share a task
+ *   3. Greedy merge — merge the pair of clusters with the highest
+ *      inter-cluster edge weight, until merging would exceed maxLinesPerTask
+ *   4. Each cluster becomes a MigrationTask with correct dependency edges
+ *   5. Optionally annotate tasks with compilation unit IDs
  *
  * @module core/task-graph-builder
  */
 
 import type { MigrationTask, CompilationUnit } from '../agents/types.js';
 
-// ─── Public API ──────────────────────────────────────────────────────────────
+// ─── Public Types ────────────────────────────────────────────────────────────
 
 export interface TaskGraphBuilderOptions {
-  /** Absolute path to the Lore knowledge-base SQLite file (kb.db). */
   kbDbPath: string;
-  /** Absolute path to the source project root. */
   sourceRoot: string;
-  /** Maximum source lines allowed per task — larger files are split at symbol boundaries. */
   maxLinesPerTask: number;
-  /** Target language identifier (e.g. "rust", "typescript", "csharp"). */
   targetLanguage: string;
-  /** Target output directory (mirrors the source tree). */
   outputPath: string;
-  /**
-   * Optional compilation units from the migration-planner.
-   * When provided, tasks are annotated with their unit ID and cross-unit
-   * dependencies are validated against the actual symbol graph.
-   */
   compilationUnits?: CompilationUnit[];
 }
 
 export interface TaskGraphResult {
-  /** Fully-connected migration tasks with symbol-level dependency edges. */
   tasks: MigrationTask[];
-  /** Strongly-connected components with >1 member (cyclic deps requiring two-pass execution). */
   sccs: string[][];
-  /** Compilation units with validated cross-unit dependency ordering. */
   compilationUnits: CompilationUnit[];
 }
 
-/**
- * Structured dependency summary computed deterministically from the Lore KB.
- * Passed to the migration-planner agent so it can make informed compilation-unit
- * grouping decisions.
- */
-export interface DependencySummary {
-  /** Total number of indexed source files. */
-  fileCount: number;
-  /** Total source lines across all files (approximate from symbol ranges). */
-  totalLines: number;
-  /** Per-file dependency edges. */
-  fileDependencies: Record<string, {
-    calls: string[];
-    calledBy: string[];
-    usesTypes: string[];
-    typesUsedBy: string[];
-  }>;
-  /** Per-file metrics. */
-  fileMetrics: Record<string, { lines: number; symbolCount: number; complexity: string }>;
-  /** Weakly-connected components of the dependency graph (natural module clusters). */
-  connectedComponents: Array<{ files: string[]; totalLines: number }>;
-  /** Strongly-connected components (cyclic dependency groups) at file level. */
-  sccs: string[][];
+/** A module in the condensed dependency summary for the planner agent. */
+export interface CondensedModule {
+  /** Stable cluster identifier. */
+  id: string;
+  /** Source files that contain symbols in this cluster. */
+  files: string[];
+  /** Total lines covered by the cluster's symbols. */
+  lines: number;
+  /** Number of symbols in the cluster. */
+  symbolCount: number;
+  /** Symbol names (up to 20 representative names). */
+  symbols: string[];
+  /** IDs of other modules this one depends on. */
+  dependsOn: string[];
 }
 
+export interface DependencySummary {
+  fileCount: number;
+  totalLines: number;
+  /** Condensed modules derived from call-graph clustering. */
+  modules: CondensedModule[];
+  /** Weakly-connected components of the module graph. */
+  connectedComponents: Array<{ moduleIds: string[]; totalLines: number }>;
+  /** Module-level SCCs (cyclic dependency groups). */
+  sccs: string[][];
+  /** Per-file metrics for context. */
+  fileMetrics: Record<string, { lines: number; symbolCount: number }>;
+}
+
+// ─── Public Functions ────────────────────────────────────────────────────────
+
 /**
- * Build a structured dependency summary from the Lore KB for the planner agent.
+ * Build a condensed dependency summary from call-graph clustering.
  */
-export async function buildDependencySummary(kbDbPath: string): Promise<DependencySummary> {
+export async function buildDependencySummary(
+  kbDbPath: string,
+  maxLinesPerModule: number = 500,
+): Promise<DependencySummary> {
   const lore = await import('@aamf/lore');
   const db = lore.openReadOnly(kbDbPath);
 
@@ -80,117 +83,78 @@ export async function buildDependencySummary(kbDbPath: string): Promise<Dependen
     const fileIdToPath = new Map<number, string>();
     for (const f of files) fileIdToPath.set(f.id, f.path);
 
-    const symbolsByFileId = new Map<number, Array<{ startLine: number; endLine: number }>>();
-    for (const sym of allSymbols) {
-      const list = symbolsByFileId.get(sym.file_id) ?? [];
-      list.push({ startLine: sym.start_line, endLine: sym.end_line });
-      symbolsByFileId.set(sym.file_id, list);
-    }
+    // Build symbol graph
+    const symInfos = allSymbols.map(s => ({
+      id: s.id, name: s.name, kind: s.kind,
+      fileId: s.file_id, startLine: s.start_line, endLine: s.end_line,
+    }));
+    const callRefs = querySymbolRefs(db);
+    const typeRefs = queryTypeRefs(db);
 
-    // symbol name → set of file_ids that define it
-    const symbolNameToFileIds = new Map<string, Set<number>>();
-    for (const sym of allSymbols) {
-      const set = symbolNameToFileIds.get(sym.name) ?? new Set();
-      set.add(sym.file_id);
-      symbolNameToFileIds.set(sym.name, set);
-    }
+    // Cluster symbols
+    const clusters = clusterSymbols(symInfos, callRefs, typeRefs, maxLinesPerModule);
 
-    const callEdges = querySymbolRefs(db);
-    const typeEdges = queryTypeRefs(db);
-
-    // Build file-level adjacency
-    type DepEntry = { calls: Set<string>; calledBy: Set<string>; usesTypes: Set<string>; typesUsedBy: Set<string> };
-    const fileDeps = new Map<string, DepEntry>();
-    const ensureEntry = (path: string): DepEntry => {
-      let e = fileDeps.get(path);
-      if (!e) { e = { calls: new Set(), calledBy: new Set(), usesTypes: new Set(), typesUsedBy: new Set() }; fileDeps.set(path, e); }
-      return e;
-    };
-    for (const f of files) ensureEntry(f.path);
-
-    for (const ref of callEdges) {
-      const callerPath = fileIdToPath.get(ref.callerFileId);
-      if (!callerPath) continue;
-      const calleeFileIds = symbolNameToFileIds.get(ref.calleeName);
-      if (!calleeFileIds) continue;
-      for (const calleeFileId of calleeFileIds) {
-        if (calleeFileId === ref.callerFileId) continue;
-        const calleePath = fileIdToPath.get(calleeFileId);
-        if (!calleePath) continue;
-        ensureEntry(callerPath).calls.add(calleePath);
-        ensureEntry(calleePath).calledBy.add(callerPath);
+    // Build modules from clusters
+    const modules: CondensedModule[] = [];
+    for (const cluster of clusters) {
+      const clusterFiles = new Set<string>();
+      for (const sym of cluster.symbols) {
+        const path = fileIdToPath.get(sym.fileId);
+        if (path) clusterFiles.add(path);
       }
-    }
-
-    for (const ref of typeEdges) {
-      const userPath = fileIdToPath.get(ref.fileId);
-      if (!userPath) continue;
-      const definerFileIds = symbolNameToFileIds.get(ref.typeName);
-      if (!definerFileIds) continue;
-      for (const definerFileId of definerFileIds) {
-        if (definerFileId === ref.fileId) continue;
-        const definerPath = fileIdToPath.get(definerFileId);
-        if (!definerPath) continue;
-        ensureEntry(userPath).usesTypes.add(definerPath);
-        ensureEntry(definerPath).typesUsedBy.add(userPath);
-      }
+      modules.push({
+        id: cluster.id,
+        files: [...clusterFiles].sort(),
+        lines: cluster.totalLines,
+        symbolCount: cluster.symbols.length,
+        symbols: cluster.symbols.slice(0, 20).map(s => s.name),
+        dependsOn: [...cluster.dependencies].sort(),
+      });
     }
 
     // File metrics
-    const fileMetrics: Record<string, { lines: number; symbolCount: number; complexity: string }> = {};
+    const symbolsByFileId = new Map<number, Array<{ endLine: number }>>();
+    for (const s of allSymbols) {
+      const list = symbolsByFileId.get(s.file_id) ?? [];
+      list.push({ endLine: s.end_line });
+      symbolsByFileId.set(s.file_id, list);
+    }
+    const fileMetrics: Record<string, { lines: number; symbolCount: number }> = {};
     let totalLines = 0;
     for (const f of files) {
       const syms = symbolsByFileId.get(f.id) ?? [];
       const maxLine = syms.length > 0 ? Math.max(...syms.map(s => s.endLine)) : 0;
       totalLines += maxLine;
-      fileMetrics[f.path] = {
-        lines: maxLine,
-        symbolCount: syms.length,
-        complexity: maxLine <= 100 ? 'simple' : maxLine <= 300 ? 'moderate' : 'complex',
-      };
+      fileMetrics[f.path] = { lines: maxLine, symbolCount: syms.length };
     }
 
-    // Connected components (undirected)
-    const allPaths = files.map(f => f.path);
-    const undirectedAdj = new Map<string, Set<string>>();
-    for (const p of allPaths) undirectedAdj.set(p, new Set());
-    for (const [path, deps] of fileDeps) {
-      for (const target of [...deps.calls, ...deps.usesTypes]) {
-        undirectedAdj.get(path)?.add(target);
-        undirectedAdj.get(target)?.add(path);
+    // Module-level connected components and SCCs
+    const moduleAdj = new Map<string, string[]>();
+    for (const m of modules) moduleAdj.set(m.id, m.dependsOn);
+    const moduleSCCs = findSCCs(modules.map(m => m.id), moduleAdj);
+
+    const undirAdj = new Map<string, Set<string>>();
+    for (const m of modules) undirAdj.set(m.id, new Set());
+    for (const m of modules) {
+      for (const dep of m.dependsOn) {
+        undirAdj.get(m.id)?.add(dep);
+        undirAdj.get(dep)?.add(m.id);
       }
     }
-    const ccs = findConnectedComponents(allPaths, undirectedAdj);
+    const ccs = findConnectedComponents(modules.map(m => m.id), undirAdj);
+    const moduleMap = new Map(modules.map(m => [m.id, m]));
     const ccResults = ccs.map(cc => ({
-      files: cc,
-      totalLines: cc.reduce((sum, p) => sum + (fileMetrics[p]?.lines ?? 0), 0),
+      moduleIds: cc,
+      totalLines: cc.reduce((sum, id) => sum + (moduleMap.get(id)?.lines ?? 0), 0),
     }));
-
-    // File-level SCCs
-    const directedAdj = new Map<string, string[]>();
-    for (const [path, deps] of fileDeps) {
-      directedAdj.set(path, [...deps.calls, ...deps.usesTypes]);
-    }
-    const fileSCCs = findSCCs(allPaths, directedAdj);
-
-    // Serialize
-    const serializedDeps: DependencySummary['fileDependencies'] = {};
-    for (const [path, deps] of fileDeps) {
-      serializedDeps[path] = {
-        calls: [...deps.calls].sort(),
-        calledBy: [...deps.calledBy].sort(),
-        usesTypes: [...deps.usesTypes].sort(),
-        typesUsedBy: [...deps.typesUsedBy].sort(),
-      };
-    }
 
     return {
       fileCount: files.length,
       totalLines,
-      fileDependencies: serializedDeps,
-      fileMetrics,
+      modules,
       connectedComponents: ccResults,
-      sccs: fileSCCs,
+      sccs: moduleSCCs,
+      fileMetrics,
     };
   } finally {
     db.close();
@@ -198,16 +162,7 @@ export async function buildDependencySummary(kbDbPath: string): Promise<Dependen
 }
 
 /**
- * Build a complete task graph from the Lore knowledge-base.
- *
- * 1. Opens the KB read-only
- * 2. Lists all source files and symbols
- * 3. Splits files into tasks respecting maxLinesPerTask (at symbol boundaries)
- * 4. Builds symbol → task mapping
- * 5. Queries symbol_refs AND type_refs for dependency edges
- * 6. Optionally annotates tasks with compilation unit IDs
- * 7. Validates cross-unit dependencies against actual edges
- * 8. Detects SCCs via Tarjan's algorithm
+ * Build a complete task graph using call-graph clustering.
  */
 export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<TaskGraphResult> {
   const { kbDbPath, sourceRoot, maxLinesPerTask, targetLanguage, outputPath, compilationUnits } = options;
@@ -221,7 +176,10 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
       return { tasks: [], sccs: [], compilationUnits: compilationUnits ?? [] };
     }
 
-    // Build file path → compilation unit mapping
+    const fileIdToPath = new Map<number, string>();
+    for (const f of files) fileIdToPath.set(f.id, f.path);
+
+    // File → compilation unit mapping
     const fileToUnit = new Map<string, string>();
     if (compilationUnits) {
       for (const unit of compilationUnits) {
@@ -230,100 +188,122 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
     }
 
     const allSymbols = lore.listSymbols(db, { limit: 100_000 });
-    const symbolsByFileId = new Map<number, SymbolInfo[]>();
-    for (const sym of allSymbols) {
-      const list = symbolsByFileId.get(sym.file_id) ?? [];
-      list.push({
-        id: sym.id, name: sym.name, kind: sym.kind,
-        fileId: sym.file_id, startLine: sym.start_line, endLine: sym.end_line,
-      });
-      symbolsByFileId.set(sym.file_id, list);
-    }
+    const symInfos: SymbolInfo[] = allSymbols.map(s => ({
+      id: s.id, name: s.name, kind: s.kind,
+      fileId: s.file_id, startLine: s.start_line, endLine: s.end_line,
+    }));
 
-    // 3. Split files into tasks
-    const tasks: MigrationTask[] = [];
-    const symbolToTask = new Map<number, string>();
-    const fileIdToTasks = new Map<number, TaskChunk[]>();
-
-    for (let fileIdx = 0; fileIdx < files.length; fileIdx++) {
-      const file = files[fileIdx]!;
-      const fileSymbols = symbolsByFileId.get(file.id) ?? [];
-      fileSymbols.sort((a, b) => a.startLine - b.startLine);
-
-      const chunks = splitFileIntoChunks(fileIdx, file, fileSymbols, maxLinesPerTask);
-      fileIdToTasks.set(file.id, chunks);
-
-      const unitId = fileToUnit.get(file.path);
-
-      for (const chunk of chunks) {
-        const targetFile = mapSourceToTarget(file.path, targetLanguage, outputPath, sourceRoot);
-        const task: MigrationTask = {
-          id: chunk.taskId,
-          name: chunk.name,
-          sourceFiles: [file.path],
+    // Handle empty symbol table — create one task per file
+    if (symInfos.length === 0) {
+      const tasks: MigrationTask[] = files.map((f, idx) => {
+        const targetFile = mapSourceToTarget(f.path, targetLanguage, outputPath, sourceRoot);
+        const unitId = fileToUnit.get(f.path);
+        return {
+          id: `task-${idx}-0`,
+          name: fileBaseName(f.path),
+          sourceFiles: [f.path],
           targetFiles: [targetFile],
-          knowledgeBaseRef: `kb/${file.path}`,
+          knowledgeBaseRef: `kb/${f.path}`,
           dependencies: [],
-          complexity: estimateComplexity(chunk.lineCount),
-          description: chunk.description,
-          acceptanceCriteria: buildAcceptanceCriteria(chunk),
-          parityChecks: buildParityChecks(chunk),
-          ...(chunk.lineRange ? { lineRange: chunk.lineRange } : {}),
+          complexity: 'simple' as const,
+          description: `Migrate ${f.path}`,
+          acceptanceCriteria: ['Target code compiles without type errors'],
+          parityChecks: ['Function signatures preserved across source→target boundary'],
           ...(unitId ? { compilationUnit: unitId } : {}),
         };
-        tasks.push(task);
-        for (const sym of chunk.symbols) symbolToTask.set(sym.id, chunk.taskId);
-      }
+      });
+      return { tasks, sccs: [], compilationUnits: compilationUnits ?? [] };
     }
 
-    // 4. symbol name → task IDs
-    const symbolNameToTaskIds = new Map<string, Set<string>>();
-    for (const sym of allSymbols) {
-      const taskId = symbolToTask.get(sym.id);
-      if (!taskId) continue;
-      const set = symbolNameToTaskIds.get(sym.name) ?? new Set();
-      set.add(taskId);
-      symbolNameToTaskIds.set(sym.name, set);
-    }
-
-    // 5. Query symbol_refs AND type_refs
     const callRefs = querySymbolRefs(db);
     const typeRefs = queryTypeRefs(db);
-    const taskDeps = new Map<string, Set<string>>();
 
-    const addDep = (from: string, to: string) => {
-      if (from === to) return;
-      const set = taskDeps.get(from) ?? new Set();
-      set.add(to);
-      taskDeps.set(from, set);
-    };
+    // Cluster symbols into tasks
+    const clusters = clusterSymbols(symInfos, callRefs, typeRefs, maxLinesPerTask);
 
-    for (const ref of callRefs) {
-      const callerTaskId = resolveSymbolToTask(ref, fileIdToTasks, symbolToTask);
-      if (!callerTaskId) continue;
-      const calleeTaskIds = symbolNameToTaskIds.get(ref.calleeName);
-      if (!calleeTaskIds) continue;
-      for (const cid of calleeTaskIds) addDep(callerTaskId, cid);
+    // Build tasks from clusters
+    const tasks: MigrationTask[] = [];
+    const clusterIdToTaskId = new Map<string, string>();
+
+    for (let i = 0; i < clusters.length; i++) {
+      const cluster = clusters[i]!;
+      const taskId = `task-${i}-0`;
+      clusterIdToTaskId.set(cluster.id, taskId);
+
+      // Collect source files from the cluster's symbols
+      const clusterFiles = new Set<string>();
+      for (const sym of cluster.symbols) {
+        const path = fileIdToPath.get(sym.fileId);
+        if (path) clusterFiles.add(path);
+      }
+      const sourceFiles = [...clusterFiles].sort();
+
+      // Target files
+      const targetFiles = sourceFiles.map(sf =>
+        mapSourceToTarget(sf, targetLanguage, outputPath, sourceRoot),
+      );
+      // Deduplicate target files (multiple source files may map to the same target)
+      const uniqueTargets = [...new Set(targetFiles)];
+
+      // Determine compilation unit (majority vote if cluster spans multiple files)
+      let unitId: string | undefined;
+      if (compilationUnits) {
+        const unitCounts = new Map<string, number>();
+        for (const sf of sourceFiles) {
+          const u = fileToUnit.get(sf);
+          if (u) unitCounts.set(u, (unitCounts.get(u) ?? 0) + 1);
+        }
+        if (unitCounts.size > 0) {
+          unitId = [...unitCounts.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+        }
+      }
+
+      // Compute line range if cluster is within a single file
+      let lineRange: { start: number; end: number } | undefined;
+      if (clusterFiles.size === 1) {
+        const minLine = Math.min(...cluster.symbols.map(s => s.startLine));
+        const maxLine = Math.max(...cluster.symbols.map(s => s.endLine));
+        lineRange = { start: minLine, end: maxLine };
+      }
+
+      const symbolNames = cluster.symbols.map(s => s.name);
+      const repNames = symbolNames.slice(0, 5).join(', ');
+
+      tasks.push({
+        id: taskId,
+        name: cluster.symbols.length === 1
+          ? cluster.symbols[0]!.name
+          : `${repNames}${symbolNames.length > 5 ? ` (+${symbolNames.length - 5})` : ''}`,
+        sourceFiles,
+        targetFiles: uniqueTargets,
+        knowledgeBaseRef: sourceFiles.map(f => `kb/${f}`).join(', '),
+        dependencies: [], // populated below
+        complexity: estimateComplexity(cluster.totalLines),
+        description: describeCluster(cluster, fileIdToPath),
+        acceptanceCriteria: buildAcceptanceCriteria(cluster),
+        parityChecks: buildParityChecks(cluster),
+        ...(lineRange ? { lineRange } : {}),
+        ...(unitId ? { compilationUnit: unitId } : {}),
+      });
     }
 
-    for (const ref of typeRefs) {
-      const userTaskId = resolveTypeRefToTask(ref, fileIdToTasks);
-      if (!userTaskId) continue;
-      const definerTaskIds = symbolNameToTaskIds.get(ref.typeName);
-      if (!definerTaskIds) continue;
-      for (const did of definerTaskIds) addDep(userTaskId, did);
-    }
-
+    // Populate inter-task dependencies from inter-cluster edges
     const taskMap = new Map(tasks.map(t => [t.id, t]));
-    for (const [taskId, deps] of taskDeps) {
-      const task = taskMap.get(taskId);
-      if (task) task.dependencies = [...deps].sort();
+    for (const cluster of clusters) {
+      const taskId = clusterIdToTaskId.get(cluster.id)!;
+      const task = taskMap.get(taskId)!;
+      const deps = new Set<string>();
+      for (const depClusterId of cluster.dependencies) {
+        const depTaskId = clusterIdToTaskId.get(depClusterId);
+        if (depTaskId && depTaskId !== taskId) deps.add(depTaskId);
+      }
+      task.dependencies = [...deps].sort();
     }
 
-    // 6. Validate compilation units
+    // Validate compilation units
     const validatedUnits = validateCompilationUnits(tasks, compilationUnits ?? []);
 
-    // 7. Detect SCCs
+    // Detect task-level SCCs
     const adjacency = new Map<string, string[]>();
     for (const t of tasks) adjacency.set(t.id, t.dependencies);
     const sccs = findSCCs(tasks.map(t => t.id), adjacency);
@@ -334,18 +314,289 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
   }
 }
 
-// ─── Internal Types ─────────────────────────────────────────────────────────
+// ─── Clustering Engine ──────────────────────────────────────────────────────
 
 interface SymbolInfo {
   id: number; name: string; kind: string;
   fileId: number; startLine: number; endLine: number;
 }
 
-interface TaskChunk {
-  taskId: string; name: string; description: string;
-  symbols: SymbolInfo[]; lineCount: number;
-  lineRange?: { start: number; end: number };
+interface Cluster {
+  id: string;
+  symbols: SymbolInfo[];
+  totalLines: number;
+  /** Cluster IDs this cluster depends on (outbound edges). */
+  dependencies: Set<string>;
 }
+
+/**
+ * Cluster symbols using call-graph analysis:
+ *   1. Build directed symbol-level adjacency from symbol_refs + type_refs
+ *   2. Contract SCCs — mutually-dependent symbols must share a cluster
+ *   3. Greedy merge — repeatedly merge the pair with the highest edge
+ *      weight, as long as the merged size doesn't exceed maxLines
+ */
+function clusterSymbols(
+  symbols: SymbolInfo[],
+  callRefs: CallRefRow[],
+  typeRefs: TypeRefRow[],
+  maxLines: number,
+): Cluster[] {
+  if (symbols.length === 0) return [];
+
+  // Build symbol name → symbol IDs map (for resolving callee names)
+  const nameToIds = new Map<string, number[]>();
+  for (const sym of symbols) {
+    const list = nameToIds.get(sym.name) ?? [];
+    list.push(sym.id);
+    nameToIds.set(sym.name, list);
+  }
+
+  const symMap = new Map(symbols.map(s => [s.id, s]));
+
+  // Build directed edges: symId → Set<symId>
+  const edges = new Map<number, Set<number>>();
+  const ensureEdges = (id: number) => {
+    if (!edges.has(id)) edges.set(id, new Set());
+  };
+  for (const sym of symbols) ensureEdges(sym.id);
+
+  // Add call edges
+  for (const ref of callRefs) {
+    if (!symMap.has(ref.callerSymbolId)) continue;
+    const calleeIds = nameToIds.get(ref.calleeName) ?? [];
+    for (const calleeId of calleeIds) {
+      if (calleeId !== ref.callerSymbolId && symMap.has(calleeId)) {
+        ensureEdges(ref.callerSymbolId);
+        edges.get(ref.callerSymbolId)!.add(calleeId);
+      }
+    }
+  }
+
+  // Add type edges (file_id + ref_line → containing symbol → type definer)
+  const symbolsByFile = new Map<number, SymbolInfo[]>();
+  for (const sym of symbols) {
+    const list = symbolsByFile.get(sym.fileId) ?? [];
+    list.push(sym);
+    symbolsByFile.set(sym.fileId, list);
+  }
+
+  for (const ref of typeRefs) {
+    // Find the symbol containing this type reference
+    let userSymId: number | undefined;
+    if (ref.symbolId != null && symMap.has(ref.symbolId)) {
+      userSymId = ref.symbolId;
+    } else {
+      // Fallback: find the symbol whose line range contains ref_line
+      const fileSym = symbolsByFile.get(ref.fileId);
+      if (fileSym) {
+        for (const s of fileSym) {
+          if (ref.refLine >= s.startLine && ref.refLine <= s.endLine) {
+            userSymId = s.id;
+            break;
+          }
+        }
+      }
+    }
+    if (userSymId == null) continue;
+
+    const definerIds = nameToIds.get(ref.typeName) ?? [];
+    for (const defId of definerIds) {
+      if (defId !== userSymId && symMap.has(defId)) {
+        ensureEdges(userSymId);
+        edges.get(userSymId)!.add(defId);
+      }
+    }
+  }
+
+  // Step 1: Find SCCs using Tarjan's on the symbol graph
+  const symIds = symbols.map(s => s.id.toString());
+  const symAdj = new Map<string, string[]>();
+  for (const [from, tos] of edges) {
+    symAdj.set(from.toString(), [...tos].map(t => t.toString()));
+  }
+  for (const sym of symbols) {
+    if (!symAdj.has(sym.id.toString())) symAdj.set(sym.id.toString(), []);
+  }
+  const symbolSCCs = findSCCs(symIds, symAdj);
+
+  // Step 2: Build initial clusters — one per SCC, one per non-SCC symbol
+  const symbolToCluster = new Map<number, string>();
+  const clusterMap = new Map<string, Cluster>();
+  let clusterCounter = 0;
+
+  // SCC clusters
+  for (const scc of symbolSCCs) {
+    const clusterId = `c${clusterCounter++}`;
+    const clusterSyms: SymbolInfo[] = [];
+    for (const sid of scc) {
+      const sym = symMap.get(parseInt(sid));
+      if (sym) {
+        clusterSyms.push(sym);
+        symbolToCluster.set(sym.id, clusterId);
+      }
+    }
+    const totalLines = computeClusterLines(clusterSyms);
+    clusterMap.set(clusterId, {
+      id: clusterId, symbols: clusterSyms, totalLines,
+      dependencies: new Set(),
+    });
+  }
+
+  // Singleton clusters for non-SCC symbols
+  for (const sym of symbols) {
+    if (symbolToCluster.has(sym.id)) continue;
+    const clusterId = `c${clusterCounter++}`;
+    symbolToCluster.set(sym.id, clusterId);
+    const lineCount = sym.endLine - sym.startLine + 1;
+    clusterMap.set(clusterId, {
+      id: clusterId, symbols: [sym], totalLines: lineCount,
+      dependencies: new Set(),
+    });
+  }
+
+  // Build inter-cluster edges with weights
+  const interClusterEdges = new Map<string, Map<string, number>>(); // from → (to → weight)
+  for (const [fromSym, toSyms] of edges) {
+    const fromCluster = symbolToCluster.get(fromSym)!;
+    for (const toSym of toSyms) {
+      const toCluster = symbolToCluster.get(toSym)!;
+      if (fromCluster === toCluster) continue;
+      if (!interClusterEdges.has(fromCluster)) interClusterEdges.set(fromCluster, new Map());
+      const fromMap = interClusterEdges.get(fromCluster)!;
+      fromMap.set(toCluster, (fromMap.get(toCluster) ?? 0) + 1);
+    }
+  }
+
+  // Step 3: Greedy merge — merge the pair with the highest bidirectional
+  // edge weight, as long as merged size ≤ maxLines
+  let changed = true;
+  while (changed) {
+    changed = false;
+
+    // Find the pair with the highest mutual edge weight
+    let bestPair: [string, string] | undefined;
+    let bestWeight = 0;
+
+    for (const [from, targets] of interClusterEdges) {
+      for (const [to, weight] of targets) {
+        if (!clusterMap.has(from) || !clusterMap.has(to)) continue;
+        // Bidirectional weight
+        const reverseWeight = interClusterEdges.get(to)?.get(from) ?? 0;
+        const totalWeight = weight + reverseWeight;
+        if (totalWeight <= bestWeight) continue;
+
+        // Check size constraint
+        const fromCluster = clusterMap.get(from)!;
+        const toCluster = clusterMap.get(to)!;
+        if (fromCluster.totalLines + toCluster.totalLines > maxLines) continue;
+
+        bestWeight = totalWeight;
+        bestPair = [from, to];
+      }
+    }
+
+    if (!bestPair || bestWeight < 2) break; // Only merge if at least 2 edges connect them
+
+    const [keepId, mergeId] = bestPair;
+    const keepCluster = clusterMap.get(keepId)!;
+    const mergeCluster = clusterMap.get(mergeId)!;
+
+    // Merge symbols
+    keepCluster.symbols.push(...mergeCluster.symbols);
+    keepCluster.totalLines = computeClusterLines(keepCluster.symbols);
+
+    // Update symbol → cluster mapping
+    for (const sym of mergeCluster.symbols) {
+      symbolToCluster.set(sym.id, keepId);
+    }
+
+    // Rewire edges: redirect all edges to/from mergeId to keepId
+    const mergedTargets = interClusterEdges.get(mergeId);
+    if (mergedTargets) {
+      for (const [target, w] of mergedTargets) {
+        if (target === keepId) continue;
+        if (!interClusterEdges.has(keepId)) interClusterEdges.set(keepId, new Map());
+        const keepTargets = interClusterEdges.get(keepId)!;
+        keepTargets.set(target, (keepTargets.get(target) ?? 0) + w);
+      }
+    }
+
+    // Redirect inbound edges from mergeId to keepId
+    for (const [from, targets] of interClusterEdges) {
+      if (from === mergeId) continue;
+      const w = targets.get(mergeId);
+      if (w != null) {
+        targets.delete(mergeId);
+        if (from !== keepId) {
+          targets.set(keepId, (targets.get(keepId) ?? 0) + w);
+        }
+      }
+    }
+
+    // Remove self-edges on keepId
+    interClusterEdges.get(keepId)?.delete(keepId);
+
+    // Remove merged cluster
+    interClusterEdges.delete(mergeId);
+    clusterMap.delete(mergeId);
+
+    changed = true;
+  }
+
+  // Compute final inter-cluster dependencies (directed)
+  for (const cluster of clusterMap.values()) {
+    cluster.dependencies.clear();
+  }
+  for (const [fromSym, toSyms] of edges) {
+    const fromCluster = symbolToCluster.get(fromSym)!;
+    for (const toSym of toSyms) {
+      const toCluster = symbolToCluster.get(toSym)!;
+      if (fromCluster !== toCluster) {
+        clusterMap.get(fromCluster)?.dependencies.add(toCluster);
+      }
+    }
+  }
+
+  return [...clusterMap.values()];
+}
+
+/**
+ * Compute total lines for a cluster, accounting for overlapping symbol
+ * ranges within the same file.
+ */
+function computeClusterLines(symbols: SymbolInfo[]): number {
+  if (symbols.length === 0) return 0;
+
+  // Group by file, then compute non-overlapping line ranges
+  const byFile = new Map<number, Array<{ start: number; end: number }>>();
+  for (const s of symbols) {
+    const list = byFile.get(s.fileId) ?? [];
+    list.push({ start: s.startLine, end: s.endLine });
+    byFile.set(s.fileId, list);
+  }
+
+  let total = 0;
+  for (const ranges of byFile.values()) {
+    ranges.sort((a, b) => a.start - b.start);
+    let mergedStart = ranges[0]!.start;
+    let mergedEnd = ranges[0]!.end;
+    for (let i = 1; i < ranges.length; i++) {
+      if (ranges[i]!.start <= mergedEnd + 1) {
+        mergedEnd = Math.max(mergedEnd, ranges[i]!.end);
+      } else {
+        total += mergedEnd - mergedStart + 1;
+        mergedStart = ranges[i]!.start;
+        mergedEnd = ranges[i]!.end;
+      }
+    }
+    total += mergedEnd - mergedStart + 1;
+  }
+
+  return total;
+}
+
+// ─── DB Queries ──────────────────────────────────────────────────────────────
 
 interface CallRefRow {
   callerSymbolId: number; callerFileId: number;
@@ -357,79 +608,6 @@ interface TypeRefRow {
   fileId: number; symbolId: number | null;
   typeName: string; refLine: number;
 }
-
-// ─── File Splitting ──────────────────────────────────────────────────────────
-
-function splitFileIntoChunks(
-  fileIndex: number,
-  file: { id: number; path: string },
-  symbols: SymbolInfo[],
-  maxLinesPerTask: number,
-): TaskChunk[] {
-  const maxEndLine = symbols.length > 0
-    ? Math.max(...symbols.map(s => s.endLine)) : 0;
-
-  if (maxEndLine <= maxLinesPerTask || symbols.length === 0) {
-    return [{
-      taskId: `task-${fileIndex}-0`,
-      name: fileBaseName(file.path),
-      description: `Migrate ${file.path}`,
-      symbols: [...symbols],
-      lineCount: maxEndLine || maxLinesPerTask,
-    }];
-  }
-
-  const chunks: TaskChunk[] = [];
-  let chunkIndex = 0;
-  let currentSymbols: SymbolInfo[] = [];
-  let chunkStartLine = 1;
-
-  for (const sym of symbols) {
-    currentSymbols.push(sym);
-    const chunkEndLine = sym.endLine;
-    const chunkLines = chunkEndLine - chunkStartLine + 1;
-
-    if (chunkLines >= maxLinesPerTask && currentSymbols.length > 0) {
-      chunks.push({
-        taskId: `task-${fileIndex}-${chunkIndex}`,
-        name: `${fileBaseName(file.path)} (part ${chunkIndex + 1})`,
-        description: `Migrate ${file.path} lines ${chunkStartLine}-${chunkEndLine}`,
-        symbols: [...currentSymbols],
-        lineCount: chunkLines,
-        lineRange: { start: chunkStartLine, end: chunkEndLine },
-      });
-      chunkIndex++;
-      chunkStartLine = chunkEndLine + 1;
-      currentSymbols = [];
-    }
-  }
-
-  if (currentSymbols.length > 0) {
-    const chunkEndLine = currentSymbols[currentSymbols.length - 1]!.endLine;
-    chunks.push({
-      taskId: `task-${fileIndex}-${chunkIndex}`,
-      name: `${fileBaseName(file.path)} (part ${chunkIndex + 1})`,
-      description: `Migrate ${file.path} lines ${chunkStartLine}-${chunkEndLine}`,
-      symbols: [...currentSymbols],
-      lineCount: chunkEndLine - chunkStartLine + 1,
-      lineRange: { start: chunkStartLine, end: chunkEndLine },
-    });
-  }
-
-  if (chunks.length === 0) {
-    return [{
-      taskId: `task-${fileIndex}-0`,
-      name: fileBaseName(file.path),
-      description: `Migrate ${file.path}`,
-      symbols: [...symbols],
-      lineCount: maxEndLine,
-    }];
-  }
-
-  return chunks;
-}
-
-// ─── Ref Queries ─────────────────────────────────────────────────────────────
 
 function querySymbolRefs(db: import('better-sqlite3').Database): CallRefRow[] {
   const rows = db.prepare(`
@@ -459,49 +637,8 @@ function queryTypeRefs(db: import('better-sqlite3').Database): TypeRefRow[] {
   }));
 }
 
-function resolveSymbolToTask(
-  ref: CallRefRow,
-  fileIdToTasks: Map<number, TaskChunk[]>,
-  symbolToTask: Map<number, string>,
-): string | undefined {
-  const direct = symbolToTask.get(ref.callerSymbolId);
-  if (direct) return direct;
-  const chunks = fileIdToTasks.get(ref.callerFileId);
-  if (!chunks) return undefined;
-  for (const chunk of chunks) {
-    if (chunk.lineRange) {
-      if (ref.callerStartLine >= chunk.lineRange.start && ref.callerEndLine <= chunk.lineRange.end)
-        return chunk.taskId;
-    } else {
-      return chunk.taskId;
-    }
-  }
-  return undefined;
-}
-
-function resolveTypeRefToTask(
-  ref: TypeRefRow,
-  fileIdToTasks: Map<number, TaskChunk[]>,
-): string | undefined {
-  const chunks = fileIdToTasks.get(ref.fileId);
-  if (!chunks) return undefined;
-  for (const chunk of chunks) {
-    if (chunk.lineRange) {
-      if (ref.refLine >= chunk.lineRange.start && ref.refLine <= chunk.lineRange.end)
-        return chunk.taskId;
-    } else {
-      return chunk.taskId;
-    }
-  }
-  return undefined;
-}
-
 // ─── Compilation Unit Validation ─────────────────────────────────────────────
 
-/**
- * Validate agent-declared compilation unit dependencies against actual
- * task-level edges.  Adds missing cross-unit dependencies.
- */
 function validateCompilationUnits(
   tasks: MigrationTask[],
   units: CompilationUnit[],
@@ -605,7 +742,7 @@ function findConnectedComponents(
   return [...groups.values()].filter(g => g.length > 0);
 }
 
-// ─── Target Path Mapping ────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const LANGUAGE_EXTENSIONS: Record<string, string> = {
   rust: '.rs', typescript: '.ts', javascript: '.js', csharp: '.cs',
@@ -627,8 +764,6 @@ function mapSourceToTarget(
   return `${outputPath}/${stem}${ext}`.replace(/\/\//g, '/');
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
 function fileBaseName(path: string): string {
   const lastSlash = path.lastIndexOf('/');
   const name = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
@@ -642,22 +777,36 @@ function estimateComplexity(lineCount: number): 'simple' | 'moderate' | 'complex
   return 'complex';
 }
 
-function buildAcceptanceCriteria(chunk: TaskChunk): string[] {
+function describeCluster(cluster: Cluster, fileIdToPath: Map<number, string>): string {
+  const files = new Set<string>();
+  for (const sym of cluster.symbols) {
+    const path = fileIdToPath.get(sym.fileId);
+    if (path) files.add(path);
+  }
+  const fileList = [...files].sort();
+  const symNames = cluster.symbols.slice(0, 5).map(s => s.name).join(', ');
+  if (fileList.length === 1) {
+    return `Migrate ${symNames} from ${fileList[0]}`;
+  }
+  return `Migrate ${symNames} across ${fileList.length} file(s)`;
+}
+
+function buildAcceptanceCriteria(cluster: Cluster): string[] {
   const criteria: string[] = [];
-  const symbolNames = chunk.symbols.map(s => s.name).slice(0, 10);
+  const symbolNames = cluster.symbols.map(s => s.name).slice(0, 10);
   if (symbolNames.length > 0) {
-    criteria.push(`All exported symbols correctly migrated: ${symbolNames.join(', ')}`);
+    criteria.push(`All symbols correctly migrated: ${symbolNames.join(', ')}`);
   }
   criteria.push('Call-site signatures match upstream dependency contracts');
   criteria.push('Target code compiles without type errors');
   return criteria;
 }
 
-function buildParityChecks(chunk: TaskChunk): string[] {
+function buildParityChecks(cluster: Cluster): string[] {
   const checks: string[] = [];
   checks.push('Function signatures preserved across source→target boundary');
   checks.push('All call sites to migrated symbols use correct argument types');
-  if (chunk.symbols.some(s => s.kind === 'type' || s.kind === 'class' || s.kind === 'struct')) {
+  if (cluster.symbols.some(s => s.kind === 'type' || s.kind === 'class' || s.kind === 'struct')) {
     checks.push('Type definitions preserve public field names and types');
   }
   return checks;
