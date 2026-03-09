@@ -106,13 +106,13 @@ describe('buildTaskGraph', () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);
     const f1 = insertFile(db, 'src/a.c');
-    insertSymbol(db, f1, 'fn_a', 'function', 1, 30);
+    insertSymbol(db, f1, 'fn_a', 'function', 1, 80);
     const f2 = insertFile(db, 'src/b.c');
-    insertSymbol(db, f2, 'fn_b', 'function', 1, 20);
+    insertSymbol(db, f2, 'fn_b', 'function', 1, 70);
     db.close();
 
     const result = await buildTaskGraph({ ...DEFAULT_OPTIONS, kbDbPath: dbPath });
-    // Two isolated symbols → two tasks (no edges to merge)
+    // Two isolated symbols (both above min-size threshold) → two tasks
     expect(result.tasks).toHaveLength(2);
   });
 
@@ -379,13 +379,13 @@ describe('buildDependencySummary', () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);
     const fa = insertFile(db, 'src/a.c');
-    const fnA = insertSymbol(db, fa, 'fn_a', 'function', 1, 20);
+    const fnA = insertSymbol(db, fa, 'fn_a', 'function', 1, 60);
     const fb = insertFile(db, 'src/b.c');
-    const fnB = insertSymbol(db, fb, 'fn_b', 'function', 1, 20);
+    const fnB = insertSymbol(db, fb, 'fn_b', 'function', 1, 60);
     insertRef(db, fnA, 'fn_b', 5, fnB);
-    // Isolated file
-    const fc = insertFile(db, 'src/c.c');
-    insertSymbol(db, fc, 'fn_c', 'function', 1, 20);
+    // Isolated file in a different directory
+    const fc = insertFile(db, 'lib/c.c');
+    insertSymbol(db, fc, 'fn_c', 'function', 1, 60);
     db.close();
 
     const summary = await buildDependencySummary(dbPath);

@@ -92,7 +92,7 @@ export async function buildDependencySummary(
     const typeRefs = queryTypeRefs(db);
 
     // Cluster symbols
-    const clusters = clusterSymbols(symInfos, callRefs, typeRefs, maxLinesPerModule);
+    const clusters = clusterSymbols(symInfos, callRefs, typeRefs, maxLinesPerModule, fileIdToPath);
 
     // Build modules from clusters
     const modules: CondensedModule[] = [];
@@ -219,7 +219,7 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
     const typeRefs = queryTypeRefs(db);
 
     // Cluster symbols into tasks
-    const clusters = clusterSymbols(symInfos, callRefs, typeRefs, maxLinesPerTask);
+    const clusters = clusterSymbols(symInfos, callRefs, typeRefs, maxLinesPerTask, fileIdToPath);
 
     // Build tasks from clusters
     const tasks: MigrationTask[] = [];
@@ -355,6 +355,7 @@ function clusterSymbols(
   callRefs: CallRefRow[],
   typeRefs: TypeRefRow[],
   maxLines: number,
+  fileIdToPath?: Map<number, string>,
 ): Cluster[] {
   if (symbols.length === 0) return [];
 
@@ -733,6 +734,118 @@ function clusterSymbols(
       }
     }
     clusterCounter += subClusters.length;
+  }
+
+  // Step 6: Proximity-based grouping for remaining small orphan clusters.
+  //         Group by file first, then by directory, bin-packing up to maxLines.
+  const MIN_LINES = 50;
+  const smallOrphans = [...clusterMap.entries()]
+    .filter(([_, c]) => computeLineSpan(c.symbols) < MIN_LINES && !c.isStubs)
+    .map(([id, c]) => ({ id, cluster: c }));
+
+  if (smallOrphans.length > 1) {
+    // Bucket by file_id (primary grouping key)
+    const byFile = new Map<number, typeof smallOrphans>();
+    const multiFile: typeof smallOrphans = [];
+
+    for (const orphan of smallOrphans) {
+      const fileIds = new Set(orphan.cluster.symbols.map(s => s.fileId));
+      if (fileIds.size === 1) {
+        const fid = [...fileIds][0]!;
+        const list = byFile.get(fid) ?? [];
+        list.push(orphan);
+        byFile.set(fid, list);
+      } else {
+        multiFile.push(orphan);
+      }
+    }
+
+    // Merge same-file small orphans into combined clusters
+    for (const [_fid, orphans] of byFile) {
+      if (orphans.length <= 1) continue;
+
+      // Sort by start line for stable ordering
+      orphans.sort((a, b) =>
+        Math.min(...a.cluster.symbols.map(s => s.startLine)) -
+        Math.min(...b.cluster.symbols.map(s => s.startLine)),
+      );
+
+      let currentOrphans: typeof orphans = [];
+      let currentSpan = 0;
+
+      for (const orphan of orphans) {
+        const orphanSpan = computeLineSpan(orphan.cluster.symbols);
+        const combinedSymbols = [
+          ...currentOrphans.flatMap(o => o.cluster.symbols),
+          ...orphan.cluster.symbols,
+        ];
+        const combinedSpan = computeLineSpan(combinedSymbols);
+
+        if (combinedSpan > maxLines && currentOrphans.length > 0) {
+          // Flush current batch → merge into the first orphan's cluster
+          const keepId = currentOrphans[0]!.id;
+          for (let i = 1; i < currentOrphans.length; i++) {
+            mergeClusters(keepId, currentOrphans[i]!.id);
+          }
+          currentOrphans = [];
+          currentSpan = 0;
+        }
+        currentOrphans.push(orphan);
+        currentSpan = computeLineSpan(currentOrphans.flatMap(o => o.cluster.symbols));
+      }
+
+      // Flush remaining
+      if (currentOrphans.length > 1) {
+        const keepId = currentOrphans[0]!.id;
+        for (let i = 1; i < currentOrphans.length; i++) {
+          mergeClusters(keepId, currentOrphans[i]!.id);
+        }
+      }
+    }
+
+    // For multi-file orphans and remaining single-file orphans that are still
+    // small, group by directory (symbols sharing the same parent directory
+    // are likely part of the same module).
+    const stillSmall = [...clusterMap.entries()]
+      .filter(([_, c]) => computeLineSpan(c.symbols) < MIN_LINES && !c.isStubs)
+      .map(([id, c]) => ({ id, cluster: c }));
+
+    if (stillSmall.length > 1) {
+      // Bucket by source directory
+      const getFileDir = (fid: number): string => {
+        const path = fileIdToPath?.get(fid) ?? fid.toString();
+        const lastSlash = path.lastIndexOf('/');
+        return lastSlash >= 0 ? path.substring(0, lastSlash) : '.';
+      };
+
+      const byDir = new Map<string, typeof stillSmall>();
+      for (const orphan of stillSmall) {
+        const primaryDir = getFileDir(orphan.cluster.symbols[0]?.fileId ?? 0);
+        const list = byDir.get(primaryDir) ?? [];
+        list.push(orphan);
+        byDir.set(primaryDir, list);
+      }
+
+      // Within each directory bucket, greedily merge
+      for (const [_, orphans] of byDir) {
+        if (orphans.length <= 1) continue;
+        let currentKeep: string | undefined;
+        for (const orphan of orphans) {
+          if (!clusterMap.has(orphan.id)) continue; // already merged
+          if (!currentKeep || !clusterMap.has(currentKeep)) {
+            currentKeep = orphan.id;
+            continue;
+          }
+          const keepCluster = clusterMap.get(currentKeep)!;
+          const combinedSpan = computeLineSpan([...keepCluster.symbols, ...orphan.cluster.symbols]);
+          if (combinedSpan <= maxLines) {
+            mergeClusters(currentKeep, orphan.id);
+          } else {
+            currentKeep = orphan.id; // start new bucket
+          }
+        }
+      }
+    }
   }
 
   // Compute final inter-cluster dependencies (directed)
