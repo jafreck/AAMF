@@ -41,9 +41,9 @@ describe('CI workflow (.github/workflows/ci.yml)', () => {
     expect(text).toMatch(/branches:\s*\[main\]/);
   });
 
-  it('should include Node.js 20.x in matrix', async () => {
+  it('should not include Node.js 20.x in matrix (Lore requires >=22)', async () => {
     const text = await loadContent();
-    expect(text).toContain('20.x');
+    expect(text).not.toContain('20.x');
   });
 
   it('should include Node.js 22.x in matrix', async () => {

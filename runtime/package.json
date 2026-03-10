@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
-    "postinstall": "rm -rf node_modules/@aamf/lore/node_modules/tree-sitter node_modules/@aamf/lore/node_modules/tree-sitter-c 2>/dev/null || true"
+    "postinstall": "node -e \"try{require('@aamf/lore/node_modules/tree-sitter')}catch{const{rmSync}=require('fs');['tree-sitter','tree-sitter-c'].forEach(p=>{try{rmSync('node_modules/@aamf/lore/node_modules/'+p,{recursive:true,force:true})}catch{}})}\""
   },
   "dependencies": {
     "@aamf/lore": "npm:@jafreck/lore@^0.3.2",
@@ -47,9 +47,5 @@
   },
   "engines": {
     "node": ">=22.0.0"
-  },
-  "overrides": {
-    "tree-sitter": "0.21.1",
-    "tree-sitter-c": "0.23.1"
   }
 }

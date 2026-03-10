@@ -1,8 +1,9 @@
 /**
  * Tests for the KB MCP server tool handlers.
  *
- * Uses an in-memory SQLite database seeded via IndexBuilder so that the
- * tests are self-contained and don't require downloading external sources.
+ * Uses a SQLite database seeded via IndexBuilder for the schema, then
+ * manually injects symbols and FTS data so the tests are self-contained
+ * and deterministic regardless of tree-sitter grammar availability.
  *
  * All tool handler functions are exercised directly (without going through
  * the MCP stdio transport) to keep the tests fast and reliable.
@@ -12,7 +13,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join, resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { IndexBuilder, openReadOnly } from '@aamf/lore';
+import { IndexBuilder, openDb, openReadOnly } from '@aamf/lore';
 import type { Database } from '@aamf/lore';
 import { handler as lookupHandler } from '@aamf/lore/lore-server/tools/lookup';
 import { handler as graphHandler } from '@aamf/lore/lore-server/tools/graph';
@@ -24,8 +25,8 @@ import { handler as writebackHandler } from '@aamf/lore/lore-server/tools/writeb
 // ─── Fixture setup ────────────────────────────────────────────────────────────
 
 /**
- * Use the tiny-python-project fixture; it has real Python source files so
- * the indexer can populate the symbols_fts table (needed for structural search).
+ * Use the tiny-python-project fixture for files and source text, then
+ * ensure at least one symbol row exists so all handler tests are exercised.
  */
 const FIXTURE_DIR = resolve(
   import.meta.dirname ?? new URL('.', import.meta.url).pathname,
@@ -35,23 +36,41 @@ const FIXTURE_DIR = resolve(
 let tempDir: string;
 let dbPath: string;
 let db: Database.Database;
-/** True when the IndexBuilder produced at least one symbol (grammar available). */
-let hasSymbols: boolean;
 
 beforeAll(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'aamf-kb-server-test-'));
   dbPath = join(tempDir, 'kb.db');
 
-  // Build the index from the fixture so all tables are populated.
+  // Build the index from the fixture so files and schema are populated.
   const builder = new IndexBuilder(dbPath, { rootDir: FIXTURE_DIR });
   await builder.build();
 
-  db = openReadOnly(dbPath);
+  // Ensure at least one symbol exists — if tree-sitter grammars failed to
+  // extract symbols (e.g. ABI mismatch on a non-standard Node version),
+  // manually insert a synthetic symbol so handler tests are deterministic.
+  const rwDb = openDb(dbPath);
+  const symCount = (rwDb.prepare('SELECT COUNT(*) AS n FROM symbols').get() as { n: number }).n;
+  if (symCount === 0) {
+    const fileRow = rwDb.prepare('SELECT id FROM files LIMIT 1').get() as { id: number } | undefined;
+    if (fileRow) {
+      rwDb.prepare(
+        `INSERT INTO symbols (file_id, name, kind, start_line, end_line)
+         VALUES (?, 'Calculator', 'class', 1, 20)`,
+      ).run(fileRow.id);
+      // Populate FTS so structural search finds the symbol.
+      const symId = (rwDb.prepare('SELECT last_insert_rowid() AS id').get() as { id: number }).id;
+      try {
+        rwDb.prepare(
+          `INSERT INTO symbols_fts (rowid, name, kind) VALUES (?, 'Calculator', 'class')`,
+        ).run(symId);
+      } catch {
+        // FTS table may not exist in all Lore versions — non-fatal.
+      }
+    }
+  }
+  rwDb.close();
 
-  // Detect whether the grammar produced symbols.  When tree-sitter is
-  // unavailable or API-incompatible, the index will have files but 0 symbols.
-  const symCount = (db.prepare('SELECT COUNT(*) AS n FROM symbols').get() as { n: number }).n;
-  hasSymbols = symCount > 0;
+  db = openReadOnly(dbPath);
 }, 60_000 /* allow up to 60 s for the build */);
 
 afterAll(async () => {
@@ -66,9 +85,7 @@ describe('lookup handler', () => {
     const result = await lookupHandler(db, { kind: 'symbol', query: 'Calculator' });
     expect(result).toHaveProperty('results');
     expect(Array.isArray(result.results)).toBe(true);
-    if (hasSymbols) {
-      expect(result.results.length).toBeGreaterThan(0);
-    }
+    expect(result.results.length).toBeGreaterThan(0);
   });
 
   it('returns an empty array for an unknown symbol', async () => {
@@ -113,9 +130,7 @@ describe('search handler', () => {
     expect(result).toHaveProperty('results');
     expect(result).toHaveProperty('mode_used');
     expect(Array.isArray(result.results)).toBe(true);
-    if (hasSymbols) {
-      expect(result.results.length).toBeGreaterThan(0);
-    }
+    expect(result.results.length).toBeGreaterThan(0);
   });
 
   it('mode defaults to structural', async () => {
@@ -176,9 +191,7 @@ describe('metrics handler', () => {
     expect(result).toHaveProperty('symbol_count');
     expect(result).toHaveProperty('file_count');
     expect(result).toHaveProperty('import_edge_count');
-    if (hasSymbols) {
-      expect(result.symbol_count).toBeGreaterThan(0);
-    }
+    expect(result.symbol_count).toBeGreaterThan(0);
     expect(result.file_count).toBeGreaterThan(0);
   });
 });
@@ -189,7 +202,6 @@ describe('writeback handler', () => {
   it('persists a summary and returns ok=true', () => {
     // Pick a real symbol id from the DB.
     const sym = db.prepare('SELECT id FROM symbols LIMIT 1').get() as { id: number } | undefined;
-    if (!hasSymbols) return; // no symbols → skip
     expect(sym).toBeDefined();
 
     const result = writebackHandler(dbPath, {
@@ -204,7 +216,6 @@ describe('writeback handler', () => {
 
   it('the written summary can be read back via the read-only handle', () => {
     const sym = db.prepare('SELECT id FROM symbols LIMIT 1').get() as { id: number } | undefined;
-    if (!hasSymbols) return; // no symbols → skip
     expect(sym).toBeDefined();
 
     writebackHandler(dbPath, {
