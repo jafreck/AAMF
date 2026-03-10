@@ -241,6 +241,7 @@ export class ContextBuilder {
           agentPayload: {
             taskId,
             testType: payload?.testType ?? 'unit',
+            ...(this.config.target.testCommand ? { testCommand: this.config.target.testCommand } : {}),
             ...(taskScope ? { taskScope } : {}),
           },
         };
