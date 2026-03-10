@@ -6,7 +6,7 @@
  * correct clustering, dependency edges, and size constraints.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,6 +43,10 @@ function createTestDb(dbPath: string): Database.Database {
       caller_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
       callee_id INTEGER REFERENCES symbols(id),
       callee_name TEXT NOT NULL, call_line INTEGER NOT NULL,
+      call_character INTEGER,
+      call_kind TEXT NOT NULL DEFAULT 'call',
+      resolution_method TEXT NOT NULL DEFAULT '',
+      file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
       resolved_type_signature TEXT, resolved_return_type TEXT,
       definition_uri TEXT, definition_path TEXT
     );
@@ -71,7 +75,10 @@ function insertSymbol(db: Database.Database, fileId: number, name: string, kind:
 }
 
 function insertRef(db: Database.Database, callerId: number, calleeName: string, callLine: number, calleeId?: number): void {
-  db.prepare('INSERT INTO symbol_refs (caller_id, callee_id, callee_name, call_line) VALUES (?, ?, ?, ?)').run(callerId, calleeId ?? null, calleeName, callLine);
+  // Look up caller's file_id for the denormalized column
+  const row = db.prepare('SELECT file_id FROM symbols WHERE id = ?').get(callerId) as { file_id: number } | undefined;
+  const fileId = row?.file_id ?? null;
+  db.prepare('INSERT INTO symbol_refs (caller_id, callee_id, callee_name, call_line, file_id) VALUES (?, ?, ?, ?, ?)').run(callerId, calleeId ?? null, calleeName, callLine, fileId);
 }
 
 function insertTypeRef(db: Database.Database, fileId: number, typeName: string, refLine: number, symbolId?: number, typeId?: number): void {
@@ -285,6 +292,30 @@ describe('buildTaskGraph', () => {
     expect(appUnit.dependsOn).toContain('base');
   });
 
+  it('should warn about uncovered files in compilation units', async () => {
+    const dbPath = join(tempDir, 'kb.db');
+    const db = createTestDb(dbPath);
+    const f1 = insertFile(db, 'src/core.c');
+    insertSymbol(db, f1, 'core_fn', 'function', 1, 80);
+    const f2 = insertFile(db, 'src/orphan.c');
+    insertSymbol(db, f2, 'orphan_fn', 'function', 1, 80);
+    db.close();
+
+    // Only 'core' unit declared — 'src/orphan.c' is uncovered
+    const units: CompilationUnit[] = [
+      { id: 'core', name: 'Core', targetPath: 'crates/core', sourceFiles: ['src/core.c'], dependsOn: [] },
+    ];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await buildTaskGraph({ ...DEFAULT_OPTIONS, kbDbPath: dbPath, compilationUnits: units });
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('src/orphan.c'),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('should produce unique task IDs', async () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);
@@ -311,6 +342,29 @@ describe('buildTaskGraph', () => {
     expect(result.tasks[0]!.lineRange).toEqual({ start: 10, end: 50 });
   });
 
+  it('should set lineRange and fileRanges for multi-file tasks', async () => {
+    const dbPath = join(tempDir, 'kb.db');
+    const db = createTestDb(dbPath);
+    const f1 = insertFile(db, 'src/a.c');
+    const fnA = insertSymbol(db, f1, 'fn_a', 'function', 1, 100);
+    const f2 = insertFile(db, 'src/b.c');
+    const fnB = insertSymbol(db, f2, 'fn_b', 'function', 1, 50);
+    // Mutual calls → SCC → forced into same cluster (multi-file)
+    insertRef(db, fnA, 'fn_b', 10, fnB);
+    insertRef(db, fnB, 'fn_a', 10, fnA);
+    db.close();
+
+    const result = await buildTaskGraph({ ...DEFAULT_OPTIONS, kbDbPath: dbPath });
+    expect(result.tasks).toHaveLength(1);
+    const task = result.tasks[0]!;
+    // Multi-file task should have fileRanges
+    expect(task.fileRanges).toBeDefined();
+    expect(task.fileRanges!['src/a.c']).toEqual({ start: 1, end: 100 });
+    expect(task.fileRanges!['src/b.c']).toEqual({ start: 1, end: 50 });
+    // lineRange should be the primary file (src/a.c with 100 lines > src/b.c with 50)
+    expect(task.lineRange).toEqual({ start: 1, end: 100 });
+  });
+
   it('should handle a dependency chain A → B → C correctly', async () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);
@@ -332,6 +386,45 @@ describe('buildTaskGraph', () => {
     expect(taskB.dependencies).toContain(taskC.id);
     expect(taskC.dependencies).toEqual([]);
     expect(result.sccs).toEqual([]);
+  });
+
+  it('should absorb stubs tasks into the SCC of their dependant chunks', async () => {
+    // Simulate an oversized SCC that gets split: many mutually-dependent
+    // symbols in a single file exceeding maxLinesPerTask.
+    const dbPath = join(tempDir, 'kb.db');
+    const db = createTestDb(dbPath);
+    const f = insertFile(db, 'src/big.c');
+    // Create enough mutually-referencing symbols to form a large SCC
+    // that exceeds maxLines and triggers splitOversizedSCC
+    const syms: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      syms.push(insertSymbol(db, f, `fn_${i}`, 'function', i * 60 + 1, (i + 1) * 60));
+    }
+    // Create a full cycle: fn_0 → fn_1 → fn_2 → ... → fn_9 → fn_0
+    for (let i = 0; i < syms.length; i++) {
+      insertRef(db, syms[i]!, `fn_${(i + 1) % syms.length}`, i * 60 + 10, syms[(i + 1) % syms.length]);
+    }
+    db.close();
+
+    // maxLinesPerTask = 200 → total 600 lines SCC, will be split into stubs + chunks
+    const result = await buildTaskGraph({
+      ...DEFAULT_OPTIONS, kbDbPath: dbPath, maxLinesPerTask: 200,
+    });
+
+    // There should be stubs task(s) and implementation chunks
+    const stubsTasks = result.tasks.filter(t => t.name.startsWith('[stubs]'));
+    expect(stubsTasks.length).toBeGreaterThan(0);
+
+    // Any stubs task whose dependants are in an SCC should itself be in that SCC.
+    // (Stubs with no SCC-member dependants are harmless standalone tasks.)
+    const allSccIds = new Set(result.sccs.flat());
+    for (const stubs of stubsTasks) {
+      const dependants = result.tasks.filter(t => t.dependencies.includes(stubs.id));
+      const sccDependants = dependants.filter(d => allSccIds.has(d.id));
+      if (sccDependants.length > 0) {
+        expect(allSccIds.has(stubs.id)).toBe(true);
+      }
+    }
   });
 });
 

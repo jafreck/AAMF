@@ -415,8 +415,13 @@ export interface MigrationTask {
   /** Total non-overlapping lines covered by symbols in this task. */
   totalLines?: number;
 
-  /** Optional line range in the source file to scope the migration. */
+  /** Optional line range in the source file to scope the migration.
+   *  For single-file tasks this is the exact symbol range.
+   *  For multi-file tasks this is the primary file's range (see fileRanges). */
   lineRange?: { start: number; end: number };
+
+  /** Per-file line ranges for multi-file tasks. Maps source file path to line range. */
+  fileRanges?: Record<string, { start: number; end: number }>;
 
   /**
    * Compilation unit this task belongs to.  Set by the task-graph-builder when

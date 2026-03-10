@@ -88,7 +88,7 @@ export async function buildDependencySummary(
       id: s.id, name: s.name, kind: s.kind,
       fileId: s.file_id, startLine: s.start_line, endLine: s.end_line,
     }));
-    const callRefs = queryResolvedEdges(db);
+    const callRefs = convertResolvedEdges(lore.listResolvedEdges(db, { resolvedOnly: true }));
     const typeRefs = queryTypeRefs(db);
 
     // Cluster symbols
@@ -215,11 +215,12 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
       return { tasks, sccs: [], compilationUnits: compilationUnits ?? [] };
     }
 
-    const callRefs = queryResolvedEdges(db);
+    const callRefs = convertResolvedEdges(lore.listResolvedEdges(db, { resolvedOnly: true }));
     const typeRefs = queryTypeRefs(db);
 
     // Cluster symbols into tasks
-    const clusters = clusterSymbols(symInfos, callRefs, typeRefs, maxLinesPerTask, fileIdToPath);
+    const linesPerStub = estimateLinesPerStub(targetLanguage);
+    const clusters = clusterSymbols(symInfos, callRefs, typeRefs, maxLinesPerTask, fileIdToPath, linesPerStub);
 
     // Build tasks from clusters
     const tasks: MigrationTask[] = [];
@@ -258,12 +259,34 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
         }
       }
 
-      // Compute line range if cluster is within a single file
+      // Compute per-file line ranges for all tasks
+      const fileRanges: Record<string, { start: number; end: number }> = {};
+      for (const sym of cluster.symbols) {
+        const path = fileIdToPath.get(sym.fileId);
+        if (!path) continue;
+        const existing = fileRanges[path];
+        if (existing) {
+          existing.start = Math.min(existing.start, sym.startLine);
+          existing.end = Math.max(existing.end, sym.endLine);
+        } else {
+          fileRanges[path] = { start: sym.startLine, end: sym.endLine };
+        }
+      }
+
+      // lineRange: single-file = exact range; multi-file = primary file range
       let lineRange: { start: number; end: number } | undefined;
       if (clusterFiles.size === 1) {
-        const minLine = Math.min(...cluster.symbols.map(s => s.startLine));
-        const maxLine = Math.max(...cluster.symbols.map(s => s.endLine));
-        lineRange = { start: minLine, end: maxLine };
+        const onlyFile = sourceFiles[0]!;
+        lineRange = fileRanges[onlyFile];
+      } else if (sourceFiles.length > 0) {
+        // Use the file with the most symbol coverage as the primary
+        let bestFile: string | undefined;
+        let bestSpan = 0;
+        for (const [file, range] of Object.entries(fileRanges)) {
+          const span = range.end - range.start + 1;
+          if (span > bestSpan) { bestSpan = span; bestFile = file; }
+        }
+        if (bestFile) lineRange = fileRanges[bestFile];
       }
 
       const symbolNames = cluster.symbols.map(s => s.name);
@@ -312,6 +335,7 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
         symbols: symbolEntries,
         totalLines,
         ...(lineRange ? { lineRange } : {}),
+        ...(Object.keys(fileRanges).length > 1 ? { fileRanges } : {}),
         ...(unitId ? { compilationUnit: unitId } : {}),
       });
     }
@@ -348,16 +372,23 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
     // Fix unreachable tasks: detect tasks not reachable from any root and
     // break one cycle edge per isolated component to create an entry point.
     const rootTaskIds = new Set(tasks.filter(t => t.dependencies.length === 0).map(t => t.id));
+    // Pre-build reverse adjacency: depId → tasks that depend on it
+    const dependantsMap = new Map<string, string[]>();
+    for (const t of tasks) {
+      for (const dep of t.dependencies) {
+        const list = dependantsMap.get(dep) ?? [];
+        list.push(t.id);
+        dependantsMap.set(dep, list);
+      }
+    }
     const reachable = new Set<string>();
     const bfsQueue = [...rootTaskIds];
     while (bfsQueue.length > 0) {
       const tid = bfsQueue.shift()!;
       if (reachable.has(tid)) continue;
       reachable.add(tid);
-      for (const t of tasks) {
-        if (t.dependencies.includes(tid) && !reachable.has(t.id)) {
-          bfsQueue.push(t.id);
-        }
+      for (const did of (dependantsMap.get(tid) ?? [])) {
+        if (!reachable.has(did)) bfsQueue.push(did);
       }
     }
     const unreachableTasks = tasks.filter(t => !reachable.has(t.id));
@@ -476,6 +507,40 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
     for (const t of tasks) adjacency.set(t.id, t.dependencies);
     const sccs = findSCCs(tasks.map(t => t.id), adjacency);
 
+    // Absorb orphan stubs tasks into the SCCs they feed.
+    //
+    // splitOversizedSCC produces stubs→chunk1, stubs→chunk2, chunk1↔chunk2.
+    // findSCCs detects {chunk1, chunk2} as an SCC, but the stubs task is
+    // outside it (one-way dependency only).  The scheduler needs the stubs
+    // task inside the SCC so two-pass execution (scaffold → implement)
+    // correctly identifies the stubs as the scaffold pass.
+    const stubsTasks = new Set(
+      tasks.filter(t => t.name.startsWith('[stubs]')).map(t => t.id),
+    );
+    if (stubsTasks.size > 0) {
+      // Build reverse index: taskId → which SCC index it belongs to
+      const taskToSccIdx = new Map<string, number>();
+      for (let i = 0; i < sccs.length; i++) {
+        for (const id of sccs[i]!) taskToSccIdx.set(id, i);
+      }
+      // For each stubs task not in any SCC, check if all its dependants
+      // are in the same SCC — if so, absorb the stubs into that SCC.
+      for (const stubsId of stubsTasks) {
+        if (taskToSccIdx.has(stubsId)) continue; // already in an SCC
+        const dependants = tasks.filter(
+          t => t.dependencies.includes(stubsId) && taskToSccIdx.has(t.id),
+        );
+        if (dependants.length === 0) continue;
+        const sccIndices = new Set(dependants.map(t => taskToSccIdx.get(t.id)!));
+        if (sccIndices.size === 1) {
+          // All dependants in the same SCC — absorb stubs into it
+          const sccIdx = [...sccIndices][0]!;
+          sccs[sccIdx]!.push(stubsId);
+          taskToSccIdx.set(stubsId, sccIdx);
+        }
+      }
+    }
+
     return { tasks, sccs, compilationUnits: validatedUnits };
   } finally {
     db.close();
@@ -514,6 +579,7 @@ function clusterSymbols(
   typeRefs: TypeRefRow[],
   maxLines: number,
   fileIdToPath?: Map<number, string>,
+  linesPerStub: number = 4,
 ): Cluster[] {
   if (symbols.length === 0) return [];
 
@@ -649,7 +715,7 @@ function clusterSymbols(
     } else {
       // Oversized SCC: split into stubs + implementation chunks
       const subClusters = splitOversizedSCC(
-        clusterSyms, edges, maxLines, clusterCounter,
+        clusterSyms, edges, maxLines, clusterCounter, linesPerStub,
       );
       for (const sub of subClusters) {
         clusterMap.set(sub.id, sub);
@@ -1112,7 +1178,7 @@ function clusterSymbols(
     }
 
     const subClusters = splitOversizedSCC(
-      cluster.symbols, edges, maxLines, clusterCounter,
+      cluster.symbols, edges, maxLines, clusterCounter, linesPerStub,
     );
     // Remove the oversized cluster
     clusterMap.delete(oversizedId);
@@ -1184,7 +1250,7 @@ function clusterSymbols(
     }
 
     // Re-split into stubs + sequential chunks
-    const subClusters = splitOversizedSCC(sccSymbols, edges, maxLines, clusterCounter);
+    const subClusters = splitOversizedSCC(sccSymbols, edges, maxLines, clusterCounter, linesPerStub);
     for (const sub of subClusters) {
       for (const dep of externalDeps) sub.dependencies.add(dep);
       clusterMap.set(sub.id, sub);
@@ -1274,6 +1340,7 @@ function splitOversizedSCC(
   allEdges: Map<number, Set<number>>,
   maxLines: number,
   counterStart: number,
+  linesPerStub: number = 4,
 ): Cluster[] {
   const sccSymIds = new Set(symbols.map(s => s.id));
 
@@ -1315,8 +1382,8 @@ function splitOversizedSCC(
   // Stubs cluster — all symbols, but marked as stubs (small estimated size)
   const stubsId = `c${counterStart}`;
   const sccGroupId = `scc-${counterStart}`;
-  // Estimate stub size as ~3 lines per symbol (signature + empty body)
-  const stubsLines = Math.max(symbols.length * 3, 50);
+  // Estimate stub size using language-aware lines-per-stub factor
+  const stubsLines = Math.max(symbols.length * linesPerStub, 50);
   const stubsCluster: Cluster = {
     id: stubsId,
     symbols: [...symbols], // all symbols — agent knows to emit stubs only
@@ -1381,9 +1448,7 @@ interface CallRefRow {
   callerSymbolId: number; callerFileId: number;
   callerStartLine: number; callerEndLine: number;
   calleeName: string;
-  /** Resolved callee symbol ID (null if unresolved). Lore v0.3.0+. */
   calleeId: number | null;
-  /** Resolved callee file ID (null if unresolved). Lore v0.3.0+. */
   calleeFileId: number | null;
 }
 
@@ -1392,74 +1457,44 @@ interface TypeRefRow {
   typeName: string; refLine: number;
 }
 
-/**
- * Load pre-resolved call-graph edges.
- *
- * Prefers Lore v0.3.0's denormalized columns on `symbol_refs` (file_id,
- * resolution_method) when available, falling back to a JOIN through `symbols`
- * for older schemas.  When resolution_method is present, low-confidence
- * resolution methods are excluded via a blocklist so that new high-confidence
- * methods added in future Lore versions are automatically included.
- */
-function queryResolvedEdges(
-  db: import('better-sqlite3').Database,
-): CallRefRow[] {
-  // Detect whether the v0.3.0 columns exist
-  const cols = db.prepare('PRAGMA table_info(symbol_refs)').all() as Array<{ name: string }>;
-  const hasFileId = cols.some(c => c.name === 'file_id');
-  const hasResolutionMethod = cols.some(c => c.name === 'resolution_method');
+/** Low-confidence resolution methods to exclude from the call graph. */
+const LOW_CONFIDENCE_METHODS = new Set(['name_ambiguous', 'unresolved']);
 
-  if (hasFileId && hasResolutionMethod) {
-    // Lore v0.3.0+: use denormalized file_id, exclude low-confidence methods.
-    // Blocklist approach: new high-confidence methods added by future Lore
-    // versions are automatically included without code changes here.
-    const rows = db.prepare(`
-      SELECT sr.caller_id, sr.file_id AS caller_file_id,
-             sr.callee_id, sr.callee_name,
-             cs.file_id AS callee_file_id
-      FROM symbol_refs sr
-      LEFT JOIN symbols cs ON sr.callee_id = cs.id
-      WHERE sr.callee_id IS NOT NULL
-        AND (sr.resolution_method IS NULL
-             OR sr.resolution_method NOT IN ('name_ambiguous', 'unresolved'))
-    `).all() as Array<{
-      caller_id: number; caller_file_id: number;
-      callee_id: number | null; callee_name: string;
-      callee_file_id: number | null;
-    }>;
-    return rows.map(r => ({
-      callerSymbolId: r.caller_id,
-      callerFileId: r.caller_file_id,
+/**
+ * Convert Lore's `ResolvedEdge[]` to the internal `CallRefRow[]` format,
+ * filtering out low-confidence resolution methods.
+ */
+function convertResolvedEdges(edges: Array<{
+  caller_id: number; caller_file_id: number;
+  callee_id: number | null; callee_name: string;
+  callee_file_id: number | null;
+  resolution_method: string;
+}>): CallRefRow[] {
+  return edges
+    .filter(e => !LOW_CONFIDENCE_METHODS.has(e.resolution_method))
+    .map(e => ({
+      callerSymbolId: e.caller_id,
+      callerFileId: e.caller_file_id,
       callerStartLine: 0,
       callerEndLine: 0,
-      calleeName: r.callee_name,
-      calleeId: r.callee_id,
-      calleeFileId: r.callee_file_id,
+      calleeName: e.callee_name,
+      calleeId: e.callee_id,
+      calleeFileId: e.callee_file_id,
     }));
-  }
+}
 
-  // Fallback for older schemas: JOIN through symbols to get file_id
-  const rows = db.prepare(`
-    SELECT s.id AS caller_symbol_id, s.file_id AS caller_file_id,
-           sr.callee_id, sr.callee_name,
-           cs.file_id AS callee_file_id
-    FROM symbol_refs sr
-    JOIN symbols s ON sr.caller_id = s.id
-    LEFT JOIN symbols cs ON sr.callee_id = cs.id
-  `).all() as Array<{
-    caller_symbol_id: number; caller_file_id: number;
-    callee_id: number | null; callee_name: string;
-    callee_file_id: number | null;
-  }>;
-  return rows.map(r => ({
-    callerSymbolId: r.caller_symbol_id,
-    callerFileId: r.caller_file_id,
-    callerStartLine: 0,
-    callerEndLine: 0,
-    calleeName: r.callee_name,
-    calleeId: r.callee_id,
-    calleeFileId: r.callee_file_id,
-  }));
+/** Estimated lines per stub signature by target language. */
+function estimateLinesPerStub(targetLanguage: string): number {
+  switch (targetLanguage.toLowerCase()) {
+    case 'c': return 3;
+    case 'rust': return 5;
+    case 'c++': case 'cpp': return 6;
+    case 'csharp': case 'c#': return 5;
+    case 'typescript': case 'ts': return 4;
+    case 'java': return 4;
+    case 'go': case 'golang': return 3;
+    default: return 4;
+  }
 }
 
 function queryTypeRefs(db: import('better-sqlite3').Database): TypeRefRow[] {
@@ -1511,6 +1546,24 @@ function validateCompilationUnits(
       if (!declaredSet.has(dep)) unit.dependsOn.push(dep);
     }
     unit.dependsOn.sort();
+  }
+
+  // Detect source files from tasks not covered by any compilation unit
+  const coveredFiles = new Set<string>();
+  for (const unit of units) {
+    for (const sf of unit.sourceFiles) coveredFiles.add(sf);
+  }
+  const allTaskFiles = new Set<string>();
+  for (const task of tasks) {
+    for (const sf of task.sourceFiles) allTaskFiles.add(sf);
+  }
+  const uncoveredFiles = [...allTaskFiles].filter(f => !coveredFiles.has(f));
+  if (uncoveredFiles.length > 0) {
+    console.warn(
+      `[task-graph-builder] ${uncoveredFiles.length} source file(s) appear in tasks but are not ` +
+      `covered by any compilation unit: ${uncoveredFiles.slice(0, 10).join(', ')}` +
+      (uncoveredFiles.length > 10 ? ` (+${uncoveredFiles.length - 10} more)` : ''),
+    );
   }
 
   return units;
