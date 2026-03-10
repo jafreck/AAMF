@@ -69,7 +69,7 @@ async function writeMigrationPlan(progressDir: string, content?: string): Promis
   await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
       await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
   await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), content ?? defaultPlan);
-  // Also write planning artifacts required by the two-step Phase 3 design.
+  // Also write planning artifacts required by the two-step Phase 1 design.
   await writePhase3PlanningArtifacts(progressDir);
 }
 
@@ -119,13 +119,13 @@ const SINGLE_AUTH_TASK: MigrationTask = {
 };
 
 /**
- * Write Phase 3 planning artifacts — produces tasks-merged.json directly.
+ * Write Phase 1 planning artifacts — produces tasks-merged.json directly.
  *
  * In the Lore-required world, the orchestrator builds tasks from the KB
  * symbol graph and writes tasks-merged.json.  For tests that skip Phase 0/3,
  * this helper simulates a completed Phase 3b by writing the merged file.
  *
- * Any test that exercises Phase 3 or later must call this (writeMigrationPlan
+ * Any test that exercises Phase 1 or later must call this (writeMigrationPlan
  * calls it automatically; tests that write a custom plan must call it explicitly).
  */
 async function writePhase3PlanningArtifacts(
@@ -178,7 +178,7 @@ function withParityPassOutput(
         result.outputParsed = true;
       }
     }
-    // Phase 5: final-parity-checker must return structuredOutput (no file fallback)
+    // Phase 6: final-parity-checker must return structuredOutput (no file fallback)
     if (inv.agent === 'final-parity-checker') {
       if (!result.structuredOutput || !Array.isArray((result.structuredOutput as any).fixes)) {
         result.structuredOutput = {
@@ -308,7 +308,34 @@ async function setupOrchestrator(
     return { phase: 0, name: 'KB Indexing', success: true, outputPath: kbDbPath, duration: 0 };
   });
 
-  return { orchestrator, checkpoint, progress, mockLauncher, logger, config, progressDir, phase0Stub };
+  // Phase 1 (Task Graph Construction) is deterministic and requires a real
+  // Lore KB.  Stub it to load tasks from disk if already written (e.g. by
+  // writeMigrationPlan/writePhase3PlanningArtifacts), otherwise write defaults.
+  const planningDir = join(progressDir, 'artifacts', 'planning');
+  const mergedTasksPath = join(planningDir, 'tasks-merged.json');
+  const phase1Stub = vi.spyOn(orchestrator as any, 'executePhase1').mockImplementation(async () => {
+    let tasks: MigrationTask[];
+    try {
+      const raw = await readFile(mergedTasksPath, 'utf-8');
+      tasks = JSON.parse(raw);
+    } catch {
+      // No existing tasks — write defaults
+      await writePhase3PlanningArtifacts(progressDir);
+      tasks = DEFAULT_PLANNING_TASKS;
+    }
+    (orchestrator as any).phase1TaskGraphResult = {
+      agent: 'migration-planner',
+      exitCode: 0,
+      success: true,
+      outputFiles: [mergedTasksPath],
+      duration: 0,
+      outputParsed: true,
+      structuredOutput: { tasks, sccs: [], compilationUnits: [] },
+    };
+    return { phase: 1, name: 'Task Graph Construction', success: true, outputPath: mergedTasksPath, duration: 0 };
+  });
+
+  return { orchestrator, checkpoint, progress, mockLauncher, logger, config, progressDir, phase0Stub, phase1Stub };
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -773,7 +800,7 @@ describe('MigrationOrchestrator', () => {
   // ─── Phase Sequencing ──────────────────────────────────────────────
 
   describe('Phase Sequencing', () => {
-    it('should execute all 8 phases in order when all succeed', async () => {
+    it('should execute all 10 phases in order when all succeed', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(tempDir, launcherFn);
 
@@ -782,7 +809,7 @@ describe('MigrationOrchestrator', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(true);
-      expect(result.phases).toHaveLength(9);
+      expect(result.phases).toHaveLength(10);
       const phaseIds = result.phases.map((p) => p.phase).sort((a, b) => a - b);
       for (let i = 0; i < phaseIds.length; i++) {
         expect(phaseIds[i]).toBe(i);
@@ -798,12 +825,13 @@ describe('MigrationOrchestrator', () => {
       const progressDir = join(tempDir, '.aamf', 'migration', config.projectName);
       await ensureDir(progressDir);
 
-      // Pre-populate checkpoint with phases 1–3 complete
+      // Pre-populate checkpoint with phases 1–4 complete
       const checkpoint = new CheckpointManager(progressDir, logger);
       await checkpoint.load(config.projectName);
-      await checkpoint.completePhase(1, join(progressDir, 'artifacts', 'impact-assessment.md'));
-      await checkpoint.completePhase(2, join(progressDir, 'knowledge-base'));
-      await checkpoint.completePhase(3, join(progressDir, 'artifacts', 'planning', 'migration-plan.md'));
+      await checkpoint.completePhase(1, join(progressDir, 'artifacts', 'planning', 'tasks-merged.json'));
+      await checkpoint.completePhase(2, join(progressDir, 'artifacts', 'impact-assessment.md'));
+      await checkpoint.completePhase(3, join(progressDir, 'knowledge-base'));
+      await checkpoint.completePhase(4, join(progressDir, 'artifacts', 'planning', 'strategy.md'));
 
       const progressFile = join(progressDir, 'progress.md');
       const progress = new ProgressWriter(progressFile);
@@ -832,7 +860,7 @@ describe('MigrationOrchestrator', () => {
 
       const result = await orchestrator.run();
 
-      expect(result.phases).toHaveLength(9);
+      expect(result.phases).toHaveLength(10);
       const agentsInvoked = mockLauncher.invocations.map((i) => i.agent);
       expect(agentsInvoked).not.toContain('impact-assessor');
       expect(agentsInvoked).not.toContain('knowledge-builder');
@@ -845,7 +873,7 @@ describe('MigrationOrchestrator', () => {
         tempDir,
         launcherFn,
         undefined,
-        1,
+        2,
       );
 
       const result = await orchestrator.run();
@@ -916,22 +944,24 @@ describe('MigrationOrchestrator', () => {
   // ─── Critical Phase Failure ────────────────────────────────────────
 
   describe('Critical Phase Failure', () => {
-    it('should abort migration when a critical phase fails (phase 1)', async () => {
+    it('should abort migration when a critical phase fails (phase 2)', async () => {
       const launcherFn = createFailingLauncher(['impact-assessor']);
       const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
 
       const result = await orchestrator.run();
 
       expect(result.success).toBe(false);
-      // Phase 0 (KB Indexing, stubbed) succeeds, then Phase 1 fails
-      expect(result.phases).toHaveLength(2);
+      // Phase 0 (KB Indexing, stubbed) + Phase 1 (Task Graph, stubbed) succeed, then Phase 2 fails
+      expect(result.phases).toHaveLength(3);
       expect(result.phases[0]!.phase).toBe(0);
       expect(result.phases[0]!.success).toBe(true);
       expect(result.phases[1]!.phase).toBe(1);
-      expect(result.phases[1]!.success).toBe(false);
+      expect(result.phases[1]!.success).toBe(true);
+      expect(result.phases[2]!.phase).toBe(2);
+      expect(result.phases[2]!.success).toBe(false);
     });
 
-    it('should abort migration when a critical phase fails (phase 4)', async () => {
+    it('should abort migration when a critical phase fails (phase 5)', async () => {
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'code-migrator') {
           return { exitCode: 1, success: false, error: 'Code migration failed' };
@@ -962,7 +992,7 @@ describe('MigrationOrchestrator', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(false);
-      const phase4 = result.phases.find((p) => p.phase === 4);
+      const phase4 = result.phases.find((p) => p.phase === 5);
       expect(phase4).toBeDefined();
       expect(phase4!.success).toBe(false);
     });
@@ -975,17 +1005,17 @@ describe('MigrationOrchestrator', () => {
 
       const result = await orchestrator.run();
 
-      const phase5 = result.phases.find((p) => p.phase === 5);
-      const phase6 = result.phases.find((p) => p.phase === 6);
-      const phase7 = result.phases.find((p) => p.phase === 7);
+      const phase5 = result.phases.find((p) => p.phase === 6);
+      const phase6 = result.phases.find((p) => p.phase === 7);
+      const phase9 = result.phases.find((p) => p.phase === 9);
 
       expect(phase5).toBeDefined();
       expect(phase5!.success).toBe(false);
       expect(phase6).toBeDefined();
-      expect(phase7).toBeDefined();
+      expect(phase9).toBeDefined();
     });
 
-    it('should continue when a non-critical phase fails (phase 6)', async () => {
+    it('should continue when a non-critical phase fails (phase 7)', async () => {
       const launcherFn = createFailingLauncher([
         'e2e-test-crafter',
         'documentation-writer',
@@ -996,13 +1026,13 @@ describe('MigrationOrchestrator', () => {
 
       const result = await orchestrator.run();
 
-      const phase6 = result.phases.find((p) => p.phase === 6);
       const phase7 = result.phases.find((p) => p.phase === 7);
+      const phase9 = result.phases.find((p) => p.phase === 9);
 
-      expect(phase6).toBeDefined();
-      expect(phase6!.success).toBe(false);
       expect(phase7).toBeDefined();
-      expect(phase7!.phase).toBe(7);
+      expect(phase7!.success).toBe(false);
+      expect(phase9).toBeDefined();
+      expect(phase9!.phase).toBe(9);
     });
   });
 
@@ -1100,7 +1130,7 @@ describe('MigrationOrchestrator', () => {
 
   describe('structuredOutput Integration', () => {
     it('should read Phase 4 tasks from tasks-merged.json produced by Lore task graph', async () => {
-      // The Lore-based Phase 3 writes tasks-merged.json directly.
+      // The Lore-based Phase 1 writes tasks-merged.json directly.
       // This test verifies that specific task content drives Phase 4.
       const launcherFn = createMockLauncher();
       const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(tempDir, launcherFn);
@@ -1133,7 +1163,7 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('should invoke code-migrators for tasks loaded via tasks-merged.json', async () => {
-      // Phase 3 writes tasks-merged.json and sets phase3PlanResult;
+      // Phase 1 writes tasks-merged.json and sets phase1TaskGraphResult;
       // this test confirms that Phase 4 picks up the tasks and invokes code-migrators.
       const launcherFn = createMockLauncher();
       const { orchestrator, progressDir, mockLauncher } = await setupOrchestrator(
@@ -1199,7 +1229,7 @@ describe('MigrationOrchestrator', () => {
       expect(codeMigratorInPhase5.length).toBeGreaterThan(0);
     });
 
-    it('should stop Phase 5 loop early when structuredOutput fixes is empty', async () => {
+    it('should stop Phase 6 loop early when structuredOutput fixes is empty', async () => {
       let parityCallCount = 0;
       const launcherFn = createMockLauncher((inv) => {
         if (inv.agent === 'final-parity-checker') {
@@ -1223,11 +1253,11 @@ describe('MigrationOrchestrator', () => {
       expect(result.success).toBe(true);
       // final-parity-checker should have been called once (loop exits immediately)
       expect(parityCallCount).toBe(1);
-      // No phase-5 code-migrator invocations expected
-      const codeMigratorInPhase5 = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.phase === 5,
+      // No phase-6 code-migrator invocations expected
+      const codeMigratorInPhase6 = mockLauncher.invocations.filter(
+        (i) => i.agent === 'code-migrator' && i.phase === 6,
       );
-      expect(codeMigratorInPhase5.length).toBe(0);
+      expect(codeMigratorInPhase6.length).toBe(0);
     });
 
     it('should prefer structuredOutput.tokenUsage over result.tokenUsage in recordTokens', async () => {
@@ -1267,9 +1297,9 @@ describe('MigrationOrchestrator', () => {
     });
   });
 
-  // ─── Phase 4 Specifics ─────────────────────────────────────────────
+  // ─── Phase 5 Specifics ─────────────────────────────────────────────
 
-  describe('Phase 4 Specifics', () => {
+  describe('Phase 5 Specifics', () => {
     it('should auto-init git in output path and create per-agent/per-task commits', async () => {
       const outputDir = join(tempDir, 'target-output');
       await ensureDir(outputDir);
@@ -1640,31 +1670,33 @@ describe('MigrationOrchestrator', () => {
 
       await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
       await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), '# Migration Plan\n\nNo tasks defined.\n');
-      // Write empty planning artifacts so Phase 3 succeeds with zero tasks.
+      // Write empty planning artifacts so Phase 1 succeeds with zero tasks.
       await writePhase3PlanningArtifacts(progressDir, []);
 
       const result = await orchestrator.run();
 
-      const phase4 = result.phases.find((p) => p.phase === 4);
+      const phase4 = result.phases.find((p) => p.phase === 5);
       expect(phase4).toBeDefined();
       expect(phase4!.success).toBe(true);
     });
 
-    it('should fail phase 3 when kb.db is missing and no tasks-merged.json exists', async () => {
+    it('should fail phase 1 when kb.db is missing and no tasks-merged.json exists', async () => {
       // Override the Phase 0 stub to NOT write kb.db — exercises the "KB not found" path.
       const launcherFn = createMockLauncher();
-      const { orchestrator, phase0Stub } = await setupOrchestrator(tempDir, launcherFn);
+      const { orchestrator, phase0Stub, phase1Stub } = await setupOrchestrator(tempDir, launcherFn);
       phase0Stub.mockImplementation(async () => {
         // Succeed without writing kb.db
         return { phase: 0, name: 'KB Indexing', success: true, outputPath: '', duration: 0 };
       });
+      // Restore real Phase 1 so it actually checks for kb.db
+      phase1Stub.mockRestore();
 
       const result = await orchestrator.run();
 
-      const phase3 = result.phases.find((p) => p.phase === 3);
-      expect(phase3).toBeDefined();
-      expect(phase3!.success).toBe(false);
-      expect(phase3!.error).toContain('kb.db');
+      const phase1 = result.phases.find((p) => p.phase === 1);
+      expect(phase1).toBeDefined();
+      expect(phase1!.success).toBe(false);
+      expect(phase1!.error).toContain('kb.db');
     });
 
     it('should fail fast with terminal metadata when task retries are exhausted', async () => {
@@ -1720,7 +1752,7 @@ describe('MigrationOrchestrator', () => {
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
       const result = await orchestrator.run();
-      const phase4 = result.phases.find((p) => p.phase === 4);
+      const phase4 = result.phases.find((p) => p.phase === 5);
 
       expect(result.success).toBe(false);
       expect(phase4?.error).toContain('task-retries-exhausted');
@@ -1775,14 +1807,14 @@ describe('MigrationOrchestrator', () => {
       expect(result.success).toBe(true);
 
       const recoveryInvocation = mockLauncher.invocations.find(
-        (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
+        (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 5,
       );
       expect(recoveryInvocation).toBeDefined();
       const recoveryContext = JSON.parse(await readFile(recoveryInvocation!.contextFile, 'utf-8'));
       expect(recoveryContext.payload?.remediationContext?.failureKind).toBe('task-retry');
 
       const taskMigratorInvocations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 5,
       );
       expect(taskMigratorInvocations.length).toBeGreaterThanOrEqual(2);
       const retryContext = JSON.parse(
@@ -1858,7 +1890,7 @@ describe('MigrationOrchestrator', () => {
       await orchestrator.run();
 
       const recoveryInvocations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
+        (i) => i.agent === 'parity-failure-resolver' && i.phase === 5,
       );
       expect(recoveryInvocations.length).toBeGreaterThan(0);
 
@@ -1934,7 +1966,7 @@ describe('MigrationOrchestrator', () => {
 
       // Find the parity-failure-resolver invocation
       const resolverInvocations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
+        (i) => i.agent === 'parity-failure-resolver' && i.phase === 5,
       );
       expect(resolverInvocations.length).toBeGreaterThan(0);
 
@@ -2008,20 +2040,20 @@ describe('MigrationOrchestrator', () => {
 
       // No parity-failure-resolver should be invoked for parity
       const recoveryForParity = mockLauncher.invocations.filter(
-        (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
+        (i) => i.agent === 'parity-failure-resolver' && i.phase === 5,
       );
       expect(recoveryForParity).toHaveLength(0);
       expect(result.success).toBe(true);
 
       // Minor-parity-repass should trigger an extra code-migrator + parity-verifier cycle
       const phase4Migrators = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.phase === 4,
+        (i) => i.agent === 'code-migrator' && i.phase === 5,
       );
       // 1 initial + 1 re-pass = 2
       expect(phase4Migrators.length).toBeGreaterThanOrEqual(2);
 
       const phase4Parity = mockLauncher.invocations.filter(
-        (i) => i.agent === 'parity-verifier' && i.phase === 4,
+        (i) => i.agent === 'parity-verifier' && i.phase === 5,
       );
       // 1 initial + 1 re-pass = 2
       expect(phase4Parity.length).toBeGreaterThanOrEqual(2);
@@ -2083,13 +2115,13 @@ describe('MigrationOrchestrator', () => {
 
       // Re-pass code-migrator was invoked (1 initial + 1 re-pass)
       const migrators = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.phase === 4,
+        (i) => i.agent === 'code-migrator' && i.phase === 5,
       );
       expect(migrators.length).toBeGreaterThanOrEqual(2);
 
       // Re-pass parity-verifier was invoked (1 initial + 1 re-pass)
       const parityRuns = mockLauncher.invocations.filter(
-        (i) => i.agent === 'parity-verifier' && i.phase === 4,
+        (i) => i.agent === 'parity-verifier' && i.phase === 5,
       );
       expect(parityRuns.length).toBeGreaterThanOrEqual(2);
 
@@ -2154,13 +2186,13 @@ describe('MigrationOrchestrator', () => {
 
       // Only 1 code-migrator run — no re-pass because parity was clean
       const migrators = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.phase === 4,
+        (i) => i.agent === 'code-migrator' && i.phase === 5,
       );
       expect(migrators).toHaveLength(1);
 
       // Only 1 parity-verifier run — no re-pass
       const parityRuns = mockLauncher.invocations.filter(
-        (i) => i.agent === 'parity-verifier' && i.phase === 4,
+        (i) => i.agent === 'parity-verifier' && i.phase === 5,
       );
       expect(parityRuns).toHaveLength(1);
     });
@@ -2355,7 +2387,7 @@ describe('MigrationOrchestrator', () => {
 
       // but since the file persists, we simulate "only minor remaining"
       const result = await orchestrator.run();
-      const phase4 = result.phases.find((p) => p.phase === 4);
+      const phase4 = result.phases.find((p) => p.phase === 5);
 
       expect(result.success).toBe(false);
       expect(phase4?.error).toContain('parity-non-minor-exhausted');
@@ -2430,18 +2462,18 @@ describe('MigrationOrchestrator', () => {
       await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), singleTaskPlan);
       await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
       const result = await orchestrator.run();
-      const phase4 = result.phases.find((p) => p.phase === 4);
+      const phase4 = result.phases.find((p) => p.phase === 5);
 
       expect(result.success).toBe(false);
       expect(phase4?.error).toContain('parity-non-minor-exhausted');
 
       const recoveryInvocations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
+        (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 5,
       );
       expect(recoveryInvocations).toHaveLength(2);
 
       const remigrateAttempts = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 5,
       );
       expect(remigrateAttempts).toHaveLength(1);
     });
@@ -2472,7 +2504,7 @@ describe('MigrationOrchestrator', () => {
       vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: false, error: 'build failed' });
 
       const result = await orchestrator.run();
-      const phase4 = result.phases.find((p) => p.phase === 4);
+      const phase4 = result.phases.find((p) => p.phase === 5);
 
       expect(result.success).toBe(false);
       expect(phase4?.error).toContain('command-recovery-exhausted');
@@ -2487,7 +2519,7 @@ describe('MigrationOrchestrator', () => {
       expect(task2MigratorRuns).toHaveLength(0);
 
       const commandRemigrations = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+        (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 5,
       );
       let foundCommandRemediation = false;
       for (const inv of commandRemigrations) {
@@ -2569,7 +2601,7 @@ describe('MigrationOrchestrator', () => {
         await writeMigrationPlan(progressDir);
 
         const result = await orchestrator.run();
-        const phase4 = result.phases.find((p) => p.phase === 4);
+        const phase4 = result.phases.find((p) => p.phase === 5);
 
         expect(phase4).toBeDefined();
         expect(phase4?.success).toBe(false);
@@ -2588,7 +2620,7 @@ describe('MigrationOrchestrator', () => {
         await writeMigrationPlan(progressDir);
 
         const result = await orchestrator.run();
-        const phase4 = result.phases.find((p) => p.phase === 4);
+        const phase4 = result.phases.find((p) => p.phase === 5);
 
         expect(phase4).toBeDefined();
         expect(phase4?.success).toBe(false);
@@ -2647,7 +2679,7 @@ describe('MigrationOrchestrator', () => {
         expect(result.success).toBe(true);
         // No remediation agents should have been invoked at wave-end
         const waveEndAdjudicator = mockLauncher.invocations.filter(
-          (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.phase === 5,
         );
         expect(waveEndAdjudicator).toHaveLength(0);
       });
@@ -2715,10 +2747,10 @@ describe('MigrationOrchestrator', () => {
 
         // Remediation should have been triggered at wave-end
         const adjudicatorInvocations = mockLauncher.invocations.filter(
-          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 5,
         );
         const codeMigratorInvocations = mockLauncher.invocations.filter(
-          (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 4,
+          (i) => i.agent === 'code-migrator' && i.taskId === 'task-001' && i.phase === 5,
         );
         // At least one remediation attempt should have happened
         expect(adjudicatorInvocations.length).toBeGreaterThanOrEqual(1);
@@ -2774,7 +2806,7 @@ describe('MigrationOrchestrator', () => {
         await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
         const result = await orchestrator.run();
-        const phase4 = result.phases.find((p) => p.phase === 4);
+        const phase4 = result.phases.find((p) => p.phase === 5);
 
         expect(result.success).toBe(false);
         expect(phase4?.error).toContain('parity-non-minor-exhausted');
@@ -2849,7 +2881,7 @@ describe('MigrationOrchestrator', () => {
 
         expect(result.success).toBe(true);
         const waveEndAdjudicator = mockLauncher.invocations.filter(
-          (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.phase === 5,
         );
         expect(waveEndAdjudicator).toHaveLength(0);
       });
@@ -2897,7 +2929,7 @@ describe('MigrationOrchestrator', () => {
 
         // Should have triggered remediation (and then exhaustion since issues persist)
         const adjudicatorInvocations = mockLauncher.invocations.filter(
-          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 5,
         );
         expect(adjudicatorInvocations.length).toBeGreaterThanOrEqual(1);
         expect(result.success).toBe(false);
@@ -2955,11 +2987,11 @@ describe('MigrationOrchestrator', () => {
         const result = await orchestrator.run();
 
         const adjudicatorInvocations = mockLauncher.invocations.filter(
-          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 5,
         );
         expect(adjudicatorInvocations.length).toBeGreaterThanOrEqual(1);
         expect(result.success).toBe(false);
-        const phase4 = result.phases.find((p) => p.phase === 4);
+        const phase4 = result.phases.find((p) => p.phase === 5);
         expect(phase4?.error).toContain('parity-non-minor-exhausted');
       });
 
@@ -3000,12 +3032,12 @@ describe('MigrationOrchestrator', () => {
         await writePhase3PlanningArtifacts(progressDir, [SINGLE_AUTH_TASK]);
 
         const result = await orchestrator.run();
-        const phase4 = result.phases.find((p) => p.phase === 4);
+        const phase4 = result.phases.find((p) => p.phase === 5);
 
         // Build failure should take precedence; no parity remediation should occur
         expect(phase4?.error).toContain('wave-end build gate failed');
         const adjudicatorInvocations = mockLauncher.invocations.filter(
-          (i) => i.agent === 'parity-failure-resolver' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.phase === 5,
         );
         expect(adjudicatorInvocations).toHaveLength(0);
       });
@@ -3038,17 +3070,17 @@ describe('MigrationOrchestrator', () => {
 
         // Both tasks should have had remediation attempts
         const task1Adjudicator = mockLauncher.invocations.filter(
-          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-001' && i.phase === 5,
         );
         const task2Adjudicator = mockLauncher.invocations.filter(
-          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-002' && i.phase === 4,
+          (i) => i.agent === 'parity-failure-resolver' && i.taskId === 'task-002' && i.phase === 5,
         );
         expect(task1Adjudicator.length).toBeGreaterThanOrEqual(1);
         expect(task2Adjudicator.length).toBeGreaterThanOrEqual(1);
 
         // Verify terminal exhaustion since issues persist
         expect(result.success).toBe(false);
-        const phase4 = result.phases.find((p) => p.phase === 4);
+        const phase4 = result.phases.find((p) => p.phase === 5);
         expect(phase4?.error).toContain('parity-non-minor-exhausted');
       });
     });
@@ -3238,12 +3270,12 @@ describe('MigrationOrchestrator', () => {
       });
 
       const result = await orchestrator.run();
-      const migratorRuns = mockLauncher.invocations.filter(i => i.agent === 'code-migrator' && i.phase === 4);
+      const migratorRuns = mockLauncher.invocations.filter(i => i.agent === 'code-migrator' && i.phase === 5);
       const waveAdjudicatorRuns = mockLauncher.invocations.filter(
-        (i) => i.agent === 'parity-failure-resolver' && i.phase === 4 && i.taskId === 'wave-1',
+        (i) => i.agent === 'parity-failure-resolver' && i.phase === 5 && i.taskId === 'wave-1',
       );
       const waveRemigratorRuns = mockLauncher.invocations.filter(
-        (i) => i.agent === 'code-migrator' && i.phase === 4 && i.taskId === 'wave-1',
+        (i) => i.agent === 'code-migrator' && i.phase === 5 && i.taskId === 'wave-1',
       );
 
       expect(result.success).toBe(true);
@@ -3306,7 +3338,7 @@ describe('MigrationOrchestrator', () => {
       vi.spyOn(orchestrator as any, 'runCommand').mockResolvedValue({ success: false, error: 'build failed' });
 
       const result = await orchestrator.run();
-      const phase4 = result.phases.find((p) => p.phase === 4);
+      const phase4 = result.phases.find((p) => p.phase === 5);
       const secondTaskRuns = mockLauncher.invocations.filter(i => i.agent === 'code-migrator' && i.taskId === 'task-002');
 
       expect(result.success).toBe(false);
@@ -3806,7 +3838,7 @@ Total usage est: 1 Premium requests
 `;
       await mkdir(join(progressDir, 'artifacts', 'planning'), { recursive: true });
       await writeFile(join(progressDir, 'artifacts', 'planning', 'migration-plan.md'), threeTaskPlan);
-      // Write planning artifacts for the three tasks so Phase 3 succeeds during the resume run.
+      // Write planning artifacts for the three tasks so Phase 1 succeeds during the resume run.
       const threeTasks: MigrationTask[] = [
         { id: 'task-001', name: 'Module A', sourceFiles: ['src/a.py'], targetFiles: ['src/a.ts'], knowledgeBaseRef: 'kb/task-001.md', dependencies: [], complexity: 'simple', description: 'Migrate A', acceptanceCriteria: ['works'], parityChecks: ['matches'], lineRange: { start: 1, end: 200 } },
         { id: 'task-002', name: 'Module B', sourceFiles: ['src/b.py'], targetFiles: ['src/b.ts'], knowledgeBaseRef: 'kb/task-002.md', dependencies: [], complexity: 'simple', description: 'Migrate B', acceptanceCriteria: ['works'], parityChecks: ['matches'], lineRange: { start: 1, end: 200 } },
@@ -3874,7 +3906,7 @@ Total usage est: 1 Premium requests
 
   // ─── Phase 5 Loop-back ─────────────────────────────────────────────
 
-  describe('Phase 5 Loop-back', () => {
+  describe('Phase 6 Loop-back', () => {
     it('should re-run code-migrator when parity issues found', async () => {
       let parityCheckCount = 0;
       const launcherFn = createMockLauncher((inv) => {
@@ -3966,7 +3998,7 @@ Total usage est: 1 Premium requests
       const result = await orchestrator.run();
 
       // Phase 5 is non-critical so run completes, but the phase itself should fail
-      const phase5 = result.phases.find((p) => p.phase === 5);
+      const phase5 = result.phases.find((p) => p.phase === 6);
       expect(phase5).toBeDefined();
       expect(phase5!.success).toBe(false);
       expect(phase5!.error).toContain('unresolved parity fix');
@@ -3991,7 +4023,7 @@ Total usage est: 1 Premium requests
 
       const result = await orchestrator.run();
 
-      const phase5 = result.phases.find((p) => p.phase === 5);
+      const phase5 = result.phases.find((p) => p.phase === 6);
       expect(phase5).toBeDefined();
       expect(phase5!.success).toBe(true);
     });
@@ -4029,7 +4061,7 @@ Total usage est: 1 Premium requests
 
       const result = await orchestrator.run();
 
-      const phase5 = result.phases.find((p) => p.phase === 5);
+      const phase5 = result.phases.find((p) => p.phase === 6);
       expect(phase5).toBeDefined();
       expect(phase5!.success).toBe(true);
       // Two parity checks: first found fixes, second found none
@@ -4096,9 +4128,9 @@ Total usage est: 1 Premium requests
 
   describe('MigrationError', () => {
     it('should construct MigrationError with phase and result details', () => {
-      const phase = getPhase(1)!;
+      const phase = getPhase(2)!;
       const phaseResult = {
-        phase: 1,
+        phase: 2,
         name: 'Impact Assessment',
         success: false,
         duration: 100,
@@ -4106,7 +4138,7 @@ Total usage est: 1 Premium requests
       };
       const error = new MigrationError(phase, phaseResult);
 
-      expect(error.message).toContain('Phase 1');
+      expect(error.message).toContain('Phase 2');
       expect(error.message).toContain('Impact Assessment');
       expect(error.message).toContain('Something went wrong');
       expect(error.phase).toBe(phase);
@@ -4114,9 +4146,9 @@ Total usage est: 1 Premium requests
     });
 
     it('should have correct name property ("MigrationError")', () => {
-      const phase = getPhase(1)!;
+      const phase = getPhase(2)!;
       const phaseResult = {
-        phase: 1,
+        phase: 2,
         name: 'Impact Assessment',
         success: false,
         duration: 100,
@@ -4199,7 +4231,7 @@ Total usage est: 1 Premium requests
           cliCommand: 'copilot',
           agentDir: '.github/agents',
           timeout: 300_000,
-          phaseTimeouts: { 1: 60_000 },
+          phaseTimeouts: { 2: 60_000 },
         },
       });
 
@@ -4218,7 +4250,7 @@ Total usage est: 1 Premium requests
           cliCommand: 'copilot',
           agentDir: '.github/agents',
           timeout: 300_000,
-          phaseTimeouts: { 2: 90_000 },
+          phaseTimeouts: { 3: 90_000 },
         },
       });
 
@@ -4237,7 +4269,7 @@ Total usage est: 1 Premium requests
           cliCommand: 'claude',
           agentDir: '.claude/agents',
           timeout: 120_000,
-          phaseTimeouts: { 1: 45_000 },
+          phaseTimeouts: { 2: 45_000 },
         },
       });
 
@@ -4443,10 +4475,10 @@ Total usage est: 1 Premium requests
       await writePhase3PlanningArtifacts(progressDir, tasks);
 
       const state = checkpoint.getState();
-      state.currentPhase = 4;
-      state.completedPhases = [1, 2, 3];
+      state.currentPhase = 5;
+      state.completedPhases = [0, 1, 2, 3, 4];
       state.phaseCursors ??= {};
-      state.phaseCursors['4'] = {
+      state.phaseCursors['5'] = {
         tasks: {
           'task-001': {
             completedSubsteps: ['migrator', 'migrator-commit', 'parity-tests', 'parity-gate'],
@@ -4460,7 +4492,7 @@ Total usage est: 1 Premium requests
       expect(result.success).toBe(true);
 
       const task001Phase4Invocations = mockLauncher.invocations.filter(
-        (inv) => inv.phase === 4 && inv.taskId === 'task-001',
+        (inv) => inv.phase === 5 && inv.taskId === 'task-001',
       );
       const task001Agents = task001Phase4Invocations.map((inv) => inv.agent);
       expect(task001Agents).not.toContain('code-migrator');
@@ -4493,11 +4525,11 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         undefined,
-        5,
+        6,
       );
       const state = checkpoint.getState();
       state.phaseCursors ??= {};
-      state.phaseCursors['5'] = {
+      state.phaseCursors['6'] = {
         iteration: 1,
         fixIndex: 1,
         lastSuccessfulStep: 'fix-started',
@@ -4506,11 +4538,11 @@ Total usage est: 1 Premium requests
 
       await orchestrator.run();
 
-      const phase5FixTaskIds = mockLauncher.invocations
-        .filter((inv) => inv.agent === 'code-migrator' && inv.phase === 5)
+      const phase6FixTaskIds = mockLauncher.invocations
+        .filter((inv) => inv.agent === 'code-migrator' && inv.phase === 6)
         .map((inv) => inv.taskId);
-      expect(phase5FixTaskIds).toContain('fix-1-1');
-      expect(phase5FixTaskIds).not.toContain('fix-1-0');
+      expect(phase6FixTaskIds).toContain('fix-1-1');
+      expect(phase6FixTaskIds).not.toContain('fix-1-0');
     });
 
     it('should return success: false when resuming phase 5 with hadUnresolvedFixes true', async () => {
@@ -4519,11 +4551,11 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         undefined,
-        5,
+        6,
       );
       const state = checkpoint.getState();
       state.phaseCursors ??= {};
-      state.phaseCursors['5'] = {
+      state.phaseCursors['6'] = {
         iteration: 3,
         fixIndex: 0,
         lastSuccessfulStep: 'complete',
@@ -4533,13 +4565,13 @@ Total usage est: 1 Premium requests
 
       const result = await orchestrator.run();
 
-      const phase5 = result.phases.find((p) => p.phase === 5);
+      const phase5 = result.phases.find((p) => p.phase === 6);
       expect(phase5).toBeDefined();
       expect(phase5!.success).toBe(false);
       expect(phase5!.error).toContain('unresolved parity fixes');
       // No agents should have been launched for phase 5 since it was already complete
-      const phase5Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 5);
-      expect(phase5Invocations).toHaveLength(0);
+      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
+      expect(phase6Invocations).toHaveLength(0);
     });
 
     it('should return success: true when resuming phase 5 with hadUnresolvedFixes false', async () => {
@@ -4548,11 +4580,11 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         undefined,
-        5,
+        6,
       );
       const state = checkpoint.getState();
       state.phaseCursors ??= {};
-      state.phaseCursors['5'] = {
+      state.phaseCursors['6'] = {
         iteration: 3,
         fixIndex: 0,
         lastSuccessfulStep: 'complete',
@@ -4562,13 +4594,13 @@ Total usage est: 1 Premium requests
 
       const result = await orchestrator.run();
 
-      const phase5 = result.phases.find((p) => p.phase === 5);
+      const phase5 = result.phases.find((p) => p.phase === 6);
       expect(phase5).toBeDefined();
       expect(phase5!.success).toBe(true);
       expect(phase5!.error).toBeUndefined();
       // No agents should have been launched for phase 5 since it was already complete
-      const phase5Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 5);
-      expect(phase5Invocations).toHaveLength(0);
+      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
+      expect(phase6Invocations).toHaveLength(0);
     });
 
     it('should skip completed phase 6 agents based on checkpoint cursor', async () => {
@@ -4577,12 +4609,12 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         undefined,
-        6,
+        7,
       );
 
       const state = checkpoint.getState();
       state.phaseCursors ??= {};
-      state.phaseCursors['6'] = {
+      state.phaseCursors['7'] = {
         completedAgents: ['e2e-test-crafter'],
         lastSuccessfulStep: 'completed-e2e-test-crafter',
       };
@@ -4592,11 +4624,11 @@ Total usage est: 1 Premium requests
       expect(result.success).toBe(true);
 
       const phase6Agents = mockLauncher.invocations
-        .filter((inv) => inv.phase === 6)
+        .filter((inv) => inv.phase === 7)
         .map((inv) => inv.agent);
       expect(phase6Agents).not.toContain('e2e-test-crafter');
       expect(phase6Agents).toContain('documentation-writer');
-      expect(checkpoint.getState().phaseCursors?.['6']?.completedAgents).toEqual(
+      expect(checkpoint.getState().phaseCursors?.['7']?.completedAgents).toEqual(
         expect.arrayContaining(['e2e-test-crafter', 'documentation-writer']),
       );
     });
@@ -6395,7 +6427,7 @@ Total usage est: 1 Premium requests
 
   // ─── Phase 6: E2E Suite Fan-Out ───────────────────────────────────────
 
-  describe('Phase 6 suite fan-out', () => {
+  describe('Phase 7 suite fan-out', () => {
     it('should fan out one test-writer per suite for multi-suite plans', async () => {
       const launcherFn = createMockLauncher();
       const targetOutput = join(tempDir, 'target-fanout');
@@ -6405,7 +6437,7 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput } },
-        6,
+        7,
       );
 
       await writeE2eTestPlan(targetOutput, [
@@ -6417,10 +6449,10 @@ Total usage est: 1 Premium requests
       const result = await orchestrator.run();
       expect(result.success).toBe(true);
 
-      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
-      const crafterInvocations = phase6Invocations.filter((inv) => inv.agent === 'e2e-test-crafter');
-      const testWriterInvocations = phase6Invocations.filter((inv) => inv.agent === 'test-writer');
-      const docWriterInvocations = phase6Invocations.filter((inv) => inv.agent === 'documentation-writer');
+      const phase7Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 7);
+      const crafterInvocations = phase7Invocations.filter((inv) => inv.agent === 'e2e-test-crafter');
+      const testWriterInvocations = phase7Invocations.filter((inv) => inv.agent === 'test-writer');
+      const docWriterInvocations = phase7Invocations.filter((inv) => inv.agent === 'documentation-writer');
 
       expect(crafterInvocations).toHaveLength(1);
       expect(testWriterInvocations).toHaveLength(3);
@@ -6446,7 +6478,7 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput } },
-        6,
+        7,
       );
 
       await orchestrator.run();
@@ -6465,7 +6497,7 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput } },
-        6,
+        7,
       );
 
       await writeE2eTestPlan(targetOutput, [
@@ -6475,8 +6507,8 @@ Total usage est: 1 Premium requests
       const result = await orchestrator.run();
       expect(result.success).toBe(true);
 
-      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
-      const testWriterInvocations = phase6Invocations.filter((inv) => inv.agent === 'test-writer');
+      const phase7Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 7);
+      const testWriterInvocations = phase7Invocations.filter((inv) => inv.agent === 'test-writer');
 
       expect(testWriterInvocations).toHaveLength(1);
       expect(testWriterInvocations[0]!.taskId).toBe('suite-001');
@@ -6491,7 +6523,7 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput } },
-        6,
+        7,
       );
 
       // No e2e-test-plan.md → zero suites
@@ -6499,7 +6531,7 @@ Total usage est: 1 Premium requests
       expect(result.success).toBe(true);
 
       const testWriterInvocations = mockLauncher.invocations.filter(
-        (inv) => inv.phase === 6 && inv.agent === 'test-writer',
+        (inv) => inv.phase === 7 && inv.agent === 'test-writer',
       );
       expect(testWriterInvocations).toHaveLength(0);
     });
@@ -6513,13 +6545,13 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput } },
-        6,
+        7,
       );
 
       // Mark crafter and suite-001 as already completed
       const state = checkpoint.getState();
       state.phaseCursors ??= {};
-      state.phaseCursors['6'] = {
+      state.phaseCursors['7'] = {
         completedAgents: ['e2e-test-crafter'],
         completedSuites: ['suite-001'],
         lastSuccessfulStep: 'completed-suite-suite-001',
@@ -6535,20 +6567,20 @@ Total usage est: 1 Premium requests
       const result = await orchestrator.run();
       expect(result.success).toBe(true);
 
-      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
+      const phase7Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 7);
 
       // e2e-test-crafter should be skipped (already completed)
-      expect(phase6Invocations.filter((inv) => inv.agent === 'e2e-test-crafter')).toHaveLength(0);
+      expect(phase7Invocations.filter((inv) => inv.agent === 'e2e-test-crafter')).toHaveLength(0);
 
       // Only suite-002 and suite-003 should be launched
-      const suiteIds = phase6Invocations
+      const suiteIds = phase7Invocations
         .filter((inv) => inv.agent === 'test-writer')
         .map((inv) => inv.taskId);
       expect(suiteIds).not.toContain('suite-001');
       expect(suiteIds).toEqual(expect.arrayContaining(['suite-002', 'suite-003']));
 
       // Checkpoint should now include all three suites
-      const cursor = checkpoint.getState().phaseCursors?.['6'];
+      const cursor = checkpoint.getState().phaseCursors?.['7'];
       expect(cursor?.completedSuites).toEqual(
         expect.arrayContaining(['suite-001', 'suite-002', 'suite-003']),
       );
@@ -6589,7 +6621,7 @@ Total usage est: 1 Premium requests
             },
           },
         },
-        6,
+        7,
       );
 
       await writeE2eTestPlan(targetOutput, [
@@ -6645,7 +6677,7 @@ Total usage est: 1 Premium requests
           target: { outputPath: targetOutput },
           options: { maxRetriesPerTask: 3 },
         },
-        6,
+        7,
       );
 
       await writeE2eTestPlan(targetOutput, [
@@ -6663,7 +6695,7 @@ Total usage est: 1 Premium requests
       expect(suite001Invocations.length).toBeGreaterThanOrEqual(2);
 
       // Both suites should end up completed
-      const cursor = checkpoint.getState().phaseCursors?.['6'];
+      const cursor = checkpoint.getState().phaseCursors?.['7'];
       expect(cursor?.completedSuites).toEqual(
         expect.arrayContaining(['suite-001', 'suite-002']),
       );
@@ -6684,7 +6716,7 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput } },
-        6,
+        7,
       );
 
       await writeE2eTestPlan(targetOutput, [
@@ -6697,7 +6729,7 @@ Total usage est: 1 Premium requests
       const tokenUsage = checkpoint.getState().tokenUsage;
       // Should have tokens from crafter + 2 suites + doc-writer
       expect(tokenUsage.total).toBeGreaterThan(0);
-      expect(tokenUsage.byPhase[6]).toBeGreaterThan(0);
+      expect(tokenUsage.byPhase[7]).toBeGreaterThan(0);
       expect(tokenUsage.byAgent['test-writer']).toBeGreaterThanOrEqual(1000); // 500 * 2 suites
     });
 
@@ -6722,7 +6754,7 @@ Total usage est: 1 Premium requests
             git: { enabled: true, autoInit: false, commitByAgent: false, commitPerTask: false },
           },
         },
-        6,
+        7,
       );
 
       await writeE2eTestPlan(targetOutput, [
@@ -6748,7 +6780,7 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput } },
-        6,
+        7,
       );
 
       await writeE2eTestPlan(targetOutput, [
@@ -6759,9 +6791,9 @@ Total usage est: 1 Premium requests
       expect(result.success).toBe(false);
 
       // No test-writer or documentation-writer should have been launched
-      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
-      expect(phase6Invocations.filter((inv) => inv.agent === 'test-writer')).toHaveLength(0);
-      expect(phase6Invocations.filter((inv) => inv.agent === 'documentation-writer')).toHaveLength(0);
+      const phase7Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 7);
+      expect(phase7Invocations.filter((inv) => inv.agent === 'test-writer')).toHaveLength(0);
+      expect(phase7Invocations.filter((inv) => inv.agent === 'documentation-writer')).toHaveLength(0);
     });
 
     it('should still run documentation-writer when a suite permanently fails', async () => {
@@ -6779,7 +6811,7 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput }, options: { maxRetriesPerTask: 1 } },
-        6,
+        7,
       );
 
       await writeE2eTestPlan(targetOutput, [
@@ -6793,7 +6825,7 @@ Total usage est: 1 Premium requests
 
       // documentation-writer should still have been invoked
       const docInvocations = mockLauncher.invocations.filter(
-        (inv) => inv.phase === 6 && inv.agent === 'documentation-writer',
+        (inv) => inv.phase === 7 && inv.agent === 'documentation-writer',
       );
       expect(docInvocations).toHaveLength(1);
     });
@@ -6807,13 +6839,13 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput } },
-        6,
+        7,
       );
 
       // Simulate a legacy cursor that lacks the completedSuites field
       const state = checkpoint.getState();
       state.phaseCursors ??= {};
-      state.phaseCursors['6'] = {
+      state.phaseCursors['7'] = {
         completedAgents: ['e2e-test-crafter'],
         lastSuccessfulStep: 'completed-e2e-test-crafter',
       };
@@ -6828,12 +6860,12 @@ Total usage est: 1 Premium requests
 
       // The suite should be launched since completedSuites was missing (treated as empty)
       const suiteInvocations = mockLauncher.invocations.filter(
-        (inv) => inv.phase === 6 && inv.agent === 'test-writer',
+        (inv) => inv.phase === 7 && inv.agent === 'test-writer',
       );
       expect(suiteInvocations).toHaveLength(1);
 
       // After run, completedSuites should now be populated
-      const cursor = checkpoint.getState().phaseCursors?.['6'];
+      const cursor = checkpoint.getState().phaseCursors?.['7'];
       expect(cursor?.completedSuites).toEqual(expect.arrayContaining(['suite-001']));
     });
 
@@ -6846,13 +6878,13 @@ Total usage est: 1 Premium requests
         tempDir,
         launcherFn,
         { target: { outputPath: targetOutput } },
-        6,
+        7,
       );
 
       // Mark crafter and all suites as already completed
       const state = checkpoint.getState();
       state.phaseCursors ??= {};
-      state.phaseCursors['6'] = {
+      state.phaseCursors['7'] = {
         completedAgents: ['e2e-test-crafter'],
         completedSuites: ['suite-001', 'suite-002'],
         lastSuccessfulStep: 'all-suites-complete',
@@ -6868,12 +6900,12 @@ Total usage est: 1 Premium requests
       expect(result.success).toBe(true);
 
       // No test-writer or e2e-test-crafter invocations
-      const phase6Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 6);
-      expect(phase6Invocations.filter((inv) => inv.agent === 'test-writer')).toHaveLength(0);
-      expect(phase6Invocations.filter((inv) => inv.agent === 'e2e-test-crafter')).toHaveLength(0);
+      const phase7Invocations = mockLauncher.invocations.filter((inv) => inv.phase === 7);
+      expect(phase7Invocations.filter((inv) => inv.agent === 'test-writer')).toHaveLength(0);
+      expect(phase7Invocations.filter((inv) => inv.agent === 'e2e-test-crafter')).toHaveLength(0);
 
       // documentation-writer should still run (not in completedAgents)
-      expect(phase6Invocations.filter((inv) => inv.agent === 'documentation-writer')).toHaveLength(1);
+      expect(phase7Invocations.filter((inv) => inv.agent === 'documentation-writer')).toHaveLength(1);
     });
 
     it('should persist completedSuites in cursor after each successful suite with git', async () => {
@@ -6898,15 +6930,15 @@ Total usage est: 1 Premium requests
             },
           },
         },
-        6,
+        7,
       );
 
       vi.spyOn(orchestrator as any, 'commitIfDirty').mockResolvedValue(undefined);
       vi.spyOn(orchestrator as any, 'ensureGitRepositoryReady').mockResolvedValue(undefined);
 
-      // Spy on savePhase6Cursor to capture snapshots
-      const origSave = (orchestrator as any).savePhase6Cursor.bind(orchestrator);
-      vi.spyOn(orchestrator as any, 'savePhase6Cursor').mockImplementation(async (cursor: any) => {
+      // Spy on savePhase7Cursor to capture snapshots
+      const origSave = (orchestrator as any).savePhase7Cursor.bind(orchestrator);
+      vi.spyOn(orchestrator as any, 'savePhase7Cursor').mockImplementation(async (cursor: any) => {
         if (cursor.completedSuites?.length > 0) {
           completedSuiteSnapshots.push([...cursor.completedSuites]);
         }

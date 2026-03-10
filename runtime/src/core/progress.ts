@@ -126,7 +126,7 @@ export class ProgressWriter {
     this.totalTasks = count;
   }
 
-  /** Update task progress within Phase 4 */
+  /** Update task progress within Phase 5 */
   async updateTask(taskId: string, status: string, details?: TaskDetails): Promise<void> {
     this.tasks.set(taskId, { status, details });
     await this.writeCurrentState();
@@ -267,7 +267,7 @@ export class ProgressWriter {
       md += '\n';
     }
 
-    // Task progress bar (Phase 4)
+    // Task progress bar (Phase 5)
     if (this.totalTasks > 0) {
       md += `## Task Progress\n\n`;
       const pct = this.totalTasks > 0 ? Math.round((completedTasks / this.totalTasks) * 100) : 0;

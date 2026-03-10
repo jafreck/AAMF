@@ -53,11 +53,11 @@ describe.skipIf(!runE2E)('E2E Smoke Test', () => {
     expect(true).toBe(true);
   });
 
-  it('should run Phase 1 (Impact Assessment) and produce expected artefacts', async () => {
+  it('should run Phase 2 (Impact Assessment) and produce expected artefacts', async () => {
     const runtime = new MigrationRuntime();
     await runtime.initialize({
       configPath,
-      phase: 1,
+      phase: 2,
       logLevel: 'info',
     });
 

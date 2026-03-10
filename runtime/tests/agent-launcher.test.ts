@@ -75,7 +75,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'cli-args',
     });
 
@@ -102,7 +102,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'model-override',
       modelOverride: 'fallback-model',
     });
@@ -130,7 +130,7 @@ describe('AgentLauncher', () => {
       agent: 'impact-assessor',
       contextFile,
       progressDir,
-      phase: 1,
+      phase: 2,
       taskId: 'env-test',
     });
 
@@ -139,7 +139,7 @@ describe('AgentLauncher', () => {
     const { content: logContent } = await readLatestAgentLog('impact-assessor', 'env-test');
     expect(logContent).toContain(`PROGRESS_DIR:${progressDir}`);
     expect(logContent).toContain(`CONTEXT_FILE:${contextFile}`);
-    expect(logContent).toContain('PHASE:1');
+    expect(logContent).toContain('PHASE:2');
     expect(logContent).toContain('TASK_ID:env-test');
   });
 
@@ -165,7 +165,7 @@ describe('AgentLauncher', () => {
         agent: 'impact-assessor',
         contextFile,
         progressDir,
-        phase: 1,
+        phase: 2,
         taskId: 'env-filter',
       });
 
@@ -196,7 +196,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'ok-001',
     });
 
@@ -217,7 +217,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'fail-001',
     });
 
@@ -240,7 +240,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'timeout-001',
       timeout: 500,
       // node sees --agent as unknown flag and ignores it, then runs
@@ -262,7 +262,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'timeout-002',
       timeout: 500,
     });
@@ -281,7 +281,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'success-stderr-001',
     });
 
@@ -303,7 +303,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'output-001',
     });
 
@@ -325,7 +325,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'token-001',
     });
 
@@ -344,7 +344,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'missing-001',
     });
 
@@ -363,7 +363,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'log-001',
     });
 
@@ -383,7 +383,7 @@ describe('AgentLauncher', () => {
       agent: 'code-migrator',
       contextFile,
       progressDir,
-      phase: 4,
+      phase: 5,
       taskId: 'args-001',
       additionalArgs: { foo: 'bar' },
     });
@@ -408,7 +408,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'aamf-valid-001',
       });
 
@@ -433,7 +433,7 @@ describe('AgentLauncher', () => {
         agent: 'parity-failure-resolver',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'aamf-parity-failure-resolver-001',
       });
 
@@ -451,7 +451,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'aamf-missing-001',
       });
 
@@ -476,7 +476,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',  // schema expects agent === 'code-migrator'
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'aamf-invalid-001',
       });
 
@@ -498,7 +498,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'aamf-malformed-001',
       });
 
@@ -528,7 +528,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'aamf-token-001',
       });
 
@@ -552,7 +552,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'aamf-warn-001',
       });
 
@@ -569,7 +569,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'aamf-fail-001',
       });
 
@@ -597,7 +597,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'token-aamf-nonzero',
       });
 
@@ -614,7 +614,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'no-tokens-001',
       });
 
@@ -630,7 +630,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'catch-token-001',
       });
 
@@ -650,7 +650,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'inv-id-001',
       });
 
@@ -672,7 +672,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile: ctx1,
         progressDir: pd1,
-        phase: 4,
+        phase: 5,
         taskId: 'inv-unique-001',
       });
 
@@ -680,7 +680,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile: ctx2,
         progressDir: pd2,
-        phase: 4,
+        phase: 5,
         taskId: 'inv-unique-002',
       });
 
@@ -698,7 +698,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'inv-log-001',
       });
 
@@ -716,7 +716,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'inv-error-001',
       });
 
@@ -757,7 +757,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile: ctx1,
         progressDir: pd1,
-        phase: 4,
+        phase: 5,
         taskId: 'qd-001',
       });
 
@@ -770,7 +770,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile: ctx2,
         progressDir: pd2,
-        phase: 4,
+        phase: 5,
         taskId: 'qd-002',
       });
 
@@ -787,7 +787,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'no-qd-001',
       });
 
@@ -815,7 +815,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'extra-path-001',
       });
 
@@ -862,7 +862,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'spawn-output',
       });
 
@@ -881,7 +881,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'no-output-001',
       });
 
@@ -904,7 +904,7 @@ describe('AgentLauncher', () => {
         agent: 'impact-assessor',
         contextFile,
         progressDir,
-        phase: 1,
+        phase: 2,
         taskId: 'mcp-config-001',
         mcpConfig,
       });
@@ -926,7 +926,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'no-mcp-001',
       });
 
@@ -955,7 +955,7 @@ describe('AgentLauncher', () => {
         agent: 'impact-assessor',
         contextFile,
         progressDir,
-        phase: 1,
+        phase: 2,
         taskId: 'claude-mcp-001',
         mcpConfig: { url: 'http://localhost:4545/mcp' },
       });
@@ -998,7 +998,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'elapsed-no-wait',
       });
 
@@ -1025,7 +1025,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'live-stdout-001',
       });
 
@@ -1057,7 +1057,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'live-stderr-001',
       });
 
@@ -1084,7 +1084,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'live-both-001',
       });
 
@@ -1105,7 +1105,7 @@ describe('AgentLauncher', () => {
         agent: 'code-migrator',
         contextFile,
         progressDir,
-        phase: 4,
+        phase: 5,
         taskId: 'live-fail-001',
       });
 
