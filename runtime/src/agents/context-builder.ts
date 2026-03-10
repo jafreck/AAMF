@@ -206,10 +206,11 @@ export class ContextBuilder {
         };
 
       case 'code-migrator': {
+        // kbEntry is a structured reference string (e.g. "kb/file#L10-L50"),
+        // not a file path — pass it in the payload, not inputFiles.
         return {
           inputFiles: [
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
-            ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
           ],
           outputPath: out,
           agentPayload: {

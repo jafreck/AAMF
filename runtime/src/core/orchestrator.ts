@@ -630,22 +630,14 @@ export class MigrationOrchestrator {
     // Optionally set up the embedding provider for semantic search.
     // Only initialised when we actually need to rebuild the index.
     if (embCfg?.enabled) {
-      const pythonBin = embCfg.pythonBin ?? 'python3';
-      const model = embeddingModelName!;
-      this.logger.info(`Embeddings enabled — ensuring Python deps (python: ${pythonBin}, model: ${model})`);
-      try {
-        await lore.ensurePythonDeps(pythonBin);
-      } catch (err) {
-        this.logger.warn(
-          `Failed to install Python embedding deps — embeddings will be skipped: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-      this.embedder = new lore.SentenceTransformersProvider(model, pythonBin);
+      const model = embeddingModelName ?? lore.DEFAULT_EMBEDDING_MODEL;
+      this.logger.info(`Embeddings enabled (model: ${model})`);
+      this.embedder = new lore.TransformersJsProvider(model);
       try {
         await this.embedder.init();
-        this.logger.info(`Embedding model loaded — dims: ${this.embedder.dims}`);
+        const device = (this.embedder as { device?: string }).device;
+        const deviceInfo = device ? `, device: ${device}` : '';
+        this.logger.info(`Embedding model loaded — dims: ${this.embedder.dims}${deviceInfo}`);
       } catch (err) {
         this.logger.warn(
           `Failed to initialise embedding model — embeddings will be skipped: ${
@@ -1557,6 +1549,8 @@ export class MigrationOrchestrator {
         acceptanceCriteria: task.acceptanceCriteria,
         parityChecks: task.parityChecks,
         ...(task.lineRange ? { lineRange: task.lineRange } : {}),
+        ...(task.symbols ? { symbols: task.symbols } : {}),
+        ...(task.knowledgeBaseRef ? { knowledgeBaseRef: task.knowledgeBaseRef } : {}),
       },
     };
   }

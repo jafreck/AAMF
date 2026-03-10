@@ -71,7 +71,7 @@
     "kbIndex": {
       "enabled": true,
       "embeddings": {
-        "enabled": true
+        "enabled": false
       },
       "lsp": {
         "enabled": true,

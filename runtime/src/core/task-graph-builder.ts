@@ -285,12 +285,19 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
       }));
       const totalLines = computeClusterLines(cluster.symbols);
 
+      // Build line-scoped KB refs: point at exact symbol ranges rather than
+      // whole files so the agent reads only the relevant code.
+      const kbRef = symbolEntries
+        .map(s => `kb/${s.file}#L${s.startLine}-L${s.endLine}`)
+        .filter((v, i, a) => a.indexOf(v) === i) // deduplicate
+        .join(', ');
+
       tasks.push({
         id: taskId,
         name: taskName,
         sourceFiles,
         targetFiles: uniqueTargets,
-        knowledgeBaseRef: sourceFiles.map(f => `kb/${f}`).join(', '),
+        knowledgeBaseRef: kbRef,
         dependencies: [], // populated below
         complexity: isStubs ? 'simple' : estimateComplexity(cluster.totalLines),
         description: isStubs
@@ -376,6 +383,91 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
             }
           }
         }
+      }
+    }
+
+    // ── Micro-task elision ─────────────────────────────────────────────
+    //
+    // Tasks under MICRO_ELISION_LINES are too small to justify a standalone
+    // agent invocation (e.g. a 2-line #define or a trivial typedef).  The
+    // agent migrating the consumer file will naturally handle these symbols
+    // when it reads the source — they're #include'd context, not standalone
+    // compilation units.
+    //
+    // Elided tasks are:
+    //   - Removed from the task list
+    //   - Their source files added to each consumer's knowledgeBaseRef so
+    //     the agent can look up the definitions
+    //   - Their dependency edges rewired: consumers that depended on the
+    //     elided task now depend on the elided task's own dependencies
+    const MICRO_ELISION_LINES = 30;
+    {
+      const taskIdx = new Map(tasks.map(t => [t.id, t]));
+
+      // Build reverse index: task ID → set of tasks that depend on it
+      const dependants = new Map<string, Set<string>>();
+      for (const t of tasks) {
+        for (const dep of t.dependencies) {
+          if (!dependants.has(dep)) dependants.set(dep, new Set());
+          dependants.get(dep)!.add(t.id);
+        }
+      }
+
+      // Identify elision candidates: small tasks not in any SCC candidate.
+      // We don't elide tasks that are depended on by many consumers (>10)
+      // because those are shared infrastructure (e.g. a key typedef used
+      // everywhere) — worth keeping as an explicit task so the agent
+      // migrates it intentionally rather than duplicating it.
+      const elisionIds = new Set<string>();
+      for (const t of tasks) {
+        if (t.name.startsWith('[stubs]')) continue;
+        const tLines = t.totalLines ?? 0;
+        if (tLines > MICRO_ELISION_LINES || tLines === 0) continue;
+        const numDependants = dependants.get(t.id)?.size ?? 0;
+        if (numDependants > 10) continue;
+        elisionIds.add(t.id);
+      }
+
+      if (elisionIds.size > 0) {
+        // Rewire edges and fold KB refs
+        for (const elidedId of elisionIds) {
+          const elided = taskIdx.get(elidedId)!;
+          const elidedKbRefs = elided.sourceFiles.map(f => `kb/${f}`);
+          const elidedDeps = elided.dependencies.filter(d => !elisionIds.has(d));
+
+          // For each task that depended on the elided task:
+          const consumers = dependants.get(elidedId);
+          if (consumers) {
+            for (const consumerId of consumers) {
+              const consumer = taskIdx.get(consumerId);
+              if (!consumer) continue;
+
+              // Remove the elided dep and add the elided task's own deps
+              consumer.dependencies = consumer.dependencies.filter(d => d !== elidedId);
+              for (const d of elidedDeps) {
+                if (d !== consumerId && !consumer.dependencies.includes(d)) {
+                  consumer.dependencies.push(d);
+                }
+              }
+
+              // Add specific symbol line references so the agent can look up
+              // exactly the elided definitions rather than scanning entire files.
+              const lineRefs = (elided.symbols ?? []).map(s =>
+                `kb/${s.file}#L${s.startLine}-L${s.endLine}`,
+              );
+              for (const ref of lineRefs) {
+                if (!consumer.knowledgeBaseRef.includes(ref)) {
+                  consumer.knowledgeBaseRef += ', ' + ref;
+                }
+              }
+            }
+          }
+        }
+
+        // Remove elided tasks
+        const remaining = tasks.filter(t => !elisionIds.has(t.id));
+        tasks.length = 0;
+        tasks.push(...remaining);
       }
     }
 
@@ -708,6 +800,64 @@ function clusterSymbols(
     changed = true;
   }
 
+  // Pass A2: unconditional same-file consolidation.
+  //
+  // Pass A only merges same-file clusters that share call/type edges.
+  // Functions in the same file that don't reference each other directly
+  // (e.g. two utility helpers) remain as separate micro-clusters.
+  //
+  // This pass merges ALL same-file clusters as long as the combined line
+  // span stays under maxLines.  This is always safe because:
+  //   - The agent reads the full file anyway during migration
+  //   - Same-file symbols share headers, types, and naming conventions
+  //   - Fewer tasks = fewer agent invocations = lower cost
+  //
+  // Strategy: for each file, collect all clusters and greedily pack them
+  // into the fewest tasks that fit under maxLines.
+  {
+    // Group cluster IDs by file.  Multi-file clusters are skipped (already
+    // handled by SCC contraction).
+    const fileToClusters = new Map<number, string[]>();
+    for (const [cid, cluster] of clusterMap) {
+      const fileIds = clusterFileIds(cluster);
+      if (fileIds.size !== 1) continue; // skip multi-file clusters
+      const fid = [...fileIds][0]!;
+      const list = fileToClusters.get(fid) ?? [];
+      list.push(cid);
+      fileToClusters.set(fid, list);
+    }
+
+    for (const [_fid, cids] of fileToClusters) {
+      if (cids.length <= 1) continue;
+
+      // Sort by start line so adjacent functions get packed together
+      cids.sort((a, b) => {
+        const aMin = Math.min(...clusterMap.get(a)!.symbols.map(s => s.startLine));
+        const bMin = Math.min(...clusterMap.get(b)!.symbols.map(s => s.startLine));
+        return aMin - bMin;
+      });
+
+      // Greedy packing: merge consecutive clusters until maxLines
+      let anchor = cids[0]!;
+      for (let i = 1; i < cids.length; i++) {
+        const next = cids[i]!;
+        if (!clusterMap.has(anchor) || !clusterMap.has(next)) {
+          if (clusterMap.has(next)) anchor = next;
+          continue;
+        }
+        const anchorCluster = clusterMap.get(anchor)!;
+        const nextCluster = clusterMap.get(next)!;
+        const mergedSpan = computeLineSpan([...anchorCluster.symbols, ...nextCluster.symbols]);
+        if (mergedSpan <= maxLines) {
+          mergeClusters(anchor, next);
+        } else {
+          // Start a new group
+          anchor = next;
+        }
+      }
+    }
+  }
+
   // Helper: get the parent directory of a file by its ID
   const getFileDir = (fid: number): string => {
     const path = fileIdToPath?.get(fid) ?? fid.toString();
@@ -715,46 +865,16 @@ function clusterSymbols(
     return lastSlash >= 0 ? path.substring(0, lastSlash) : '.';
   };
 
-  // Pass B: cross-file merging (≥2 bidirectional edges)
-  // Cross-directory merges require ≥5 edges to prevent weak header-mediated
-  // coupling from fusing unrelated subsystems (e.g. lib/compress + tests/).
-  changed = true;
-  while (changed) {
-    changed = false;
-    let bestPair: [string, string] | undefined;
-    let bestWeight = 0;
-
-    for (const [from, targets] of interClusterEdges) {
-      for (const [to, weight] of targets) {
-        if (!clusterMap.has(from) || !clusterMap.has(to)) continue;
-        const fromCluster = clusterMap.get(from)!;
-        const toCluster = clusterMap.get(to)!;
-        if (computeLineSpan([...fromCluster.symbols, ...toCluster.symbols]) > maxLines) continue;
-
-        const reverseWeight = interClusterEdges.get(to)?.get(from) ?? 0;
-        const totalWeight = weight + reverseWeight;
-        if (totalWeight <= bestWeight) continue;
-        if (totalWeight < 2) continue; // require ≥2 for cross-file
-
-        // Cross-directory guard: if clusters don't share any parent directory,
-        // require a much stronger coupling signal to merge.
-        const fromDirs = new Set(fromCluster.symbols.map(s => getFileDir(s.fileId)));
-        const toDirs = new Set(toCluster.symbols.map(s => getFileDir(s.fileId)));
-        let sharesDirectory = false;
-        for (const d of fromDirs) {
-          if (toDirs.has(d)) { sharesDirectory = true; break; }
-        }
-        if (!sharesDirectory && totalWeight < 5) continue;
-
-        bestWeight = totalWeight;
-        bestPair = [from, to];
-      }
-    }
-
-    if (!bestPair) break;
-    mergeClusters(bestPair[0], bestPair[1]);
-    changed = true;
-  }
+  // Pass B removed: cross-file merging is disabled.
+  //
+  // Merging clusters from different source files creates multi-file "chimera"
+  // tasks that introduce false cyclic dependencies.  For example, merging
+  // lib/compress/zstd_lazy.c symbols with examples/common.h symbols causes
+  // lib tasks to appear to depend on test/example tasks and vice versa,
+  // collapsing large portions of the graph into a single SCC.
+  //
+  // Cross-file dependencies are preserved as inter-task edges, allowing the
+  // scheduler to order tasks correctly without conflating file boundaries.
 
   // Step 4: Hierarchical affinity folding for undersized clusters.
   //
@@ -818,17 +938,26 @@ function clusterSymbols(
         }
       }
 
-      // ── Tier 2: dependency affinity ────────────────────────────────────
-      // Fold into the neighbor with the most call/type edges (any direction).
+      // ── Tier 2: dependency affinity (same-file only) ───────────────────
+      // Fold into the neighbor with the most call/type edges, but only if
+      // the neighbor shares at least one source file.  Cross-file folding
+      // creates chimera tasks that break the DAG structure.
       if (!bestNeighbor) {
         let bestEdgeCount = 0;
         const outbound = interClusterEdges.get(cid);
+        const myFiles = clusterFileIds(cluster);
 
         if (outbound) {
           for (const [target, w] of outbound) {
             if (!clusterMap.has(target)) continue;
             const targetCluster = clusterMap.get(target)!;
             if (targetCluster.isStubs) continue;
+            // Same-file constraint
+            let sharesFile = false;
+            for (const sym of targetCluster.symbols) {
+              if (myFiles.has(sym.fileId)) { sharesFile = true; break; }
+            }
+            if (!sharesFile) continue;
             if (computeLineSpan([...cluster.symbols, ...targetCluster.symbols]) > maxLines) continue;
             const reverseW = interClusterEdges.get(target)?.get(cid) ?? 0;
             if (w + reverseW > bestEdgeCount) {
@@ -842,6 +971,12 @@ function clusterSymbols(
           if (from === cid || !clusterMap.has(from)) continue;
           const fromCluster = clusterMap.get(from)!;
           if (fromCluster.isStubs) continue;
+          // Same-file constraint
+          let sharesFile = false;
+          for (const sym of fromCluster.symbols) {
+            if (myFiles.has(sym.fileId)) { sharesFile = true; break; }
+          }
+          if (!sharesFile) continue;
           const w = targets.get(cid);
           if (w == null) continue;
           if (computeLineSpan([...cluster.symbols, ...fromCluster.symbols]) > maxLines) continue;
@@ -853,33 +988,67 @@ function clusterSymbols(
         }
       }
 
-      // ── Tier 3: directory affinity ─────────────────────────────────────
-      // Only merge when there is exactly one viable directory-mate under
-      // the size limit.  Multiple candidates means the relationship is
-      // ambiguous — leave the cluster standalone rather than guess.
+      // ── Tier 3: cross-file consumer affinity (micro-tasks only) ────────
+      // For very small clusters (< MICRO_TASK_LINES), allow folding into a
+      // cross-file consumer if there is a dominant consumer and they share
+      // the same parent directory.  This catches header macros, typedefs,
+      // and trivial wrappers — they are too small to warrant a standalone
+      // agent invocation and don't create chimera problems because:
+      //   - The tiny cluster adds negligible size to the consumer task
+      //   - Same-directory constraint prevents cross-category merges
+      //     (lib/ won't merge with tests/ or examples/)
       if (!bestNeighbor) {
-        const myDirs = new Set(cluster.symbols.map(s => getFileDir(s.fileId)));
-        let dirCandidate: string | undefined;
-        let dirCandidateCount = 0;
+        const MICRO_TASK_LINES = 20;
+        const span = computeLineSpan(cluster.symbols);
+        if (span <= MICRO_TASK_LINES) {
+          const myDirs = new Set(cluster.symbols.map(s => getFileDir(s.fileId)));
 
-        for (const [otherId, otherCluster] of clusterMap) {
-          if (otherId === cid || otherCluster.isStubs) continue;
-          if (computeLineSpan([...cluster.symbols, ...otherCluster.symbols]) > maxLines) continue;
-
-          const otherDirs = new Set(otherCluster.symbols.map(s => getFileDir(s.fileId)));
-          let sharesDir = false;
-          for (const d of myDirs) {
-            if (otherDirs.has(d)) { sharesDir = true; break; }
+          // Count inbound edges: which clusters consume this one?
+          const consumers = new Map<string, number>(); // clusterId → edge count
+          for (const [from, targets] of interClusterEdges) {
+            if (from === cid || !clusterMap.has(from)) continue;
+            const w = targets.get(cid);
+            if (w != null && w > 0) {
+              consumers.set(from, (consumers.get(from) ?? 0) + w);
+            }
           }
-          if (sharesDir) {
-            dirCandidate = otherId;
-            dirCandidateCount++;
-            if (dirCandidateCount > 1) break; // ambiguous — stop early
+          // Also count outbound edges (the micro-task depends on the consumer)
+          const outbound = interClusterEdges.get(cid);
+          if (outbound) {
+            for (const [target, w] of outbound) {
+              if (!clusterMap.has(target)) continue;
+              consumers.set(target, (consumers.get(target) ?? 0) + w);
+            }
           }
-        }
 
-        if (dirCandidateCount === 1) {
-          bestNeighbor = dirCandidate;
+          if (consumers.size > 0) {
+            const totalEdges = [...consumers.values()].reduce((a, b) => a + b, 0);
+            // Find dominant consumer (>50% of all edges)
+            let bestConsumer: string | undefined;
+            let bestConsumerEdges = 0;
+            for (const [consumerId, edgeCount] of consumers) {
+              if (edgeCount > bestConsumerEdges) {
+                bestConsumerEdges = edgeCount;
+                bestConsumer = consumerId;
+              }
+            }
+
+            if (bestConsumer && bestConsumerEdges > totalEdges * 0.5) {
+              const consumerCluster = clusterMap.get(bestConsumer)!;
+              if (!consumerCluster.isStubs) {
+                // Same-directory guard
+                const consumerDirs = new Set(consumerCluster.symbols.map(s => getFileDir(s.fileId)));
+                let sharesDir = false;
+                for (const d of myDirs) {
+                  if (consumerDirs.has(d)) { sharesDir = true; break; }
+                }
+                if (sharesDir &&
+                    computeLineSpan([...cluster.symbols, ...consumerCluster.symbols]) <= maxLines) {
+                  bestNeighbor = bestConsumer;
+                }
+              }
+            }
+          }
         }
       }
 
