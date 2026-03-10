@@ -275,6 +275,16 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
           ? cluster.symbols[0]!.name
           : `${repNames}${symbolNames.length > 5 ? ` (+${symbolNames.length - 5})` : ''}`;
 
+      // Build structured symbol entries for agent consumption
+      const symbolEntries = cluster.symbols.map(s => ({
+        name: s.name,
+        kind: s.kind,
+        file: fileIdToPath.get(s.fileId) ?? `file:${s.fileId}`,
+        startLine: s.startLine,
+        endLine: s.endLine,
+      }));
+      const totalLines = computeClusterLines(cluster.symbols);
+
       tasks.push({
         id: taskId,
         name: taskName,
@@ -292,6 +302,8 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
         parityChecks: isStubs
           ? ['Type signatures match source definitions']
           : buildParityChecks(cluster),
+        symbols: symbolEntries,
+        totalLines,
         ...(lineRange ? { lineRange } : {}),
         ...(unitId ? { compilationUnit: unitId } : {}),
       });
@@ -324,6 +336,47 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
         );
       }
       seenIds.add(t.id);
+    }
+
+    // Fix unreachable tasks: detect tasks not reachable from any root and
+    // break one cycle edge per isolated component to create an entry point.
+    const rootTaskIds = new Set(tasks.filter(t => t.dependencies.length === 0).map(t => t.id));
+    const reachable = new Set<string>();
+    const bfsQueue = [...rootTaskIds];
+    while (bfsQueue.length > 0) {
+      const tid = bfsQueue.shift()!;
+      if (reachable.has(tid)) continue;
+      reachable.add(tid);
+      for (const t of tasks) {
+        if (t.dependencies.includes(tid) && !reachable.has(t.id)) {
+          bfsQueue.push(t.id);
+        }
+      }
+    }
+    const unreachableTasks = tasks.filter(t => !reachable.has(t.id));
+    if (unreachableTasks.length > 0) {
+      // For each unreachable connected component, remove one intra-component
+      // dependency to create a root entry point.
+      const unreachableIds = new Set(unreachableTasks.map(t => t.id));
+      const broken = new Set<string>(); // track which components we've fixed
+      for (const t of unreachableTasks) {
+        if (broken.has(t.id)) continue;
+        const internalDeps = t.dependencies.filter(d => unreachableIds.has(d));
+        if (internalDeps.length === t.dependencies.length && internalDeps.length > 0) {
+          // All deps are internal — remove the first to make this a root
+          t.dependencies = t.dependencies.slice(1);
+          // Mark reachable component members as handled
+          const componentQueue = [t.id];
+          while (componentQueue.length > 0) {
+            const cid = componentQueue.shift()!;
+            if (broken.has(cid)) continue;
+            broken.add(cid);
+            for (const other of unreachableTasks) {
+              if (other.dependencies.includes(cid)) componentQueue.push(other.id);
+            }
+          }
+        }
+      }
     }
 
     // Detect task-level SCCs
@@ -655,7 +708,16 @@ function clusterSymbols(
     changed = true;
   }
 
+  // Helper: get the parent directory of a file by its ID
+  const getFileDir = (fid: number): string => {
+    const path = fileIdToPath?.get(fid) ?? fid.toString();
+    const lastSlash = path.lastIndexOf('/');
+    return lastSlash >= 0 ? path.substring(0, lastSlash) : '.';
+  };
+
   // Pass B: cross-file merging (≥2 bidirectional edges)
+  // Cross-directory merges require ≥5 edges to prevent weak header-mediated
+  // coupling from fusing unrelated subsystems (e.g. lib/compress + tests/).
   changed = true;
   while (changed) {
     changed = false;
@@ -673,6 +735,16 @@ function clusterSymbols(
         const totalWeight = weight + reverseWeight;
         if (totalWeight <= bestWeight) continue;
         if (totalWeight < 2) continue; // require ≥2 for cross-file
+
+        // Cross-directory guard: if clusters don't share any parent directory,
+        // require a much stronger coupling signal to merge.
+        const fromDirs = new Set(fromCluster.symbols.map(s => getFileDir(s.fileId)));
+        const toDirs = new Set(toCluster.symbols.map(s => getFileDir(s.fileId)));
+        let sharesDirectory = false;
+        for (const d of fromDirs) {
+          if (toDirs.has(d)) { sharesDirectory = true; break; }
+        }
+        if (!sharesDirectory && totalWeight < 5) continue;
 
         bestWeight = totalWeight;
         bestPair = [from, to];
@@ -706,12 +778,6 @@ function clusterSymbols(
   //   No match → leave as standalone.  A 10-line task is cheap; forcing it
   //              into an unrelated cluster confuses the migrator agent.
   const MIN_LINES_PER_TASK = 50;
-
-  const getFileDir = (fid: number): string => {
-    const path = fileIdToPath?.get(fid) ?? fid.toString();
-    const lastSlash = path.lastIndexOf('/');
-    return lastSlash >= 0 ? path.substring(0, lastSlash) : '.';
-  };
 
   changed = true;
   while (changed) {
@@ -830,12 +896,51 @@ function clusterSymbols(
   // merging.  Uses computeLineSpan (already defined in Step 3) to measure
   // actual source range including inter-function gaps.
   const oversizedIds = [...clusterMap.entries()]
-    .filter(([_, c]) => computeLineSpan(c.symbols) > maxLines && c.symbols.length > 1)
+    .filter(([_, c]) => computeLineSpan(c.symbols) > maxLines)
     .map(([id]) => id);
 
   for (const oversizedId of oversizedIds) {
     const cluster = clusterMap.get(oversizedId);
     if (!cluster) continue;
+
+    // Single-symbol clusters can't be split by symbol — split by line range instead
+    if (cluster.symbols.length <= 1 && cluster.symbols.length > 0) {
+      const sym = cluster.symbols[0]!;
+      const totalSpan = sym.endLine - sym.startLine + 1;
+      if (totalSpan <= maxLines) continue; // actual lines fit, span was inflated
+      const numChunks = Math.ceil(totalSpan / maxLines);
+      const linesPerChunk = Math.ceil(totalSpan / numChunks);
+
+      clusterMap.delete(oversizedId);
+      let prevChunkId: string | undefined;
+
+      for (let i = 0; i < numChunks; i++) {
+        const chunkStart = sym.startLine + i * linesPerChunk;
+        const chunkEnd = Math.min(sym.startLine + (i + 1) * linesPerChunk - 1, sym.endLine);
+        const chunkId = `c${clusterCounter++}`;
+        const chunkSym: SymbolInfo = {
+          ...sym,
+          startLine: chunkStart,
+          endLine: chunkEnd,
+        };
+        const deps = new Set<string>();
+        if (i === 0) {
+          // First chunk inherits original external deps
+          for (const dep of cluster.dependencies) deps.add(dep);
+        }
+        if (prevChunkId) deps.add(prevChunkId);
+        const chunk: Cluster = {
+          id: chunkId,
+          symbols: [chunkSym],
+          totalLines: chunkEnd - chunkStart + 1,
+          dependencies: deps,
+        };
+        clusterMap.set(chunkId, chunk);
+        symbolToCluster.set(sym.id, chunkId); // last chunk "owns" the symbol
+        prevChunkId = chunkId;
+      }
+      continue;
+    }
 
     const subClusters = splitOversizedSCC(
       cluster.symbols, edges, maxLines, clusterCounter,
@@ -867,6 +972,82 @@ function clusterSymbols(
       const toCluster = symbolToCluster.get(toSym)!;
       if (fromCluster !== toCluster) {
         clusterMap.get(fromCluster)?.dependencies.add(toCluster);
+      }
+    }
+  }
+
+  // Step 6: Split task-level SCCs that emerged from merging.
+  // Greedy merge Passes A/B can re-introduce cycles at the cluster level
+  // even though symbol-level SCCs were already contracted.  Detect them
+  // now and apply stubs+sequential-chunks splitting.
+  const finalIds = [...clusterMap.keys()];
+  const finalAdj = new Map<string, string[]>();
+  for (const c of clusterMap.values()) {
+    finalAdj.set(c.id, [...c.dependencies]);
+  }
+  const taskLevelSCCs = findSCCs(finalIds, finalAdj);
+
+  for (const scc of taskLevelSCCs) {
+    const sccSet = new Set(scc);
+    // Collect all symbols across the SCC
+    const sccSymbols: SymbolInfo[] = [];
+    for (const cid of scc) {
+      const c = clusterMap.get(cid);
+      if (c) sccSymbols.push(...c.symbols);
+    }
+    const sccLines = computeClusterLines(sccSymbols);
+
+    // Only split if the SCC is large enough to warrant it
+    if (sccLines <= maxLines && scc.length <= 10) continue;
+
+    // Collect external dependencies (deps pointing outside the SCC)
+    const externalDeps = new Set<string>();
+    for (const cid of scc) {
+      const c = clusterMap.get(cid)!;
+      for (const dep of c.dependencies) {
+        if (!sccSet.has(dep)) externalDeps.add(dep);
+      }
+    }
+
+    // Remove all SCC member clusters
+    for (const cid of scc) {
+      clusterMap.delete(cid);
+    }
+
+    // Re-split into stubs + sequential chunks
+    const subClusters = splitOversizedSCC(sccSymbols, edges, maxLines, clusterCounter);
+    for (const sub of subClusters) {
+      for (const dep of externalDeps) sub.dependencies.add(dep);
+      clusterMap.set(sub.id, sub);
+      for (const sym of sub.symbols) {
+        symbolToCluster.set(sym.id, sub.id);
+      }
+    }
+    clusterCounter += subClusters.length;
+  }
+
+  // Recompute final inter-cluster dependencies after SCC splitting
+  if (taskLevelSCCs.length > 0) {
+    for (const cluster of clusterMap.values()) {
+      // Preserve stubs/sequential deps from splitOversizedSCC, only
+      // clear non-structural deps and re-derive from symbol edges.
+      const structuralDeps = new Set<string>();
+      for (const dep of cluster.dependencies) {
+        // Keep deps to stubs clusters and sequential chain deps
+        if (cluster.sccGroup && clusterMap.get(dep)?.sccGroup === cluster.sccGroup) {
+          structuralDeps.add(dep);
+        }
+      }
+      cluster.dependencies.clear();
+      for (const dep of structuralDeps) cluster.dependencies.add(dep);
+    }
+    for (const [fromSym, toSyms] of edges) {
+      const fromCluster = symbolToCluster.get(fromSym)!;
+      for (const toSym of toSyms) {
+        const toCluster = symbolToCluster.get(toSym)!;
+        if (fromCluster !== toCluster) {
+          clusterMap.get(fromCluster)?.dependencies.add(toCluster);
+        }
       }
     }
   }

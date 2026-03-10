@@ -833,6 +833,27 @@ export class MigrationOrchestrator {
     }
   }
 
+  /**
+   * Emergency cleanup for use by the SIGINT/SIGTERM handler.
+   *
+   * Kills the KB server and disposes the embedding provider (which holds
+   * a long-running Python child process).  Without this, interrupted runs
+   * leave orphaned clangd / Python processes that consume GBs of RAM.
+   *
+   * Uses a 3-second timeout per operation so we never hang waiting for a
+   * stuck child process (e.g. Python mid-model-download).
+   */
+  async shutdown(): Promise<void> {
+    const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | void> =>
+      Promise.race([p, new Promise<void>(r => setTimeout(r, ms))]);
+
+    await withTimeout(this.stopKbServer(), 3_000);
+    if (this.embedder) {
+      try { await withTimeout(this.embedder.dispose(), 3_000); } catch { /* ignore */ }
+      this.embedder = undefined;
+    }
+  }
+
   // ─── Phase 1: Task Graph Construction (deterministic) ─────────────────
 
   private async executePhase1(start: number): Promise<PhaseResult> {

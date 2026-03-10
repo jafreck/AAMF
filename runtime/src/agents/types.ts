@@ -403,6 +403,18 @@ export interface MigrationTask {
   /** Parity check identifiers that apply to this task. */
   parityChecks: string[];
 
+  /** Structured symbol data for this task (name, kind, file, line range). */
+  symbols?: Array<{
+    name: string;
+    kind: string;
+    file: string;
+    startLine: number;
+    endLine: number;
+  }>;
+
+  /** Total non-overlapping lines covered by symbols in this task. */
+  totalLines?: number;
+
   /** Optional line range in the source file to scope the migration. */
   lineRange?: { start: number; end: number };
 

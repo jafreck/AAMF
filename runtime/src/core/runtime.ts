@@ -77,6 +77,7 @@ export class MigrationRuntime {
   private projectRoot!: string;
   private phase?: number;
   private runId!: string;
+  private orchestrator?: MigrationOrchestrator;
 
   private getActiveRuntimeSettings(): {
     agentDir: string;
@@ -191,7 +192,7 @@ export class MigrationRuntime {
     }
 
     // Create and run orchestrator
-    const orchestrator = new MigrationOrchestrator(
+    this.orchestrator = new MigrationOrchestrator(
       this.config,
       this.checkpoint,
       this.launcher,
@@ -202,7 +203,8 @@ export class MigrationRuntime {
       this.phase,
     );
 
-    const result = await orchestrator.run();
+    const result = await this.orchestrator.run();
+    this.orchestrator = undefined;
 
     // Flush any buffered log entries before returning
     await this.logger.flush();
@@ -387,6 +389,27 @@ export class MigrationRuntime {
   private setupShutdownHandlers(): void {
     const handler = async (signal: string) => {
       this.logger.warn(`Received ${signal} — shutting down gracefully`);
+
+      // Kill child processes FIRST — the orchestrator holds references to
+      // the KB server (clangd LSP) and embedding provider (Python/PyTorch).
+      // Without this, interrupted runs leave orphaned processes that each
+      // consume 2-4 GB of RAM, leading to 60+ GB memory spikes when
+      // multiple interrupted runs accumulate.
+      //
+      // Use a timeout so we don't hang if a child process is stuck
+      // (e.g. Python mid-model-download).  After 5s, force-exit.
+      const shutdownTimeout = setTimeout(() => {
+        process.exit(signal === 'SIGINT' ? 130 : 143);
+      }, 5_000);
+      shutdownTimeout.unref(); // don't prevent exit
+
+      try {
+        if (this.orchestrator) {
+          await this.orchestrator.shutdown();
+        }
+      } catch {
+        // Best-effort child process cleanup
+      }
       try {
         await this.logger.flush();
         await this.checkpoint.save(this.checkpoint.getState());
@@ -394,6 +417,7 @@ export class MigrationRuntime {
       } catch {
         // Best-effort save
       }
+      clearTimeout(shutdownTimeout);
       process.exit(signal === 'SIGINT' ? 130 : 143);
     };
     
