@@ -898,7 +898,7 @@ export class MigrationOrchestrator {
     }
 
     // Pre-compute the dependency summary from Lore KB.
-    const depSummaryFile = join(planningDir, 'dependency-summary.json');
+    const depSummaryFile = this.paths.dependencySummaryFile;
     if (!(await fileExists(depSummaryFile))) {
       this.logger.info('Computing dependency summary from Lore KB…');
       try {

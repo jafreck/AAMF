@@ -51,6 +51,7 @@ describe('ContextBuilder', () => {
       kbDbFile: join(root, 'kb.db'),
       knowledgeBaseDir: join(root, 'knowledge-base'),
       impactAssessmentFile: join(artifactsDir, 'impact-assessment.md'),
+      dependencySummaryFile: join(artifactsPlanningDir, 'dependency-summary.json'),
       migrationPlanFile: join(artifactsPlanningDir, 'migration-plan.md'),
       competingStrategiesFile: join(artifactsPlanningDir, 'competing-strategies.md'),
       finalParityReportFile: join(artifactsParityDir, 'final-parity-report.md'),
@@ -115,6 +116,7 @@ describe('ContextBuilder', () => {
 
       expect(context.inputFiles).toContain('/tmp/source');
       expect(context.outputPath).toContain('impact-assessment.md');
+      expect(context.payload?.dependencySummaryPath).toContain('dependency-summary.json');
     });
 
     it('should route knowledge-builder to source, output to KB dir', async () => {
@@ -123,6 +125,7 @@ describe('ContextBuilder', () => {
 
       expect(context.inputFiles).toContain('/tmp/source');
       expect(context.outputPath).toContain('knowledge-base');
+      expect(context.payload?.dependencySummaryPath).toContain('dependency-summary.json');
     });
 
     it('should route migration-planner to KB index + impact assessment', async () => {

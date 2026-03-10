@@ -152,23 +152,27 @@ export class ContextBuilder {
 
     switch (agent) {
       case 'impact-assessor':
-        return { inputFiles: [src], outputPath: impactAssessment };
+        return {
+          inputFiles: [src],
+          outputPath: impactAssessment,
+          agentPayload: { dependencySummaryPath: this.paths.dependencySummaryFile },
+        };
 
       case 'knowledge-builder':
         return {
           inputFiles: [src],
           outputPath: kbDir,
+          agentPayload: { dependencySummaryPath: this.paths.dependencySummaryFile },
         };
 
       case 'migration-planner': {
         const planningDir = join(this.progressDir, 'artifacts', 'planning');
-        const depSummaryPath = join(planningDir, 'dependency-summary.json');
         return {
-          inputFiles: [join(kbDir, 'index.md'), impactAssessment, depSummaryPath],
+          inputFiles: [join(kbDir, 'index.md'), impactAssessment, this.paths.dependencySummaryFile],
           outputPath: planningDir,
           agentPayload: {
             executionStrategy: this.buildExecutionStrategy(),
-            dependencySummaryPath: depSummaryPath,
+            dependencySummaryPath: this.paths.dependencySummaryFile,
           },
         };
       }
