@@ -20,7 +20,7 @@ export interface PhaseDefinition {
  * Ordered migration phases.
  *
  * Deterministic phases run first (0–1) so the task graph is available
- * before any agent launches.  Agentic phases follow (2–9).
+ * before any agent launches.  Agentic phases follow (3–9).
  */
 export const PHASES: readonly PhaseDefinition[] = [
   // ── Deterministic block (no agents) ──────────────────────────────────
@@ -41,14 +41,6 @@ export const PHASES: readonly PhaseDefinition[] = [
     parallel: false,
   },
   // ── Agentic block ────────────────────────────────────────────────────
-  {
-    id: 2,
-    name: 'Impact Assessment',
-    description: 'Analyze source codebase to determine migration scope, complexity, and risks',
-    agents: getAgentsForPhase(2),
-    critical: true,
-    parallel: false,
-  },
   {
     id: 3,
     name: 'Knowledge Base Construction',

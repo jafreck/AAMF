@@ -50,7 +50,6 @@ describe('ContextBuilder', () => {
       metricsSummaryFile: join(metricsDir, 'summary.json'),
       kbDbFile: join(root, 'kb.db'),
       knowledgeBaseDir: join(root, 'knowledge-base'),
-      impactAssessmentFile: join(artifactsDir, 'impact-assessment.md'),
       dependencySummaryFile: join(artifactsPlanningDir, 'dependency-summary.json'),
       migrationPlanFile: join(artifactsPlanningDir, 'migration-plan.md'),
       competingStrategiesFile: join(artifactsPlanningDir, 'competing-strategies.md'),
@@ -76,22 +75,22 @@ describe('ContextBuilder', () => {
 
   describe('Context File Creation', () => {
     it('should write context JSON to the contexts directory', async () => {
-      const contextPath = await builder.buildContext('impact-assessor', 2);
+      const contextPath = await builder.buildContext('knowledge-builder', 3);
 
       expect(contextPath).toContain('contexts');
       expect(await fileExists(contextPath)).toBe(true);
 
       const context = await readJson<AgentContext>(contextPath);
-      expect(context.agent).toBe('impact-assessor');
+      expect(context.agent).toBe('knowledge-builder');
     });
 
     it('should include correct base fields in context', async () => {
-      const contextPath = await builder.buildContext('impact-assessor', 2);
+      const contextPath = await builder.buildContext('knowledge-builder', 3);
       const context = await readJson<AgentContext>(contextPath);
 
-      expect(context.agent).toBe('impact-assessor');
+      expect(context.agent).toBe('knowledge-builder');
       expect(context.projectName).toBe('test-project');
-      expect(context.phase).toBe(2);
+      expect(context.phase).toBe(3);
       expect(context.config.source.path).toBe('/tmp/source');
       expect(context.config.source.language).toBe('python');
       expect(context.config.target.language).toBe('typescript');
@@ -110,15 +109,6 @@ describe('ContextBuilder', () => {
   // ─── Per-Agent File Routing ────────────────────────────────────────
 
   describe('Per-Agent File Routing', () => {
-    it('should route impact-assessor to source path and impact-assessment.md', async () => {
-      const contextPath = await builder.buildContext('impact-assessor', 2);
-      const context = await readJson<AgentContext>(contextPath);
-
-      expect(context.inputFiles).toContain('/tmp/source');
-      expect(context.outputPath).toContain('impact-assessment.md');
-      expect(context.payload?.dependencySummaryPath).toContain('dependency-summary.json');
-    });
-
     it('should route knowledge-builder to source, output to KB dir', async () => {
       const contextPath = await builder.buildContext('knowledge-builder', 3);
       const context = await readJson<AgentContext>(contextPath);
@@ -128,12 +118,12 @@ describe('ContextBuilder', () => {
       expect(context.payload?.dependencySummaryPath).toContain('dependency-summary.json');
     });
 
-    it('should route migration-planner to KB index + impact assessment', async () => {
+    it('should route migration-planner to KB index + dependency summary', async () => {
       const contextPath = await builder.buildContext('migration-planner', 4);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles.some((f: string) => f.includes('index.md'))).toBe(true);
-      expect(context.inputFiles.some((f: string) => f.includes('impact-assessment.md'))).toBe(true);
+      expect(context.inputFiles.some((f: string) => f.includes('dependency-summary.json'))).toBe(true);
       // Output path is now the planning/ directory (migration-planner emits
       // strategy.md; the runtime builds the task graph deterministically)
       expect(context.outputPath).toContain('planning');
@@ -804,7 +794,7 @@ describe('ContextBuilder', () => {
       });
       const guidanceBuilder = new ContextBuilder(config, progressDir, paths);
 
-      for (const agent of ['impact-assessor', 'migration-planner', 'code-migrator', 'parity-verifier'] as const) {
+      for (const agent of ['migration-planner', 'code-migrator', 'parity-verifier'] as const) {
         const contextPath = await guidanceBuilder.buildContext(agent, 1, 'task-001');
         const context = await readJson<AgentContext>(contextPath);
         expect(context.guidance).toEqual(['No FFI bindings allowed']);

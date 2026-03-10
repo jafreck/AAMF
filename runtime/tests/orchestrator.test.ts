@@ -800,7 +800,7 @@ describe('MigrationOrchestrator', () => {
   // ─── Phase Sequencing ──────────────────────────────────────────────
 
   describe('Phase Sequencing', () => {
-    it('should execute all 10 phases in order when all succeed', async () => {
+    it('should execute all 9 phases in order when all succeed', async () => {
       const launcherFn = createMockLauncher();
       const { orchestrator, mockLauncher, progressDir } = await setupOrchestrator(tempDir, launcherFn);
 
@@ -809,11 +809,9 @@ describe('MigrationOrchestrator', () => {
       const result = await orchestrator.run();
 
       expect(result.success).toBe(true);
-      expect(result.phases).toHaveLength(10);
+      expect(result.phases).toHaveLength(9);
       const phaseIds = result.phases.map((p) => p.phase).sort((a, b) => a - b);
-      for (let i = 0; i < phaseIds.length; i++) {
-        expect(phaseIds[i]).toBe(i);
-      }
+      expect(phaseIds).toEqual([0, 1, 3, 4, 5, 6, 7, 8, 9]);
       expect(mockLauncher.invocations.length).toBeGreaterThan(0);
     });
 
@@ -829,7 +827,6 @@ describe('MigrationOrchestrator', () => {
       const checkpoint = new CheckpointManager(progressDir, logger);
       await checkpoint.load(config.projectName);
       await checkpoint.completePhase(1, join(progressDir, 'artifacts', 'planning', 'tasks-merged.json'));
-      await checkpoint.completePhase(2, join(progressDir, 'artifacts', 'impact-assessment.md'));
       await checkpoint.completePhase(3, join(progressDir, 'knowledge-base'));
       await checkpoint.completePhase(4, join(progressDir, 'artifacts', 'planning', 'strategy.md'));
 
@@ -860,9 +857,8 @@ describe('MigrationOrchestrator', () => {
 
       const result = await orchestrator.run();
 
-      expect(result.phases).toHaveLength(10);
+      expect(result.phases).toHaveLength(9);
       const agentsInvoked = mockLauncher.invocations.map((i) => i.agent);
-      expect(agentsInvoked).not.toContain('impact-assessor');
       expect(agentsInvoked).not.toContain('knowledge-builder');
       expect(agentsInvoked).not.toContain('migration-planner');
     });
@@ -873,14 +869,13 @@ describe('MigrationOrchestrator', () => {
         tempDir,
         launcherFn,
         undefined,
-        2,
+        3,
       );
 
       const result = await orchestrator.run();
 
       const agentsInvoked = mockLauncher.invocations.map((i) => i.agent);
-      expect(agentsInvoked).toContain('impact-assessor');
-      expect(agentsInvoked).not.toContain('knowledge-builder');
+      expect(agentsInvoked).toContain('knowledge-builder');
       expect(agentsInvoked).not.toContain('migration-planner');
       expect(agentsInvoked).not.toContain('code-migrator');
     });
@@ -944,20 +939,20 @@ describe('MigrationOrchestrator', () => {
   // ─── Critical Phase Failure ────────────────────────────────────────
 
   describe('Critical Phase Failure', () => {
-    it('should abort migration when a critical phase fails (phase 2)', async () => {
-      const launcherFn = createFailingLauncher(['impact-assessor']);
+    it('should abort migration when a critical phase fails (phase 3)', async () => {
+      const launcherFn = createFailingLauncher(['knowledge-builder']);
       const { orchestrator } = await setupOrchestrator(tempDir, launcherFn);
 
       const result = await orchestrator.run();
 
       expect(result.success).toBe(false);
-      // Phase 0 (KB Indexing, stubbed) + Phase 1 (Task Graph, stubbed) succeed, then Phase 2 fails
+      // Phase 0 (KB Indexing, stubbed) + Phase 1 (Task Graph, stubbed) succeed, then Phase 3 fails
       expect(result.phases).toHaveLength(3);
       expect(result.phases[0]!.phase).toBe(0);
       expect(result.phases[0]!.success).toBe(true);
       expect(result.phases[1]!.phase).toBe(1);
       expect(result.phases[1]!.success).toBe(true);
-      expect(result.phases[2]!.phase).toBe(2);
+      expect(result.phases[2]!.phase).toBe(3);
       expect(result.phases[2]!.success).toBe(false);
     });
 
@@ -4128,28 +4123,28 @@ Total usage est: 1 Premium requests
 
   describe('MigrationError', () => {
     it('should construct MigrationError with phase and result details', () => {
-      const phase = getPhase(2)!;
+      const phase = getPhase(3)!;
       const phaseResult = {
-        phase: 2,
-        name: 'Impact Assessment',
+        phase: 3,
+        name: 'Knowledge Base Construction',
         success: false,
         duration: 100,
         error: 'Something went wrong',
       };
       const error = new MigrationError(phase, phaseResult);
 
-      expect(error.message).toContain('Phase 2');
-      expect(error.message).toContain('Impact Assessment');
+      expect(error.message).toContain('Phase 3');
+      expect(error.message).toContain('Knowledge Base Construction');
       expect(error.message).toContain('Something went wrong');
       expect(error.phase).toBe(phase);
       expect(error.result).toBe(phaseResult);
     });
 
     it('should have correct name property ("MigrationError")', () => {
-      const phase = getPhase(2)!;
+      const phase = getPhase(3)!;
       const phaseResult = {
-        phase: 2,
-        name: 'Impact Assessment',
+        phase: 3,
+        name: 'Knowledge Base Construction',
         success: false,
         duration: 100,
       };
@@ -4165,7 +4160,7 @@ Total usage est: 1 Premium requests
   describe('Phase-failed enrichment', () => {
     it('should include exitCode and stderr in phase-failed event when phase 1 fails', async () => {
       const launcherFn = createMockLauncher((inv) => {
-        if (inv.agent === 'impact-assessor') {
+        if (inv.agent === 'knowledge-builder') {
           return { exitCode: 2, success: false, error: 'failure', stderr: 'agent stderr output' };
         }
         return {};
@@ -4186,7 +4181,7 @@ Total usage est: 1 Premium requests
     it('should truncate stderr to 2000 chars in phase-failed event', async () => {
       const longStderr = 'x'.repeat(3000);
       const launcherFn = createMockLauncher((inv) => {
-        if (inv.agent === 'impact-assessor') {
+        if (inv.agent === 'knowledge-builder') {
           return { exitCode: 1, success: false, error: 'fail', stderr: longStderr };
         }
         return {};
@@ -4204,7 +4199,7 @@ Total usage est: 1 Premium requests
 
     it('should include exitCode and stderr in progress file on phase failure', async () => {
       const launcherFn = createMockLauncher((inv) => {
-        if (inv.agent === 'impact-assessor') {
+        if (inv.agent === 'knowledge-builder') {
           return { exitCode: 3, success: false, error: 'fail', stderr: 'stderr from agent' };
         }
         return {};
@@ -4231,13 +4226,13 @@ Total usage est: 1 Premium requests
           cliCommand: 'copilot',
           agentDir: '.github/agents',
           timeout: 300_000,
-          phaseTimeouts: { 2: 60_000 },
+          phaseTimeouts: { 3: 60_000 },
         },
       });
 
       await orchestrator.run();
 
-      const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'impact-assessor');
+      const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'knowledge-builder');
       expect(phase1Invocation).toBeDefined();
       expect(phase1Invocation!.timeout).toBe(60_000);
     });
@@ -4250,13 +4245,13 @@ Total usage est: 1 Premium requests
           cliCommand: 'copilot',
           agentDir: '.github/agents',
           timeout: 300_000,
-          phaseTimeouts: { 3: 90_000 },
+          phaseTimeouts: { 4: 90_000 },
         },
       });
 
       await orchestrator.run();
 
-      const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'impact-assessor');
+      const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'knowledge-builder');
       expect(phase1Invocation).toBeDefined();
       expect(phase1Invocation!.timeout).toBe(300_000);
     });
@@ -4269,13 +4264,13 @@ Total usage est: 1 Premium requests
           cliCommand: 'claude',
           agentDir: '.claude/agents',
           timeout: 120_000,
-          phaseTimeouts: { 2: 45_000 },
+          phaseTimeouts: { 3: 45_000 },
         },
       });
 
       await orchestrator.run();
 
-      const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'impact-assessor');
+      const phase1Invocation = mockLauncher.invocations.find((i) => i.agent === 'knowledge-builder');
       expect(phase1Invocation).toBeDefined();
       expect(phase1Invocation!.timeout).toBe(45_000);
       expect((orchestrator as any).getRuntimeTimeout()).toBe(120_000);
@@ -4720,7 +4715,7 @@ Total usage est: 1 Premium requests
 
     it('should emit agent-failed event with invocationId on failure', async () => {
       const launcherFn = createMockLauncher((inv) => {
-        if (inv.agent === 'impact-assessor') {
+        if (inv.agent === 'knowledge-builder') {
           return { exitCode: 1, success: false, error: 'test error', invocationId: 'fail-inv-456' };
         }
         return {};

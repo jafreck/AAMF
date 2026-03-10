@@ -2,17 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { PHASES, getPhase, getRemainingPhases } from '../src/core/phase-registry.js';
 
 describe('Phase Registry', () => {
-  it('should have exactly 10 entries', () => {
-    expect(PHASES).toHaveLength(10);
+  it('should have exactly 9 entries', () => {
+    expect(PHASES).toHaveLength(9);
   });
 
-  it('should contain phases with IDs 0–9', () => {
+  it('should contain phases with IDs 0–1, 3–9', () => {
     const ids = PHASES.map(p => p.id).sort((a, b) => a - b);
-    expect(ids).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(ids).toEqual([0, 1, 3, 4, 5, 6, 7, 8, 9]);
   });
 
-  it('should mark phases 0–5 as critical', () => {
-    for (const id of [0, 1, 2, 3, 4, 5]) {
+  it('should mark phases 0–1, 3–5 as critical', () => {
+    for (const id of [0, 1, 3, 4, 5]) {
       const phase = PHASES.find(p => p.id === id);
       expect(phase?.critical).toBe(true);
     }

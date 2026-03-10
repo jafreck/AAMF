@@ -81,7 +81,7 @@ describe('Logger', () => {
 
   it('should log typed events via event() method', async () => {
     const logger = new Logger({ logDir, level: 'info', console: false });
-    logger.event({ type: 'phase-started', phase: 1, name: 'Impact Assessment' });
+    logger.event({ type: 'phase-started', phase: 3, name: 'Knowledge Base Construction' });
     await logger.flush();
 
     const logPath = join(logDir, 'migration.log');
@@ -90,8 +90,8 @@ describe('Logger', () => {
 
     expect(entry.message).toBe('phase-started');
     expect(entry.data).toBeDefined();
-    expect(entry.data.phase).toBe(1);
-    expect(entry.data.name).toBe('Impact Assessment');
+    expect(entry.data.phase).toBe(3);
+    expect(entry.data.name).toBe('Knowledge Base Construction');
   });
 
   it('should create a child logger that inherits config', async () => {

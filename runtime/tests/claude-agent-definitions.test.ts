@@ -377,7 +377,7 @@ describe('generateAgentDefinitions() always includes Lore guidance', () => {
 
   it('should include Lore guidance in all KB-aware agent templates', async () => {
     const kbAwareAgents = [
-      'impact-assessor', 'knowledge-builder', 'migration-planner', 'adjudicator',
+      'knowledge-builder', 'migration-planner', 'adjudicator',
       'code-migrator', 'parity-verifier', 'test-writer', 'parity-failure-resolver',
       'final-parity-checker', 'e2e-test-crafter', 'documentation-writer',
       'idiomatic-reviewer', 'idiomatic-refactorer',
