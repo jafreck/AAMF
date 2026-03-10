@@ -149,7 +149,7 @@ describe('ContextBuilder', () => {
       expect(strategy.maxParallelAgents).toBe(3);
       expect(strategy.maxRetriesPerTask).toBe(3);
       expect(strategy.requiresNonOverlappingTargets).toBe(true);
-      expect(strategy.waveControl).toEqual({ waveSize: 3, maxConvergenceIterations: 3 });
+      expect(strategy.waveControl).toEqual({ maxConvergenceIterations: 3 });
       expect(strategy.buildCommand).toBeUndefined();
       expect(strategy.testCommand).toBeUndefined();
     });
@@ -176,7 +176,7 @@ describe('ContextBuilder', () => {
           keepArtifacts: false,
           qualityPolicy: 'strict' as const,
           executionMode: 'wave-barrier' as const,
-          waveControl: { waveSize: 4, maxConvergenceIterations: 5 },
+          waveControl: { maxConvergenceIterations: 5 },
           git: { enabled: false, autoInit: true, commitByAgent: true, commitPerTask: true, authorName: 'AAMF Migration Bot', authorEmail: 'aamf@local.invalid' },
         },
       });
@@ -188,7 +188,7 @@ describe('ContextBuilder', () => {
       expect(strategy.executionMode).toBe('wave-barrier');
       expect(strategy.maxParallelAgents).toBe(5);
       expect(strategy.maxRetriesPerTask).toBe(2);
-      expect(strategy.waveControl).toEqual({ waveSize: 4, maxConvergenceIterations: 5 });
+      expect(strategy.waveControl).toEqual({ maxConvergenceIterations: 5 });
       expect(strategy.buildCommand).toBe('cargo build');
       expect(strategy.testCommand).toBe('cargo test');
       expect(strategy.requiresNonOverlappingTargets).toBe(true);

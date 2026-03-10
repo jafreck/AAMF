@@ -67,10 +67,8 @@ export const MigrationConfigSchema = z.object({
      * These values are ignored in `per-task` mode.
      */
     waveControl: z.object({
-      waveSize: z.number().int().min(1).default(3),
       maxConvergenceIterations: z.number().int().min(1).default(3),
     }).default({
-      waveSize: 3,
       maxConvergenceIterations: 3,
     }),
     /**
@@ -231,7 +229,6 @@ export const MigrationConfigSchema = z.object({
     buildConcurrency: 1,
     executionMode: 'per-task',
     waveControl: {
-      waveSize: 3,
       maxConvergenceIterations: 3,
     },
     continueOnBlocked: true,

@@ -107,7 +107,6 @@ async function writeMigrationConfig(): Promise<void> {
       tokenBudget: 10_000_000,
       executionMode: 'wave-barrier',
       waveControl: {
-        waveSize: 3,
         maxConvergenceIterations: 3,
       },
       dryRun: false,

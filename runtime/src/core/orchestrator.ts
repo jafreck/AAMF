@@ -1339,7 +1339,7 @@ export class MigrationOrchestrator {
     const continueOnBlocked = this.config.options.continueOnBlocked ?? true;
     const maxBlockedTasks = this.config.options.maxBlockedTasks ?? 1; // 0 = unlimited
     const executionMode = this.config.options.executionMode ?? 'per-task';
-    const waveControl = this.config.options.waveControl ?? { waveSize: 3, maxConvergenceIterations: 3 };
+    const waveControl = this.config.options.waveControl ?? { maxConvergenceIterations: 3 };
     // In wave-barrier mode, wave-level commits replace per-task commits, so
     // we can safely run multiple tasks in parallel even when git is enabled.
     // In per-task mode, git commits happen inside executeTask so we must
@@ -1375,7 +1375,7 @@ export class MigrationOrchestrator {
           completedDurationsMs,
           continueOnBlocked,
           maxBlockedTasks,
-          Math.max(1, Math.min(waveControl.waveSize, phase4Parallelism)),
+          phase4Parallelism,
           waveControl.maxConvergenceIterations,
         );
       } catch (error) {
@@ -1672,7 +1672,7 @@ export class MigrationOrchestrator {
     completedDurationsMs: number[],
     continueOnBlocked: boolean,
     maxBlockedTasks: number,
-    waveSize: number,
+    maxParallelAgents: number,
     maxConvergenceIterations: number,
   ): Promise<PhaseResult> {
     let wave = 0;
@@ -1701,7 +1701,7 @@ export class MigrationOrchestrator {
       }
 
       const blockedAtWaveStart = queue.getProgress().blocked;
-      const waveTasks = TaskQueue.selectNonOverlappingBatch(readyTasks, waveSize);
+      const waveTasks = readyTasks;
       wave++;
       if (this.phase5Snapshot) {
         this.phase5Snapshot.waveCount++;
@@ -1715,14 +1715,15 @@ export class MigrationOrchestrator {
 
       let migrationResults: Array<{ task: MigrationTask; result: { migrated: boolean; durationMs?: number } }>;
       try {
-        migrationResults = await Promise.all(
-          waveTasks.map(async task => {
+        migrationResults = await TaskQueue.executePipelined(
+          waveTasks,
+          maxParallelAgents,
+          async task => {
             if (!taskStartTimes.has(task.id)) {
               taskStartTimes.set(task.id, Date.now());
             }
-            const result = await this.executeTask(task, retryExec, queue, completedDurationsMs, 'wave-migration');
-            return { task, result };
-          }),
+            return await this.executeTask(task, retryExec, queue, completedDurationsMs, 'wave-migration');
+          },
         );
       } catch (error) {
         if (error instanceof TerminalExhaustionError) {

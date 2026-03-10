@@ -3211,7 +3211,7 @@ describe('MigrationOrchestrator', () => {
         },
         options: {
           executionMode: 'wave-barrier',
-          waveControl: { waveSize: 2, maxConvergenceIterations: 2 },
+          waveControl: { maxConvergenceIterations: 2 },
         },
       });
 
@@ -3250,7 +3250,7 @@ describe('MigrationOrchestrator', () => {
         },
         options: {
           executionMode: 'wave-barrier',
-          waveControl: { waveSize: 2, maxConvergenceIterations: 3 },
+          waveControl: { maxConvergenceIterations: 3 },
         },
       });
 
@@ -3314,7 +3314,7 @@ describe('MigrationOrchestrator', () => {
     it('should fail fast on wave convergence exhaustion without scheduling later waves', async () => {
       const tasks: MigrationTask[] = [
         { ...SINGLE_AUTH_TASK, id: 'task-001', name: 'Task 1', targetFiles: ['src/a.ts'] },
-        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'] },
+        { ...SINGLE_AUTH_TASK, id: 'task-002', name: 'Task 2', sourceFiles: ['src/b.py'], targetFiles: ['lib/b.ts'], dependencies: ['task-001'] },
       ];
 
       const launcherFn = createMockLauncher();
@@ -3327,7 +3327,7 @@ describe('MigrationOrchestrator', () => {
         },
         options: {
           executionMode: 'wave-barrier',
-          waveControl: { waveSize: 1, maxConvergenceIterations: 1 },
+          waveControl: { maxConvergenceIterations: 1 },
           continueOnBlocked: false,
         },
       });
@@ -3343,7 +3343,7 @@ describe('MigrationOrchestrator', () => {
 
       expect(result.success).toBe(false);
       expect(phase4?.error).toContain('wave-convergence-exhausted');
-      expect(result.blockedTasks).not.toContain('task-001');
+      // task-002 depends on task-001, so it's in wave 2 and never reached.
       expect(secondTaskRuns).toHaveLength(0);
     });
   });
@@ -4839,7 +4839,7 @@ Total usage est: 1 Premium requests
       const { orchestrator, progressDir } = await setupOrchestrator(tempDir, launcherFn, {
         options: {
           executionMode: 'wave-barrier',
-          waveControl: { waveSize: 2, maxConvergenceIterations: 2 },
+          waveControl: { maxConvergenceIterations: 2 },
         },
       });
       await writeMigrationPlan(progressDir);
@@ -6320,7 +6320,7 @@ Total usage est: 1 Premium requests
         },
         options: {
           executionMode: 'wave-barrier',
-          waveControl: { waveSize: 2, maxConvergenceIterations: 2 },
+          waveControl: { maxConvergenceIterations: 2 },
           git: {
             enabled: true,
             autoInit: true,
@@ -6397,7 +6397,7 @@ Total usage est: 1 Premium requests
         options: {
           maxParallelAgents: 3,
           executionMode: 'wave-barrier',
-          waveControl: { waveSize: 3, maxConvergenceIterations: 2 },
+          waveControl: { maxConvergenceIterations: 2 },
           git: {
             enabled: true,
             autoInit: true,

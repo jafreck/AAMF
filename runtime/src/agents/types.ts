@@ -216,8 +216,6 @@ export interface ExecutionStrategy {
 
   /** Wave-barrier settings (only meaningful when `executionMode === 'wave-barrier'`). */
   waveControl: {
-    /** Number of tasks that run concurrently within a single wave. */
-    waveSize: number;
     /** Maximum build/test convergence iterations per wave before giving up. */
     maxConvergenceIterations: number;
   };

@@ -126,7 +126,7 @@ describe('Config Loader', () => {
     const config = await loadConfig(configPath);
     expect(config.options.maxParallelAgents).toBe(3);
     expect(config.options.maxRetriesPerTask).toBe(3);
-    expect(config.options.waveControl).toEqual({ waveSize: 3, maxConvergenceIterations: 3 });
+    expect(config.options.waveControl).toEqual({ maxConvergenceIterations: 3 });
     expect(config.options.qualityPolicy).toBe('strict');
     expect(config.agentBackend.timeout).toBe(300_000);
     expect(config.agentBackend.cliCommand).toBe('copilot');
@@ -140,7 +140,7 @@ describe('Config Loader', () => {
       target: { language: 'typescript', outputPath: './relative-out' },
       options: {
         executionMode: 'wave-barrier',
-        waveControl: { waveSize: 4, maxConvergenceIterations: 6 },
+        waveControl: { maxConvergenceIterations: 6 },
       },
     }));
 
@@ -148,7 +148,7 @@ describe('Config Loader', () => {
     expect(config.source.path).toBe(join(tempDir, 'relative-src'));
     expect(config.target.outputPath).toBe(join(tempDir, 'relative-out'));
     expect(config.options.executionMode).toBe('wave-barrier');
-    expect(config.options.waveControl).toEqual({ waveSize: 4, maxConvergenceIterations: 6 });
+    expect(config.options.waveControl).toEqual({ maxConvergenceIterations: 6 });
   });
 
   it('should parse an explicit qualityPolicy value', async () => {

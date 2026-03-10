@@ -322,12 +322,11 @@ export class ContextBuilder {
    */
   private buildExecutionStrategy(): import('./types.js').ExecutionStrategy {
     const opts = this.config.options;
-    const waveControl = opts.waveControl ?? { waveSize: 3, maxConvergenceIterations: 3 };
+    const waveControl = opts.waveControl ?? { maxConvergenceIterations: 3 };
     return {
       executionMode: opts.executionMode ?? 'per-task',
       maxParallelAgents: opts.maxParallelAgents,
       waveControl: {
-        waveSize: waveControl.waveSize,
         maxConvergenceIterations: waveControl.maxConvergenceIterations,
       },
       maxRetriesPerTask: opts.maxRetriesPerTask,

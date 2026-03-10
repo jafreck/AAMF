@@ -52,13 +52,12 @@
   },
   "options": {
     "qualityPolicy": "strict",
-    "maxParallelAgents": 8,
+    "maxParallelAgents": 12,
     "maxRetriesPerTask": 3,
     "maxLinesPerTask": 1000,
     "tokenBudget": 400000000,
     "executionMode": "wave-barrier",
     "waveControl": {
-      "waveSize": 4,
       "maxConvergenceIterations": 3
     },
     "dryRun": false,
