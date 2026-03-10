@@ -35,9 +35,9 @@ describe('Release workflow (.github/workflows/release.yml)', () => {
     expect(text).not.toContain('branches:');
   });
 
-  it('should use Node.js 20.x', async () => {
+  it('should use Node.js 22.x', async () => {
     const text = await loadContent();
-    expect(text).toContain('20.x');
+    expect(text).toContain('22.x');
   });
 
   it('should cache node_modules under runtime/', async () => {

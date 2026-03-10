@@ -16,19 +16,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Use Node.js 20.x
+      - name: Use Node.js 22.x
         uses: actions/setup-node@v4
         with:
-          node-version: 20.x
+          node-version: 22.x
 
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
           path: |
             runtime/node_modules
-          key: ${{ runner.os }}-node-20.x-${{ hashFiles('runtime/package-lock.json') }}
+          key: ${{ runner.os }}-node-22.x-${{ hashFiles('runtime/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-20.x-
+            ${{ runner.os }}-node-22.x-
 
       - name: Install dependencies
         working-directory: runtime
