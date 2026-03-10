@@ -69,6 +69,8 @@ export interface CheckpointState {
   completedTaskDurationsMs: number[];       // wall-clock ms per completed task, in order
   /** True once the migration-planner (step 3a) finishes successfully. */
   phase3aComplete?: boolean;
+  /** True once the target-repo scaffold has been generated from compilation units. */
+  scaffoldComplete?: boolean;
   completedPhase3Groups?: string[];
   /** Number of JSONL metric records written; used to skip on resume. */
   metricsCount: number;
@@ -307,6 +309,16 @@ export class CheckpointManager {
     await this.save(state);
   }
 
+  /**
+   * Mark the target-repo scaffold as generated.
+   * Subsequent resumes will skip re-running scaffold generation.
+   */
+  async completeScaffold(): Promise<void> {
+    const state = this.getState();
+    state.scaffoldComplete = true;
+    await this.save(state);
+  }
+
   /** Record that a specific module group finished successfully. On resume, completed groups are skipped. */
   async completePhase3Group(groupId: string): Promise<void> {
     const state = this.getState();
@@ -356,6 +368,7 @@ export class CheckpointManager {
       cumulativeDurationMs: 0,
       completedTaskDurationsMs: [],
       phase3aComplete: false,
+      scaffoldComplete: false,
       completedPhase3Groups: [],
       metricsCount: 0,
       terminalExhaustion: undefined,
@@ -369,6 +382,7 @@ export class CheckpointManager {
     state.cumulativeDurationMs ??= 0;
     state.completedTaskDurationsMs ??= [];
     state.phase3aComplete ??= false;
+    state.scaffoldComplete ??= false;
     state.completedPhase3Groups ??= [];
     state.metricsCount ??= 0;
     state.phase0Fingerprint ??= undefined;

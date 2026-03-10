@@ -43,6 +43,7 @@ import { ReportGenerator } from '../observability/report-generator.js';
 import type { InvocationMetric } from '../agents/types.js';
 import { buildRuntimePaths } from './runtime-paths.js';
 import { buildTaskGraph, buildDependencySummary, findSCCs } from './task-graph-builder.js';
+import { generateScaffold } from './scaffold.js';
 
 const loadLore = () => import('@aamf/lore');
 const loadKbServerProcess = () => import('./kb-server-process.js');
@@ -1125,10 +1126,55 @@ export class MigrationOrchestrator {
 
       await this.checkpoint.completePhase3a();
       this.logger.info(
-        'Phase 4 complete: migration-planner wrote planning/strategy.md',
+        'Phase 4 step 4a complete: migration-planner wrote planning/strategy.md',
       );
     } else {
       this.logger.info('Resuming Phase 4 — strategy already complete, skipping migration-planner');
+    }
+
+    // Step 4b: Generate target-repo scaffold from compilation units.
+    // The scaffold creates the directory tree, build manifests, and module
+    // stubs so that Phase 5 code-migrator agents write into existing structure
+    // rather than inventing the build layout on the fly.
+    if (!this.checkpoint.getState().scaffoldComplete) {
+      const compilationUnitsFile = join(planningDir, 'compilation-units.json');
+      if (await fileExists(compilationUnitsFile)) {
+        try {
+          const units = await readJson<CompilationUnit[]>(compilationUnitsFile);
+          if (units.length > 0) {
+            this.logger.info(`Scaffolding target repo from ${units.length} compilation unit(s)…`);
+            const scaffoldResult = await generateScaffold({
+              outputPath: this.config.target.outputPath,
+              targetLanguage: this.config.target.language,
+              targetFramework: this.config.target.framework,
+              projectName: this.config.projectName,
+              compilationUnits: units,
+              buildCommand: this.config.target.buildCommand,
+            }, this.logger);
+
+            // Optionally verify the scaffold compiles
+            if (this.config.target.buildCommand && scaffoldResult.filesCreated > 0) {
+              this.logger.info('Verifying scaffold compiles…');
+              const buildResult = await this.runCommand('build', this.config.target.buildCommand, 'scaffold-verify');
+              if (!buildResult.success) {
+                this.logger.warn(
+                  `Scaffold build verification failed: ${buildResult.error ?? 'unknown'} — proceeding anyway`,
+                );
+              } else {
+                this.logger.info('Scaffold builds successfully');
+              }
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`Failed to generate scaffold: ${msg} — Phase 5 agents will create structure on the fly`);
+        }
+      } else {
+        this.logger.info('No compilation-units.json found — skipping scaffold generation');
+      }
+      await this.checkpoint.completeScaffold();
+    } else {
+      this.logger.info('Resuming Phase 4 — scaffold already generated');
     }
 
     return {
@@ -3426,23 +3472,12 @@ export class MigrationOrchestrator {
   /**
    * Determine whether a build check should run after completing `task`.
    *
-   * - If the task has no `compilationUnit`, always run the build check.
-   * - If it does, only run when all other tasks in the same compilation unit
-   *   are already completed in the queue.  This ensures the build sees a
-   *   complete compilation unit rather than failing on missing symbols.
+   * Always returns true — compilation units now serve as scaffold boundaries
+   * (target-repo structure) rather than build-gating mechanisms.  The scaffold
+   * generated in Phase 4b ensures the target repo has valid build manifests
+   * before any code-migrator runs, so per-task builds are always meaningful.
    */
-  private shouldRunBuildCheck(task: MigrationTask, queue: TaskQueue): boolean {
-    if (!task.compilationUnit) return true;
-
-    // Check if all tasks in the same compilation unit are completed
-    const allIds = queue.getAllTaskIds();
-    for (const id of allIds) {
-      if (id === task.id) continue;
-      const other = queue.getTask(id);
-      if (other?.compilationUnit === task.compilationUnit && !queue.isTaskCompleted(id)) {
-        return false;
-      }
-    }
+  private shouldRunBuildCheck(_task: MigrationTask, _queue: TaskQueue): boolean {
     return true;
   }
 
