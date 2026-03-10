@@ -328,8 +328,8 @@ describe('ContextBuilder', () => {
       });
       const context = await readJson<AgentContext>(contextPath);
 
-      // Should only have the migration plan and KB entry
-      expect(context.inputFiles.length).toBe(2);
+      // Should only have the migration plan (kbEntry is in payload, not inputFiles)
+      expect(context.inputFiles.length).toBe(1);
     });
 
     it('should prioritize nested remediationContext payload for code-migrator when both shapes are provided', async () => {
