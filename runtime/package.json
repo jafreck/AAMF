@@ -12,8 +12,7 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit",
-    "postinstall": "node -e \"try{require('@aamf/lore/node_modules/tree-sitter')}catch{const{rmSync}=require('fs');['tree-sitter','tree-sitter-c'].forEach(p=>{try{rmSync('node_modules/@aamf/lore/node_modules/'+p,{recursive:true,force:true})}catch{}})}\""
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@aamf/lore": "npm:@jafreck/lore@^0.3.2",
