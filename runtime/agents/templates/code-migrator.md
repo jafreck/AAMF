@@ -35,6 +35,7 @@ When `taskScope` is absent, migrate the full source file scope as described belo
 
 3. **Write Migrated Code**
    - Produce the target code in the specified target file(s)
+   - When `taskScope.symbols` is present, write **only** the listed symbols — the target file may already contain code from other tasks; append or replace stubs for your symbols only
    - Ensure behavioral equivalence with the source (same inputs → same outputs)
    - Follow target language idioms and best practices
    - Preserve all business logic faithfully

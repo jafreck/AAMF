@@ -115,7 +115,7 @@ describe('TaskQueue.selectNonOverlappingBatch', () => {
     expect(batch.map(t => t.id)).toEqual(['a', 'c']);
   });
 
-  it('should skip tasks that overlap target directories', () => {
+  it('should allow tasks in the same directory with different files', () => {
     const tasks = [
       { ...makeTask('a'), targetFiles: ['src/one.ts'] },
       { ...makeTask('b'), targetFiles: ['src/two.ts'] },
@@ -123,6 +123,6 @@ describe('TaskQueue.selectNonOverlappingBatch', () => {
     ];
 
     const batch = TaskQueue.selectNonOverlappingBatch(tasks, 3);
-    expect(batch.map(t => t.id)).toEqual(['a', 'c']);
+    expect(batch.map(t => t.id)).toEqual(['a', 'b', 'c']);
   });
 });
