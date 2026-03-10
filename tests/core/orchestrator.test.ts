@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm, mkdir, writeFile, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { MigrationOrchestrator, MigrationError } from '../../src/core/orchestrator.js';
+import { MigrationError, classifyError } from '../../src/flow/index.js';
+import type { MigrationFlowContext } from '../../src/flow/index.js';
 import { CheckpointManager } from '../../src/core/checkpoint.js';
 import { ProgressWriter } from '../../src/core/progress.js';
-import { PHASES, getPhase } from '../../src/core/phase-registry.js';
+import { getAgentsForPhase } from '../../src/agents/registry.js';
 import {
   createMockLauncher,
   createFailingLauncher,

@@ -1,21 +1,28 @@
 import { randomUUID } from 'node:crypto';
 import { resolve, join, dirname } from 'node:path';
 import { stat, readdir, readFile } from 'node:fs/promises';
+import pLimit from 'p-limit';
 import { loadConfig, applyOverrides } from '../config/loader.js';
 import { MigrationConfig } from '../config/schema.js';
-import { MigrationOrchestrator } from './orchestrator.js';
 import { CheckpointManager } from './checkpoint.js';
 import { AgentLauncher } from './agent-launcher.js';
 import { ProgressWriter } from './progress.js';
-import { PHASES } from './phase-registry.js';
 import { Logger } from '../logging/logger.js';
-import { MigrationResult } from '../agents/types.js';
+import type { MigrationResult, PhaseResult } from '../agents/types.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
+import { TokenTracker } from '../budget/token-tracker.js';
 import { fileExists } from '../util/fs.js';
 import { formatDuration } from '../util/format.js';
 import { killAllActiveProcesses } from '../util/process.js';
 import { buildRuntimePaths } from './runtime-paths.js';
 import { generateAgentDefinitions } from '../agents/generator.js';
+import { ContextBuilder } from '../agents/context-builder.js';
+import { MetricsCollector } from '../observability/metrics-collector.js';
+import { ReportGenerator } from '../observability/report-generator.js';
+import { FlowRunner } from '@cadre-dev/framework/flow';
+import { migrationFlow, AamfFlowCheckpointAdapter } from '../flow/index.js';
+import type { MigrationFlowContext } from '../flow/index.js';
+import { getAgentsForPhase } from '../agents/registry.js';
 
 export interface RuntimeOptions {
   configPath: string;
@@ -78,7 +85,9 @@ export class MigrationRuntime {
   private projectRoot!: string;
   private phase?: number;
   private runId!: string;
-  private orchestrator?: MigrationOrchestrator;
+  /** Mutable flow context — populated during run(), used by shutdown handler. */
+  private flowContext?: MigrationFlowContext;
+  private abortController?: AbortController;
 
   private getActiveRuntimeSettings(): {
     agentDir: string;
@@ -192,27 +201,201 @@ export class MigrationRuntime {
       };
     }
 
-    // Create and run orchestrator
-    this.orchestrator = new MigrationOrchestrator(
-      this.config,
-      this.checkpoint,
-      this.launcher,
-      this.progress,
-      this.logger,
-      this.projectRoot,
-      this.runId,
-      this.phase,
-    );
+    // Build the shared flow context
+    const tokenTracker = new TokenTracker();
+    const state = this.checkpoint.getState();
+    tokenTracker.loadFromCheckpoint(state.tokenUsage);
 
-    const result = await this.orchestrator.run();
-    this.orchestrator = undefined;
+    const metricsCollector = new MetricsCollector();
+    if (state.resumeCount > 0) {
+      await metricsCollector.loadFromJsonl(this.progressDir, state.metricsCount ?? 0);
+    }
 
-    // Flush any buffered log entries before returning
+    const costEstimator = new CostEstimator();
+    const reportGenerator = new ReportGenerator();
+    const contextBuilder = new ContextBuilder(this.config, this.progressDir, this.paths);
+    const bc = this.config.options.buildConcurrency ?? 1;
+    const buildLimiter = pLimit(bc === 0 ? this.config.options.maxParallelAgents : bc);
+    const gitLimiter = pLimit(1);
+
+    const flowContext: MigrationFlowContext = {
+      config: this.config,
+      projectRoot: this.projectRoot,
+      runId: this.runId,
+      paths: this.paths,
+      singlePhase: this.phase,
+      checkpoint: this.checkpoint,
+      launcher: this.launcher,
+      progress: this.progress,
+      logger: this.logger,
+      tokenTracker,
+      costEstimator,
+      metricsCollector,
+      reportGenerator,
+      contextBuilder,
+      buildLimiter,
+      gitLimiter,
+      peakConcurrency: 0,
+      parityResults: new Map(),
+      routedTaskIds: new Set(),
+      escalationCostUsd: 0,
+      deferGitCommits: false,
+    };
+    this.flowContext = flowContext;
+
+    this.logger.event({ type: 'migration-started', projectName: this.config.projectName });
+    await this.progress.appendEvent('Migration started');
+
+    // Ensure git is ready before flow execution
+    const { ensureGitRepositoryReady } = await import('../flow/steps/shared.js');
+    await ensureGitRepositoryReady(flowContext);
+
+    // Start KB server for resume if Phase 0 already completed
+    const resumePoint = this.checkpoint.getResumePoint();
+    if (resumePoint.phase > 0 && (await fileExists(this.paths.kbDbFile))) {
+      const { KbServerProcess } = await import('./kb-server-process.js');
+      const lore = await import('@jafreck/lore');
+      const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
+      flowContext.kbServer = new KbServerProcess(this.paths.kbDbFile, flowContext.embedder, (obs) => {
+        this.logger.debug(
+          `lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
+        );
+      }, {
+        level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
+        logFile: this.paths.loreLogFile,
+      });
+      try {
+        await flowContext.kbServer.start();
+        this.logger.info(`KB server started (resume, lore log: ${this.paths.loreLogFile})`);
+      } catch (err) {
+        this.logger.warn(`KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
+        flowContext.kbServer = undefined;
+      }
+    }
+
+    const startTime = Date.now();
+    const phaseResults: PhaseResult[] = [];
+    let aborted = false;
+
+    // Run the flow
+    this.abortController = new AbortController();
+    const checkpointAdapter = new AamfFlowCheckpointAdapter(this.checkpoint);
+    const runner = new FlowRunner<MigrationFlowContext>();
+
+    try {
+      const flowResult = await runner.run(migrationFlow, flowContext, {
+        checkpoint: checkpointAdapter,
+        signal: this.abortController.signal,
+        hooks: {
+          onNodeStart: async (nodeId) => {
+            this.logger.setPhase(nodeIdToPhase(nodeId));
+          },
+          onNodeComplete: async (nodeId, _node, output) => {
+            const phaseResult = output as PhaseResult | undefined;
+            if (phaseResult && typeof phaseResult === 'object' && 'phase' in phaseResult) {
+              phaseResults.push(phaseResult);
+
+              // Start KB server after Phase 0
+              if (phaseResult.phase === 0 && phaseResult.success && !flowContext.kbServer) {
+                try {
+                  const { KbServerProcess } = await import('./kb-server-process.js');
+                  const lore = await import('@jafreck/lore');
+                  const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
+                  flowContext.kbServer = new KbServerProcess(this.paths.kbDbFile, flowContext.embedder, (obs) => {
+                    this.logger.debug(
+                      `lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
+                    );
+                  }, {
+                    level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
+                    logFile: this.paths.loreLogFile,
+                  });
+                  await flowContext.kbServer.start();
+                  this.logger.info('KB server started after Phase 0');
+                } catch (err) {
+                  this.logger.warn(`KB server failed: ${err instanceof Error ? err.message : String(err)}`);
+                  flowContext.kbServer = undefined;
+                }
+              }
+
+              if (phaseResult.success) {
+                await this.checkpoint.completePhase(phaseResult.phase, phaseResult.outputPath ?? '');
+                await this.progress.updatePhase(phaseResult.phase, 'completed');
+                this.logger.event({ type: 'phase-completed', phase: phaseResult.phase, name: phaseResult.name, success: true, duration: phaseResult.duration });
+              } else {
+                const truncatedStderr = phaseResult.stderr ? phaseResult.stderr.slice(0, 2000) : undefined;
+                await this.progress.updatePhase(phaseResult.phase, 'failed', phaseResult.error, phaseResult.exitCode, truncatedStderr);
+                this.logger.event({ type: 'phase-failed', phase: phaseResult.phase, name: phaseResult.name, error: phaseResult.error ?? 'unknown', exitCode: phaseResult.exitCode, stderr: truncatedStderr });
+              }
+
+              // Token usage sync
+              this.progress.setTokenUsage(tokenTracker.toCheckpointData());
+            }
+          },
+          onNodeSkip: async (nodeId) => {
+            this.logger.info(`Flow node skipped (checkpoint resume): ${nodeId}`);
+          },
+        },
+      });
+
+      aborted = flowResult.status === 'failed' || flowResult.status === 'cancelled' || flowResult.status === 'timed-out';
+    } catch (err) {
+      this.logger.error(`Flow execution failed: ${err instanceof Error ? err.message : String(err)}`);
+      aborted = true;
+    } finally {
+      // Always clean up
+      if (flowContext.kbServer) {
+        try { await flowContext.kbServer.stop(); this.logger.info('KB server stopped'); } catch { /* ignore */ }
+        flowContext.kbServer = undefined;
+      }
+      if (flowContext.embedder) {
+        try { await flowContext.embedder.dispose(); } catch { /* ignore */ }
+        flowContext.embedder = undefined;
+      }
+    }
+
+    const totalDuration = Date.now() - startTime;
+    const finalState = this.checkpoint.getState();
+    const cumulativeDurationMs = (finalState.cumulativeDurationMs ?? 0) + totalDuration;
+    finalState.cumulativeDurationMs = cumulativeDurationMs;
+    await this.checkpoint.save(finalState);
+
+    // Filter stale entries
+    const completedSet = new Set(finalState.completedTasks);
+    const filteredFailed = finalState.failedTasks.filter(f => !completedSet.has(f.taskId));
+    const filteredBlocked = finalState.blockedTasks.filter(id => !completedSet.has(id));
+
+    const migrationResult: MigrationResult = {
+      success: !aborted && phaseResults.every(r => r.success),
+      projectName: this.config.projectName,
+      phases: phaseResults,
+      totalDuration,
+      cumulativeDuration: cumulativeDurationMs,
+      tokenUsage: tokenTracker.toCheckpointData(),
+      failedTasks: filteredFailed.map(f => f.taskId),
+      blockedTasks: filteredBlocked,
+    };
+
+    this.logger.event({ type: 'migration-completed', projectName: this.config.projectName, success: migrationResult.success, duration: totalDuration });
+    this.progress.setCumulativeDuration(cumulativeDurationMs);
+    await this.progress.finalize(migrationResult);
+
+    // Write observability reports
+    try {
+      await metricsCollector.writeSummary(this.progressDir, flowContext.peakConcurrency);
+      const aggregates = metricsCollector.getAggregates(flowContext.peakConcurrency);
+      await reportGenerator.generate(
+        this.paths.metricsDir, this.paths.reportsObservabilityDir,
+        metricsCollector.getMetrics(), aggregates,
+      );
+    } catch (err) {
+      this.logger.warn(`Failed to write observability report: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    this.flowContext = undefined;
+    this.abortController = undefined;
     await this.logger.flush();
-
-    // Print summary
-    this.printSummary(result);
-    return result;
+    this.printSummary(migrationResult);
+    return migrationResult;
   }
 
   async getStatus(): Promise<string> {
@@ -295,7 +478,7 @@ export class MigrationRuntime {
   private async validateAgentFiles(): Promise<void> {
     const runtimeSettings = this.getActiveRuntimeSettings();
     const { agentDir, agentFileSuffix, validateSchemaContract } = runtimeSettings;
-    const allAgents = [...new Set(PHASES.flatMap(p => p.agents))];
+    const allAgents = [...new Set(Array.from({ length: 10 }, (_, i) => i).flatMap(p => getAgentsForPhase(p)))];
     const missing: string[] = [];
     const invalid: string[] = [];
 
@@ -405,8 +588,21 @@ export class MigrationRuntime {
       shutdownTimeout.unref(); // don't prevent exit
 
       try {
-        if (this.orchestrator) {
-          await this.orchestrator.shutdown();
+        if (this.flowContext) {
+          const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | void> =>
+            Promise.race([p, new Promise<void>(r => setTimeout(r, ms))]);
+          if (this.flowContext.kbServer) {
+            await withTimeout(this.flowContext.kbServer.stop(), 3_000);
+            this.flowContext.kbServer = undefined;
+          }
+          if (this.flowContext.embedder) {
+            try { await withTimeout(this.flowContext.embedder.dispose(), 3_000); } catch { /* ignore */ }
+            this.flowContext.embedder = undefined;
+          }
+        }
+        // Signal the flow runner to cancel
+        if (this.abortController) {
+          this.abortController.abort();
         }
       } catch {
         // Best-effort child process cleanup
@@ -433,4 +629,26 @@ export class MigrationRuntime {
     process.on('SIGINT', () => void handler('SIGINT'));
     process.on('SIGTERM', () => void handler('SIGTERM'));
   }
+}
+
+/** Map a flow node ID to a phase number for logger.setPhase(). */
+function nodeIdToPhase(nodeId: string): number {
+  const map: Record<string, number> = {
+    'kb-index': 0,
+    'task-graph-construction': 1,
+    'impact-assessment': 2,
+    'budget-check-2': 2,
+    'kb-construction': 3,
+    'budget-check-3': 3,
+    'migration-planning': 4,
+    'budget-check-4': 4,
+    'iterative-migration': 5,
+    'budget-check-5': 5,
+    'final-parity-checker': 6,
+    'finalization': 7,
+    'idiomatic-refactor-gate': 8,
+    'idiomatic-refactor': 8,
+    'completion': 9,
+  };
+  return map[nodeId] ?? -1;
 }
