@@ -1,5 +1,5 @@
 /**
- * Tests for call-graph utilities: buildCallGraph(), topoSort(), detectCycles().
+ * Tests for call-graph utilities: resolveSymbolEdges(), topoSort(), detectCycles().
  *
  * Tests use an in-memory SQLite database (`:memory:`) seeded with controlled
  * data so they don't depend on grammar availability.
@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join, resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { openDb, type Database, buildCallGraph, topoSort, detectCycles, IndexBuilder } from '@aamf/lore';
+import { openDb, type Database, resolveSymbolEdges, topoSort, detectCycles, IndexBuilder } from '@aamf/lore';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,9 +46,9 @@ function insertImport(db: Database.Database, importerId: number, depId: number):
   ).run(importerId, depId);
 }
 
-// ─── buildCallGraph() ─────────────────────────────────────────────────────────
+// ─── resolveSymbolEdges() ─────────────────────────────────────────────────────
 
-describe('buildCallGraph', () => {
+describe('resolveSymbolEdges', () => {
   it('resolves callee names to symbol ids where possible', () => {
     const db = memDb();
 
@@ -61,7 +61,7 @@ describe('buildCallGraph', () => {
       `INSERT INTO symbol_refs (caller_id, callee_name, call_line) VALUES (?, ?, 1)`,
     ).run(callerId, 'callee_fn');
 
-    buildCallGraph(db);
+    resolveSymbolEdges(db);
 
     const row = db
       .prepare('SELECT callee_id FROM symbol_refs WHERE caller_id = ?')
@@ -81,7 +81,7 @@ describe('buildCallGraph', () => {
       `INSERT INTO symbol_refs (caller_id, callee_name, call_line) VALUES (?, ?, 1)`,
     ).run(callerId, 'nonexistent_fn');
 
-    buildCallGraph(db);
+    resolveSymbolEdges(db);
 
     const row = db
       .prepare('SELECT callee_id FROM symbol_refs WHERE caller_id = ?')
@@ -93,7 +93,7 @@ describe('buildCallGraph', () => {
 
   it('does not throw on an empty database', () => {
     const db = memDb();
-    expect(() => buildCallGraph(db)).not.toThrow();
+    expect(() => resolveSymbolEdges(db)).not.toThrow();
     db.close();
   });
 });
