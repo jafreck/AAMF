@@ -2542,16 +2542,16 @@ describe('MigrationOrchestrator', () => {
       expect(progressContent).toContain('build');
     });
 
-    describe('qualityPolicy phase 4 gating', () => {
-      it('should map qualityPolicy values to expected phase 4 gate modes', async () => {
+    describe('qualityPolicy gating', () => {
+      it('should map qualityPolicy values to expected quality gate modes', async () => {
         const launcherFn = createMockLauncher();
         const strict = await setupOrchestrator(tempDir, launcherFn, { options: { qualityPolicy: 'strict' } });
         const balanced = await setupOrchestrator(tempDir, launcherFn, { options: { qualityPolicy: 'balanced' } });
         const deferred = await setupOrchestrator(tempDir, launcherFn, { options: { qualityPolicy: 'deferred-strict' } });
 
-        expect((strict.orchestrator as any).getPhase4QualityGateMode()).toBe('enforce');
-        expect((balanced.orchestrator as any).getPhase4QualityGateMode()).toBe('advisory');
-        expect((deferred.orchestrator as any).getPhase4QualityGateMode()).toBe('advisory');
+        expect((strict.orchestrator as any).getQualityGateMode()).toBe('enforce');
+        expect((balanced.orchestrator as any).getQualityGateMode()).toBe('advisory');
+        expect((deferred.orchestrator as any).getQualityGateMode()).toBe('advisory');
       });
 
       it('should return a wave-end build gate error and skip test gate after build failure', async () => {
@@ -2822,7 +2822,7 @@ describe('MigrationOrchestrator', () => {
           options: { ...valid.orchestrator['config'].options, qualityPolicy: 'some-future-policy' },
         };
 
-        expect((valid.orchestrator as any).getPhase4QualityGateMode()).toBe('skip');
+        expect((valid.orchestrator as any).getQualityGateMode()).toBe('skip');
       });
 
       it('should skip parity evaluation in deferred-strict when waveTasks is empty', async () => {

@@ -137,7 +137,7 @@ export function classifyError(errorOutput: string): string | undefined {
 
 import { formatDuration } from '../util/format.js';
 
-type Phase4QualityGateMode = 'enforce' | 'advisory' | 'skip';
+type QualityGateMode = 'enforce' | 'advisory' | 'skip';
 
 /** Parity result data extracted from parity-verifier aamf-json output. */
 interface ParityResultData {
@@ -1322,7 +1322,7 @@ export class MigrationOrchestrator {
       } catch (error) {
         this._deferGitCommits = false;
         if (error instanceof TerminalExhaustionError) {
-          return this.buildPhase4TerminalResult(start, queue, error);
+          return this.buildPhase5TerminalResult(start, queue, error);
         }
         throw error;
       }
@@ -1359,7 +1359,7 @@ export class MigrationOrchestrator {
           result.status === 'rejected' && result.reason instanceof TerminalExhaustionError,
       );
       if (terminalExhaustion) {
-        return this.buildPhase4TerminalResult(start, queue, terminalExhaustion.reason);
+        return this.buildPhase5TerminalResult(start, queue, terminalExhaustion.reason);
       }
 
       // Check blocked-task policy
@@ -1393,7 +1393,7 @@ export class MigrationOrchestrator {
     }
 
     let waveEndGateError: string | undefined;
-    const gateMode = this.getPhase4QualityGateMode();
+    const gateMode = this.getQualityGateMode();
     if (!deadlocked && finalProgress.blocked === 0 && gateMode !== 'enforce') {
       const completedWaveTasks = queue.getAllTaskIds()
         .filter(id => queue.isTaskCompleted(id))
@@ -1582,7 +1582,7 @@ export class MigrationOrchestrator {
     throw new TerminalExhaustionError(normalized);
   }
 
-  private buildPhase4TerminalResult(
+  private buildPhase5TerminalResult(
     start: number,
     queue: TaskQueue,
     error: TerminalExhaustionError,
@@ -1666,7 +1666,7 @@ export class MigrationOrchestrator {
       } catch (error) {
         if (error instanceof TerminalExhaustionError) {
           if (deferGit) this._deferGitCommits = false;
-          return this.buildPhase4TerminalResult(start, queue, error);
+          return this.buildPhase5TerminalResult(start, queue, error);
         }
         throw error;
       }
@@ -1772,7 +1772,7 @@ export class MigrationOrchestrator {
           } catch (error) {
             if (error instanceof TerminalExhaustionError) {
               if (deferGit) this._deferGitCommits = false;
-              return this.buildPhase4TerminalResult(start, queue, error);
+              return this.buildPhase5TerminalResult(start, queue, error);
             }
             throw error;
           }
@@ -1811,7 +1811,7 @@ export class MigrationOrchestrator {
           await this.commitForWave(wave, completedIds);
         }
 
-        // Re-defer so that completePhase4Task's commitForTask is suppressed.
+        // Re-defer so that completePhase5Task's commitForTask is suppressed.
         if (deferGit) {
           this._deferGitCommits = true;
         }
@@ -1820,7 +1820,7 @@ export class MigrationOrchestrator {
           if (queue.isTaskCompleted(task.id) || queue.isTaskBlocked(task.id)) continue;
           const startedAt = taskStartTimes.get(task.id) ?? waveStart;
           const durationMs = Date.now() - startedAt;
-          await this.completePhase4Task(task, queue, completedDurationsMs, durationMs);
+          await this.completePhase5Task(task, queue, completedDurationsMs, durationMs);
         }
       }
 
@@ -1897,7 +1897,7 @@ export class MigrationOrchestrator {
     if (!this.hasPhase5Substep(task.id, 'migrator')) {
       const migratorCtx = await this.contextBuilder.buildContext(
         'code-migrator',
-        4,
+        5,
         task.id,
         {
           sourceFiles: task.sourceFiles,
@@ -1998,7 +1998,7 @@ export class MigrationOrchestrator {
 
           const retryContext = await this.contextBuilder.buildContext(
             'code-migrator',
-            4,
+            5,
             task.id,
             {
               sourceFiles: task.sourceFiles,
@@ -2013,7 +2013,7 @@ export class MigrationOrchestrator {
           // Escalate to parity-failure-resolver agent
           const recoveryCtx = await this.contextBuilder.buildContext(
             'parity-failure-resolver',
-            4,
+            5,
             taskId,
             {
               failureReport: lastError,
@@ -2054,7 +2054,7 @@ export class MigrationOrchestrator {
     if (!this.hasPhase5Substep(task.id, 'parity-tests')) {
       const parityCtx = await this.contextBuilder.buildContext(
         'parity-verifier',
-        4,
+        5,
         task.id,
         {
           sourceFile: task.sourceFiles[0],
@@ -2064,7 +2064,7 @@ export class MigrationOrchestrator {
       );
       const testCtx = await this.contextBuilder.buildContext(
         'test-writer',
-        4,
+        5,
         task.id,
         {
           targetFile: task.targetFiles[0],
@@ -2095,7 +2095,7 @@ export class MigrationOrchestrator {
       await this.markPhase5Substep(task.id, 'parity-tests');
     }
 
-    const gateMode = this.getPhase4QualityGateMode();
+    const gateMode = this.getQualityGateMode();
 
     // b2. Check parity result and retry if non-minor issues found
     if (gateMode !== 'skip' && !this.hasPhase5Substep(task.id, 'parity-gate')) {
@@ -2142,7 +2142,7 @@ export class MigrationOrchestrator {
 
           const recoveryCtx = await this.contextBuilder.buildContext(
             'parity-failure-resolver',
-            4,
+            5,
             task.id,
             {
               failureReport: enrichedSummary,
@@ -2179,7 +2179,7 @@ export class MigrationOrchestrator {
           // Re-run parity-verifier
           const reParityCtx = await this.contextBuilder.buildContext(
             'parity-verifier',
-            4,
+            5,
             task.id,
             {
               sourceFile: task.sourceFiles[0],
@@ -2257,7 +2257,7 @@ export class MigrationOrchestrator {
 
         const repassCtx = await this.contextBuilder.buildContext(
           'code-migrator',
-          4,
+          5,
           task.id,
           {
             sourceFiles: task.sourceFiles,
@@ -2277,7 +2277,7 @@ export class MigrationOrchestrator {
           // Re-run parity-verifier to check if minor issues were resolved
           const reParityCtx = await this.contextBuilder.buildContext(
             'parity-verifier',
-            4,
+            5,
             task.id,
             {
               sourceFile: task.sourceFiles[0],
@@ -2386,7 +2386,7 @@ export class MigrationOrchestrator {
 
     // d. Complete task
     const durationMs = Date.now() - taskStartMs;
-    await this.completePhase4Task(task, queue, completedDurationsMs, durationMs, completionEventDurationMs);
+    await this.completePhase5Task(task, queue, completedDurationsMs, durationMs, completionEventDurationMs);
     return { migrated: true, durationMs };
   }
 
@@ -2501,7 +2501,7 @@ export class MigrationOrchestrator {
     });
   }
 
-  private async completePhase4Task(
+  private async completePhase5Task(
     task: MigrationTask,
     queue: TaskQueue,
     completedDurationsMs: number[],
@@ -3322,7 +3322,7 @@ export class MigrationOrchestrator {
       // 1. Launch parity-failure-resolver with the error output
       const recoveryCtx = await this.contextBuilder.buildContext(
         'parity-failure-resolver',
-        4,
+        5,
         task.id,
         {
           failureReport: cmdResult.logPath ?? cmdResult.rawError ?? cmdResult.error,
@@ -3347,7 +3347,7 @@ export class MigrationOrchestrator {
       // 2. Re-migrate with the fixed context
       const reMigrateCtx = await this.contextBuilder.buildContext(
         'code-migrator',
-        4,
+        5,
         task.id,
         {
           sourceFiles: task.sourceFiles,
@@ -3400,7 +3400,7 @@ export class MigrationOrchestrator {
     return false;
   }
 
-  private getPhase4QualityGateMode(): Phase4QualityGateMode {
+  private getQualityGateMode(): QualityGateMode {
     const policy = this.config.options.qualityPolicy;
     if (policy === 'strict') return 'enforce';
     if (policy === 'balanced') return 'advisory';
@@ -3494,7 +3494,7 @@ export class MigrationOrchestrator {
           // parity-failure-resolver
           const recoveryCtx = await this.contextBuilder.buildContext(
             'parity-failure-resolver',
-            4,
+            5,
             task.id,
             {
               failureReport: enrichedSummary,
@@ -3515,7 +3515,7 @@ export class MigrationOrchestrator {
           // code-migrator
           const reMigrateCtx = await this.contextBuilder.buildContext(
             'code-migrator',
-            4,
+            5,
             task.id,
             {
               sourceFiles: task.sourceFiles,
@@ -3534,7 +3534,7 @@ export class MigrationOrchestrator {
           // parity-verifier re-run
           const reParityCtx = await this.contextBuilder.buildContext(
             'parity-verifier',
-            4,
+            5,
             task.id,
             {
               sourceFile: task.sourceFiles[0],

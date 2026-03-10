@@ -313,6 +313,19 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
     // Validate compilation units
     const validatedUnits = validateCompilationUnits(tasks, compilationUnits ?? []);
 
+    // Assert task ID uniqueness — a collision would silently corrupt the
+    // dependency graph, so fail loudly rather than producing invalid output.
+    const seenIds = new Set<string>();
+    for (const t of tasks) {
+      if (seenIds.has(t.id)) {
+        throw new Error(
+          `Duplicate task ID "${t.id}" detected after clustering — this is a ` +
+          `bug in the task graph builder. Please report it.`,
+        );
+      }
+      seenIds.add(t.id);
+    }
+
     // Detect task-level SCCs
     const adjacency = new Map<string, string[]>();
     for (const t of tasks) adjacency.set(t.id, t.dependencies);
@@ -388,12 +401,17 @@ function clusterSymbols(
         edges.get(ref.callerSymbolId)!.add(ref.calleeId);
       }
     } else {
-      // Fallback: name-based resolution (only for edges Lore couldn't resolve)
+      // Fallback: name-based resolution (only for edges Lore couldn't resolve).
+      // Prefer same-file matches; for cross-file, only link when the name is
+      // globally unique.  Ambiguous names (e.g. init, free, read) would create
+      // false coupling between unrelated compilation units.
       const calleeIds = nameToIds.get(ref.calleeName) ?? [];
-      // Prefer same-file matches to avoid false cross-file edges
       const callerFileId = ref.callerFileId;
       const localCallees = calleeIds.filter(id => symMap.get(id)?.fileId === callerFileId);
-      const resolvedIds = localCallees.length > 0 ? localCallees : calleeIds;
+      // Cross-file: only if the name resolves to exactly one symbol
+      const resolvedIds = localCallees.length > 0
+        ? localCallees
+        : calleeIds.length === 1 ? calleeIds : [];
       for (const calleeId of resolvedIds) {
         if (calleeId !== ref.callerSymbolId && symMap.has(calleeId)) {
           ensureEdges(ref.callerSymbolId);
@@ -431,7 +449,16 @@ function clusterSymbols(
     if (userSymId == null) continue;
 
     const definerIds = nameToIds.get(ref.typeName) ?? [];
-    for (const defId of definerIds) {
+    // Prefer same-file type definitions; for cross-file, only link when the
+    // type name is globally unique.  C codebases often reuse struct/typedef
+    // names across compilation units — linking all of them creates false
+    // cross-unit coupling.
+    const userFileId = symMap.get(userSymId)?.fileId;
+    const localDefiners = definerIds.filter(id => symMap.get(id)?.fileId === userFileId);
+    const resolvedDefiners = localDefiners.length > 0
+      ? localDefiners
+      : definerIds.length === 1 ? definerIds : [];
+    for (const defId of resolvedDefiners) {
       if (defId !== userSymId && symMap.has(defId)) {
         ensureEdges(userSymId);
         edges.get(userSymId)!.add(defId);
@@ -657,61 +684,140 @@ function clusterSymbols(
     changed = true;
   }
 
-  // Step 4: Absorb undersized clusters (< minLines) into their
-  // most-connected neighbor.  This prevents 5-line leaf functions
-  // from being individual tasks.
+  // Step 4: Hierarchical affinity folding for undersized clusters.
+  //
+  // Small clusters (< MIN_LINES_PER_TASK) are folded into related clusters
+  // using a strict affinity hierarchy.  Unlike blind bin-packing, merges
+  // only happen when the clusters share a concrete relationship:
+  //
+  //   Tier 1 — File affinity (strongest): fold into another cluster that
+  //            shares at least one source file.  The agent already reads
+  //            the file, so co-located symbols add minimal overhead.
+  //
+  //   Tier 2 — Dependency affinity: fold into the cluster with the most
+  //            call/type edges to/from this one.  A leaf function with a
+  //            single caller naturally belongs in the caller's task.
+  //
+  //   Tier 3 — Directory affinity: fold into a cluster whose symbols live
+  //            in the same parent directory, but only when that cluster is
+  //            the sole directory-mate under the size limit.  Directory
+  //            co-location implies module membership in C-style projects.
+  //
+  //   No match → leave as standalone.  A 10-line task is cheap; forcing it
+  //              into an unrelated cluster confuses the migrator agent.
   const MIN_LINES_PER_TASK = 50;
+
+  const getFileDir = (fid: number): string => {
+    const path = fileIdToPath?.get(fid) ?? fid.toString();
+    const lastSlash = path.lastIndexOf('/');
+    return lastSlash >= 0 ? path.substring(0, lastSlash) : '.';
+  };
+
   changed = true;
   while (changed) {
     changed = false;
     for (const [cid, cluster] of clusterMap) {
-      if (cluster.totalLines >= MIN_LINES_PER_TASK) continue;
+      if (cluster.isStubs) continue;
+      if (computeLineSpan(cluster.symbols) >= MIN_LINES_PER_TASK) continue;
 
-      // Find the neighbor with the most edges to/from this cluster
       let bestNeighbor: string | undefined;
-      let bestEdgeCount = 0;
 
-      // Check outbound edges
-      const outbound = interClusterEdges.get(cid);
-      if (outbound) {
-        for (const [target, w] of outbound) {
-          if (!clusterMap.has(target)) continue;
-          const targetCluster = clusterMap.get(target)!;
-          if (computeLineSpan([...cluster.symbols, ...targetCluster.symbols]) > maxLines) continue;
-          const reverseW = interClusterEdges.get(target)?.get(cid) ?? 0;
+      // ── Tier 1: file affinity ──────────────────────────────────────────
+      // Find the cluster sharing the most files, preferring the one with
+      // the highest edge weight as a tiebreaker.
+      {
+        let bestFileOverlap = 0;
+        let bestEdgeWeight = 0;
+        const myFiles = clusterFileIds(cluster);
+
+        for (const [otherId, otherCluster] of clusterMap) {
+          if (otherId === cid || otherCluster.isStubs) continue;
+          if (computeLineSpan([...cluster.symbols, ...otherCluster.symbols]) > maxLines) continue;
+
+          let overlap = 0;
+          for (const sym of otherCluster.symbols) {
+            if (myFiles.has(sym.fileId)) { overlap++; break; }
+          }
+          if (overlap === 0) continue;
+
+          const edgeWeight =
+            (interClusterEdges.get(cid)?.get(otherId) ?? 0) +
+            (interClusterEdges.get(otherId)?.get(cid) ?? 0);
+
+          if (overlap > bestFileOverlap || (overlap === bestFileOverlap && edgeWeight > bestEdgeWeight)) {
+            bestFileOverlap = overlap;
+            bestEdgeWeight = edgeWeight;
+            bestNeighbor = otherId;
+          }
+        }
+      }
+
+      // ── Tier 2: dependency affinity ────────────────────────────────────
+      // Fold into the neighbor with the most call/type edges (any direction).
+      if (!bestNeighbor) {
+        let bestEdgeCount = 0;
+        const outbound = interClusterEdges.get(cid);
+
+        if (outbound) {
+          for (const [target, w] of outbound) {
+            if (!clusterMap.has(target)) continue;
+            const targetCluster = clusterMap.get(target)!;
+            if (targetCluster.isStubs) continue;
+            if (computeLineSpan([...cluster.symbols, ...targetCluster.symbols]) > maxLines) continue;
+            const reverseW = interClusterEdges.get(target)?.get(cid) ?? 0;
+            if (w + reverseW > bestEdgeCount) {
+              bestEdgeCount = w + reverseW;
+              bestNeighbor = target;
+            }
+          }
+        }
+
+        for (const [from, targets] of interClusterEdges) {
+          if (from === cid || !clusterMap.has(from)) continue;
+          const fromCluster = clusterMap.get(from)!;
+          if (fromCluster.isStubs) continue;
+          const w = targets.get(cid);
+          if (w == null) continue;
+          if (computeLineSpan([...cluster.symbols, ...fromCluster.symbols]) > maxLines) continue;
+          const reverseW = outbound?.get(from) ?? 0;
           if (w + reverseW > bestEdgeCount) {
             bestEdgeCount = w + reverseW;
-            bestNeighbor = target;
+            bestNeighbor = from;
           }
         }
       }
 
-      // Check inbound edges
-      for (const [from, targets] of interClusterEdges) {
-        if (from === cid || !clusterMap.has(from)) continue;
-        const w = targets.get(cid);
-        if (w == null) continue;
-        const fromCluster = clusterMap.get(from)!;
-        if (computeLineSpan([...cluster.symbols, ...fromCluster.symbols]) > maxLines) continue;
-        const reverseW = outbound?.get(from) ?? 0;
-        if (w + reverseW > bestEdgeCount) {
-          bestEdgeCount = w + reverseW;
-          bestNeighbor = from;
-        }
-      }
-
-      // Also try same-file merging for disconnected small symbols
+      // ── Tier 3: directory affinity ─────────────────────────────────────
+      // Only merge when there is exactly one viable directory-mate under
+      // the size limit.  Multiple candidates means the relationship is
+      // ambiguous — leave the cluster standalone rather than guess.
       if (!bestNeighbor) {
+        const myDirs = new Set(cluster.symbols.map(s => getFileDir(s.fileId)));
+        let dirCandidate: string | undefined;
+        let dirCandidateCount = 0;
+
         for (const [otherId, otherCluster] of clusterMap) {
-          if (otherId === cid) continue;
+          if (otherId === cid || otherCluster.isStubs) continue;
           if (computeLineSpan([...cluster.symbols, ...otherCluster.symbols]) > maxLines) continue;
-          if (shareFile(cluster, otherCluster)) {
-            bestNeighbor = otherId;
-            break;
+
+          const otherDirs = new Set(otherCluster.symbols.map(s => getFileDir(s.fileId)));
+          let sharesDir = false;
+          for (const d of myDirs) {
+            if (otherDirs.has(d)) { sharesDir = true; break; }
           }
+          if (sharesDir) {
+            dirCandidate = otherId;
+            dirCandidateCount++;
+            if (dirCandidateCount > 1) break; // ambiguous — stop early
+          }
+        }
+
+        if (dirCandidateCount === 1) {
+          bestNeighbor = dirCandidate;
         }
       }
 
+      // ── No match → leave as standalone ─────────────────────────────────
       if (bestNeighbor) {
         mergeClusters(bestNeighbor, cid);
         changed = true;
@@ -749,118 +855,6 @@ function clusterSymbols(
       }
     }
     clusterCounter += subClusters.length;
-  }
-
-  // Step 6: Proximity-based grouping for remaining small orphan clusters.
-  //         Group by file first, then by directory, bin-packing up to maxLines.
-  const MIN_LINES = 50;
-  const smallOrphans = [...clusterMap.entries()]
-    .filter(([_, c]) => computeLineSpan(c.symbols) < MIN_LINES && !c.isStubs)
-    .map(([id, c]) => ({ id, cluster: c }));
-
-  if (smallOrphans.length > 1) {
-    // Bucket by file_id (primary grouping key)
-    const byFile = new Map<number, typeof smallOrphans>();
-    const multiFile: typeof smallOrphans = [];
-
-    for (const orphan of smallOrphans) {
-      const fileIds = new Set(orphan.cluster.symbols.map(s => s.fileId));
-      if (fileIds.size === 1) {
-        const fid = [...fileIds][0]!;
-        const list = byFile.get(fid) ?? [];
-        list.push(orphan);
-        byFile.set(fid, list);
-      } else {
-        multiFile.push(orphan);
-      }
-    }
-
-    // Merge same-file small orphans into combined clusters
-    for (const [_fid, orphans] of byFile) {
-      if (orphans.length <= 1) continue;
-
-      // Sort by start line for stable ordering
-      orphans.sort((a, b) =>
-        Math.min(...a.cluster.symbols.map(s => s.startLine)) -
-        Math.min(...b.cluster.symbols.map(s => s.startLine)),
-      );
-
-      let currentOrphans: typeof orphans = [];
-      let currentSpan = 0;
-
-      for (const orphan of orphans) {
-        const orphanSpan = computeLineSpan(orphan.cluster.symbols);
-        const combinedSymbols = [
-          ...currentOrphans.flatMap(o => o.cluster.symbols),
-          ...orphan.cluster.symbols,
-        ];
-        const combinedSpan = computeLineSpan(combinedSymbols);
-
-        if (combinedSpan > maxLines && currentOrphans.length > 0) {
-          // Flush current batch → merge into the first orphan's cluster
-          const keepId = currentOrphans[0]!.id;
-          for (let i = 1; i < currentOrphans.length; i++) {
-            mergeClusters(keepId, currentOrphans[i]!.id);
-          }
-          currentOrphans = [];
-          currentSpan = 0;
-        }
-        currentOrphans.push(orphan);
-        currentSpan = computeLineSpan(currentOrphans.flatMap(o => o.cluster.symbols));
-      }
-
-      // Flush remaining
-      if (currentOrphans.length > 1) {
-        const keepId = currentOrphans[0]!.id;
-        for (let i = 1; i < currentOrphans.length; i++) {
-          mergeClusters(keepId, currentOrphans[i]!.id);
-        }
-      }
-    }
-
-    // For multi-file orphans and remaining single-file orphans that are still
-    // small, group by directory (symbols sharing the same parent directory
-    // are likely part of the same module).
-    const stillSmall = [...clusterMap.entries()]
-      .filter(([_, c]) => computeLineSpan(c.symbols) < MIN_LINES && !c.isStubs)
-      .map(([id, c]) => ({ id, cluster: c }));
-
-    if (stillSmall.length > 1) {
-      // Bucket by source directory
-      const getFileDir = (fid: number): string => {
-        const path = fileIdToPath?.get(fid) ?? fid.toString();
-        const lastSlash = path.lastIndexOf('/');
-        return lastSlash >= 0 ? path.substring(0, lastSlash) : '.';
-      };
-
-      const byDir = new Map<string, typeof stillSmall>();
-      for (const orphan of stillSmall) {
-        const primaryDir = getFileDir(orphan.cluster.symbols[0]?.fileId ?? 0);
-        const list = byDir.get(primaryDir) ?? [];
-        list.push(orphan);
-        byDir.set(primaryDir, list);
-      }
-
-      // Within each directory bucket, greedily merge
-      for (const [_, orphans] of byDir) {
-        if (orphans.length <= 1) continue;
-        let currentKeep: string | undefined;
-        for (const orphan of orphans) {
-          if (!clusterMap.has(orphan.id)) continue; // already merged
-          if (!currentKeep || !clusterMap.has(currentKeep)) {
-            currentKeep = orphan.id;
-            continue;
-          }
-          const keepCluster = clusterMap.get(currentKeep)!;
-          const combinedSpan = computeLineSpan([...keepCluster.symbols, ...orphan.cluster.symbols]);
-          if (combinedSpan <= maxLines) {
-            mergeClusters(currentKeep, orphan.id);
-          } else {
-            currentKeep = orphan.id; // start new bucket
-          }
-        }
-      }
-    }
   }
 
   // Compute final inter-cluster dependencies (directed)
@@ -1053,8 +1047,9 @@ interface TypeRefRow {
  *
  * Prefers Lore v0.3.0's denormalized columns on `symbol_refs` (file_id,
  * resolution_method) when available, falling back to a JOIN through `symbols`
- * for older schemas.  When resolution_method is present, only edges resolved
- * via high-confidence methods (LSP, same-file, globally unique) are returned.
+ * for older schemas.  When resolution_method is present, low-confidence
+ * resolution methods are excluded via a blocklist so that new high-confidence
+ * methods added in future Lore versions are automatically included.
  */
 function queryResolvedEdges(
   db: import('better-sqlite3').Database,
@@ -1065,7 +1060,9 @@ function queryResolvedEdges(
   const hasResolutionMethod = cols.some(c => c.name === 'resolution_method');
 
   if (hasFileId && hasResolutionMethod) {
-    // Lore v0.3.0+: use denormalized file_id and filter by resolution confidence
+    // Lore v0.3.0+: use denormalized file_id, exclude low-confidence methods.
+    // Blocklist approach: new high-confidence methods added by future Lore
+    // versions are automatically included without code changes here.
     const rows = db.prepare(`
       SELECT sr.caller_id, sr.file_id AS caller_file_id,
              sr.callee_id, sr.callee_name,
@@ -1073,7 +1070,8 @@ function queryResolvedEdges(
       FROM symbol_refs sr
       LEFT JOIN symbols cs ON sr.callee_id = cs.id
       WHERE sr.callee_id IS NOT NULL
-        AND sr.resolution_method IN ('lsp_definition', 'name_same_file', 'name_unique')
+        AND (sr.resolution_method IS NULL
+             OR sr.resolution_method NOT IN ('name_ambiguous', 'unresolved'))
     `).all() as Array<{
       caller_id: number; caller_file_id: number;
       callee_id: number | null; callee_name: string;
