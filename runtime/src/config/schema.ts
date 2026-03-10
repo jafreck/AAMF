@@ -27,7 +27,6 @@ export const MigrationConfigSchema = z.object({
     language: z.string(),
     framework: z.string().optional(),
     outputPath: z.string(),
-    testFramework: z.string().optional(),
     buildCommand: z.string().optional(),
     testCommand: z.string().optional(),
     formatCommand: z.string().optional(),

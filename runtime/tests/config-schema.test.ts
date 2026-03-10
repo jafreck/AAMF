@@ -109,7 +109,7 @@ describe('MigrationConfigSchema', () => {
     const full = {
       ...validConfig,
       source: { ...validConfig.source, entryPoints: ['main.py'], excludePatterns: ['venv'] },
-      target: { ...validConfig.target, framework: 'express', testFramework: 'vitest' },
+      target: { ...validConfig.target, framework: 'express' },
       options: { maxParallelAgents: 5, tokenBudget: 1000000 },
       agentBackend: { runtime: 'copilot', cliCommand: 'copilot', model: 'gpt-4o', agentDir: '.github/agents', timeout: 300000 },
     };

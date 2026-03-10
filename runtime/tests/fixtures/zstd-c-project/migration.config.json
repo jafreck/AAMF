@@ -46,7 +46,6 @@
     "language": "rust",
     "framework": "stable",
     "outputPath": ".aamf/zstd-rust-output",
-    "testFramework": "cargo-test",
     "buildCommand": "cargo build",
     "testCommand": "cargo test"
   },

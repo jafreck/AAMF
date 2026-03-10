@@ -87,7 +87,6 @@ async function writeMigrationConfig(): Promise<void> {
       language: 'csharp',
       framework: 'net9.0',
       outputPath: outputDir,
-      testFramework: 'xunit',
       buildCommand: 'dotnet build',
       testCommand: 'dotnet test',
     },

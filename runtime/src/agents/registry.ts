@@ -388,7 +388,7 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
     displayName: 'E2E Test Crafter',
     description: 'Plans and coordinates end-to-end test suites for the fully migrated codebase, delegating individual suite writing to test-writer agents.',
     outputSchema: E2eTestCrafterSchema,
-    inputJsonSchema: inputSchema({ extraProperties: { testFramework: { type: 'string' } } }),
+    inputJsonSchema: inputSchema(),
     outputJsonSchema: outputSchema('e2e-test-crafter', {
       extraProperties: {
         suitesPlanned:   { type: 'integer', minimum: 0 },

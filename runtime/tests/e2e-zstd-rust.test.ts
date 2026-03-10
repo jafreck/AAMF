@@ -96,7 +96,6 @@ async function writeMigrationConfig(): Promise<void> {
       language: 'rust',
       framework: 'stable',
       outputPath: outputDir,
-      testFramework: 'cargo-test',
       buildCommand: 'cargo build',
       testCommand: 'cargo test',
     },
