@@ -90,7 +90,10 @@ describe('AgentLauncher', () => {
     expect(logContent).toContain('gpt-4o');
     expect(logContent).toContain('--allow-all-tools');
     expect(logContent).toContain('--no-ask-user');
-    expect(logContent).not.toContain('-s');
+    // Ensure the deprecated standalone -s flag is not present.
+    // Use word-boundary regex to avoid false positives from substrings
+    // like --allow-all-paths or /tmp/source.
+    expect(logContent).not.toMatch(/(?:^|\s)-s(?:\s|$)/m);
   });
 
   it('should prefer invocation modelOverride over configured model', async () => {
