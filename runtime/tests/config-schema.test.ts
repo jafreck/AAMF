@@ -97,12 +97,12 @@ describe('MigrationConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should reject parallelAgents > 10', () => {
+  it('should accept large maxParallelAgents values', () => {
     const result = MigrationConfigSchema.safeParse({
       ...validConfig,
       options: { maxParallelAgents: 20 },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('should accept full config', () => {

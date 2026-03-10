@@ -13,6 +13,7 @@ import { MigrationResult } from '../agents/types.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
 import { fileExists } from '../util/fs.js';
 import { formatDuration } from '../util/format.js';
+import { killAllActiveProcesses } from '../util/process.js';
 import { buildRuntimePaths } from './runtime-paths.js';
 import { generateAgentDefinitions } from '../agents/generator.js';
 
@@ -409,6 +410,14 @@ export class MigrationRuntime {
         }
       } catch {
         // Best-effort child process cleanup
+      }
+      // Kill any in-flight agent processes spawned via spawnWithTimeout.
+      // These are detached (own process group) so they survive parent exit
+      // unless explicitly killed.
+      try {
+        await killAllActiveProcesses();
+      } catch {
+        // Best-effort
       }
       try {
         await this.logger.flush();
