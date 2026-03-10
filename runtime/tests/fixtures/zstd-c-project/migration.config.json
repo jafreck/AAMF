@@ -15,11 +15,30 @@
     ],
     "excludePatterns": [
       ".git",
+      ".build",
+      ".cache",
+      "build",
+      "obj",
+      "CMakeFiles",
+      "CMakeCache.txt",
+      "cmake_install.cmake",
+      "*.cmake",
+      "Makefile*",
       "*.o",
       "*.lo",
       "*.la",
+      "*.a",
+      "*.so",
+      "*.so.*",
+      "*.dylib",
+      "*.dll",
+      "*.lib",
+      "*.exe",
+      "*.dSYM",
       "*.pc",
-      "Makefile*",
+      "*.d",
+      "*.gcno",
+      "*.gcda",
       "*.md"
     ]
   },
@@ -27,19 +46,17 @@
     "language": "rust",
     "framework": "stable",
     "outputPath": ".aamf/zstd-rust-output",
-    "testFramework": "cargo-test",
     "buildCommand": "cargo build",
     "testCommand": "cargo test"
   },
   "options": {
     "qualityPolicy": "strict",
-    "maxParallelAgents": 8,
+    "maxParallelAgents": 12,
     "maxRetriesPerTask": 3,
-    "maxLinesPerTask": 750,
+    "maxLinesPerTask": 1000,
     "tokenBudget": 400000000,
     "executionMode": "wave-barrier",
     "waveControl": {
-      "waveSize": 4,
       "maxConvergenceIterations": 3
     },
     "dryRun": false,
@@ -52,7 +69,13 @@
     "kbIndex": {
       "enabled": true,
       "embeddings": {
-        "enabled": true
+        "enabled": false
+      },
+      "lsp": {
+        "enabled": true,
+        "servers": {
+          "c": { "command": "clangd", "args": ["--compile-commands-dir=zstd-src/zstd-1.5.7/build"] }
+        }
       }
     }
   },
@@ -60,8 +83,9 @@
     "runtime": "copilot",
     "cliCommand": "copilot",
     "model": "claude-opus-4.6",
-    "failureRecoveryModel": "gpt-5.3-codex",
+    "failureRecoveryModel": "claude-opus-4.6",
     "agentDir": "../../../../.github/agents",
-    "timeout": 3600000
+    "timeout": 3600000,
+    "phaseTimeouts": { "0": 600000 }
   }
 }

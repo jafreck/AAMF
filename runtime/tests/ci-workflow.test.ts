@@ -41,9 +41,13 @@ describe('CI workflow (.github/workflows/ci.yml)', () => {
     expect(text).toMatch(/branches:\s*\[main\]/);
   });
 
-  it('should include Node.js 20.x in matrix', async () => {
+  it('should not include Node.js 20.x in the build matrix (Lore requires >=22)', async () => {
     const text = await loadContent();
-    expect(text).toContain('20.x');
+    // The build matrix should only contain 22.x.
+    // A "Node.js 20.x" compat shim job may exist for branch protection,
+    // but node-version: [20.x] must not appear in the matrix.
+    expect(text).toMatch(/node-version:\s*\[22\.x\]/);
+    expect(text).not.toMatch(/node-version:\s*\[.*20\.x/);
   });
 
   it('should include Node.js 22.x in matrix', async () => {

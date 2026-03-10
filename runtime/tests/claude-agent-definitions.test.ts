@@ -346,68 +346,51 @@ describe('generateAgentDefinitions()', () => {
   });
 });
 
-// ─── Conditional Lore Injection Tests ────────────────────────────────────────
+// ─── Lore Guidance Tests ─────────────────────────────────────────────────────
+// Lore is always enabled — templates unconditionally include Lore guidance.
 
-describe('generateAgentDefinitions() with loreEnabled', () => {
-  let loreDirEnabled: string;
-  let loreDirDisabled: string;
+describe('generateAgentDefinitions() always includes Lore guidance', () => {
+  let loreDir: string;
 
   beforeAll(async () => {
-    loreDirEnabled = await mkdtemp(join(tmpdir(), 'aamf-lore-on-'));
-    loreDirDisabled = await mkdtemp(join(tmpdir(), 'aamf-lore-off-'));
+    loreDir = await mkdtemp(join(tmpdir(), 'aamf-lore-'));
 
     await generateAgentDefinitions({
       backend: 'copilot',
-      outputDir: loreDirEnabled,
+      outputDir: loreDir,
       templateDir: TEMPLATE_DIR,
       vars: { loreEnabled: 'true' },
-    });
-
-    await generateAgentDefinitions({
-      backend: 'copilot',
-      outputDir: loreDirDisabled,
-      templateDir: TEMPLATE_DIR,
-      // No loreEnabled var → conditional blocks stripped
     });
   });
 
   afterAll(async () => {
-    await rm(loreDirEnabled, { recursive: true, force: true });
-    await rm(loreDirDisabled, { recursive: true, force: true });
+    await rm(loreDir, { recursive: true, force: true });
   });
 
-  it('should include Lore guidance when loreEnabled is set', async () => {
-    // code-migrator is a KB_AWARE agent with the lore partial
-    const content = await readFile(join(loreDirEnabled, 'code-migrator.agent.md'), 'utf-8');
+  it('should include Lore guidance in code-migrator', async () => {
+    const content = await readFile(join(loreDir, 'code-migrator.agent.md'), 'utf-8');
     expect(content).toContain('Lore Code-Intelligence Server (MANDATORY)');
     expect(content).toContain('lore_search');
     expect(content).toContain('lore_lookup');
     expect(content).toContain('lore_graph');
   });
 
-  it('should exclude Lore guidance when loreEnabled is not set', async () => {
-    const content = await readFile(join(loreDirDisabled, 'code-migrator.agent.md'), 'utf-8');
-    expect(content).not.toContain('Lore Code-Intelligence Server');
-    expect(content).not.toContain('lore_search');
-    expect(content).not.toContain('lore_lookup');
-  });
-
-  it('should include Lore guidance in all KB-aware agent templates when enabled', async () => {
+  it('should include Lore guidance in all KB-aware agent templates', async () => {
     const kbAwareAgents = [
       'impact-assessor', 'knowledge-builder', 'migration-planner', 'adjudicator',
       'code-migrator', 'parity-verifier', 'test-writer', 'parity-failure-resolver',
       'final-parity-checker', 'e2e-test-crafter', 'documentation-writer',
-      'idiomatic-reviewer', 'idiomatic-refactorer', 'task-decomposer',
+      'idiomatic-reviewer', 'idiomatic-refactorer',
     ];
     for (const agent of kbAwareAgents) {
-      const content = await readFile(join(loreDirEnabled, `${agent}.agent.md`), 'utf-8');
+      const content = await readFile(join(loreDir, `${agent}.agent.md`), 'utf-8');
       expect(content, `${agent} should contain Lore guidance`).toContain('Lore Code-Intelligence Server (MANDATORY)');
     }
   });
 
-  it('should not contain any unresolved conditional blocks when loreEnabled is set', async () => {
+  it('should not contain any unresolved conditional blocks', async () => {
     for (const agentName of ALL_AGENT_NAMES) {
-      const content = await readFile(join(loreDirEnabled, `${agentName}.agent.md`), 'utf-8');
+      const content = await readFile(join(loreDir, `${agentName}.agent.md`), 'utf-8');
       expect(content, `Unresolved {{#if}} in "${agentName}"`).not.toMatch(/\{\{#if\s+[\w-]+\}\}/);
       expect(content, `Unresolved {{/if}} in "${agentName}"`).not.toContain('{{/if}}');
     }

@@ -27,16 +27,15 @@ export const MigrationConfigSchema = z.object({
     language: z.string(),
     framework: z.string().optional(),
     outputPath: z.string(),
-    testFramework: z.string().optional(),
     buildCommand: z.string().optional(),
     testCommand: z.string().optional(),
     formatCommand: z.string().optional(),
     lintCommand: z.string().optional(),
   }),
   options: z.object({
-    maxParallelAgents: z.number().int().min(1).max(10).default(3),
+    maxParallelAgents: z.number().int().min(1).default(3),
     maxRetriesPerTask: z.number().int().min(1).max(5).default(3),
-    maxLinesPerTask: z.number().int().default(500),
+    maxLinesPerTask: z.number().int().default(1000),
     tokenBudget: z.number().int().optional(),
     dryRun: z.boolean().default(false),
     resume: z.boolean().default(false),
@@ -50,38 +49,36 @@ export const MigrationConfigSchema = z.object({
      */
     buildConcurrency: z.number().int().min(0).max(10).default(1),
     /**
-     * Maximum number of concurrent test-writer suites in Phase 6 fan-out.
+     * Maximum number of concurrent test-writer suites in Phase 7 fan-out.
      * Controls how many E2E test suites can be generated in parallel,
-     * separate from the general Phase 4 parallelism (`maxParallelAgents`).
+     * separate from the general Phase 5 parallelism (`maxParallelAgents`).
      * When omitted, defaults to the value of `maxParallelAgents`.
      */
     maxE2eSuiteConcurrency: z.number().int().min(1).max(10).optional(),
     /**
-     * Phase 4 execution strategy.
+     * Phase 5 execution strategy.
      * - `per-task`: existing behavior (migrate + validate task-by-task).
      * - `wave-barrier`: migrate in waves, then validate between waves.
      */
     executionMode: z.enum(['per-task', 'wave-barrier']).default('per-task'),
     /**
-     * Controls for Phase 4 wave/barrier execution mode.
+     * Controls for Phase 5 wave/barrier execution mode.
      * These values are ignored in `per-task` mode.
      */
     waveControl: z.object({
-      waveSize: z.number().int().min(1).default(3),
       maxConvergenceIterations: z.number().int().min(1).default(3),
     }).default({
-      waveSize: 3,
       maxConvergenceIterations: 3,
     }),
     /**
      * Whether to continue executing independent tasks when one is blocked.
      * When `true` (default), the orchestrator skips blocked tasks and their
      * dependents, continuing with any remaining ready tasks.
-     * When `false`, Phase 4 halts on the first blocked task.
+     * When `false`, Phase 5 halts on the first blocked task.
      */
     continueOnBlocked: z.boolean().default(true),
     /**
-     * Maximum number of blocked tasks before Phase 4 is halted.
+     * Maximum number of blocked tasks before Phase 5 is halted.
      * Only applies when `continueOnBlocked` is `true`. Default: unlimited (0).
      */
     maxBlockedTasks: z.number().int().min(0).default(1),
@@ -98,19 +95,18 @@ export const MigrationConfigSchema = z.object({
     /**
      * Options for the optional idiomatic refactor phase (Phase 8).
      * When enabled, the idiomatic-reviewer and idiomatic-refactorer agents
-     * run after Phase 6 to improve code idiomaticness.
+     * run after Phase 7 to improve code idiomaticness.
      */
     idiomaticRefactor: z.object({
       enabled: z.boolean().default(false),
       maxIterations: z.number().int().min(1).default(2),
     }).optional(),
     /**
-     * Options for the optional KB indexing phase (Phase 0).
-     * When enabled (or when AAMF_USE_KB_INDEX=1), the indexer builds a SQLite
-     * knowledge-base and an HTTP MCP server is started for agents to query it.
+     * Options for KB indexing (Phase 0).
+     * The Lore indexer always runs in Phase 0 to build a SQLite knowledge-base.
+     * An HTTP MCP server is started for agents to query it.
      */
     kbIndex: z.object({
-      enabled: z.boolean().default(false),
       /**
        * Log level for the Lore KB server's internal structured logger.
        * Lore writes NDJSON entries to `logs/runtime/lore.log`.
@@ -134,6 +130,31 @@ export const MigrationConfigSchema = z.object({
         model: z.string().default('Qwen/Qwen3-Embedding-0.6B'),
         /** Path to the Python binary with sentence-transformers installed. */
         pythonBin: z.string().default('python3'),
+      }).optional(),
+      /**
+       * LSP integration for the Lore indexer.
+       * When enabled, Lore starts language servers (e.g. clangd for C/C++,
+       * typescript-language-server for TS) to resolve cross-file symbol
+       * references, type definitions, and call targets with full semantic
+       * accuracy — beyond what tree-sitter can provide alone.
+       */
+      lsp: z.object({
+        /** Enable LSP-powered symbol resolution during indexing. Default: false. */
+        enabled: z.boolean().default(false),
+        /** Timeout in ms for each LSP request (hover, definition, references). */
+        requestTimeoutMs: z.number().int().min(500).default(5000),
+        /**
+         * Override default language server commands.
+         * Keys are language identifiers (e.g. 'c', 'typescript').
+         * Values specify the command and args to launch the server.
+         * For C/C++ with clangd, pass --compile-commands-dir in args
+         * to point to the directory containing compile_commands.json.
+         * Example: `{ "c": { "command": "clangd", "args": ["--compile-commands-dir=/path/to/build"] } }`
+         */
+        servers: z.record(z.string(), z.object({
+          command: z.string(),
+          args: z.array(z.string()).default([]),
+        })).optional(),
       }).optional(),
     }).optional(),
     /**
@@ -179,7 +200,7 @@ export const MigrationConfigSchema = z.object({
      *
      * When enabled, AAMF ensures `target.outputPath` is a Git repository and
      * creates granular commits during migration (per code-modifying agent and
-     * per completed Phase 4 task).
+     * per completed Phase 5 task).
      */
     git: z.object({
       /** Enable automatic git init/add/commit operations. */
@@ -188,7 +209,7 @@ export const MigrationConfigSchema = z.object({
       autoInit: z.boolean().default(true),
       /** Commit after successful code-modifying agent invocations. */
       commitByAgent: z.boolean().default(true),
-      /** Commit after each successfully completed Phase 4 task. */
+      /** Commit after each successfully completed Phase 5 task. */
       commitPerTask: z.boolean().default(true),
       /** Allow empty git commits for task-level markers when no files changed. */
       allowEmptyTaskCommits: z.boolean().default(true),
@@ -200,14 +221,13 @@ export const MigrationConfigSchema = z.object({
   }).default({
     maxParallelAgents: 3,
     maxRetriesPerTask: 3,
-    maxLinesPerTask: 500,
+    maxLinesPerTask: 1000,
     dryRun: false,
     resume: false,
     invocationDelayMs: 0,
     buildConcurrency: 1,
     executionMode: 'per-task',
     waveControl: {
-      waveSize: 3,
       maxConvergenceIterations: 3,
     },
     continueOnBlocked: true,

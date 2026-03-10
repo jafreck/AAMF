@@ -36,7 +36,6 @@ Create a `migration.config.json` file in your project root. Below is a full refe
     "language": "typescript",
     "framework": "express",
     "outputPath": "./migrated",
-    "testFramework": "vitest",
     "buildCommand": "npm run build",
     "testCommand": "npm test"
   },
@@ -118,7 +117,6 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | `target.language` | `string` | *required* | Target language for the migrated codebase. |
 | `target.framework` | `string` | — | Target framework (e.g. `express`, `actix-web`, `spring`). |
 | `target.outputPath` | `string` | *required* | Directory where migrated code is written. |
-| `target.testFramework` | `string` | — | Test framework to generate tests for (e.g. `vitest`, `pytest`). |
 | `target.buildCommand` | `string` | — | Command the runtime executes to verify the build succeeds. |
 | `target.testCommand` | `string` | — | Command the runtime executes to run tests. |
 
@@ -421,7 +419,6 @@ runtime/src/
 ├── agents/
 │   ├── context-builder.ts            # Assembles file-based context for agent invocations
 │   ├── result-parser.ts              # Parses structured output from agent responses
-│   ├── task-decomposer.tasks.schema.json  # JSON schema for task-decomposer outputs
 │   └── types.ts                      # Agent-related type definitions (16 agent types)
 ├── budget/
 │   ├── cost-estimator.ts             # USD cost estimation (48 models across Claude, Gemini, OpenAI)

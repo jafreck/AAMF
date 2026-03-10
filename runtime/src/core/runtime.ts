@@ -13,6 +13,7 @@ import { MigrationResult } from '../agents/types.js';
 import { CostEstimator } from '../budget/cost-estimator.js';
 import { fileExists } from '../util/fs.js';
 import { formatDuration } from '../util/format.js';
+import { killAllActiveProcesses } from '../util/process.js';
 import { buildRuntimePaths } from './runtime-paths.js';
 import { generateAgentDefinitions } from '../agents/generator.js';
 
@@ -77,6 +78,7 @@ export class MigrationRuntime {
   private projectRoot!: string;
   private phase?: number;
   private runId!: string;
+  private orchestrator?: MigrationOrchestrator;
 
   private getActiveRuntimeSettings(): {
     agentDir: string;
@@ -145,15 +147,12 @@ export class MigrationRuntime {
     // 7. Generate agent definition files from shared templates
     const settings = this.getActiveRuntimeSettings();
     const absAgentDir = resolve(this.projectRoot, settings.agentDir);
-    const loreEnabled = !!(this.config.options.kbIndex?.enabled);
     const generated = await generateAgentDefinitions({
       backend: this.config.agentBackend.runtime,
       outputDir: absAgentDir,
-      vars: {
-        ...(loreEnabled ? { loreEnabled: 'true' } : {}),
-      },
+      vars: { loreEnabled: 'true' },
     });
-    this.logger.info(`Generated ${generated.length} agent definitions in ${settings.agentDir} (loreEnabled=${loreEnabled})`);
+    this.logger.info(`Generated ${generated.length} agent definitions in ${settings.agentDir} (loreEnabled=true)`);
 
     // 8. Validate agent files exist
     await this.validateAgentFiles();
@@ -194,7 +193,7 @@ export class MigrationRuntime {
     }
 
     // Create and run orchestrator
-    const orchestrator = new MigrationOrchestrator(
+    this.orchestrator = new MigrationOrchestrator(
       this.config,
       this.checkpoint,
       this.launcher,
@@ -205,7 +204,8 @@ export class MigrationRuntime {
       this.phase,
     );
 
-    const result = await orchestrator.run();
+    const result = await this.orchestrator.run();
+    this.orchestrator = undefined;
 
     // Flush any buffered log entries before returning
     await this.logger.flush();
@@ -390,6 +390,35 @@ export class MigrationRuntime {
   private setupShutdownHandlers(): void {
     const handler = async (signal: string) => {
       this.logger.warn(`Received ${signal} — shutting down gracefully`);
+
+      // Kill child processes FIRST — the orchestrator holds references to
+      // the KB server (clangd LSP) and embedding provider (Python/PyTorch).
+      // Without this, interrupted runs leave orphaned processes that each
+      // consume 2-4 GB of RAM, leading to 60+ GB memory spikes when
+      // multiple interrupted runs accumulate.
+      //
+      // Use a timeout so we don't hang if a child process is stuck
+      // (e.g. Python mid-model-download).  After 5s, force-exit.
+      const shutdownTimeout = setTimeout(() => {
+        process.exit(signal === 'SIGINT' ? 130 : 143);
+      }, 5_000);
+      shutdownTimeout.unref(); // don't prevent exit
+
+      try {
+        if (this.orchestrator) {
+          await this.orchestrator.shutdown();
+        }
+      } catch {
+        // Best-effort child process cleanup
+      }
+      // Kill any in-flight agent processes spawned via spawnWithTimeout.
+      // These are detached (own process group) so they survive parent exit
+      // unless explicitly killed.
+      try {
+        await killAllActiveProcesses();
+      } catch {
+        // Best-effort
+      }
       try {
         await this.logger.flush();
         await this.checkpoint.save(this.checkpoint.getState());
@@ -397,6 +426,7 @@ export class MigrationRuntime {
       } catch {
         // Best-effort save
       }
+      clearTimeout(shutdownTimeout);
       process.exit(signal === 'SIGINT' ? 130 : 143);
     };
     

@@ -89,7 +89,6 @@ async function writeMigrationConfig(): Promise<void> {
       language: 'rust',
       framework: 'stable',
       outputPath: outputDir,
-      testFramework: 'cargo-test',
       buildCommand: 'cargo build',
       testCommand: 'cargo test',
     },
@@ -441,20 +440,18 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
 });
 
 /**
- * E2E test variant with AAMF_USE_KB_INDEX=1.
+ * E2E test variant that verifies Phase 0 (KB Indexing) integration.
  *
- * Runs the full migration pipeline with KB indexing (Phase 0) enabled,
- * verifying that the phase completes and the KB database is created with
- * at least one row in the kb_meta table.
+ * Runs the full migration pipeline and verifies that Phase 0 completes
+ * and the KB database is created with at least one row in the kb_meta table.
  *
- * Gated behind both AAMF_E2E=1 and AAMF_USE_KB_INDEX=1.
+ * Gated behind AAMF_E2E=1.
  *
  * Run with:
- *   AAMF_E2E=1 AAMF_USE_KB_INDEX=1 npx vitest run tests/e2e-lz4-rust.test.ts
+ *   AAMF_E2E=1 npx vitest run tests/e2e-lz4-rust.test.ts
  */
-const runKbIndexE2E = runE2E && process.env.AAMF_USE_KB_INDEX === '1';
 
-describe.skipIf(!runKbIndexE2E)('E2E lz4 C → Rust Migration with KB Index', () => {
+describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration with KB Index', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
   const kbProgressDir = join(fixtureDir, '.aamf-kb', 'migration', 'lz4-to-rust-kb');
   const kbAamfRoot = join(fixtureDir, '.aamf-kb');
@@ -478,7 +475,6 @@ describe.skipIf(!runKbIndexE2E)('E2E lz4 C → Rust Migration with KB Index', ()
         language: 'rust',
         framework: 'stable',
         outputPath: kbOutputDir,
-        testFramework: 'cargo-test',
         buildCommand: 'cargo build',
         testCommand: 'cargo test',
       },
@@ -504,17 +500,13 @@ describe.skipIf(!runKbIndexE2E)('E2E lz4 C → Rust Migration with KB Index', ()
     await rm(kbAamfRoot, { recursive: true, force: true });
     await rm(kbOutputDir, { recursive: true, force: true });
 
-    // Enable KB indexing for this run
-    process.env['AAMF_USE_KB_INDEX'] = '1';
-
     const runtime = new MigrationRuntime();
     await runtime.initialize({ configPath: kbConfigPath, logLevel: 'info' });
     result = await runtime.run();
   }, 10_800_000); // 3-hour timeout
 
   afterAll(async () => {
-    // Restore env
-    delete process.env['AAMF_USE_KB_INDEX'];
+    // no cleanup needed
   });
 
   it('should have downloaded the lz4 library source', async () => {

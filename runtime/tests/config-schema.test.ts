@@ -20,7 +20,6 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.dryRun).toBe(false);
     expect(result.options.buildConcurrency).toBe(1);
     expect(result.options.executionMode).toBe('per-task');
-    expect(result.options.waveControl?.waveSize).toBe(3);
     expect(result.options.waveControl?.maxConvergenceIterations).toBe(3);
     expect(result.options.continueOnBlocked).toBe(true);
     expect(result.options.maxBlockedTasks).toBe(1);
@@ -98,19 +97,19 @@ describe('MigrationConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should reject parallelAgents > 10', () => {
+  it('should accept large maxParallelAgents values', () => {
     const result = MigrationConfigSchema.safeParse({
       ...validConfig,
       options: { maxParallelAgents: 20 },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('should accept full config', () => {
     const full = {
       ...validConfig,
       source: { ...validConfig.source, entryPoints: ['main.py'], excludePatterns: ['venv'] },
-      target: { ...validConfig.target, framework: 'express', testFramework: 'vitest' },
+      target: { ...validConfig.target, framework: 'express' },
       options: { maxParallelAgents: 5, tokenBudget: 1000000 },
       agentBackend: { runtime: 'copilot', cliCommand: 'copilot', model: 'gpt-4o', agentDir: '.github/agents', timeout: 300000 },
     };
@@ -394,21 +393,13 @@ describe('MigrationConfigSchema', () => {
         options: { executionMode: 'wave-barrier' },
       });
       expect(result.options.executionMode).toBe('wave-barrier');
-      expect(result.options.waveControl).toEqual({ waveSize: 3, maxConvergenceIterations: 3 });
+      expect(result.options.waveControl).toEqual({ maxConvergenceIterations: 3 });
     });
 
     it('should reject invalid executionMode', () => {
       const result = MigrationConfigSchema.safeParse({
         ...validConfig,
         options: { executionMode: 'serial-wave' },
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it('should reject waveControl.waveSize less than 1', () => {
-      const result = MigrationConfigSchema.safeParse({
-        ...validConfig,
-        options: { waveControl: { waveSize: 0 } },
       });
       expect(result.success).toBe(false);
     });
@@ -481,34 +472,18 @@ describe('MigrationConfigSchema', () => {
         expect(result.options.kbIndex).toBeUndefined();
       });
 
-      it('should default kbIndex.enabled to false when kbIndex is {}', () => {
+      it('should default kbIndex logLevel to debug when kbIndex is {}', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
           options: { kbIndex: {} },
         });
-        expect(result.options.kbIndex?.enabled).toBe(false);
-      });
-
-      it('should accept kbIndex: { enabled: true }', () => {
-        const result = MigrationConfigSchema.parse({
-          ...validConfig,
-          options: { kbIndex: { enabled: true } },
-        });
-        expect(result.options.kbIndex?.enabled).toBe(true);
-      });
-
-      it('should accept kbIndex: { enabled: false } explicitly', () => {
-        const result = MigrationConfigSchema.parse({
-          ...validConfig,
-          options: { kbIndex: { enabled: false } },
-        });
-        expect(result.options.kbIndex?.enabled).toBe(false);
+        expect(result.options.kbIndex?.logLevel).toBe('debug');
       });
 
       it('should leave embeddings undefined when omitted from kbIndex', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
-          options: { kbIndex: { enabled: true } },
+          options: { kbIndex: {} },
         });
         expect(result.options.kbIndex?.embeddings).toBeUndefined();
       });
@@ -516,7 +491,7 @@ describe('MigrationConfigSchema', () => {
       it('should default embeddings.enabled to false when embeddings is {}', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
-          options: { kbIndex: { enabled: true, embeddings: {} } },
+          options: { kbIndex: { embeddings: {} } },
         });
         expect(result.options.kbIndex?.embeddings?.enabled).toBe(false);
       });
@@ -526,7 +501,6 @@ describe('MigrationConfigSchema', () => {
           ...validConfig,
           options: {
             kbIndex: {
-              enabled: true,
               embeddings: { enabled: true, model: 'BAAI/bge-small-en-v1.5', pythonBin: '/usr/bin/python3.11' },
             },
           },
@@ -541,7 +515,7 @@ describe('MigrationConfigSchema', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
           options: {
-            kbIndex: { enabled: true, embeddings: { enabled: true } },
+            kbIndex: { embeddings: { enabled: true } },
           },
         });
         const emb = result.options.kbIndex?.embeddings;

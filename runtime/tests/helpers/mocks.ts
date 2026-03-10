@@ -95,7 +95,7 @@ export function createMockConfig(overrides?: any): MigrationConfig {
     options: {
       maxParallelAgents: 3,
       maxRetriesPerTask: 3,
-      maxLinesPerTask: 500,
+      maxLinesPerTask: 1000,
       dryRun: false,
       resume: false,
       invocationDelayMs: 0,

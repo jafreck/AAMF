@@ -23,7 +23,6 @@
     "language": "rust",
     "framework": "stable",
     "outputPath": "./tmp/protobuf-upb-rust-output",
-    "testFramework": "cargo-test",
     "buildCommand": "cargo build",
     "testCommand": "cargo test"
   },

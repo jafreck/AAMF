@@ -54,11 +54,11 @@ export interface MetricsAggregate {
   totalEscalationCostUsd: number;
   /** Routed invocations (tier != normal) that succeeded on first attempt. */
   retriesAvoidedByRouting: number;
-  /** Phase 4 execution strategy used for this run. */
+  /** Phase 5 execution strategy used for this run. */
   phase4ExecutionMode: 'per-task' | 'wave-barrier' | 'unknown';
-  /** Total duration of phase 4 in milliseconds. */
+  /** Total duration of phase 5 in milliseconds. */
   phase4DurationMs: number;
-  /** Number of phase 4 tasks marked completed. */
+  /** Number of phase 5 tasks marked completed. */
   completedPhase4Tasks: number;
   /** Number of migration waves executed in wave-barrier mode. */
   waveCount: number;
@@ -70,9 +70,9 @@ export interface MetricsAggregate {
   waveConvergenceFailures: number;
   /** Number of waves that hit the convergence iteration cap. */
   waveConvergenceLimitHits: number;
-  /** Number of build command invocations in phase 4. */
+  /** Number of build command invocations in phase 5. */
   buildCommandRuns: number;
-  /** Number of test command invocations in phase 4. */
+  /** Number of test command invocations in phase 5. */
   testCommandRuns: number;
   /** Number of format command invocations. */
   formatCommandRuns: number;
@@ -84,9 +84,9 @@ export interface MetricsAggregate {
   commandInfraRetries: number;
   /** Time spent in build/test recovery loops in milliseconds. */
   recoveryLoopTimeMs: number;
-  /** Build/test command invocations per completed phase 4 task. */
+  /** Build/test command invocations per completed phase 5 task. */
   buildTestInvocationsPerCompletedTask: number;
-  /** Retry invocations per completed phase 4 task. */
+  /** Retry invocations per completed phase 5 task. */
   retryVolumePerCompletedTask: number;
 }
 

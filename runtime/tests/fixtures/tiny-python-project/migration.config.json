@@ -9,8 +9,7 @@
   "target": {
     "language": "typescript",
     "framework": "none",
-    "outputPath": "./tmp/e2e-output",
-    "testFramework": "vitest"
+    "outputPath": "./tmp/e2e-output"
   },
   "options": {
     "qualityPolicy": "strict",

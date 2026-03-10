@@ -2,38 +2,38 @@ import { describe, it, expect } from 'vitest';
 import { PHASES, getPhase, getRemainingPhases } from '../src/core/phase-registry.js';
 
 describe('Phase Registry', () => {
-  it('should have exactly 9 entries', () => {
-    expect(PHASES).toHaveLength(9);
+  it('should have exactly 10 entries', () => {
+    expect(PHASES).toHaveLength(10);
   });
 
-  it('should contain phases with IDs 0–7 plus 8', () => {
+  it('should contain phases with IDs 0–9', () => {
     const ids = PHASES.map(p => p.id).sort((a, b) => a - b);
-    expect(ids).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(ids).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
-  it('should mark phases 0–4 as critical', () => {
-    for (const id of [0, 1, 2, 3, 4]) {
+  it('should mark phases 0–5 as critical', () => {
+    for (const id of [0, 1, 2, 3, 4, 5]) {
       const phase = PHASES.find(p => p.id === id);
       expect(phase?.critical).toBe(true);
     }
   });
 
-  it('should mark phases 5–8 as non-critical', () => {
-    for (const id of [5, 6, 7, 8]) {
+  it('should mark phases 6–9 as non-critical', () => {
+    for (const id of [6, 7, 8, 9]) {
       const phase = PHASES.find(p => p.id === id);
       expect(phase?.critical).toBe(false);
     }
   });
 
-  it('should allow parallelism for phase 6 only', () => {
-    expect(PHASES.find(p => p.id === 2)?.parallel).toBe(false);
-    expect(PHASES.find(p => p.id === 6)?.parallel).toBe(true);
+  it('should allow parallelism for phase 7 only', () => {
+    expect(PHASES.find(p => p.id === 3)?.parallel).toBe(false);
+    expect(PHASES.find(p => p.id === 7)?.parallel).toBe(true);
   });
 
-  it('should return Phase 4 via getPhase(4)', () => {
-    const phase = getPhase(4);
+  it('should return Phase 5 via getPhase(5)', () => {
+    const phase = getPhase(5);
     expect(phase).toBeDefined();
-    expect(phase?.id).toBe(4);
+    expect(phase?.id).toBe(5);
     expect(phase?.name).toBe('Iterative Migration');
     expect(phase?.description).toContain('per-task or wave-barrier mode');
     expect(phase?.agents).toContain('parity-failure-resolver');
@@ -44,11 +44,11 @@ describe('Phase Registry', () => {
     expect(getPhase(99)).toBeUndefined();
   });
 
-  it('should return phases 5, 6, 7, 8 from getRemainingPhases(5)', () => {
-    const remaining = getRemainingPhases(5);
+  it('should return phases 6, 7, 8, 9 from getRemainingPhases(6)', () => {
+    const remaining = getRemainingPhases(6);
     expect(remaining).toHaveLength(4);
     const ids = remaining.map(p => p.id).sort((a, b) => a - b);
-    expect(ids).toEqual([5, 6, 7, 8]);
+    expect(ids).toEqual([6, 7, 8, 9]);
   });
 
   it('should have non-empty name and description for all phases', () => {
@@ -66,9 +66,9 @@ describe('Phase Registry', () => {
       expect(phase?.name).toBe('KB Indexing');
     });
 
-    it('should be optional and critical', () => {
+    it('should be required and critical', () => {
       const phase = getPhase(0);
-      expect(phase?.optional).toBe(true);
+      expect(phase?.optional).toBeUndefined();
       expect(phase?.critical).toBe(true);
     });
 
@@ -103,10 +103,10 @@ describe('Phase Registry', () => {
       expect(phase?.agents).toContain('idiomatic-refactorer');
     });
 
-    it('should appear before Phase 7 (Completion) in the PHASES array', () => {
+    it('should appear before Phase 9 (Completion) in the PHASES array', () => {
       const phase8Index = PHASES.findIndex(p => p.id === 8);
-      const phase7Index = PHASES.findIndex(p => p.id === 7);
-      expect(phase8Index).toBeLessThan(phase7Index);
+      const phase9Index = PHASES.findIndex(p => p.id === 9);
+      expect(phase8Index).toBeLessThan(phase9Index);
     });
   });
 });

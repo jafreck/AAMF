@@ -17,7 +17,6 @@ export type AgentName =
   | 'impact-assessor'
   | 'knowledge-builder'
   | 'migration-planner'
-  | 'task-decomposer'
   | 'adjudicator'
   | 'code-migrator'
   | 'parity-verifier'
@@ -200,8 +199,8 @@ export interface AgentContext {
 
 /**
  * Execution-topology context passed to planning agents (`migration-planner`,
- * `task-decomposer`) so they can tailor task granularity, grouping, and
- * dependency design to the actual Phase 4 execution mode.
+ * `migration-planner`) so they can tailor task granularity, grouping, and
+ * dependency design to the actual Phase 5 execution mode.
  *
  * Agents that receive this in their `payload.executionStrategy` can, for
  * example, co-locate related files into the same wave-friendly grouping,
@@ -209,7 +208,7 @@ export interface AgentContext {
  * calibrate task complexity against the available recovery budget.
  */
 export interface ExecutionStrategy {
-  /** Phase 4 execution mode: `'per-task'` (serial) or `'wave-barrier'` (concurrent waves). */
+  /** Phase 5 execution mode: `'per-task'` (serial) or `'wave-barrier'` (concurrent waves). */
   executionMode: 'per-task' | 'wave-barrier';
 
   /** Maximum number of agent subprocesses running in parallel. */
@@ -217,8 +216,6 @@ export interface ExecutionStrategy {
 
   /** Wave-barrier settings (only meaningful when `executionMode === 'wave-barrier'`). */
   waveControl: {
-    /** Number of tasks that run concurrently within a single wave. */
-    waveSize: number;
     /** Maximum build/test convergence iterations per wave before giving up. */
     maxConvergenceIterations: number;
   };
@@ -251,7 +248,7 @@ export interface ExecutionStrategy {
  * Location details describing which wave/task/check failed and needs remediation.
  */
 export interface RemediationTargetContext {
-  /** Phase 4 wave number when the failure occurred. */
+  /** Phase 5 wave number when the failure occurred. */
   wave?: number;
   /** Task identifier associated with the failure. */
   taskId?: string;
@@ -324,7 +321,7 @@ export interface PriorRecoveryAttempt {
 
 // ─── Terminal Exhaustion Contracts ────────────────────────────────────────────
 
-/** Canonical terminal exhaustion reason codes for Phase 4 fail-fast outcomes. */
+/** Canonical terminal exhaustion reason codes for Phase 5 fail-fast outcomes. */
 export type TerminalReasonCode =
   | 'wave-convergence-exhausted'
   | 'task-retries-exhausted'
@@ -336,7 +333,7 @@ export type TerminalReasonCode =
 /**
  * A discrete E2E test suite definition extracted from the e2e-test-crafter's
  * plan output.  Each brief describes one test suite that will be handed to
- * an independent `test-writer` agent invocation during Phase 6 fan-out.
+ * an independent `test-writer` agent invocation during Phase 7 fan-out.
  */
 export interface E2eSuiteBrief {
   /** Unique suite identifier, e.g. `"suite-001"`. */
@@ -403,24 +400,74 @@ export interface MigrationTask {
   /** Parity check identifiers that apply to this task. */
   parityChecks: string[];
 
-  /** Optional line range in the source file to scope the migration. */
+  /** Structured symbol data for this task (name, kind, file, line range). */
+  symbols?: Array<{
+    name: string;
+    kind: string;
+    file: string;
+    startLine: number;
+    endLine: number;
+  }>;
+
+  /** Total non-overlapping lines covered by symbols in this task. */
+  totalLines?: number;
+
+  /** Optional line range in the source file to scope the migration.
+   *  For single-file tasks this is the exact symbol range.
+   *  For multi-file tasks this is the primary file's range (see fileRanges). */
   lineRange?: { start: number; end: number };
+
+  /** Per-file line ranges for multi-file tasks. Maps source file path to line range. */
+  fileRanges?: Record<string, { start: number; end: number }>;
+
+  /**
+   * Compilation unit this task belongs to.  Set by the task-graph-builder when
+   * a `compilation-units.json` artifact is available from the migration-planner.
+   * Build checks only run at compilation-unit boundaries.
+   */
+  compilationUnit?: string;
+}
+
+// ─── Compilation Units ──────────────────────────────────────────────────────
+
+/**
+ * A target compilation unit (crate, package, project) that groups related
+ * source files into a buildable boundary.  Emitted by `migration-planner`
+ * in `planning/compilation-units.json`.
+ *
+ * The runtime validates cross-unit dependencies against the Lore symbol graph
+ * and only runs build checks when all tasks in a unit are complete.
+ */
+export interface CompilationUnit {
+  /** Stable identifier, e.g. `"core"`, `"dict-builder"`. */
+  id: string;
+
+  /** Human-readable name for the compilation unit. */
+  name: string;
+
+  /** Target path for the compilation unit (e.g. `"crates/zstd-core"`). */
+  targetPath: string;
+
+  /** Source files that belong to this unit. */
+  sourceFiles: string[];
+
+  /** IDs of other compilation units this one depends on. */
+  dependsOn: string[];
+
+  /** Agent's rationale for this grouping. */
+  rationale?: string;
 }
 
 // ─── Module Groups ──────────────────────────────────────────────────────────
 
 /**
+ * @deprecated Use {@link CompilationUnit} instead.
  * A logical grouping of related source modules, emitted by `migration-planner`
  * in `planning/groups.json`.
- *
- * Each group is handed to an independent `task-decomposer` agent that reads
- * `planning/strategy.md` plus only the group's analysis files, keeping
- * individual context windows small and enabling full parallelism.
  */
 export interface ModuleGroup {
   /**
    * Stable, filesystem-safe identifier (e.g. `"core"`, `"api"`, `"utils-1"`).
-   * Used as the suffix in `planning/tasks-<id>.json`.
    */
   id: string;
 
@@ -429,8 +476,7 @@ export interface ModuleGroup {
 
   /**
    * Absolute paths to the knowledge-base analysis files that are relevant to
-   * this group.  The `task-decomposer` agent receives these as its
-   * `inputFiles`, alongside `planning/strategy.md`.
+   * this group.
    */
   analysisFiles: string[];
 

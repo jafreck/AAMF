@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm, realpath } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
-import { spawnWithTimeout, resolveLoginPath, killProcessTree } from '../src/util/process.js';
+import { spawnWithTimeout, resolveLoginPath, killProcessTree, killAllActiveProcesses } from '../src/util/process.js';
 
 describe('spawnWithTimeout', () => {
   let tempDir: string;
@@ -123,6 +123,33 @@ describe('spawnWithTimeout', () => {
       expect(result.stdout).toContain('out1');
       expect(result.stdout).toContain('out2');
       expect(result.stderr).toContain('err1');
+    });
+  });
+
+  describe('killAllActiveProcesses', () => {
+    it('should kill a long-running child process', async () => {
+      // Start a process that would run for 60 seconds
+      const promise = spawnWithTimeout('node', ['-e', 'setTimeout(() => {}, 60000)']);
+      // Give it a moment to spawn
+      await new Promise(r => setTimeout(r, 200));
+      // Kill all active — this should terminate the child
+      await killAllActiveProcesses();
+      const result = await promise;
+      expect(result.killed).toBe(false); // killed flag is set by timeout, not external kill
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    it('should be a no-op when no processes are active', async () => {
+      await expect(killAllActiveProcesses()).resolves.toBeUndefined();
+    });
+
+    it('should clear the registry after killing', async () => {
+      const promise = spawnWithTimeout('node', ['-e', 'setTimeout(() => {}, 60000)']);
+      await new Promise(r => setTimeout(r, 200));
+      await killAllActiveProcesses();
+      await promise;
+      // Second call should be a no-op (registry was cleared)
+      await expect(killAllActiveProcesses()).resolves.toBeUndefined();
     });
   });
 });

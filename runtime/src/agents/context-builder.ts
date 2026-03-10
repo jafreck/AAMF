@@ -1,13 +1,8 @@
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { AgentName, AgentContext } from './types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { writeJson, ensureDir } from '../util/fs.js';
 import type { RuntimePaths } from '../core/runtime-paths.js';
-
-const TASK_DECOMPOSER_SCHEMA_PATH = fileURLToPath(
-  new URL('./task-decomposer.tasks.schema.json', import.meta.url),
-);
 
 /** Options for building an agent context file. */
 export interface ContextBuildOptions {
@@ -157,37 +152,27 @@ export class ContextBuilder {
 
     switch (agent) {
       case 'impact-assessor':
-        return { inputFiles: [src], outputPath: impactAssessment };
+        return {
+          inputFiles: [src],
+          outputPath: impactAssessment,
+          agentPayload: { dependencySummaryPath: this.paths.dependencySummaryFile },
+        };
 
       case 'knowledge-builder':
         return {
-          inputFiles: [src, impactAssessment],
+          inputFiles: [src],
           outputPath: kbDir,
+          agentPayload: { dependencySummaryPath: this.paths.dependencySummaryFile },
         };
 
-      case 'migration-planner':
+      case 'migration-planner': {
+        const planningDir = join(this.progressDir, 'artifacts', 'planning');
         return {
-          inputFiles: [join(kbDir, 'index.md'), impactAssessment],
-          outputPath: join(this.progressDir, 'artifacts', 'planning'),
+          inputFiles: [join(kbDir, 'index.md'), impactAssessment, this.paths.dependencySummaryFile],
+          outputPath: planningDir,
           agentPayload: {
             executionStrategy: this.buildExecutionStrategy(),
-          },
-        };
-
-      case 'task-decomposer': {
-        const strategyFile = String(payload?.strategyFile ?? join(this.progressDir, 'artifacts', 'planning', 'strategy.md'));
-        const analysisFiles = Array.isArray(payload?.analysisFiles)
-          ? (payload.analysisFiles as string[])
-          : [];
-        return {
-          inputFiles: [TASK_DECOMPOSER_SCHEMA_PATH, strategyFile, ...analysisFiles],
-          outputPath: join(this.progressDir, 'artifacts', 'planning', `tasks-${taskId ?? 'unknown'}.json`),
-          agentPayload: {
-            groupId: payload?.groupId,
-            groupName: payload?.groupName,
-            taskSchemaPath: TASK_DECOMPOSER_SCHEMA_PATH,
-            maxLinesPerTask: this.config.options.maxLinesPerTask,
-            executionStrategy: this.buildExecutionStrategy(),
+            dependencySummaryPath: this.paths.dependencySummaryFile,
           },
         };
       }
@@ -202,10 +187,11 @@ export class ContextBuilder {
         };
 
       case 'code-migrator': {
+        // kbEntry is a structured reference string (e.g. "kb/file#L10-L50"),
+        // not a file path — pass it in the payload, not inputFiles.
         return {
           inputFiles: [
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
-            ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
           ],
           outputPath: out,
           agentPayload: {
@@ -233,7 +219,7 @@ export class ContextBuilder {
         };
 
       case 'test-writer': {
-        // Phase 6 per-suite E2E path: payload carries a full suite brief
+        // Phase 7 per-suite E2E path: payload carries a full suite brief
         if (this.isRecord(payload?.e2eSuiteBrief)) {
           const brief = payload!.e2eSuiteBrief as Record<string, unknown>;
           const targetFiles = Array.isArray(brief.targetFiles) ? (brief.targetFiles as string[]) : [];
@@ -244,7 +230,7 @@ export class ContextBuilder {
             agentPayload: { taskId, testType: 'e2e', e2eSuiteBrief: brief },
           };
         }
-        // Phase 4 unit-test path (unchanged)
+        // Phase 5 unit-test path (unchanged)
         return {
           inputFiles: [
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
@@ -255,6 +241,7 @@ export class ContextBuilder {
           agentPayload: {
             taskId,
             testType: payload?.testType ?? 'unit',
+            ...(this.config.target.testCommand ? { testCommand: this.config.target.testCommand } : {}),
             ...(taskScope ? { taskScope } : {}),
           },
         };
@@ -332,16 +319,15 @@ export class ContextBuilder {
   /**
    * Build the execution-strategy descriptor from the current config.
    * Injected into the planning agents' payload so they can reason about
-   * how Phase 4 will execute their task graph.
+   * how Phase 5 will execute their task graph.
    */
   private buildExecutionStrategy(): import('./types.js').ExecutionStrategy {
     const opts = this.config.options;
-    const waveControl = opts.waveControl ?? { waveSize: 3, maxConvergenceIterations: 3 };
+    const waveControl = opts.waveControl ?? { maxConvergenceIterations: 3 };
     return {
       executionMode: opts.executionMode ?? 'per-task',
       maxParallelAgents: opts.maxParallelAgents,
       waveControl: {
-        waveSize: waveControl.waveSize,
         maxConvergenceIterations: waveControl.maxConvergenceIterations,
       },
       maxRetriesPerTask: opts.maxRetriesPerTask,

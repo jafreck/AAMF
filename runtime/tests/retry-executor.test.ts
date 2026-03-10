@@ -26,7 +26,7 @@ describe('RetryExecutor', () => {
       agent: 'code-migrator',
       contextFile: '/tmp/context.json',
       progressDir: '/tmp/progress',
-      phase: 4,
+      phase: 5,
       taskId: 'task-001',
       ...overrides,
     };
@@ -220,7 +220,7 @@ describe('RetryExecutor', () => {
         agent: 'parity-failure-resolver',
         contextFile: '/tmp/recovery-ctx.json',
         progressDir: '/tmp/progress',
-        phase: 4,
+        phase: 5,
         taskId: 'task-001',
       };
 
@@ -279,7 +279,7 @@ describe('RetryExecutor', () => {
         agent: 'parity-failure-resolver',
         contextFile: '/tmp/recovery-ctx.json',
         progressDir: '/tmp/progress',
-        phase: 4,
+        phase: 5,
         taskId: 'task-001',
       };
 
@@ -313,7 +313,7 @@ describe('RetryExecutor', () => {
         agent: 'parity-failure-resolver',
         contextFile: '/tmp/recovery.json',
         progressDir: '/tmp/progress',
-        phase: 4,
+        phase: 5,
         taskId: 'task-001',
       };
 
@@ -468,7 +468,7 @@ describe('RetryExecutor', () => {
         agent: 'parity-failure-resolver',
         contextFile: '/tmp/recovery.json',
         progressDir: '/tmp/progress',
-        phase: 4,
+        phase: 5,
         taskId: 'task-001',
       };
 

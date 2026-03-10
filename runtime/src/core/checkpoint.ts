@@ -16,18 +16,18 @@ export interface Phase4TaskSubstepState {
   lastSuccessfulStep?: string;
 }
 
-export interface Phase4Cursor {
+export interface Phase5Cursor {
   tasks: Record<string, Phase4TaskSubstepState>;
 }
 
-export interface Phase5Cursor {
+export interface Phase6Cursor {
   iteration: number;
   fixIndex: number;
   lastSuccessfulStep?: string;
   hadUnresolvedFixes?: boolean;
 }
 
-export interface Phase6Cursor {
+export interface Phase7Cursor {
   completedAgents: string[];
   completedSuites?: string[];
   lastSuccessfulStep?: string;
@@ -41,9 +41,9 @@ export interface Phase8Cursor {
 }
 
 export interface PhaseCursorMap {
-  '4'?: Phase4Cursor;
   '5'?: Phase5Cursor;
   '6'?: Phase6Cursor;
+  '7'?: Phase7Cursor;
   '8'?: Phase8Cursor;
 }
 
@@ -69,13 +69,14 @@ export interface CheckpointState {
   completedTaskDurationsMs: number[];       // wall-clock ms per completed task, in order
   /** True once the migration-planner (step 3a) finishes successfully. */
   phase3aComplete?: boolean;
-  /** IDs of module groups whose task-decomposer has completed successfully. */
+  /** True once the target-repo scaffold has been generated from compilation units. */
+  scaffoldComplete?: boolean;
   completedPhase3Groups?: string[];
   /** Number of JSONL metric records written; used to skip on resume. */
   metricsCount: number;
   /** Source fingerprint from last successful Phase 0 build; used to skip re-indexing on resume. */
   phase0Fingerprint?: string;
-  /** Terminal Phase 4 exhaustion metadata, when execution stopped fail-fast. */
+  /** Terminal Phase 5 exhaustion metadata, when execution stopped fail-fast. */
   terminalExhaustion?: TerminalExhaustionState;
   /** Persisted waiver records for adjudicated false-positive findings. */
   adjudicationWaivers?: AdjudicationWaiverRecord[];
@@ -229,12 +230,12 @@ export class CheckpointManager {
     // Remove from blocked if it was there
     state.blockedTasks = state.blockedTasks.filter(id => id !== taskId);
     state.phaseCursors ??= {};
-    state.phaseCursors['4'] ??= { tasks: {} };
-    state.phaseCursors['4'].tasks[taskId] ??= { completedSubsteps: [] };
-    if (!state.phaseCursors['4'].tasks[taskId].completedSubsteps.includes('completed')) {
-      state.phaseCursors['4'].tasks[taskId].completedSubsteps.push('completed');
+    state.phaseCursors['5'] ??= { tasks: {} };
+    state.phaseCursors['5'].tasks[taskId] ??= { completedSubsteps: [] };
+    if (!state.phaseCursors['5'].tasks[taskId].completedSubsteps.includes('completed')) {
+      state.phaseCursors['5'].tasks[taskId].completedSubsteps.push('completed');
     }
-    state.phaseCursors['4'].tasks[taskId].lastSuccessfulStep = 'completed';
+    state.phaseCursors['5'].tasks[taskId].lastSuccessfulStep = 'completed';
     await this.save(state);
   }
 
@@ -290,7 +291,7 @@ export class CheckpointManager {
     await this.save(state);
   }
 
-  /** Persist terminal exhaustion metadata for fail-fast Phase 4 exits. */
+  /** Persist terminal exhaustion metadata for fail-fast Phase 5 exits. */
   async setTerminalExhaustion(terminalExhaustion: TerminalExhaustionState): Promise<void> {
     const state = this.getState();
     state.terminalExhaustion = terminalExhaustion;
@@ -298,9 +299,8 @@ export class CheckpointManager {
   }
 
   /**
-   * Mark Phase 3 step 3a (migration-planner) as complete.
-   * Subsequent resumes will skip re-running the migration-planner and jump
-   * directly to step 3b (task-decomposer fan-out).
+   * Mark Phase 4 migration strategy (migration-planner) as complete.
+   * Subsequent resumes will skip re-running the migration-planner.
    */
   async completePhase3a(): Promise<void> {
     const state = this.getState();
@@ -310,10 +310,16 @@ export class CheckpointManager {
   }
 
   /**
-   * Record that the task-decomposer for a specific module group finished
-   * successfully.  On resume, completed groups are skipped so only failed
-   * ones are retried.
+   * Mark the target-repo scaffold as generated.
+   * Subsequent resumes will skip re-running scaffold generation.
    */
+  async completeScaffold(): Promise<void> {
+    const state = this.getState();
+    state.scaffoldComplete = true;
+    await this.save(state);
+  }
+
+  /** Record that a specific module group finished successfully. On resume, completed groups are skipped. */
   async completePhase3Group(groupId: string): Promise<void> {
     const state = this.getState();
     state.completedPhase3Groups ??= [];
@@ -362,6 +368,7 @@ export class CheckpointManager {
       cumulativeDurationMs: 0,
       completedTaskDurationsMs: [],
       phase3aComplete: false,
+      scaffoldComplete: false,
       completedPhase3Groups: [],
       metricsCount: 0,
       terminalExhaustion: undefined,
@@ -375,6 +382,7 @@ export class CheckpointManager {
     state.cumulativeDurationMs ??= 0;
     state.completedTaskDurationsMs ??= [];
     state.phase3aComplete ??= false;
+    state.scaffoldComplete ??= false;
     state.completedPhase3Groups ??= [];
     state.metricsCount ??= 0;
     state.phase0Fingerprint ??= undefined;
@@ -382,13 +390,13 @@ export class CheckpointManager {
     state.adjudicationWaivers ??= [];
     state.adjudicationEvents ??= [];
     state.phaseCursors ??= {};
-    state.phaseCursors['4'] ??= { tasks: {} };
-    state.phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };
-    state.phaseCursors['6'] ??= { completedAgents: [] };
+    state.phaseCursors['5'] ??= { tasks: {} };
+    state.phaseCursors['6'] ??= { iteration: 0, fixIndex: 0 };
+    state.phaseCursors['7'] ??= { completedAgents: [] };
     state.phaseCursors['8'] ??= { iteration: 0, issueIndex: 0 };
-    state.phaseCursors['4'].tasks ??= {};
-    state.phaseCursors['6'].completedAgents ??= [];
-    state.phaseCursors['6'].completedSuites ??= [];
+    state.phaseCursors['5'].tasks ??= {};
+    state.phaseCursors['7'].completedAgents ??= [];
+    state.phaseCursors['7'].completedSuites ??= [];
   }
 
   private async resolveCheckpointReadPath(): Promise<string | undefined> {

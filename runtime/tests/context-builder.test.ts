@@ -51,6 +51,7 @@ describe('ContextBuilder', () => {
       kbDbFile: join(root, 'kb.db'),
       knowledgeBaseDir: join(root, 'knowledge-base'),
       impactAssessmentFile: join(artifactsDir, 'impact-assessment.md'),
+      dependencySummaryFile: join(artifactsPlanningDir, 'dependency-summary.json'),
       migrationPlanFile: join(artifactsPlanningDir, 'migration-plan.md'),
       competingStrategiesFile: join(artifactsPlanningDir, 'competing-strategies.md'),
       finalParityReportFile: join(artifactsParityDir, 'final-parity-report.md'),
@@ -75,7 +76,7 @@ describe('ContextBuilder', () => {
 
   describe('Context File Creation', () => {
     it('should write context JSON to the contexts directory', async () => {
-      const contextPath = await builder.buildContext('impact-assessor', 1);
+      const contextPath = await builder.buildContext('impact-assessor', 2);
 
       expect(contextPath).toContain('contexts');
       expect(await fileExists(contextPath)).toBe(true);
@@ -85,12 +86,12 @@ describe('ContextBuilder', () => {
     });
 
     it('should include correct base fields in context', async () => {
-      const contextPath = await builder.buildContext('impact-assessor', 1);
+      const contextPath = await builder.buildContext('impact-assessor', 2);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.agent).toBe('impact-assessor');
       expect(context.projectName).toBe('test-project');
-      expect(context.phase).toBe(1);
+      expect(context.phase).toBe(2);
       expect(context.config.source.path).toBe('/tmp/source');
       expect(context.config.source.language).toBe('python');
       expect(context.config.target.language).toBe('typescript');
@@ -110,35 +111,36 @@ describe('ContextBuilder', () => {
 
   describe('Per-Agent File Routing', () => {
     it('should route impact-assessor to source path and impact-assessment.md', async () => {
-      const contextPath = await builder.buildContext('impact-assessor', 1);
+      const contextPath = await builder.buildContext('impact-assessor', 2);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/source');
       expect(context.outputPath).toContain('impact-assessment.md');
+      expect(context.payload?.dependencySummaryPath).toContain('dependency-summary.json');
     });
 
-    it('should route knowledge-builder to source + impact assessment, output to KB dir', async () => {
-      const contextPath = await builder.buildContext('knowledge-builder', 2);
+    it('should route knowledge-builder to source, output to KB dir', async () => {
+      const contextPath = await builder.buildContext('knowledge-builder', 3);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/source');
-      expect(context.inputFiles.some((f: string) => f.includes('impact-assessment.md'))).toBe(true);
       expect(context.outputPath).toContain('knowledge-base');
+      expect(context.payload?.dependencySummaryPath).toContain('dependency-summary.json');
     });
 
     it('should route migration-planner to KB index + impact assessment', async () => {
-      const contextPath = await builder.buildContext('migration-planner', 3);
+      const contextPath = await builder.buildContext('migration-planner', 4);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles.some((f: string) => f.includes('index.md'))).toBe(true);
       expect(context.inputFiles.some((f: string) => f.includes('impact-assessment.md'))).toBe(true);
-      // Output path is now the planning/ directory (migration-planner emits groups.json +
-      // strategy.md; task-decomposers emit tasks-<group>.json into the same directory)
+      // Output path is now the planning/ directory (migration-planner emits
+      // strategy.md; the runtime builds the task graph deterministically)
       expect(context.outputPath).toContain('planning');
     });
 
     it('should include executionStrategy in migration-planner payload with default config', async () => {
-      const contextPath = await builder.buildContext('migration-planner', 3);
+      const contextPath = await builder.buildContext('migration-planner', 4);
       const context = await readJson<AgentContext>(contextPath);
       const strategy = context.payload?.executionStrategy as Record<string, unknown>;
 
@@ -147,7 +149,7 @@ describe('ContextBuilder', () => {
       expect(strategy.maxParallelAgents).toBe(3);
       expect(strategy.maxRetriesPerTask).toBe(3);
       expect(strategy.requiresNonOverlappingTargets).toBe(true);
-      expect(strategy.waveControl).toEqual({ waveSize: 3, maxConvergenceIterations: 3 });
+      expect(strategy.waveControl).toEqual({ maxConvergenceIterations: 3 });
       expect(strategy.buildCommand).toBeUndefined();
       expect(strategy.testCommand).toBeUndefined();
     });
@@ -174,19 +176,19 @@ describe('ContextBuilder', () => {
           keepArtifacts: false,
           qualityPolicy: 'strict' as const,
           executionMode: 'wave-barrier' as const,
-          waveControl: { waveSize: 4, maxConvergenceIterations: 5 },
+          waveControl: { maxConvergenceIterations: 5 },
           git: { enabled: false, autoInit: true, commitByAgent: true, commitPerTask: true, authorName: 'AAMF Migration Bot', authorEmail: 'aamf@local.invalid' },
         },
       });
       const b = new ContextBuilder(config, progressDir, paths);
-      const contextPath = await b.buildContext('migration-planner', 3);
+      const contextPath = await b.buildContext('migration-planner', 4);
       const context = await readJson<AgentContext>(contextPath);
       const strategy = context.payload?.executionStrategy as Record<string, unknown>;
 
       expect(strategy.executionMode).toBe('wave-barrier');
       expect(strategy.maxParallelAgents).toBe(5);
       expect(strategy.maxRetriesPerTask).toBe(2);
-      expect(strategy.waveControl).toEqual({ waveSize: 4, maxConvergenceIterations: 5 });
+      expect(strategy.waveControl).toEqual({ maxConvergenceIterations: 5 });
       expect(strategy.buildCommand).toBe('cargo build');
       expect(strategy.testCommand).toBe('cargo test');
       expect(strategy.requiresNonOverlappingTargets).toBe(true);
@@ -210,41 +212,6 @@ describe('ContextBuilder', () => {
       expect(context.inputFiles).toEqual([]);
       expect(context.payload?.decisionType).toBe('migration-strategy');
       expect(context.outputPath).toContain('adjudication-result.md');
-    });
-
-    it('should pass task-decomposer schema path in both inputFiles and payload', async () => {
-      const contextPath = await builder.buildContext('task-decomposer', 3, 'core', {
-        strategyFile: '/tmp/strategy.md',
-        analysisFiles: ['/tmp/kb-core.md'],
-        groupId: 'core',
-        groupName: 'Core',
-      });
-      const context = await readJson<AgentContext>(contextPath);
-
-      const schemaFile = context.inputFiles.find((f: string) =>
-        f.endsWith('/runtime/src/agents/task-decomposer.tasks.schema.json'),
-      );
-      expect(schemaFile).toBeDefined();
-      expect(context.payload?.taskSchemaPath).toBe(schemaFile);
-      expect(context.payload?.maxLinesPerTask).toBe(500);
-      expect(context.inputFiles).toContain('/tmp/strategy.md');
-      expect(context.inputFiles).toContain('/tmp/kb-core.md');
-    });
-
-    it('should include executionStrategy in task-decomposer payload', async () => {
-      const contextPath = await builder.buildContext('task-decomposer', 3, 'core', {
-        strategyFile: '/tmp/strategy.md',
-        analysisFiles: ['/tmp/kb-core.md'],
-        groupId: 'core',
-        groupName: 'Core',
-      });
-      const context = await readJson<AgentContext>(contextPath);
-      const strategy = context.payload?.executionStrategy as Record<string, unknown>;
-
-      expect(strategy).toBeDefined();
-      expect(strategy.executionMode).toBe('per-task');
-      expect(strategy.maxParallelAgents).toBe(3);
-      expect(strategy.requiresNonOverlappingTargets).toBe(true);
     });
 
     it('should route code-migrator with task-specific source/target files', async () => {
@@ -329,8 +296,8 @@ describe('ContextBuilder', () => {
       });
       const context = await readJson<AgentContext>(contextPath);
 
-      // Should only have the migration plan and KB entry
-      expect(context.inputFiles.length).toBe(2);
+      // Should only have the migration plan (kbEntry is in payload, not inputFiles)
+      expect(context.inputFiles.length).toBe(1);
     });
 
     it('should prioritize nested remediationContext payload for code-migrator when both shapes are provided', async () => {
@@ -455,7 +422,7 @@ describe('ContextBuilder', () => {
       expect(context.payload?.testType).toBe('unit');
     });
 
-    it('should route Phase 6 per-suite test-writer with e2eSuiteBrief payload', async () => {
+    it('should route Phase 7 per-suite test-writer with e2eSuiteBrief payload', async () => {
       const suiteBrief = {
         id: 'suite-001',
         name: 'Auth E2E',
@@ -504,7 +471,7 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe('/tmp/target');
     });
 
-    it('should not change Phase 4 test-writer context when e2eSuiteBrief is absent', async () => {
+    it('should not change Phase 5 test-writer context when e2eSuiteBrief is absent', async () => {
       const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFile: 'src/auth.ts',
         kbEntry: 'kb/auth.md',
@@ -536,7 +503,7 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe('/tmp/target/tests/e2e/bad');
     });
 
-    it('should fall through to Phase 4 path when e2eSuiteBrief is not a record', async () => {
+    it('should fall through to Phase 5 path when e2eSuiteBrief is not a record', async () => {
       const contextPath = await builder.buildContext('test-writer', 6, 'suite-str', {
         e2eSuiteBrief: 'not-an-object',
         targetFile: 'src/payments.ts',
@@ -825,7 +792,7 @@ describe('ContextBuilder', () => {
       const config = createMockConfig({ guidance: [] });
       const emptyGuidanceBuilder = new ContextBuilder(config, progressDir, paths);
 
-      const contextPath = await emptyGuidanceBuilder.buildContext('migration-planner', 3);
+      const contextPath = await emptyGuidanceBuilder.buildContext('migration-planner', 4);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.guidance).toBeUndefined();

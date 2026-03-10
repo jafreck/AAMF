@@ -96,7 +96,6 @@ async function writeMigrationConfig(): Promise<void> {
       language: 'rust',
       framework: 'stable',
       outputPath: outputDir,
-      testFramework: 'cargo-test',
       buildCommand: 'cargo build',
       testCommand: 'cargo test',
     },
@@ -107,7 +106,6 @@ async function writeMigrationConfig(): Promise<void> {
       tokenBudget: 10_000_000,
       executionMode: 'wave-barrier',
       waveControl: {
-        waveSize: 3,
         maxConvergenceIterations: 3,
       },
       dryRun: false,

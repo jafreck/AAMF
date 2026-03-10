@@ -115,7 +115,7 @@ describe('TaskQueue.selectNonOverlappingBatch', () => {
     expect(batch.map(t => t.id)).toEqual(['a', 'c']);
   });
 
-  it('should skip tasks that overlap target directories', () => {
+  it('should allow tasks in the same directory with different files', () => {
     const tasks = [
       { ...makeTask('a'), targetFiles: ['src/one.ts'] },
       { ...makeTask('b'), targetFiles: ['src/two.ts'] },
@@ -123,6 +123,85 @@ describe('TaskQueue.selectNonOverlappingBatch', () => {
     ];
 
     const batch = TaskQueue.selectNonOverlappingBatch(tasks, 3);
-    expect(batch.map(t => t.id)).toEqual(['a', 'c']);
+    expect(batch.map(t => t.id)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('TaskQueue.executePipelined', () => {
+  it('should execute all tasks respecting concurrency limit', async () => {
+    const tasks = [
+      { ...makeTask('a'), targetFiles: ['a.ts'] },
+      { ...makeTask('b'), targetFiles: ['b.ts'] },
+      { ...makeTask('c'), targetFiles: ['c.ts'] },
+      { ...makeTask('d'), targetFiles: ['d.ts'] },
+    ];
+
+    let maxConcurrent = 0;
+    let current = 0;
+    const results = await TaskQueue.executePipelined(tasks, 2, async (task) => {
+      current++;
+      maxConcurrent = Math.max(maxConcurrent, current);
+      await new Promise(r => setTimeout(r, 10));
+      current--;
+      return task.id;
+    });
+
+    expect(results.map(r => r.result).sort()).toEqual(['a', 'b', 'c', 'd']);
+    expect(maxConcurrent).toBeLessThanOrEqual(2);
+  });
+
+  it('should serialize tasks that share a target file', async () => {
+    const tasks = [
+      { ...makeTask('a'), targetFiles: ['shared.ts'] },
+      { ...makeTask('b'), targetFiles: ['shared.ts'] },
+    ];
+
+    let maxConcurrent = 0;
+    let current = 0;
+    const order: string[] = [];
+    await TaskQueue.executePipelined(tasks, 4, async (task) => {
+      current++;
+      maxConcurrent = Math.max(maxConcurrent, current);
+      order.push(task.id);
+      await new Promise(r => setTimeout(r, 10));
+      current--;
+      return task.id;
+    });
+
+    expect(maxConcurrent).toBe(1);
+    expect(order).toEqual(['a', 'b']);
+  });
+
+  it('should pipeline tasks with different files in the same directory', async () => {
+    const tasks = [
+      { ...makeTask('a'), targetFiles: ['src/one.ts'] },
+      { ...makeTask('b'), targetFiles: ['src/two.ts'] },
+    ];
+
+    let maxConcurrent = 0;
+    let current = 0;
+    await TaskQueue.executePipelined(tasks, 4, async (task) => {
+      current++;
+      maxConcurrent = Math.max(maxConcurrent, current);
+      await new Promise(r => setTimeout(r, 20));
+      current--;
+      return task.id;
+    });
+
+    expect(maxConcurrent).toBe(2);
+  });
+
+  it('should propagate executor errors', async () => {
+    const tasks = [
+      { ...makeTask('a'), targetFiles: ['a.ts'] },
+      { ...makeTask('b'), targetFiles: ['b.ts'] },
+    ];
+
+    await expect(
+      TaskQueue.executePipelined(tasks, 2, async (task) => {
+        if (task.id === 'a') throw new Error('boom');
+        return task.id;
+      }),
+    ).rejects.toThrow('boom');
   });
 });
