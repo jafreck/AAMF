@@ -4,7 +4,7 @@
  * Declarative migration flow replacing MigrationOrchestrator.
  */
 
-export { migrationFlow } from './migration-flow.js';
+export { migrationFlow, buildFlowUpToPhase, nodeIdToPhase } from './migration-flow.js';
 export { AamfFlowCheckpointAdapter } from './checkpoint-adapter.js';
 export type { MigrationFlowContext } from './context.js';
 export type {

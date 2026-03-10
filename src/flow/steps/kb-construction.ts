@@ -5,7 +5,7 @@
 import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
 import type { MigrationFlowContext } from '../context.js';
 import type { PhaseResult } from '../../agents/types.js';
-import { buildInvocation, launchAgentWithEvents, recordTokens } from './shared.js';
+import { buildInvocation, launchAgentWithEvents, recordTokens, assertPhaseSuccess } from './shared.js';
 
 export async function launchKnowledgeBuilder(
   flowCtx: FlowExecutionContext<MigrationFlowContext>,
@@ -26,11 +26,12 @@ export async function launchKnowledgeBuilder(
   recordTokens(ctx, kbResult, 3);
 
   if (!kbResult.success) {
-    return {
+    const failResult: PhaseResult = {
       phase: 3, name: 'Knowledge Base Construction', success: false,
       duration: Date.now() - start, error: kbResult.error,
       exitCode: kbResult.exitCode, stderr: kbResult.stderr,
     };
+    assertPhaseSuccess(failResult);
   }
 
   return { phase: 3, name: 'Knowledge Base Construction', success: true, outputPath, duration: Date.now() - start };

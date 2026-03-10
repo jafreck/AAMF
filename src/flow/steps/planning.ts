@@ -9,6 +9,7 @@ import type { MigrationFlowContext } from '../context.js';
 import type { PhaseResult, CompilationUnit } from '../../agents/types.js';
 import {
   buildInvocation, launchAgentWithEvents, recordTokens, runCommand,
+  assertPhaseSuccess,
 } from './shared.js';
 import { ensureDir, fileExists, readJson } from '../../util/fs.js';
 import { generateScaffold } from '../../core/scaffold.js';
@@ -31,10 +32,11 @@ export async function launchMigrationPlanner(
     recordTokens(ctx, planResult, 4);
 
     if (!planResult.success) {
-      return {
+      const failResult: PhaseResult = {
         phase: 4, name: 'Migration Strategy', success: false, duration: Date.now() - start,
         error: planResult.error, exitCode: planResult.exitCode, stderr: planResult.stderr,
       };
+      assertPhaseSuccess(failResult);
     }
 
     // Adjudicator

@@ -12,6 +12,7 @@ import { unlink } from 'node:fs/promises';
 import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
 import type { MigrationFlowContext } from '../context.js';
 import type { PhaseResult } from '../../agents/types.js';
+import { assertPhaseSuccess } from './shared.js';
 import { fileExists } from '../../util/fs.js';
 
 const loadLore = () => import('@jafreck/lore');
@@ -190,8 +191,10 @@ export async function buildKbIndex(
     }
   }
 
-  return {
+  const failResult: PhaseResult = {
     phase: 0, name: 'KB Indexing', success: false, duration: Date.now() - start,
     error: lastErr instanceof Error ? lastErr.message : String(lastErr),
   };
+  assertPhaseSuccess(failResult);
+  return failResult; // unreachable
 }

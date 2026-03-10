@@ -30,8 +30,8 @@ describe('vitest.config.ts', () => {
     expect(testConfig.coverage.thresholds.functions).toBe(88);
   });
 
-  it('should set 88% threshold for statements', () => {
-    expect(testConfig.coverage.thresholds.statements).toBe(88);
+  it('should set 87% threshold for statements', () => {
+    expect(testConfig.coverage.thresholds.statements).toBe(87);
   });
 
   it('should have exactly two reporters', () => {

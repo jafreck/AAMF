@@ -20,7 +20,8 @@ import { ContextBuilder } from '../agents/context-builder.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
 import { FlowRunner } from '@cadre-dev/framework/flow';
-import { migrationFlow, AamfFlowCheckpointAdapter } from '../flow/index.js';
+import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToPhase } from '../flow/index.js';
+import { MigrationError } from '../flow/steps/shared.js';
 import type { MigrationFlowContext } from '../flow/index.js';
 import { getAgentsForPhase } from '../agents/registry.js';
 
@@ -28,7 +29,7 @@ export interface RuntimeOptions {
   configPath: string;
   resume?: boolean;
   dryRun?: boolean;
-  phase?: number;   // run only this phase
+  phase?: number;   // run up to and including this phase
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
 }
 
@@ -223,7 +224,7 @@ export class MigrationRuntime {
       projectRoot: this.projectRoot,
       runId: this.runId,
       paths: this.paths,
-      singlePhase: this.phase,
+      maxPhase: this.phase,
       checkpoint: this.checkpoint,
       launcher: this.launcher,
       progress: this.progress,
@@ -253,29 +254,20 @@ export class MigrationRuntime {
     // Start KB server for resume if Phase 0 already completed
     const resumePoint = this.checkpoint.getResumePoint();
     if (resumePoint.phase > 0 && (await fileExists(this.paths.kbDbFile))) {
-      const { KbServerProcess } = await import('./kb-server-process.js');
-      const lore = await import('@jafreck/lore');
-      const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
-      flowContext.kbServer = new KbServerProcess(this.paths.kbDbFile, flowContext.embedder, (obs) => {
-        this.logger.debug(
-          `lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
-        );
-      }, {
-        level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
-        logFile: this.paths.loreLogFile,
-      });
-      try {
-        await flowContext.kbServer.start();
-        this.logger.info(`KB server started (resume, lore log: ${this.paths.loreLogFile})`);
-      } catch (err) {
-        this.logger.warn(`KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
-        flowContext.kbServer = undefined;
-      }
+      await this.startKbServer(flowContext);
     }
 
     const startTime = Date.now();
     const phaseResults: PhaseResult[] = [];
     let aborted = false;
+
+    // Select the flow definition — truncate if --phase was specified
+    const flow = this.phase != null
+      ? buildFlowUpToPhase(this.phase)
+      : migrationFlow;
+    if (this.phase != null) {
+      this.logger.info(`Running phases 0–${this.phase} (--phase ${this.phase})`);
+    }
 
     // Run the flow
     this.abortController = new AbortController();
@@ -283,63 +275,58 @@ export class MigrationRuntime {
     const runner = new FlowRunner<MigrationFlowContext>();
 
     try {
-      const flowResult = await runner.run(migrationFlow, flowContext, {
+      // FlowRunnerOptions in @cadre-dev/framework@0.1.0 lacks hooks/signal.
+      // These properties exist in the runtime implementation; cast until 0.2.0.
+      const runnerOptions: Record<string, unknown> = {
         checkpoint: checkpointAdapter,
         signal: this.abortController.signal,
         hooks: {
-          onNodeStart: async (nodeId) => {
+          onNodeStart: async (nodeId: string) => {
             this.logger.setPhase(nodeIdToPhase(nodeId));
           },
-          onNodeComplete: async (nodeId, _node, output) => {
+          onNodeComplete: async (nodeId: string, _node: unknown, output: unknown) => {
             const phaseResult = output as PhaseResult | undefined;
             if (phaseResult && typeof phaseResult === 'object' && 'phase' in phaseResult) {
               phaseResults.push(phaseResult);
 
               // Start KB server after Phase 0
               if (phaseResult.phase === 0 && phaseResult.success && !flowContext.kbServer) {
-                try {
-                  const { KbServerProcess } = await import('./kb-server-process.js');
-                  const lore = await import('@jafreck/lore');
-                  const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
-                  flowContext.kbServer = new KbServerProcess(this.paths.kbDbFile, flowContext.embedder, (obs) => {
-                    this.logger.debug(
-                      `lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
-                    );
-                  }, {
-                    level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
-                    logFile: this.paths.loreLogFile,
-                  });
-                  await flowContext.kbServer.start();
-                  this.logger.info('KB server started after Phase 0');
-                } catch (err) {
-                  this.logger.warn(`KB server failed: ${err instanceof Error ? err.message : String(err)}`);
-                  flowContext.kbServer = undefined;
-                }
+                await this.startKbServer(flowContext);
               }
 
-              if (phaseResult.success) {
-                await this.checkpoint.completePhase(phaseResult.phase, phaseResult.outputPath ?? '');
-                await this.progress.updatePhase(phaseResult.phase, 'completed');
-                this.logger.event({ type: 'phase-completed', phase: phaseResult.phase, name: phaseResult.name, success: true, duration: phaseResult.duration });
-              } else {
-                const truncatedStderr = phaseResult.stderr ? phaseResult.stderr.slice(0, 2000) : undefined;
-                await this.progress.updatePhase(phaseResult.phase, 'failed', phaseResult.error, phaseResult.exitCode, truncatedStderr);
-                this.logger.event({ type: 'phase-failed', phase: phaseResult.phase, name: phaseResult.name, error: phaseResult.error ?? 'unknown', exitCode: phaseResult.exitCode, stderr: truncatedStderr });
-              }
+              // All phases are critical — success is asserted inside the step.
+              // If we reach onNodeComplete, the step succeeded.
+              await this.checkpoint.completePhase(phaseResult.phase, phaseResult.outputPath ?? '');
+              await this.progress.updatePhase(phaseResult.phase, 'completed');
+              this.logger.event({ type: 'phase-completed', phase: phaseResult.phase, name: phaseResult.name, success: true, duration: phaseResult.duration });
 
               // Token usage sync
               this.progress.setTokenUsage(tokenTracker.toCheckpointData());
             }
           },
-          onNodeSkip: async (nodeId) => {
+          onNodeSkip: async (nodeId: string) => {
             this.logger.info(`Flow node skipped (checkpoint resume): ${nodeId}`);
           },
         },
-      });
+      };
 
-      aborted = flowResult.status === 'failed' || flowResult.status === 'cancelled' || flowResult.status === 'timed-out';
+      const flowResult = await runner.run(flow, flowContext, runnerOptions as any);
+
+      // Status may be 'failed', 'cancelled', or 'timed-out' in newer framework versions
+      const status = flowResult.status as string;
+      aborted = status === 'failed' || status === 'cancelled' || status === 'timed-out';
     } catch (err) {
-      this.logger.error(`Flow execution failed: ${err instanceof Error ? err.message : String(err)}`);
+      // Record the failed phase result if this was a MigrationError
+      if (err instanceof MigrationError) {
+        const failedResult = err.result;
+        phaseResults.push(failedResult);
+        const truncatedStderr = failedResult.stderr ? failedResult.stderr.slice(0, 2000) : undefined;
+        await this.progress.updatePhase(failedResult.phase, 'failed', failedResult.error, failedResult.exitCode, truncatedStderr);
+        this.logger.event({ type: 'phase-failed', phase: failedResult.phase, name: failedResult.name, error: failedResult.error ?? 'unknown', exitCode: failedResult.exitCode, stderr: truncatedStderr });
+        await this.progress.appendEvent(`Migration aborted: Phase ${failedResult.phase} (${failedResult.name}) failed`);
+      } else {
+        this.logger.error(`Flow execution failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
       aborted = true;
     } finally {
       // Always clean up
@@ -629,26 +616,29 @@ export class MigrationRuntime {
     process.on('SIGINT', () => void handler('SIGINT'));
     process.on('SIGTERM', () => void handler('SIGTERM'));
   }
-}
 
-/** Map a flow node ID to a phase number for logger.setPhase(). */
-function nodeIdToPhase(nodeId: string): number {
-  const map: Record<string, number> = {
-    'kb-index': 0,
-    'task-graph-construction': 1,
-    'impact-assessment': 2,
-    'budget-check-2': 2,
-    'kb-construction': 3,
-    'budget-check-3': 3,
-    'migration-planning': 4,
-    'budget-check-4': 4,
-    'iterative-migration': 5,
-    'budget-check-5': 5,
-    'final-parity-checker': 6,
-    'finalization': 7,
-    'idiomatic-refactor-gate': 8,
-    'idiomatic-refactor': 8,
-    'completion': 9,
-  };
-  return map[nodeId] ?? -1;
+  /**
+   * Start the KB MCP server, attaching it to the given flow context.
+   * Used both on resume (before flow starts) and after Phase 0 completes.
+   */
+  private async startKbServer(flowContext: MigrationFlowContext): Promise<void> {
+    try {
+      const { KbServerProcess } = await import('./kb-server-process.js');
+      const lore = await import('@jafreck/lore');
+      const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
+      flowContext.kbServer = new KbServerProcess(this.paths.kbDbFile, flowContext.embedder, (obs) => {
+        this.logger.debug(
+          `lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
+        );
+      }, {
+        level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
+        logFile: this.paths.loreLogFile,
+      });
+      await flowContext.kbServer.start();
+      this.logger.info(`KB server started (lore log: ${this.paths.loreLogFile})`);
+    } catch (err) {
+      this.logger.warn(`KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
+      flowContext.kbServer = undefined;
+    }
+  }
 }

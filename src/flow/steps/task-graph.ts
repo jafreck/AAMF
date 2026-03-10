@@ -10,6 +10,7 @@ import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
 import type { MigrationFlowContext } from '../context.js';
 import type { PhaseResult, MigrationTask, CompilationUnit } from '../../agents/types.js';
 import { fileExists, atomicWrite, ensureDir, readJson } from '../../util/fs.js';
+import { assertPhaseSuccess } from './shared.js';
 import { buildTaskGraph, buildDependencySummary } from '../../core/task-graph-builder.js';
 
 export async function buildTaskGraphStep(
@@ -46,10 +47,12 @@ export async function buildTaskGraphStep(
 
   // Verify KB exists
   if (!(await fileExists(ctx.paths.kbDbFile))) {
-    return {
+    const failResultNoKb: PhaseResult = {
       phase: 1, name: 'Task Graph Construction', success: false, duration: Date.now() - start,
       error: 'Lore KB database (kb.db) not found — Phase 0 must complete first',
     };
+    assertPhaseSuccess(failResultNoKb);
+    return failResultNoKb;
   }
 
   // Dependency summary
@@ -112,6 +115,8 @@ export async function buildTaskGraphStep(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     ctx.logger.error(`Failed to build task graph: ${msg}`);
-    return { phase: 1, name: 'Task Graph Construction', success: false, duration: Date.now() - start, error: `Lore task-graph build failed: ${msg}` };
+    const failResultBuild: PhaseResult = { phase: 1, name: 'Task Graph Construction', success: false, duration: Date.now() - start, error: `Lore task-graph build failed: ${msg}` };
+    assertPhaseSuccess(failResultBuild);
+    return failResultBuild;
   }
 }

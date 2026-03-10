@@ -19,7 +19,7 @@
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "dependencies": {
-    "@cadre-dev/framework": "file:../cadre/packages/framework",
+    "@cadre-dev/framework": "^0.1.0",
     "@jafreck/lore": "^0.3.7",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@types/better-sqlite3": "^7.6.13",

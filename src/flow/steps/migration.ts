@@ -31,7 +31,7 @@ import {
   storeParityResult, checkParityResult, hasNonMinorParityIssues,
   getParityIssueSummary, resolverReducedScope,
   getPhase5TaskState, hasPhase5Substep, markPhase5Substep,
-  checkBudget,
+  checkBudget, assertPhaseSuccess,
 } from './shared.js';
 
 export async function executeIterativeMigration(
@@ -52,10 +52,12 @@ export async function executeIterativeMigration(
         ctx.logger.warn('Phase 1 structured output unavailable — falling back to tasks-merged.json');
         tasks = await readJson<MigrationTask[]>(mergedPlanPath);
       } else {
-        return {
+        const failResultNoPlan: PhaseResult = {
           phase: 5, name: 'Iterative Migration', success: false, duration: Date.now() - start,
           error: 'migration-plan.md and tasks-merged.json not found — Phase 1 may not have completed',
         };
+        assertPhaseSuccess(failResultNoPlan);
+        return failResultNoPlan;
       }
     } else {
       ctx.logger.warn('Phase 1 structured output unavailable — falling back to parseMigrationPlan');
@@ -224,7 +226,7 @@ export async function executeIterativeMigration(
     waveEndGateError = await runWaveEndQualityGates(ctx, completedWaveTasks);
   }
 
-  return {
+  const phase5Result: PhaseResult = {
     phase: 5, name: 'Iterative Migration',
     success: finalProgress.blocked === 0 && !deadlocked && !waveEndGateError,
     outputPath: ctx.config.target.outputPath, duration: Date.now() - start,
@@ -234,6 +236,8 @@ export async function executeIterativeMigration(
         ? `${finalProgress.blocked} task(s) blocked after max retries`
         : waveEndGateError ?? undefined,
   };
+  assertPhaseSuccess(phase5Result);
+  return phase5Result;
 }
 
 // ─── Wave Barrier Mode ────────────────────────────────────────────────
@@ -385,7 +389,7 @@ async function executeWaveBarrier(
     ctx.metricsCollector.setPhase4Snapshot(ctx.phase5Snapshot);
     ctx.phase5Snapshot = undefined;
   }
-  return {
+  const waveResult: PhaseResult = {
     phase: 5, name: 'Iterative Migration',
     success: finalProgress.blocked === 0 && !deadlocked,
     outputPath: ctx.config.target.outputPath, duration: Date.now() - start,
@@ -393,6 +397,8 @@ async function executeWaveBarrier(
       ? `${finalProgress.remaining} task(s) deadlocked`
       : finalProgress.blocked > 0 ? `${finalProgress.blocked} task(s) blocked after max retries` : undefined,
   };
+  assertPhaseSuccess(waveResult);
+  return waveResult;
 }
 
 // ─── Per-Task Execution ───────────────────────────────────────────────
@@ -696,7 +702,9 @@ function buildPhase5TerminalResult(ctx: MigrationFlowContext, start: number, que
     ctx.metricsCollector.setPhase4Snapshot(ctx.phase5Snapshot);
     ctx.phase5Snapshot = undefined;
   }
-  return { phase: 5, name: 'Iterative Migration', success: false, outputPath: ctx.config.target.outputPath, duration: Date.now() - start, error: error.message };
+  const result: PhaseResult = { phase: 5, name: 'Iterative Migration', success: false, outputPath: ctx.config.target.outputPath, duration: Date.now() - start, error: error.message };
+  assertPhaseSuccess(result);
+  return result; // unreachable
 }
 
 async function runWaveValidation(ctx: MigrationFlowContext, wave: number): Promise<WaveValidationResult> {

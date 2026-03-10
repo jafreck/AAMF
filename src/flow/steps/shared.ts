@@ -98,6 +98,16 @@ export class MigrationError extends Error {
   }
 }
 
+/**
+ * Assert that a phase result is successful, throwing a {@link MigrationError}
+ * if it is not.  Every phase is critical — a failure halts the flow.
+ */
+export function assertPhaseSuccess(result: import('../../agents/types.js').PhaseResult): void {
+  if (!result.success) {
+    throw new MigrationError(result.phase, result.name, result);
+  }
+}
+
 // ─── Helper Functions ──────────────────────────────────────────────────
 
 export function getConfiguredRuntimeModel(ctx: MigrationFlowContext): string {
@@ -145,7 +155,7 @@ export function normalizeFailureSummary(summary: string): string {
 // ─── Agent Invocation Building ─────────────────────────────────────────
 
 const KB_AWARE_AGENTS: AgentName[] = [
-  'impact-assessor', 'knowledge-builder', 'migration-planner', 'adjudicator',
+  'knowledge-builder', 'migration-planner', 'adjudicator',
   'code-migrator', 'parity-verifier', 'test-writer', 'parity-failure-resolver',
   'final-parity-checker', 'e2e-test-crafter', 'documentation-writer',
   'idiomatic-reviewer', 'idiomatic-refactorer',

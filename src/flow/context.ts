@@ -90,7 +90,7 @@ export interface MigrationFlowContext {
   readonly projectRoot: string;
   readonly runId: string;
   readonly paths: RuntimePaths;
-  readonly singlePhase?: number;
+  readonly maxPhase?: number;
 
   // ── Infrastructure services ──
   readonly checkpoint: CheckpointManager;
