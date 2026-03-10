@@ -69,7 +69,6 @@ export interface CheckpointState {
   completedTaskDurationsMs: number[];       // wall-clock ms per completed task, in order
   /** True once the migration-planner (step 3a) finishes successfully. */
   phase3aComplete?: boolean;
-  /** IDs of module groups whose task-decomposer has completed successfully. */
   completedPhase3Groups?: string[];
   /** Number of JSONL metric records written; used to skip on resume. */
   metricsCount: number;
@@ -308,11 +307,7 @@ export class CheckpointManager {
     await this.save(state);
   }
 
-  /**
-   * Record that the task-decomposer for a specific module group finished
-   * successfully.  On resume, completed groups are skipped so only failed
-   * ones are retried.
-   */
+  /** Record that a specific module group finished successfully. On resume, completed groups are skipped. */
   async completePhase3Group(groupId: string): Promise<void> {
     const state = this.getState();
     state.completedPhase3Groups ??= [];

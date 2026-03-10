@@ -421,7 +421,6 @@ runtime/src/
 ├── agents/
 │   ├── context-builder.ts            # Assembles file-based context for agent invocations
 │   ├── result-parser.ts              # Parses structured output from agent responses
-│   ├── task-decomposer.tasks.schema.json  # JSON schema for task-decomposer outputs
 │   └── types.ts                      # Agent-related type definitions (16 agent types)
 ├── budget/
 │   ├── cost-estimator.ts             # USD cost estimation (48 models across Claude, Gemini, OpenAI)

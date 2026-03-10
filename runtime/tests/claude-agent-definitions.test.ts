@@ -380,7 +380,7 @@ describe('generateAgentDefinitions() always includes Lore guidance', () => {
       'impact-assessor', 'knowledge-builder', 'migration-planner', 'adjudicator',
       'code-migrator', 'parity-verifier', 'test-writer', 'parity-failure-resolver',
       'final-parity-checker', 'e2e-test-crafter', 'documentation-writer',
-      'idiomatic-reviewer', 'idiomatic-refactorer', 'task-decomposer',
+      'idiomatic-reviewer', 'idiomatic-refactorer',
     ];
     for (const agent of kbAwareAgents) {
       const content = await readFile(join(loreDir, `${agent}.agent.md`), 'utf-8');

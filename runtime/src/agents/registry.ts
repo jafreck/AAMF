@@ -100,12 +100,6 @@ export const MigrationOrchestratorSchema = AamfOutputBase.extend({ agent: z.lite
 export const ImpactAssessorSchema = AamfOutputBase.extend({ agent: z.literal('impact-assessor') });
 export const KnowledgeBuilderSchema = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
 export const MigrationPlannerSchema = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
-export const TaskDecomposerSchema = AamfOutputBase.extend({
-  agent: z.literal('task-decomposer'),
-  outputFiles: z.array(z.string().min(1)).min(1),
-  taskCount: z.number().int().nonnegative().optional(),
-  tasks: z.never().optional(),
-});
 export const AdjudicatorSchema = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
 export const CodeMigratorSchema = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
 export const ParityVerifierSchema = AamfOutputBase.extend({
@@ -223,30 +217,6 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
         groupCount: { type: 'integer', minimum: 0 },
         strategy:   { type: 'string' },
       },
-    }),
-    phases: [4],
-    copilotTools: ['read', 'edit', 'search'],
-    claudeTools: CLAUDE_TOOLS,
-  },
-  'task-decomposer': {
-    name: 'task-decomposer',
-    displayName: 'Task Decomposer',
-    description: 'Decomposes one module group into atomic migration tasks using the selected strategy and KB analysis files.',
-    outputSchema: TaskDecomposerSchema,
-    inputJsonSchema: inputSchema({
-      extraRequired: ['taskId'],
-      extraProperties: {
-        taskId:    { type: 'string', minLength: 1 },
-        groupFile: { type: 'string' },
-      },
-    }),
-    outputJsonSchema: outputSchema('task-decomposer', {
-      extraRequired: ['taskId'],
-      extraProperties: {
-        taskId:    { type: 'string', minLength: 1 },
-        taskCount: { type: 'integer', minimum: 0 },
-      },
-      overrideOutputFiles: { type: 'array', items: { type: 'string', minLength: 1 }, minItems: 1 },
     }),
     phases: [4],
     copilotTools: ['read', 'edit', 'search'],

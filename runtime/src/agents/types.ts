@@ -17,7 +17,6 @@ export type AgentName =
   | 'impact-assessor'
   | 'knowledge-builder'
   | 'migration-planner'
-  | 'task-decomposer'
   | 'adjudicator'
   | 'code-migrator'
   | 'parity-verifier'
@@ -200,7 +199,7 @@ export interface AgentContext {
 
 /**
  * Execution-topology context passed to planning agents (`migration-planner`,
- * `task-decomposer`) so they can tailor task granularity, grouping, and
+ * `migration-planner`) so they can tailor task granularity, grouping, and
  * dependency design to the actual Phase 5 execution mode.
  *
  * Agents that receive this in their `payload.executionStrategy` can, for
@@ -467,15 +466,10 @@ export interface CompilationUnit {
  * @deprecated Use {@link CompilationUnit} instead.
  * A logical grouping of related source modules, emitted by `migration-planner`
  * in `planning/groups.json`.
- *
- * Each group is handed to an independent `task-decomposer` agent that reads
- * `planning/strategy.md` plus only the group's analysis files, keeping
- * individual context windows small and enabling full parallelism.
  */
 export interface ModuleGroup {
   /**
    * Stable, filesystem-safe identifier (e.g. `"core"`, `"api"`, `"utils-1"`).
-   * Used as the suffix in `planning/tasks-<id>.json`.
    */
   id: string;
 
@@ -484,8 +478,7 @@ export interface ModuleGroup {
 
   /**
    * Absolute paths to the knowledge-base analysis files that are relevant to
-   * this group.  The `task-decomposer` agent receives these as its
-   * `inputFiles`, alongside `planning/strategy.md`.
+   * this group.
    */
   analysisFiles: string[];
 

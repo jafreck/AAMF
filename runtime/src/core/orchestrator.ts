@@ -1152,7 +1152,7 @@ export class MigrationOrchestrator {
     } else {
       if (!(await fileExists(planPath))) {
         // Also check for the newer planning/tasks-merged.json produced by the
-        // Phase 1 task graph (migration-planner + parallel task-decomposer).
+        // Phase 1 deterministic task graph.
         const mergedPlanPath = join(this.paths.artifactsPlanningDir, 'tasks-merged.json');
         if (await fileExists(mergedPlanPath)) {
           this.logger.warn(
