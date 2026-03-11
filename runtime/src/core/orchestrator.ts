@@ -3573,8 +3573,6 @@ export class MigrationOrchestrator {
           this.recordTokens(reParityResult, 5);
           this.storeParityResult(reParityResult, task.id);
         }));
-
-        // Re-evaluate: filter to tasks that still have non-minor issues
         const stillFailing: MigrationTask[] = [];
         for (const task of failingTasks) {
           const hasNonMinor = this.hasNonMinorParityIssues(task.id);

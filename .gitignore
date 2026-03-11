@@ -34,6 +34,13 @@ coverage/
 **/.aamf/**
 tmp/
 
+# Migration output artifacts (produced by agent runs)
+*.rlib
+*.rmeta
+*.exe
+*.o
+*.a
+
 # Downloaded source tarballs (fetched at e2e test time)
 sqlite-src/
 jq-src/
