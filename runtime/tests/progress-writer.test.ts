@@ -32,8 +32,7 @@ describe('ProgressWriter', () => {
     expect(await fileExists(progressFile)).toBe(true);
     const content = await readFile(progressFile, 'utf-8');
     expect(content).toContain('test-project');
-    // Should have phase table with 7 rows
-    expect(content).toContain('Impact Assessment');
+    // Should have phase table with 6 rows
     expect(content).toContain('Knowledge Base Construction');
     expect(content).toContain('Migration Planning');
     expect(content).toContain('Iterative Migration');
@@ -241,7 +240,7 @@ describe('ProgressWriter', () => {
       const content = await readFile(progressFile, 'utf-8');
       // All phases should be back to pending (⬜)
       const pendingCount = (content.match(/⬜/g) || []).length;
-      expect(pendingCount).toBe(7);
+      expect(pendingCount).toBe(6);
       // No completed markers
       expect(content).not.toContain('✅');
     });

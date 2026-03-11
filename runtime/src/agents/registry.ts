@@ -97,7 +97,6 @@ export interface AgentRegistryEntry {
 // These extend AamfOutputBase with agent-specific fields.
 
 export const MigrationOrchestratorSchema = AamfOutputBase.extend({ agent: z.literal('migration-orchestrator') });
-export const ImpactAssessorSchema = AamfOutputBase.extend({ agent: z.literal('impact-assessor') });
 export const KnowledgeBuilderSchema = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
 export const MigrationPlannerSchema = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
 export const AdjudicatorSchema = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
@@ -171,23 +170,6 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
       },
     }),
     phases: [],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
-  },
-  'impact-assessor': {
-    name: 'impact-assessor',
-    displayName: 'Impact Assessor',
-    description: 'Analyzes a legacy codebase to assess migration impact, estimate cost/effort, and identify risks.',
-    outputSchema: ImpactAssessorSchema,
-    inputJsonSchema: inputSchema({ extraProperties: { sourcePath: { type: 'string' } } }),
-    outputJsonSchema: outputSchema('impact-assessor', {
-      extraProperties: {
-        totalFiles: { type: 'integer', minimum: 0 },
-        totalLoc:   { type: 'integer', minimum: 0 },
-        riskCount:  { type: 'integer', minimum: 0 },
-      },
-    }),
-    phases: [2],
     copilotTools: ['read', 'edit', 'search', 'execute'],
     claudeTools: CLAUDE_TOOLS,
   },

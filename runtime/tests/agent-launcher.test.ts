@@ -130,19 +130,19 @@ describe('AgentLauncher', () => {
     const { contextFile, progressDir } = await prepareInvocation('env-test');
 
     const result = await launcher.launchAgent({
-      agent: 'impact-assessor',
+      agent: 'knowledge-builder',
       contextFile,
       progressDir,
-      phase: 2,
+      phase: 3,
       taskId: 'env-test',
     });
 
     expect(result.success).toBe(true);
 
-    const { content: logContent } = await readLatestAgentLog('impact-assessor', 'env-test');
+    const { content: logContent } = await readLatestAgentLog('knowledge-builder', 'env-test');
     expect(logContent).toContain(`PROGRESS_DIR:${progressDir}`);
     expect(logContent).toContain(`CONTEXT_FILE:${contextFile}`);
-    expect(logContent).toContain('PHASE:2');
+    expect(logContent).toContain('PHASE:3');
     expect(logContent).toContain('TASK_ID:env-test');
   });
 
@@ -165,16 +165,16 @@ describe('AgentLauncher', () => {
       const { contextFile, progressDir } = await prepareInvocation('env-filter');
 
       const result = await launcher.launchAgent({
-        agent: 'impact-assessor',
+        agent: 'knowledge-builder',
         contextFile,
         progressDir,
-        phase: 2,
+        phase: 3,
         taskId: 'env-filter',
       });
 
       expect(result.success).toBe(true);
 
-      const { content: logContent } = await readLatestAgentLog('impact-assessor', 'env-filter');
+      const { content: logContent } = await readLatestAgentLog('knowledge-builder', 'env-filter');
       expect(logContent).toContain('VSCODE_IPC_HOOK_CLI:');
       expect(logContent).not.toContain('vscode-ipc-token');
       expect(logContent).toContain('TERM_PROGRAM:');
@@ -467,7 +467,7 @@ describe('AgentLauncher', () => {
 
     it('should force success: false and set parseError when aamf-json block is present but schema-invalid', async () => {
       // wrong agent literal → schema validation fails
-      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'impact-assessor' });
+      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'knowledge-builder' });
       const script = await createScript('bad-aamf.sh', [
         `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
         'exit 0',
@@ -904,17 +904,17 @@ describe('AgentLauncher', () => {
       };
 
       const result = await launcher.launchAgent({
-        agent: 'impact-assessor',
+        agent: 'knowledge-builder',
         contextFile,
         progressDir,
-        phase: 2,
+        phase: 3,
         taskId: 'mcp-config-001',
         mcpConfig,
       });
 
       expect(result.success).toBe(true);
 
-      const { content: logContent } = await readLatestAgentLog('impact-assessor', 'mcp-config-001');
+      const { content: logContent } = await readLatestAgentLog('knowledge-builder', 'mcp-config-001');
       expect(logContent).toContain('--additional-mcp-config');
       expect(logContent).toContain('aamf-kb');
       expect(logContent).toContain('localhost:4321');
@@ -955,17 +955,17 @@ describe('AgentLauncher', () => {
       const { contextFile, progressDir } = await prepareInvocation('claude-mcp-001');
 
       const result = await launcher.launchAgent({
-        agent: 'impact-assessor',
+        agent: 'knowledge-builder',
         contextFile,
         progressDir,
-        phase: 2,
+        phase: 3,
         taskId: 'claude-mcp-001',
         mcpConfig: { url: 'http://localhost:4545/mcp' },
       });
 
       expect(result.success).toBe(true);
 
-      const { content: logContent } = await readLatestAgentLog('impact-assessor', 'claude-mcp-001');
+      const { content: logContent } = await readLatestAgentLog('knowledge-builder', 'claude-mcp-001');
       expect(logContent).toContain('--mcp-config');
       expect(logContent).toContain('aamf-kb');
       expect(logContent).toContain('localhost:4545');

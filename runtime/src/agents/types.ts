@@ -14,7 +14,6 @@ export type JsonSchema = Record<string, unknown>;
 /** All recognized agent names in the AAMF system. */
 export type AgentName =
   | 'migration-orchestrator'
-  | 'impact-assessor'
   | 'knowledge-builder'
   | 'migration-planner'
   | 'adjudicator'

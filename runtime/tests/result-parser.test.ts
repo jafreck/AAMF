@@ -11,7 +11,6 @@ import {
 } from '../src/agents/agent-output-schemas.js';
 import {
   MigrationOrchestratorSchema,
-  ImpactAssessorSchema,
   KnowledgeBuilderSchema,
   MigrationPlannerSchema,
   AdjudicatorSchema,
@@ -424,10 +423,6 @@ Here are the tasks:
       ).toThrow();
     });
 
-    it('should validate ImpactAssessorSchema', () => {
-      expect(() => ImpactAssessorSchema.parse({ status: 'completed', agent: 'impact-assessor' })).not.toThrow();
-    });
-
     it('should validate KnowledgeBuilderSchema', () => {
       expect(() => KnowledgeBuilderSchema.parse({ status: 'completed', agent: 'knowledge-builder' })).not.toThrow();
     });
@@ -578,7 +573,7 @@ intermediate text
     });
 
     it('should return parsed: false when agent literal does not match schema', () => {
-      const stdout = '```aamf-json\n{"status":"completed","agent":"impact-assessor"}\n```';
+      const stdout = '```aamf-json\n{"status":"completed","agent":"knowledge-builder"}\n```';
       const result = parseAamfOutput(stdout, CodeMigratorSchema);
       expect(result.parsed).toBe(false);
       if (!result.parsed) {

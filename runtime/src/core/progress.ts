@@ -45,13 +45,12 @@ export class ProgressWriter {
     this.retryTargets = [];
     this.terminalExhaustion = undefined;
     this.adjudicationEvents = [];
-    this.phases.set(1, { name: 'Impact Assessment', status: 'pending' });
-    this.phases.set(2, { name: 'Knowledge Base Construction', status: 'pending' });
-    this.phases.set(3, { name: 'Migration Planning', status: 'pending' });
-    this.phases.set(4, { name: 'Iterative Migration', status: 'pending' });
-    this.phases.set(5, { name: 'Final Parity Verification', status: 'pending' });
-    this.phases.set(6, { name: 'E2E Testing & Documentation', status: 'pending' });
-    this.phases.set(7, { name: 'Completion', status: 'pending' });
+    this.phases.set(1, { name: 'Knowledge Base Construction', status: 'pending' });
+    this.phases.set(2, { name: 'Migration Planning', status: 'pending' });
+    this.phases.set(3, { name: 'Iterative Migration', status: 'pending' });
+    this.phases.set(4, { name: 'Final Parity Verification', status: 'pending' });
+    this.phases.set(5, { name: 'E2E Testing & Documentation', status: 'pending' });
+    this.phases.set(6, { name: 'Completion', status: 'pending' });
 
     await this.write(config.projectName);
   }
@@ -59,7 +58,7 @@ export class ProgressWriter {
   /** Reconstruct progress state from a checkpoint (used on resume). */
   reconstructFromCheckpoint(state: CheckpointState): void {
     // Ensure phase definitions exist
-    const phaseNames = ['Impact Assessment', 'Knowledge Base Construction', 'Migration Planning', 'Iterative Migration', 'Final Parity Verification', 'E2E Testing & Documentation', 'Completion'];
+    const phaseNames = ['Knowledge Base Construction', 'Migration Planning', 'Iterative Migration', 'Final Parity Verification', 'E2E Testing & Documentation', 'Completion'];
     for (let i = 0; i < phaseNames.length; i++) {
       if (!this.phases.has(i + 1)) {
         this.phases.set(i + 1, { name: phaseNames[i]!, status: 'pending' });

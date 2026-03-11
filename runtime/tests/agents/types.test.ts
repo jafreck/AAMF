@@ -230,11 +230,11 @@ describe('AgentResult', () => {
 describe('AgentInvocation', () => {
   it('should construct with required fields only', () => {
     const inv: AgentInvocation = {
-      agent: 'impact-assessor',
+      agent: 'knowledge-builder',
       contextFile: '/tmp/context.json',
       progressDir: '/tmp/progress',
     };
-    expect(inv.agent).toBe('impact-assessor');
+    expect(inv.agent).toBe('knowledge-builder');
     expect(inv.contextFile).toBe('/tmp/context.json');
     expect(inv.progressDir).toBe('/tmp/progress');
     expect(inv.phase).toBeUndefined();
@@ -272,7 +272,7 @@ describe('AgentInvocation', () => {
       url: 'http://localhost:4321/mcp',
     };
     const inv: AgentInvocation = {
-      agent: 'impact-assessor',
+      agent: 'knowledge-builder',
       contextFile: '/tmp/context.json',
       progressDir: '/tmp/progress',
       mcpConfig,

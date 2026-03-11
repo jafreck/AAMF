@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   MigrationOrchestratorSchema,
-  ImpactAssessorSchema,
   KnowledgeBuilderSchema,
   MigrationPlannerSchema,
   AdjudicatorSchema,
@@ -26,20 +25,7 @@ describe('Per-agent output schemas', () => {
     });
     it('rejects wrong agent literal', () => {
       expect(() =>
-        MigrationOrchestratorSchema.parse({ status: VALID_STATUS, agent: 'impact-assessor' }),
-      ).toThrow();
-    });
-  });
-
-  describe('ImpactAssessorSchema', () => {
-    it('accepts valid output', () => {
-      expect(() =>
-        ImpactAssessorSchema.parse({ status: VALID_STATUS, agent: 'impact-assessor' }),
-      ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        ImpactAssessorSchema.parse({ status: VALID_STATUS, agent: 'migration-orchestrator' }),
+        MigrationOrchestratorSchema.parse({ status: VALID_STATUS, agent: 'knowledge-builder' }),
       ).toThrow();
     });
   });

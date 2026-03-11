@@ -143,19 +143,19 @@ describe('ClaudeCodeRunner', () => {
     const { contextFile, progressDir } = await prepareInvocation('claude-env');
 
     const result = await runner.run({
-      agent: 'impact-assessor',
+      agent: 'knowledge-builder',
       contextFile,
       progressDir,
-      phase: 2,
+      phase: 3,
       taskId: 'claude-env',
     });
 
     expect(result.success).toBe(true);
 
-    const { content: logContent } = await readLatestAgentLog('impact-assessor', 'claude-env');
+    const { content: logContent } = await readLatestAgentLog('knowledge-builder', 'claude-env');
     expect(logContent).toContain(`PROGRESS_DIR:${progressDir}`);
     expect(logContent).toContain(`CONTEXT_FILE:${contextFile}`);
-    expect(logContent).toContain('PHASE:2');
+    expect(logContent).toContain('PHASE:3');
     expect(logContent).toContain('TASK_ID:claude-env');
   });
 

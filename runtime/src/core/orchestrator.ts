@@ -213,10 +213,10 @@ export class MigrationError extends Error {
 const DEFAULT_INDEX_TIMEOUT_MS = 5 * 60_000;
 
 /**
- * The main orchestrator that sequences all 10 migration phases (0–9).
+ * The main orchestrator that sequences all 9 migration phases (0–1, 3–9).
  *
  * Phases 0–1 are deterministic (KB indexing + task graph construction).
- * Phases 2–9 are agentic (impact assessment through completion).
+ * Phases 3–9 are agentic (knowledge base construction through completion).
  */
 export class MigrationOrchestrator {
   private readonly contextBuilder: ContextBuilder;
@@ -553,8 +553,6 @@ export class MigrationOrchestrator {
         return this.executePhase0(start);
       case 1:
         return this.executePhase1(start);
-      case 2:
-        return this.executePhase2(start);
       case 3:
         return this.executePhase3(start);
       case 4:
@@ -985,39 +983,6 @@ export class MigrationOrchestrator {
         error: `Lore task-graph build failed: ${msg}`,
       };
     }
-  }
-
-  // ─── Phase 2: Impact Assessment ──────────────────────────────────────
-
-  private async executePhase2(start: number): Promise<PhaseResult> {
-    const checkpointState = this.checkpoint.getState();
-    if (checkpointState.completedPhases.includes(2)) {
-      this.logger.info('Phase 2 skipped on resume — impact assessment already complete');
-      return {
-        phase: 2,
-        name: 'Impact Assessment',
-        success: true,
-        outputPath: this.paths.impactAssessmentFile,
-        duration: Date.now() - start,
-      };
-    }
-
-    const contextFile = await this.contextBuilder.buildContext('impact-assessor', 2);
-    const inv = this.buildInvocation('impact-assessor', contextFile, 2);
-    const result = await this.launchAgentWithEvents(inv);
-    this.recordTokens(result, 2);
-
-    const outputPath = this.paths.impactAssessmentFile;
-    return {
-      phase: 2,
-      name: 'Impact Assessment',
-      success: result.success,
-      outputPath,
-      duration: Date.now() - start,
-      error: result.error,
-      exitCode: result.success ? undefined : result.exitCode,
-      stderr: result.success ? undefined : result.stderr,
-    };
   }
 
   // ─── Phase 3: Knowledge Base Construction ────────────────────────────
@@ -4039,7 +4004,6 @@ export class MigrationOrchestrator {
     // Agents that benefit from KB access when the KB server is running.
     // Essentially every agent that analyses or transforms source code.
     const KB_AWARE_AGENTS: AgentName[] = [
-      'impact-assessor',
       'knowledge-builder',
       'migration-planner',
       'adjudicator',

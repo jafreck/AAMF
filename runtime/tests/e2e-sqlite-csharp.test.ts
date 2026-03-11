@@ -213,14 +213,6 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
 
   // ── Per-phase checks ────────────────────────────────────────────────────
 
-  it('Phase 1 (Impact Assessment) should succeed', () => {
-    const phase = result.phases.find(p => p.phase === 1);
-    expect(phase).toBeDefined();
-    expect(phase!.success).toBe(true);
-    expect(phase!.name).toBe('Impact Assessment');
-    expect(phase!.duration).toBeGreaterThan(0);
-  });
-
   it('Phase 2 (Knowledge Base Construction) should succeed', () => {
     const phase = result.phases.find(p => p.phase === 2);
     expect(phase).toBeDefined();
@@ -279,7 +271,6 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
   it('should create progress.md covering every phase', async () => {
     const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
     expect(progressMd).toContain('sqlite-to-csharp-net9');
-    expect(progressMd).toContain('Impact Assessment');
     expect(progressMd).toContain('Iterative Migration');
     expect(progressMd).toContain('Completion');
   });

@@ -143,7 +143,6 @@ export class ContextBuilder {
     payload?: Record<string, unknown>,
   ): { inputFiles: string[]; outputPath: string; agentPayload?: Record<string, unknown> } {
     const kbDir = this.paths.knowledgeBaseDir;
-    const impactAssessment = this.paths.impactAssessmentFile;
     const migrationPlan = this.paths.migrationPlanFile;
     const src = this.config.source.path;
     const out = this.config.target.outputPath;
@@ -151,13 +150,6 @@ export class ContextBuilder {
     const taskScope = this.getTaskScope(payload);
 
     switch (agent) {
-      case 'impact-assessor':
-        return {
-          inputFiles: [src],
-          outputPath: impactAssessment,
-          agentPayload: { dependencySummaryPath: this.paths.dependencySummaryFile },
-        };
-
       case 'knowledge-builder':
         return {
           inputFiles: [src],
@@ -168,7 +160,7 @@ export class ContextBuilder {
       case 'migration-planner': {
         const planningDir = join(this.progressDir, 'artifacts', 'planning');
         return {
-          inputFiles: [join(kbDir, 'index.md'), impactAssessment, this.paths.dependencySummaryFile],
+          inputFiles: [join(kbDir, 'index.md'), this.paths.dependencySummaryFile],
           outputPath: planningDir,
           agentPayload: {
             executionStrategy: this.buildExecutionStrategy(),

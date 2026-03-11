@@ -53,11 +53,11 @@ describe.skipIf(!runE2E)('E2E Smoke Test', () => {
     expect(true).toBe(true);
   });
 
-  it('should run Phase 2 (Impact Assessment) and produce expected artefacts', async () => {
+  it('should run Phase 3 (Knowledge Base Construction) and produce expected artefacts', async () => {
     const runtime = new MigrationRuntime();
     await runtime.initialize({
       configPath,
-      phase: 2,
+      phase: 3,
       logLevel: 'info',
     });
 
@@ -80,7 +80,7 @@ describe.skipIf(!runE2E)('E2E Smoke Test', () => {
     // --- Verify progress.md was written ---
     const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
     expect(progressMd).toContain('tiny-calc-migration');
-    expect(progressMd).toContain('Impact Assessment');
+    expect(progressMd).toContain('Knowledge Base Construction');
 
     // --- Verify the logs directory has at least one log ---
     const logsDir = join(progressDir, 'logs');
@@ -92,6 +92,5 @@ describe.skipIf(!runE2E)('E2E Smoke Test', () => {
     // --- Verify the result object ---
     expect(result.projectName).toBe('tiny-calc-migration');
     expect(result.phases.length).toBeGreaterThanOrEqual(1);
-    expect(result.phases[0]?.phase).toBe(1);
   }, 180_000); // 3-minute timeout for real CLI call
 });

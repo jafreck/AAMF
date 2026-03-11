@@ -28,7 +28,6 @@ export interface RuntimePaths {
   metricsSummaryFile: string;
   kbDbFile: string;
   knowledgeBaseDir: string;
-  impactAssessmentFile: string;
   dependencySummaryFile: string;
   migrationPlanFile: string;
   competingStrategiesFile: string;
@@ -77,7 +76,6 @@ export function buildRuntimePaths(projectRoot: string, projectName: string): Run
     metricsSummaryFile: join(metricsDir, 'summary.json'),
     kbDbFile: join(root, 'kb.db'),
     knowledgeBaseDir: join(root, 'knowledge-base'),
-    impactAssessmentFile: join(artifactsDir, 'impact-assessment.md'),
     dependencySummaryFile: join(artifactsPlanningDir, 'dependency-summary.json'),
     migrationPlanFile: join(artifactsPlanningDir, 'migration-plan.md'),
     competingStrategiesFile: join(artifactsPlanningDir, 'competing-strategies.md'),
