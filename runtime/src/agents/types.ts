@@ -280,6 +280,10 @@ export interface AgentRemediationContext {
     details: string;
     sourceLocation: string;
     targetLocation?: string;
+    /** Pre-extracted source code snippet for the cited sourceLocation. */
+    sourceSnippet?: string;
+    /** Pre-extracted target code snippet for the cited targetLocation. */
+    targetSnippet?: string;
   }>;
   /** Outcomes of prior recovery attempts, enabling the agent to avoid repeating failed strategies. */
   priorAttempts?: PriorRecoveryAttempt[];

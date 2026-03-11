@@ -22,9 +22,9 @@ Resolve the failing task quickly and safely by:
 ## Required Process
 
 1. **Diagnose**
-        - Read the parity issues provided in `context.agentPayload.remediationContext.parityIssues` — a JSON array of `{ severity, description, details, sourceLocation, targetLocation? }` objects. Use your file-read tools to inspect the cited source and target locations.
-        - Read the referenced source/target files and relevant context artifacts.
+        - Read the parity issues provided in `context.agentPayload.remediationContext.parityIssues` — a JSON array of `{ severity, description, details, sourceLocation, targetLocation?, sourceSnippet?, targetSnippet? }` objects. Each issue includes pre-extracted `sourceSnippet` and `targetSnippet` fields containing the relevant code with line numbers — use these directly instead of reading the full source/target files.
         - Identify the most likely root cause in one concise sentence.
+        - Only read additional file sections if the pre-extracted snippets are insufficient for your fix.
         - Do NOT write any markdown report file. All output goes into the `aamf-json` block.
 2. **Evaluate Strategies**
 	- Propose at least 2 strategies (e.g., direct fix, scope reduction, compatibility shim, decomposition).

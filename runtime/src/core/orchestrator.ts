@@ -12,6 +12,7 @@ import {
   AgentInvocation,
   AgentResult,
   AgentName,
+  AgentRemediationContext,
   MigrationResult,
   MigrationTask,
   CompilationUnit,
@@ -2157,6 +2158,7 @@ export class MigrationOrchestrator {
 
           // Attach structured parity issues and prior attempt history
           parityRemediation.parityIssues = parityIssues;
+          this.enrichParityIssuesWithSnippets(parityRemediation.parityIssues);
           if (priorAttempts.length > 0) {
             parityRemediation.priorAttempts = [...priorAttempts];
           }
@@ -3516,6 +3518,7 @@ export class MigrationOrchestrator {
             expectedSuccessCondition: `Parity checks pass (or only minor issues) for ${task.id}`,
           });
           parityRemediation.parityIssues = parityIssues;
+          this.enrichParityIssuesWithSnippets(parityRemediation.parityIssues);
 
           // parity-failure-resolver
           const recoveryCtx = await this.contextBuilder.buildContext(
@@ -3603,6 +3606,65 @@ export class MigrationOrchestrator {
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────
+
+  /**
+   * Extract source/target code snippets for each parity issue and attach them
+   * directly to the issue objects.  This lets the parity-failure-resolver see
+   * the relevant code without reading entire files, dramatically reducing
+   * token usage on large target files.
+   */
+  private enrichParityIssuesWithSnippets(
+    issues: NonNullable<AgentRemediationContext['parityIssues']>,
+  ): void {
+    for (const issue of issues) {
+      if (issue.sourceLocation) {
+        issue.sourceSnippet = this.extractSnippet(issue.sourceLocation);
+      }
+      if (issue.targetLocation) {
+        issue.targetSnippet = this.extractSnippet(issue.targetLocation);
+      }
+    }
+  }
+
+  /**
+   * Parse a location string like `"path/to/file.c:100-120"` and extract those
+   * lines from the file on disk.  Returns undefined if the file or range can't
+   * be read.
+   */
+  private extractSnippet(location: string): string | undefined {
+    // Format: "relative/path:startLine-endLine" or "relative/path:line"
+    const colonIdx = location.lastIndexOf(':');
+    if (colonIdx === -1) return undefined;
+
+    const relPath = location.substring(0, colonIdx);
+    const rangeStr = location.substring(colonIdx + 1);
+    const filePath = resolve(this.projectRoot, relPath);
+
+    let startLine: number;
+    let endLine: number;
+    const dashIdx = rangeStr.indexOf('-');
+    if (dashIdx !== -1) {
+      startLine = parseInt(rangeStr.substring(0, dashIdx), 10);
+      endLine = parseInt(rangeStr.substring(dashIdx + 1), 10);
+    } else {
+      startLine = parseInt(rangeStr, 10);
+      endLine = startLine;
+    }
+    if (isNaN(startLine) || isNaN(endLine)) return undefined;
+
+    // Add a few lines of context on each side
+    const ctxLines = 5;
+    const from = Math.max(1, startLine - ctxLines);
+    const to = endLine + ctxLines;
+
+    try {
+      const content = readFileSync(filePath, 'utf-8');
+      const lines = content.split('\n');
+      return lines.slice(from - 1, to).map((l, i) => `${from + i}: ${l}`).join('\n');
+    } catch {
+      return undefined;
+    }
+  }
 
   /**
    * Check whether the parity-failure-resolver determined that remaining
