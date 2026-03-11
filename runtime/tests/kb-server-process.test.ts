@@ -118,4 +118,119 @@ describe('KbServerProcess', () => {
       ).rejects.toThrow();
     });
   });
+
+  // ─── Session-based MCP transport ──────────────────────────────────────────
+
+  describe('session-based MCP transport', () => {
+    const MCP_HEADERS = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/event-stream',
+    };
+
+    /** Send an MCP initialize request and return the session ID. */
+    async function initSession(url: string): Promise<string> {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: MCP_HEADERS,
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'test', version: '0.0.1' },
+          },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const sid = res.headers.get('mcp-session-id');
+      expect(sid).toBeTruthy();
+      // Drain response body
+      await res.text();
+      return sid!;
+    }
+
+    it('should establish a session and serve tools/list on the same session', async () => {
+      const proc = new KbServerProcess(dbPath);
+      await proc.start();
+      try {
+        const url = proc.mcpConfig.url;
+        const sid = await initSession(url);
+
+        // Send initialized notification
+        const notifRes = await fetch(url, {
+          method: 'POST',
+          headers: { ...MCP_HEADERS, 'mcp-session-id': sid },
+          body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+        });
+        expect(notifRes.status).toBeLessThan(300);
+        await notifRes.text();
+
+        // List tools on same session
+        const toolsRes = await fetch(url, {
+          method: 'POST',
+          headers: { ...MCP_HEADERS, 'mcp-session-id': sid },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+        });
+        expect(toolsRes.status).toBe(200);
+        const toolsBody = await toolsRes.text();
+        expect(toolsBody).toContain('lore_search');
+      } finally {
+        await proc.stop();
+      }
+    });
+
+    it('should return 400 for POST without session ID on non-initialize request', async () => {
+      const proc = new KbServerProcess(dbPath);
+      await proc.start();
+      try {
+        const url = proc.mcpConfig.url;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: MCP_HEADERS,
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+        });
+        expect(res.status).toBe(400);
+      } finally {
+        await proc.stop();
+      }
+    });
+
+    it('should return 400 for GET without a valid session ID', async () => {
+      const proc = new KbServerProcess(dbPath);
+      await proc.start();
+      try {
+        const url = proc.mcpConfig.url;
+        const res = await fetch(url, { method: 'GET' });
+        expect(res.status).toBe(400);
+      } finally {
+        await proc.stop();
+      }
+    });
+
+    it('should return 404 for DELETE without a valid session ID', async () => {
+      const proc = new KbServerProcess(dbPath);
+      await proc.start();
+      try {
+        const url = proc.mcpConfig.url;
+        const res = await fetch(url, { method: 'DELETE' });
+        expect(res.status).toBe(404);
+      } finally {
+        await proc.stop();
+      }
+    });
+
+    it('should return 405 for unsupported HTTP methods', async () => {
+      const proc = new KbServerProcess(dbPath);
+      await proc.start();
+      try {
+        const url = proc.mcpConfig.url;
+        const res = await fetch(url, { method: 'PUT' });
+        expect(res.status).toBe(405);
+      } finally {
+        await proc.stop();
+      }
+    });
+  });
 });
