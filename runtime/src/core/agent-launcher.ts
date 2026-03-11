@@ -50,6 +50,7 @@ function copilotDescriptor(config: MigrationConfig): CliBackendDescriptor {
         '--allow-all-tools',
         '--allow-all-paths',
         '--no-ask-user',
+        '--output-format', 'json',
       ];
       if (model) args.push('--model', model);
       if (cfg.source.path) args.push('--add-dir', cfg.source.path);
@@ -131,14 +132,136 @@ function stripVSCodeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return stripped;
 }
 
+// ─── Copilot JSONL event parsing ──────────────────────────────────────────────
+
+/** A single JSONL event emitted by `copilot --output-format json`. */
+interface CopilotEvent {
+  type: string;
+  data?: Record<string, unknown>;
+  id?: string;
+  timestamp?: string;
+  [key: string]: unknown;
+}
+
+/** Summary extracted from the copilot `result` event. */
+interface CopilotResultSummary {
+  exitCode: number;
+  premiumRequests?: number;
+  totalApiDurationMs?: number;
+  sessionDurationMs?: number;
+  codeChanges?: { linesAdded: number; linesRemoved: number; filesModified: string[] };
+}
+
+/**
+ * Parse copilot JSONL stdout into structured events and reconstruct the
+ * text content the agent produced (for backward-compatible aamf-json parsing).
+ */
+function parseCopilotJsonl(stdout: string): {
+  events: CopilotEvent[];
+  textContent: string;
+  toolCalls: Array<{ name: string; status: string }>;
+  resultSummary: CopilotResultSummary | undefined;
+  errorEvents: CopilotEvent[];
+} {
+  const events: CopilotEvent[] = [];
+  const toolCalls: Array<{ name: string; status: string }> = [];
+  const errorEvents: CopilotEvent[] = [];
+  let resultSummary: CopilotResultSummary | undefined;
+  let textContent = '';
+
+  for (const line of stdout.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line);
+      // Only treat as a copilot event if it has the expected `type` field.
+      // Otherwise it's likely text-mode output that happens to be valid JSON
+      // (e.g., an aamf-json payload line).
+      if (typeof parsed !== 'object' || parsed === null || typeof parsed.type !== 'string') {
+        textContent += line + '\n';
+        continue;
+      }
+      const event = parsed as CopilotEvent;
+      events.push(event);
+
+      switch (event.type) {
+        case 'assistant.message': {
+          const data = event.data as { content?: string } | undefined;
+          if (data?.content) textContent += data.content;
+          break;
+        }
+        case 'assistant.tool_call': {
+          const data = event.data as { toolName?: string } | undefined;
+          if (data?.toolName) toolCalls.push({ name: data.toolName, status: 'called' });
+          break;
+        }
+        case 'assistant.tool_call_result': {
+          const data = event.data as { toolName?: string; status?: string } | undefined;
+          if (data?.toolName) toolCalls.push({ name: data.toolName, status: data.status ?? 'completed' });
+          break;
+        }
+        case 'result': {
+          const data = event as { exitCode?: number; usage?: Record<string, unknown> };
+          const usage = data.usage as {
+            premiumRequests?: number;
+            totalApiDurationMs?: number;
+            sessionDurationMs?: number;
+            codeChanges?: { linesAdded: number; linesRemoved: number; filesModified: string[] };
+          } | undefined;
+          resultSummary = {
+            exitCode: data.exitCode ?? -1,
+            premiumRequests: usage?.premiumRequests,
+            totalApiDurationMs: usage?.totalApiDurationMs,
+            sessionDurationMs: usage?.sessionDurationMs,
+            codeChanges: usage?.codeChanges,
+          };
+          break;
+        }
+        case 'error': {
+          errorEvents.push(event);
+          break;
+        }
+      }
+    } catch {
+      // Not valid JSON — may be text-mode output if --output-format json wasn't applied.
+      textContent += line + '\n';
+    }
+  }
+
+  return { events, textContent, toolCalls, resultSummary, errorEvents };
+}
+
+/** Produce a human-readable summary of tool calls for logging. */
+function summarizeToolCalls(toolCalls: Array<{ name: string; status: string }>): string {
+  const counts = new Map<string, number>();
+  for (const tc of toolCalls) {
+    counts.set(tc.name, (counts.get(tc.name) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([name, count]) => `${name}(${count})`).join(', ');
+}
+
+/** Convert a copilot result summary to the internal TokenUsage shape. */
+function tokenUsageFromResult(summary: CopilotResultSummary): AgentResult['tokenUsage'] | undefined {
+  // The copilot result event doesn't provide raw token counts, only premium
+  // requests and timing.  We return undefined so the caller falls back to
+  // the text-based token parser which does extract per-model token counts.
+  return undefined;
+}
+
 /** Shared helper: write stdout/stderr to a per-agent log file. */
-async function writeAgentLog(logDir: string, agent: string, taskId: string, stdout: string, stderr: string, invocationId?: string): Promise<void> {
+async function writeAgentLog(logDir: string, agent: string, taskId: string, stdout: string, stderr: string, invocationId?: string, events?: CopilotEvent[]): Promise<void> {
   const targetDir = join(logDir, agent, taskId);
   await ensureDir(targetDir);
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const filename = invocationId ? `${invocationId}-${timestamp}.log` : `${timestamp}.log`;
   const content = `=== STDOUT ===\n${stdout}\n\n=== STDERR ===\n${stderr}\n`;
   await atomicWrite(join(targetDir, filename), content);
+
+  // Write structured JSONL event log when available.
+  if (events && events.length > 0) {
+    const eventsFilename = invocationId ? `${invocationId}-${timestamp}.events.jsonl` : `${timestamp}.events.jsonl`;
+    const eventsContent = events.map(e => JSON.stringify(e)).join('\n') + '\n';
+    await atomicWrite(join(targetDir, eventsFilename), eventsContent);
+  }
 }
 
 // ─── Live output streaming ────────────────────────────────────────────────────
@@ -357,8 +480,7 @@ export class CliAgentRunner implements AgentRunner {
     if (invocation.taskId) env.AAMF_TASK_ID = invocation.taskId;
 
     const startTime = Date.now();
-    invLogger.info(`Launching CLI agent: ${cliCommand} --agent ${invocation.agent}`);
-    invLogger.debug(`Full CLI command: ${cliCommand} ${args.join(' ')}`);
+    invLogger.info(`Launching CLI agent: ${cliCommand} ${args.join(' ')}`);
 
     // ── Heartbeat & output-directory watcher ─────────────────────────
     const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -430,14 +552,35 @@ export class CliAgentRunner implements AgentRunner {
       await liveCallbacks.flush();
       const duration = Date.now() - startTime;
 
+      // Parse JSONL events when copilot outputs structured JSON.
+      const parsed = parseCopilotJsonl(result.stdout);
+      // Use reconstructed text content for aamf-json extraction (backward compat).
+      const stdoutForParsing = parsed.textContent || result.stdout;
+
       const taskId = invocation.taskId ?? 'main';
-      await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId);
+      await writeAgentLog(this.logDir, invocation.agent, taskId, result.stdout, result.stderr, invocationId, parsed.events);
+
+      if (parsed.toolCalls.length > 0) {
+        const toolSummary = summarizeToolCalls(parsed.toolCalls);
+        invLogger.info(`Agent tool calls: ${toolSummary}`);
+      }
+      if (parsed.errorEvents.length > 0) {
+        for (const errEvt of parsed.errorEvents) {
+          invLogger.warn(`Agent error event: ${JSON.stringify(errEvt.data)}`);
+        }
+      }
 
       const outputFiles = await detectOutputFiles(invocation);
-      const tokenUsage = parseTokenUsage(
-        result.stdout + '\n' + result.stderr,
-        this.backend.tokenParserRuntime,
-      );
+      // Prefer structured usage from the copilot result event when available.
+      let tokenUsage = parsed.resultSummary
+        ? tokenUsageFromResult(parsed.resultSummary)
+        : undefined;
+      if (!tokenUsage) {
+        tokenUsage = parseTokenUsage(
+          result.stdout + '\n' + result.stderr,
+          this.backend.tokenParserRuntime,
+        );
+      }
 
       const agentResult: AgentResult = {
         agent: invocation.agent,
@@ -456,9 +599,15 @@ export class CliAgentRunner implements AgentRunner {
             ? result.stderr || `Exit code ${result.exitCode}`
             : undefined,
         stderr: (result.killed || result.exitCode !== 0) ? result.stderr : undefined,
+        copilotEvents: parsed.events.length > 0 ? {
+          totalEvents: parsed.events.length,
+          toolCalls: parsed.toolCalls,
+          resultSummary: parsed.resultSummary,
+          errorCount: parsed.errorEvents.length,
+        } : undefined,
       };
 
-      return finaliseResult(agentResult, result.stdout, prompt, invLogger);
+      return finaliseResult(agentResult, stdoutForParsing, prompt, invLogger);
     } catch (err) {
       stopTimers();
       await liveCallbacks.flush().catch(() => {});

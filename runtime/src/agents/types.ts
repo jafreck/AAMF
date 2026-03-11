@@ -146,6 +146,20 @@ export interface AgentResult {
 
   /** Time in milliseconds from process spawn to the first output file being detected. */
   spawnToFirstOutput?: number;
+
+  /** Structured event data from `copilot --output-format json`, when available. */
+  copilotEvents?: {
+    totalEvents: number;
+    toolCalls: Array<{ name: string; status: string }>;
+    resultSummary?: {
+      exitCode: number;
+      premiumRequests?: number;
+      totalApiDurationMs?: number;
+      sessionDurationMs?: number;
+      codeChanges?: { linesAdded: number; linesRemoved: number; filesModified: string[] };
+    };
+    errorCount: number;
+  };
 }
 
 // ─── Agent Context ───────────────────────────────────────────────────────────
