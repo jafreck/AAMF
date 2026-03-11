@@ -131,9 +131,10 @@ export class ProgressWriter {
     await this.writeCurrentState();
   }
 
-  /** Update token usage with full breakdown */
-  setTokenUsage(data: { total: number; byPhase: Record<number, number>; byAgent: Record<string, number> }): void {
+  /** Update token usage with full breakdown and flush to disk */
+  async setTokenUsage(data: { total: number; byPhase: Record<number, number>; byAgent: Record<string, number> }): Promise<void> {
     this.tokenUsage = { total: data.total, byPhase: { ...data.byPhase }, byAgent: { ...data.byAgent } };
+    await this.writeCurrentState();
   }
 
   /** Append a timestamped event */
@@ -269,11 +270,17 @@ export class ProgressWriter {
     // Task progress bar (Phase 5)
     if (this.totalTasks > 0) {
       md += `## Task Progress\n\n`;
-      const pct = this.totalTasks > 0 ? Math.round((completedTasks / this.totalTasks) * 100) : 0;
+      const migratedTasks = [...this.tasks.values()].filter(t => t.status === 'migrated').length;
+      const doneTasks = completedTasks + migratedTasks;
+      const pct = this.totalTasks > 0 ? Math.round((doneTasks / this.totalTasks) * 100) : 0;
       const filled = Math.round(pct / 5);
       const empty = 20 - filled;
       const bar = '█'.repeat(filled) + '░'.repeat(empty);
-      md += `[${bar}] ${pct}% (${completedTasks}/${this.totalTasks} tasks)\n\n`;
+      if (migratedTasks > 0 && migratedTasks !== doneTasks) {
+        md += `[${bar}] ${pct}% (${completedTasks} completed, ${migratedTasks} migrated / ${this.totalTasks} tasks)\n\n`;
+      } else {
+        md += `[${bar}] ${pct}% (${doneTasks}/${this.totalTasks} tasks)\n\n`;
+      }
 
       // Failed/blocked tasks
       const failed = [...this.tasks.entries()].filter(([_, t]) => t.status === 'failed');

@@ -472,7 +472,7 @@ export class MigrationOrchestrator {
           }
         }
 
-        this.progress.setTokenUsage(this.tokenTracker.toCheckpointData());
+        await this.progress.setTokenUsage(this.tokenTracker.toCheckpointData());
       }
     } finally {
       // Always stop the KB server and dispose the embedder, whether migration succeeded, failed, or was aborted
@@ -2345,6 +2345,13 @@ export class MigrationOrchestrator {
     }
 
     if (mode === 'wave-migration') {
+      // In wave-barrier mode, completePhase5Task runs later (after the wave
+      // barrier releases).  Update progress now so observers see that the
+      // task's core migration substeps are done.
+      await this.progress.updateTask(task.id, 'migrated', {
+        sourceFiles: task.sourceFiles,
+        targetFiles: task.targetFiles,
+      });
       return { migrated: true, durationMs: Date.now() - taskStartMs };
     }
 
@@ -4105,6 +4112,9 @@ export class MigrationOrchestrator {
       // Sync token snapshot to checkpoint state so the next save() persists accurate data
       const state = this.checkpoint.getState();
       state.tokenUsage = this.tokenTracker.toCheckpointData();
+      // Keep progress.md token display in sync (fire-and-forget; the next
+      // progress.updateTask call will also flush to disk)
+      void this.progress.setTokenUsage(this.tokenTracker.toCheckpointData());
     }
   }
 
