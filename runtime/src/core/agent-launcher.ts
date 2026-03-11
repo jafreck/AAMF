@@ -341,10 +341,7 @@ export class CliAgentRunner implements AgentRunner {
     if (invocation.taskId) invLogger.setTaskId(invocation.taskId);
     if (invocation.phase !== undefined) invLogger.setPhase(invocation.phase);
 
-    const loreHint = invocation.mcpConfig
-      ? ' IMPORTANT: Use the Lore MCP tools (aamf-kb server) as your first action — call lore_lookup or lore_search before reading any source files directly.'
-      : '';
-    const prompt = `Read your context file at: ${invocation.contextFile}\nExecute the task described in the context. Write all output files to the paths specified in the context.${loreHint}`;
+    const prompt = `Read your context file at: ${invocation.contextFile}\nExecute the task described in the context. Write all output files to the paths specified in the context.`;
 
     const model = invocation.modelOverride ?? this.backend.model;
     const args = this.backend.buildArgs(invocation, prompt, model, this.config);
