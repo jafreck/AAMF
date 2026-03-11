@@ -83,6 +83,14 @@ export interface AgentInvocation {
   /** Pre-generated invocation ID for log correlation; runners use this instead of generating their own. */
   invocationId?: string;
 
+  /**
+   * Task-scoped directories to expose via `--add-dir` instead of the global
+   * source/target trees.  When set, these replace the blanket `cfg.source.path`
+   * and `cfg.target.outputPath` entries so the agent only sees directories
+   * relevant to its task.
+   */
+  scopedDirs?: string[];
+
   /** Routing tier assigned by the model routing policy (undefined when routing is inactive). */
   routingTier?: ModelTier;
 

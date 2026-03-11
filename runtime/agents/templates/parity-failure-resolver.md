@@ -32,7 +32,9 @@ Resolve the failing task quickly and safely by:
 
 3. **Execute and Verify**
 	- Apply the chosen changes.
-	- Run/inspect the requested verification signal(s) available in context.
+	- **Self-verify**: After applying fixes, re-read the modified target code and compare it against the source to confirm the parity issues are resolved. Check that your fix doesn't introduce new regressions.
+	- If your self-verification confirms all non-minor issues are resolved, set `selfVerified: true` in your output — this allows the orchestrator to skip an expensive separate re-verification step.
+	- If you cannot confidently verify your fixes, set `selfVerified: false` and a separate parity-verifier will re-check.
 	- If unresolved after this attempt, return `status: "needs-review"` or `status: "failed"` with precise notes.
 
 ## Output Rules (Critical)
@@ -56,6 +58,7 @@ Resolve the failing task quickly and safely by:
   "strategyApplied": "Direct fix",
   "attempts": 1,
   "scopeReduced": false,
+  "selfVerified": true,
   "notes": "Root cause and outcome summary"
 }
 ```
@@ -69,6 +72,7 @@ Resolve the failing task quickly and safely by:
 - `outputFiles` should include files modified/written during this attempt.
 - `attempts` must be an integer `>= 1`.
 - `scopeReduced` must be boolean.
+- `selfVerified` must be boolean — `true` when you have re-read the fixed target code and confirmed the parity issues are resolved.
 
 ## Constraints
 

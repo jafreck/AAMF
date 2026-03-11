@@ -52,8 +52,20 @@ function copilotDescriptor(config: MigrationConfig): CliBackendDescriptor {
         '--no-ask-user',
       ];
       if (model) args.push('--model', model);
-      if (cfg.source.path) args.push('--add-dir', cfg.source.path);
-      if (cfg.target.outputPath) args.push('--add-dir', cfg.target.outputPath);
+      if (invocation.scopedDirs && invocation.scopedDirs.length > 0) {
+        // Task-scoped directories — expose only what this task needs
+        const seen = new Set<string>();
+        for (const dir of invocation.scopedDirs) {
+          if (dir && !seen.has(dir)) {
+            seen.add(dir);
+            args.push('--add-dir', dir);
+          }
+        }
+      } else {
+        // Fallback: expose full source/target trees
+        if (cfg.source.path) args.push('--add-dir', cfg.source.path);
+        if (cfg.target.outputPath) args.push('--add-dir', cfg.target.outputPath);
+      }
       args.push('--add-dir', invocation.progressDir);
       if (invocation.additionalArgs) {
         for (const [key, value] of Object.entries(invocation.additionalArgs)) {
@@ -341,7 +353,10 @@ export class CliAgentRunner implements AgentRunner {
     if (invocation.taskId) invLogger.setTaskId(invocation.taskId);
     if (invocation.phase !== undefined) invLogger.setPhase(invocation.phase);
 
-    const prompt = `Read your context file at: ${invocation.contextFile}\nExecute the task described in the context. Write all output files to the paths specified in the context.`;
+    const loreHint = invocation.mcpConfig
+      ? ' IMPORTANT: Use the Lore MCP tools (aamf-kb server) as your first action — call lore_lookup or lore_search before reading any source files directly.'
+      : '';
+    const prompt = `Read your context file at: ${invocation.contextFile}\nExecute the task described in the context. Write all output files to the paths specified in the context.${loreHint}`;
 
     const model = invocation.modelOverride ?? this.backend.model;
     const args = this.backend.buildArgs(invocation, prompt, model, this.config);

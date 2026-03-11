@@ -369,7 +369,7 @@ describe('generateAgentDefinitions() always includes Lore guidance', () => {
 
   it('should include Lore guidance in code-migrator', async () => {
     const content = await readFile(join(loreDir, 'code-migrator.agent.md'), 'utf-8');
-    expect(content).toContain('Lore Code-Intelligence Server (MANDATORY)');
+    expect(content).toContain('Lore Code-Intelligence Server (MANDATORY');
     expect(content).toContain('lore_search');
     expect(content).toContain('lore_lookup');
     expect(content).toContain('lore_graph');
@@ -384,7 +384,7 @@ describe('generateAgentDefinitions() always includes Lore guidance', () => {
     ];
     for (const agent of kbAwareAgents) {
       const content = await readFile(join(loreDir, `${agent}.agent.md`), 'utf-8');
-      expect(content, `${agent} should contain Lore guidance`).toContain('Lore Code-Intelligence Server (MANDATORY)');
+      expect(content, `${agent} should contain Lore guidance`).toContain('Lore Code-Intelligence Server (MANDATORY');
     }
   });
 
