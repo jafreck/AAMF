@@ -239,6 +239,16 @@ export class CheckpointManager {
     await this.save(state);
   }
 
+  /** Remove a task from failedTasks (e.g. after a retry succeeds). */
+  async clearFailedTask(taskId: string): Promise<void> {
+    const state = this.getState();
+    const before = state.failedTasks.length;
+    state.failedTasks = state.failedTasks.filter(f => f.taskId !== taskId);
+    if (state.failedTasks.length < before) {
+      await this.save(state);
+    }
+  }
+
   /** Record a task failure */
   async failTask(taskId: string, error: string, attempt: number, recoveryAttempted: boolean): Promise<void> {
     const state = this.getState();

@@ -2068,6 +2068,9 @@ export class MigrationOrchestrator {
         });
       }
 
+      // Clear any stale failedTasks entry left by intermediate retry failures
+      await this.checkpoint.clearFailedTask(task.id);
+
       completionEventDurationMs = migratorResult.duration;
       await this.markPhase5Substep(task.id, 'migrator');
     }
