@@ -1,4 +1,4 @@
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { readdir, readFile, unlink } from 'node:fs/promises';
@@ -2052,7 +2052,7 @@ export class MigrationOrchestrator {
               remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
             },
           );
-          return this.buildInvocation('parity-failure-resolver', recoveryCtx, 5, taskId, task);
+          return this.buildInvocation('parity-failure-resolver', recoveryCtx, 5, taskId);
         },
       });
 
@@ -2110,8 +2110,8 @@ export class MigrationOrchestrator {
         this.logger,
       );
       const [parityResult, testResult] = await parallel.executeAll([
-        this.buildInvocation('parity-verifier', parityCtx, 5, task.id, task),
-        this.buildInvocation('test-writer', testCtx, 5, task.id, task),
+        this.buildInvocation('parity-verifier', parityCtx, 5, task.id),
+        this.buildInvocation('test-writer', testCtx, 5, task.id),
       ]);
       this._peakConcurrency = Math.max(this._peakConcurrency, parallel.peakConcurrency);
       if (parityResult) {
@@ -2184,7 +2184,7 @@ export class MigrationOrchestrator {
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
-          const recoveryInv = this.buildInvocation('parity-failure-resolver', recoveryCtx, 5, task.id, task);
+          const recoveryInv = this.buildInvocation('parity-failure-resolver', recoveryCtx, 5, task.id);
           const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
           this.recordTokens(recoveryResult, 5);
 
@@ -2206,16 +2206,6 @@ export class MigrationOrchestrator {
           // Commit any fixes the resolver applied, then re-verify parity
           await this.commitForAgent('parity-failure-resolver', 5, task.id, task.name);
 
-          // If the resolver self-verified its fixes, trust the verdict and
-          // skip the expensive parity-verifier re-run.
-          if (this.resolverSelfVerified(recoveryResult)) {
-            this.logger.info(
-              `Parity-failure-resolver self-verified fixes for ${task.id} on attempt ${attempt} — skipping re-verification`,
-            );
-            parityPassed = true;
-            break;
-          }
-
           // Re-run parity-verifier
           const reParityCtx = await this.contextBuilder.buildContext(
             'parity-verifier',
@@ -2227,7 +2217,7 @@ export class MigrationOrchestrator {
               ...this.taskScopePayload(task),
             },
           );
-          const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 5, task.id, task);
+          const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 5, task.id);
           const reParityResult = await this.launchAgentWithEvents(reParityInv);
           this.recordTokens(reParityResult, 5);
           this.storeParityResult(reParityResult, task.id);
@@ -2307,7 +2297,7 @@ export class MigrationOrchestrator {
             remediationContext: toAgentRemediationContext(minorRemediation),
           },
         );
-        const repassInv = this.buildInvocation('code-migrator', repassCtx, 5, task.id, task);
+        const repassInv = this.buildInvocation('code-migrator', repassCtx, 5, task.id);
         const repassResult = await this.launchAgentWithEvents(repassInv);
         this.recordTokens(repassResult, 5);
 
@@ -2325,7 +2315,7 @@ export class MigrationOrchestrator {
               ...this.taskScopePayload(task),
             },
           );
-          const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 5, task.id, task);
+          const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 5, task.id);
           const reParityResult = await this.launchAgentWithEvents(reParityInv);
           this.recordTokens(reParityResult, 5);
           this.storeParityResult(reParityResult, task.id);
@@ -3375,7 +3365,7 @@ export class MigrationOrchestrator {
           remediationContext: toAgentRemediationContext(remediationContext),
         },
       );
-      const recoveryInv = this.buildInvocation('parity-failure-resolver', recoveryCtx, 5, task.id, task);
+      const recoveryInv = this.buildInvocation('parity-failure-resolver', recoveryCtx, 5, task.id);
       const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
       this.recordTokens(recoveryResult, 5);
 
@@ -3397,7 +3387,7 @@ export class MigrationOrchestrator {
           remediationContext: toAgentRemediationContext(remediationContext),
         },
       );
-      const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 5, task.id, task);
+      const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 5, task.id);
       const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
       this.recordTokens(reMigrateResult, 5);
 
@@ -3535,7 +3525,7 @@ export class MigrationOrchestrator {
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
-          const recoveryInv = this.buildInvocation('parity-failure-resolver', recoveryCtx, 5, task.id, task);
+          const recoveryInv = this.buildInvocation('parity-failure-resolver', recoveryCtx, 5, task.id);
           const recoveryResult = await this.launchAgentWithEvents(recoveryInv);
           this.recordTokens(recoveryResult, 5);
 
@@ -3554,7 +3544,7 @@ export class MigrationOrchestrator {
               remediationContext: toAgentRemediationContext(parityRemediation),
             },
           );
-          const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 5, task.id, task);
+          const reMigrateInv = this.buildInvocation('code-migrator', reMigrateCtx, 5, task.id);
           const reMigrateResult = await this.launchAgentWithEvents(reMigrateInv);
           this.recordTokens(reMigrateResult, 5);
 
@@ -3571,7 +3561,7 @@ export class MigrationOrchestrator {
               ...this.taskScopePayload(task),
             },
           );
-          const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 5, task.id, task);
+          const reParityInv = this.buildInvocation('parity-verifier', reParityCtx, 5, task.id);
           const reParityResult = await this.launchAgentWithEvents(reParityInv);
           this.recordTokens(reParityResult, 5);
           this.storeParityResult(reParityResult, task.id);
@@ -3618,17 +3608,6 @@ export class MigrationOrchestrator {
   private resolverReducedScope(result: AgentResult): boolean {
     if (!result.outputParsed || !result.structuredOutput) return false;
     return (result.structuredOutput as Record<string, unknown>).scopeReduced === true;
-  }
-
-  /**
-   * Check whether the parity-failure-resolver performed its own re-verification
-   * of the fixes it applied.  When `selfVerified` is true, the resolver has
-   * confirmed that parity issues are resolved, so the orchestrator can skip
-   * the expensive separate parity-verifier re-run.
-   */
-  private resolverSelfVerified(result: AgentResult): boolean {
-    if (!result.outputParsed || !result.structuredOutput) return false;
-    return (result.structuredOutput as Record<string, unknown>).selfVerified === true;
   }
 
   /**
@@ -4095,17 +4074,6 @@ export class MigrationOrchestrator {
       }
     }
 
-    // Compute task-scoped directories so agents only see files relevant to
-    // their task instead of the full source/target trees.
-    let scopedDirs: string[] | undefined;
-    if (task) {
-      const dirs = new Set<string>();
-      for (const f of [...task.sourceFiles, ...task.targetFiles]) {
-        dirs.add(dirname(resolve(this.projectRoot, f)));
-      }
-      if (dirs.size > 0) scopedDirs = [...dirs];
-    }
-
     return {
       agent,
       contextFile,
@@ -4113,7 +4081,6 @@ export class MigrationOrchestrator {
       phase,
       taskId,
       timeout,
-      ...(scopedDirs ? { scopedDirs } : {}),
       ...(modelOverride ? { modelOverride } : {}),
       ...(routingTier ? { routingTier, routingReason } : {}),
       ...(mcpConfig ? { mcpConfig } : {}),

@@ -52,20 +52,8 @@ function copilotDescriptor(config: MigrationConfig): CliBackendDescriptor {
         '--no-ask-user',
       ];
       if (model) args.push('--model', model);
-      if (invocation.scopedDirs && invocation.scopedDirs.length > 0) {
-        // Task-scoped directories — expose only what this task needs
-        const seen = new Set<string>();
-        for (const dir of invocation.scopedDirs) {
-          if (dir && !seen.has(dir)) {
-            seen.add(dir);
-            args.push('--add-dir', dir);
-          }
-        }
-      } else {
-        // Fallback: expose full source/target trees
-        if (cfg.source.path) args.push('--add-dir', cfg.source.path);
-        if (cfg.target.outputPath) args.push('--add-dir', cfg.target.outputPath);
-      }
+      if (cfg.source.path) args.push('--add-dir', cfg.source.path);
+      if (cfg.target.outputPath) args.push('--add-dir', cfg.target.outputPath);
       args.push('--add-dir', invocation.progressDir);
       if (invocation.additionalArgs) {
         for (const [key, value] of Object.entries(invocation.additionalArgs)) {
