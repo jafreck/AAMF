@@ -1126,4 +1126,119 @@ describe('AgentLauncher', () => {
       expect(liveContent).not.toContain('[stderr]');
     });
   });
+
+  // ─── Copilot JSONL event parsing ────────────────────────────────────────────
+
+  describe('copilot JSONL event parsing', () => {
+    it('should parse JSONL stdout, extract text content, and write .events.jsonl log', async () => {
+      const events = [
+        JSON.stringify({ type: 'session.tools_updated', data: { model: 'test' }, id: '1', timestamp: new Date().toISOString() }),
+        JSON.stringify({ type: 'assistant.message', data: { content: 'hello world' }, id: '2', timestamp: new Date().toISOString() }),
+        JSON.stringify({ type: 'result', exitCode: 0, usage: { premiumRequests: 1, totalApiDurationMs: 500, sessionDurationMs: 1000, codeChanges: { linesAdded: 0, linesRemoved: 0, filesModified: [] } }, timestamp: new Date().toISOString() }),
+      ];
+      const script = await createScript('jsonl-output.sh', events.map(e => `echo '${e}'`).join('\n') + '\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('jsonl-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 5,
+        taskId: 'jsonl-001',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.copilotEvents).toBeDefined();
+      expect(result.copilotEvents!.totalEvents).toBe(3);
+      expect(result.copilotEvents!.resultSummary).toBeDefined();
+      expect(result.copilotEvents!.resultSummary!.premiumRequests).toBe(1);
+      expect(result.copilotEvents!.resultSummary!.sessionDurationMs).toBe(1000);
+
+      // Should have written .events.jsonl
+      const agentLogDir = join(projectRoot, '.aamf', 'migration', config.projectName, 'logs', 'agents', 'code-migrator', 'jsonl-001');
+      const logFiles = await readdir(agentLogDir);
+      const eventsLog = logFiles.find(f => f.endsWith('.events.jsonl'));
+      expect(eventsLog).toBeDefined();
+
+      const eventsContent = await readFile(join(agentLogDir, eventsLog!), 'utf-8');
+      const eventLines = eventsContent.trim().split('\n');
+      expect(eventLines.length).toBe(3);
+    });
+
+    it('should extract tool calls from JSONL events', async () => {
+      const events = [
+        JSON.stringify({ type: 'assistant.tool_call', data: { toolName: 'read_file' }, id: '1', timestamp: new Date().toISOString() }),
+        JSON.stringify({ type: 'assistant.tool_call_result', data: { toolName: 'read_file', status: 'completed' }, id: '2', timestamp: new Date().toISOString() }),
+        JSON.stringify({ type: 'assistant.tool_call', data: { toolName: 'run_in_terminal' }, id: '3', timestamp: new Date().toISOString() }),
+        JSON.stringify({ type: 'assistant.message', data: { content: 'done' }, id: '4', timestamp: new Date().toISOString() }),
+        JSON.stringify({ type: 'result', exitCode: 0, usage: { premiumRequests: 1 }, timestamp: new Date().toISOString() }),
+      ];
+      const script = await createScript('jsonl-tools.sh', events.map(e => `echo '${e}'`).join('\n') + '\nexit 0');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('jsonl-tools-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 5,
+        taskId: 'jsonl-tools-001',
+      });
+
+      expect(result.copilotEvents).toBeDefined();
+      expect(result.copilotEvents!.toolCalls.length).toBe(3);
+      expect(result.copilotEvents!.toolCalls[0]).toEqual({ name: 'read_file', status: 'called' });
+      expect(result.copilotEvents!.toolCalls[1]).toEqual({ name: 'read_file', status: 'completed' });
+      expect(result.copilotEvents!.toolCalls[2]).toEqual({ name: 'run_in_terminal', status: 'called' });
+    });
+
+    it('should capture error events from JSONL output', async () => {
+      const events = [
+        JSON.stringify({ type: 'error', data: { message: 'Connection reset', code: 503 }, id: '1', timestamp: new Date().toISOString() }),
+        JSON.stringify({ type: 'result', exitCode: 1, usage: { premiumRequests: 0 }, timestamp: new Date().toISOString() }),
+      ];
+      const script = await createScript('jsonl-error.sh', events.map(e => `echo '${e}'`).join('\n') + '\nexit 1');
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('jsonl-error-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 5,
+        taskId: 'jsonl-error-001',
+      });
+
+      expect(result.copilotEvents).toBeDefined();
+      expect(result.copilotEvents!.errorCount).toBe(1);
+    });
+
+    it('should handle mixed text and JSONL output gracefully', async () => {
+      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'code-migrator' });
+      const script = await createScript('jsonl-mixed.sh', [
+        `echo 'plain text line'`,
+        `echo '${JSON.stringify({ type: 'assistant.message', data: { content: 'msg' }, id: '1', timestamp: new Date().toISOString() })}'`,
+        `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
+        'exit 0',
+      ].join('\n'));
+      const launcher = makeLauncher(script);
+      const { contextFile, progressDir } = await prepareInvocation('jsonl-mixed-001');
+
+      const result = await launcher.launchAgent({
+        agent: 'code-migrator',
+        contextFile,
+        progressDir,
+        phase: 5,
+        taskId: 'jsonl-mixed-001',
+      });
+
+      // aamf-json should still be parsed from the text content
+      expect(result.outputParsed).toBe(true);
+      expect(result.structuredOutput?.status).toBe('completed');
+      // JSONL event should be captured
+      expect(result.copilotEvents).toBeDefined();
+      expect(result.copilotEvents!.totalEvents).toBe(1);
+    });
+  });
 });
