@@ -82,8 +82,8 @@
   "agentBackend": {
     "runtime": "copilot",
     "cliCommand": "copilot",
-    "model": "claude-opus-4.6",
-    "failureRecoveryModel": "claude-opus-4.6",
+    "model": "gpt-5.4",
+    "failureRecoveryModel": "gpt-5.4",
     "agentDir": "../../../../.github/agents",
     "timeout": 3600000,
     "phaseTimeouts": { "0": 600000 }

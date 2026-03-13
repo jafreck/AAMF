@@ -60,7 +60,7 @@ function outputSchema(
   const outputFiles = opts.overrideOutputFiles ?? BASE_OUTPUT_PROPERTIES.outputFiles;
   return {
     type: 'object',
-    required: ['agent', 'status', 'outputFiles', ...(opts.extraRequired ?? [])],
+    required: ['status', 'outputFiles', ...(opts.extraRequired ?? [])],
     properties: {
       agent: { const: agentName },
       ...BASE_OUTPUT_PROPERTIES,
@@ -96,13 +96,13 @@ export interface AgentRegistryEntry {
 // ─── Per-Agent Output Schema Extensions ──────────────────────────────────────
 // These extend AamfOutputBase with agent-specific fields.
 
-export const MigrationOrchestratorSchema = AamfOutputBase.extend({ agent: z.literal('migration-orchestrator') });
-export const KnowledgeBuilderSchema = AamfOutputBase.extend({ agent: z.literal('knowledge-builder') });
-export const MigrationPlannerSchema = AamfOutputBase.extend({ agent: z.literal('migration-planner') });
-export const AdjudicatorSchema = AamfOutputBase.extend({ agent: z.literal('adjudicator') });
-export const CodeMigratorSchema = AamfOutputBase.extend({ agent: z.literal('code-migrator') });
+export const MigrationOrchestratorSchema = AamfOutputBase.extend({ agent: z.literal('migration-orchestrator').optional() });
+export const KnowledgeBuilderSchema = AamfOutputBase.extend({ agent: z.literal('knowledge-builder').optional() });
+export const MigrationPlannerSchema = AamfOutputBase.extend({ agent: z.literal('migration-planner').optional() });
+export const AdjudicatorSchema = AamfOutputBase.extend({ agent: z.literal('adjudicator').optional() });
+export const CodeMigratorSchema = AamfOutputBase.extend({ agent: z.literal('code-migrator').optional() });
 export const ParityVerifierSchema = AamfOutputBase.extend({
-  agent: z.literal('parity-verifier'),
+  agent: z.literal('parity-verifier').optional(),
   parity: z.enum(['pass', 'partial', 'fail']),
   issues: z.array(z.object({
     severity: z.enum(['critical', 'major', 'minor']),
@@ -112,12 +112,12 @@ export const ParityVerifierSchema = AamfOutputBase.extend({
     targetLocation: z.string().optional(),
   })).default([]),
 });
-export const TestWriterSchema = AamfOutputBase.extend({ agent: z.literal('test-writer') });
+export const TestWriterSchema = AamfOutputBase.extend({ agent: z.literal('test-writer').optional() });
 export const ParityFailureResolverSchema = AamfOutputBase.extend({
-  agent: z.enum(['parity-failure-resolver', 'failure-recovery']),
-}).transform((data) => ({ ...data, agent: 'parity-failure-resolver' as const }));
+  agent: z.enum(['parity-failure-resolver', 'failure-recovery']).optional(),
+}).transform((data) => ({ ...data, agent: data.agent ? 'parity-failure-resolver' as const : undefined }));
 export const FinalParityCheckerSchema = AamfOutputBase.extend({
-  agent: z.literal('final-parity-checker'),
+  agent: z.literal('final-parity-checker').optional(),
   fixes: z.array(z.object({
     description: z.string().min(1),
     details: z.string(),
@@ -127,11 +127,11 @@ export const FinalParityCheckerSchema = AamfOutputBase.extend({
     targetLocation: z.string().optional(),
   })).optional(),
 });
-export const E2eTestCrafterSchema = AamfOutputBase.extend({ agent: z.literal('e2e-test-crafter') });
-export const DocumentationWriterSchema = AamfOutputBase.extend({ agent: z.literal('documentation-writer') });
-export const MigrationRunnerSchema = AamfOutputBase.extend({ agent: z.literal('migration-runner') });
+export const E2eTestCrafterSchema = AamfOutputBase.extend({ agent: z.literal('e2e-test-crafter').optional() });
+export const DocumentationWriterSchema = AamfOutputBase.extend({ agent: z.literal('documentation-writer').optional() });
+export const MigrationRunnerSchema = AamfOutputBase.extend({ agent: z.literal('migration-runner').optional() });
 export const IdiomaticReviewerSchema = AamfOutputBase.extend({
-  agent: z.literal('idiomatic-reviewer'),
+  agent: z.literal('idiomatic-reviewer').optional(),
   issues: z.array(z.object({
     file: z.string().min(1),
     location: z.string(),
@@ -140,7 +140,7 @@ export const IdiomaticReviewerSchema = AamfOutputBase.extend({
     details: z.string(),
   })).optional(),
 });
-export const IdiomaticRefactorerSchema = AamfOutputBase.extend({ agent: z.literal('idiomatic-refactorer') });
+export const IdiomaticRefactorerSchema = AamfOutputBase.extend({ agent: z.literal('idiomatic-refactorer').optional() });
 
 // ─── The Registry ────────────────────────────────────────────────────────────
 

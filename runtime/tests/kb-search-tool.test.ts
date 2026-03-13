@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { handler, type SearchObservation, type SearchObserver } from '@aamf/lore/lore-server/tools/search';
+import { handler, type SearchObservation, type SearchObserver } from '@aamf/lore/server/tools/search';
 
 type Row = {
   symbol_id: number;
