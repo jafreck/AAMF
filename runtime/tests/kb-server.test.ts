@@ -15,12 +15,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { IndexBuilder, openDb, openReadOnly } from '@aamf/lore';
 import type { Database } from '@aamf/lore';
-import { handler as lookupHandler } from '@aamf/lore/lore-server/tools/lookup';
-import { handler as graphHandler } from '@aamf/lore/lore-server/tools/graph';
-import { handler as searchHandler } from '@aamf/lore/lore-server/tools/search';
-import { handler as snippetHandler } from '@aamf/lore/lore-server/tools/snippet';
-import { handler as metricsHandler } from '@aamf/lore/lore-server/tools/metrics';
-import { handler as writebackHandler } from '@aamf/lore/lore-server/tools/writeback';
+import { handler as lookupHandler } from '@aamf/lore/server/tools/lookup';
+import { handler as graphHandler } from '@aamf/lore/server/tools/graph';
+import { handler as searchHandler } from '@aamf/lore/server/tools/search';
+import { handler as snippetHandler } from '@aamf/lore/server/tools/snippet';
+import { handler as metricsHandler } from '@aamf/lore/server/tools/metrics';
 
 // ─── Fixture setup ────────────────────────────────────────────────────────────
 
@@ -186,50 +185,12 @@ describe('snippet handler', () => {
 // ─── lore_metrics ───────────────────────────────────────────────────────────────
 
 describe('metrics handler', () => {
-  it('returns symbol_count, file_count, and import_edge_count', () => {
+  it('returns symbols array with complexity data', () => {
     const result = metricsHandler(db, {});
-    expect(result).toHaveProperty('symbol_count');
-    expect(result).toHaveProperty('file_count');
-    expect(result).toHaveProperty('import_edge_count');
-    expect(result.symbol_count).toBeGreaterThan(0);
-    expect(result.file_count).toBeGreaterThan(0);
+    expect(result).toHaveProperty('symbols');
+    expect(Array.isArray(result.symbols)).toBe(true);
+    expect(result.symbols.length).toBeGreaterThan(0);
   });
 });
 
-// ─── lore_writeback ─────────────────────────────────────────────────────────────
 
-describe('writeback handler', () => {
-  it('persists a summary and returns ok=true', () => {
-    // Pick a real symbol id from the DB.
-    const sym = db.prepare('SELECT id FROM symbols LIMIT 1').get() as { id: number } | undefined;
-    expect(sym).toBeDefined();
-
-    const result = writebackHandler(dbPath, {
-      symbol_id: sym!.id,
-      summary: 'Test summary',
-      model: 'test-model',
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.symbol_id).toBe(sym!.id);
-  });
-
-  it('the written summary can be read back via the read-only handle', () => {
-    const sym = db.prepare('SELECT id FROM symbols LIMIT 1').get() as { id: number } | undefined;
-    expect(sym).toBeDefined();
-
-    writebackHandler(dbPath, {
-      symbol_id: sym!.id,
-      summary: 'Persisted summary text',
-      model: 'test-model-v2',
-    });
-
-    // Re-open the db to pick up the change (the read-only handle caches nothing).
-    const row = db
-      .prepare('SELECT summary FROM symbol_summaries WHERE symbol_id = ?')
-      .get(sym!.id) as { summary: string } | undefined;
-
-    expect(row).toBeDefined();
-    expect(row!.summary).toBe('Persisted summary text');
-  });
-});

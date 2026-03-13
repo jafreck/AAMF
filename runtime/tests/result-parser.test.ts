@@ -373,6 +373,12 @@ Here are the tasks:
       expect(result.notes).toBeUndefined();
     });
 
+    it('should accept output without agent field', () => {
+      const result = AamfOutputBase.parse({ status: 'completed' });
+      expect(result.status).toBe('completed');
+      expect(result.agent).toBeUndefined();
+    });
+
     it('should accept all optional fields', () => {
       const result = AamfOutputBase.parse({
         status: 'needs-review',

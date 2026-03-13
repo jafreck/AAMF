@@ -23,6 +23,11 @@ describe('Per-agent output schemas', () => {
         MigrationOrchestratorSchema.parse({ status: VALID_STATUS, agent: 'migration-orchestrator' }),
       ).not.toThrow();
     });
+    it('accepts output without agent field', () => {
+      expect(() =>
+        MigrationOrchestratorSchema.parse({ status: VALID_STATUS }),
+      ).not.toThrow();
+    });
     it('rejects wrong agent literal', () => {
       expect(() =>
         MigrationOrchestratorSchema.parse({ status: VALID_STATUS, agent: 'knowledge-builder' }),

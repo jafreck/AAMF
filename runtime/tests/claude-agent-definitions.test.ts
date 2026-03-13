@@ -156,7 +156,7 @@ describe('Registry JSON schemas', () => {
         const schema = AGENT_REGISTRY[agentName].outputJsonSchema;
         expect(schema.type).toBe('object');
         expect(Array.isArray(schema.required)).toBe(true);
-        expect(schema.required).toContain('agent');
+        expect(schema.required).not.toContain('agent');
         expect(schema.required).toContain('status');
         expect(schema.required).toContain('outputFiles');
         const props = schema.properties as Record<string, unknown>;
