@@ -48,7 +48,6 @@ Resolve the failing task quickly and safely by:
 
 ```aamf-json
 {
-  "agent": "parity-failure-resolver",
   "status": "completed",
   "outputFiles": [],
   "taskId": "task-000",
@@ -62,7 +61,6 @@ Resolve the failing task quickly and safely by:
 
 ### Field constraints
 
-- `agent` must be exactly `"parity-failure-resolver"`.
 - `status` must be one of: `"completed"`, `"failed"`, `"needs-review"`.
 - `taskId` must match the provided task.
 - `failureType` should be one of: `"parity"`, `"build"`, `"test"`, `"blocked"`.

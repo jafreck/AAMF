@@ -15,7 +15,6 @@ import { fileExists, readJson } from '../util/fs.js';
  */
 export const AamfOutputBase = z.object({
   status: z.enum(['completed', 'failed', 'needs-review']),
-  agent: z.string().min(1).optional(),
   taskId: z.string().min(1).optional(),
   tokenUsage: z.object({
     prompt: z.number().int(),
@@ -34,7 +33,6 @@ export type AamfOutputBaseType = z.infer<typeof AamfOutputBase>;
  */
 export const TaskResultSchema = z.object({
   taskId: z.string().min(1),
-  agent: z.string().min(1).optional(),
   status: z.enum(['completed', 'failed', 'needs-review']),
   outputFiles: z.array(z.string()).default([]),
   parity: z.enum(['pass', 'partial', 'fail']).optional(),
@@ -62,7 +60,6 @@ export const MISSING_BLOCK_ERROR = 'missing aamf-json block';
  * Not part of the standard AgentName union — used by the KB indexing step.
  */
 export const KbIndexerOutput = AamfOutputBase.extend({
-  agent: z.literal('kb-indexer').optional(),
   /** Absolute path to the SQLite knowledge-base database written by the indexer. */
   dbPath: z.string().min(1),
 });

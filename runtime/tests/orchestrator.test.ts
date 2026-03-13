@@ -3530,7 +3530,6 @@ Some preamble text
 
 \`\`\`aamf-json
 {
-  "agent": "parity-verifier",
   "status": "completed",
   "outputFiles": ["artifacts/parity/task-001.md"],
   "taskId": "task-001",
@@ -3578,7 +3577,7 @@ Total usage est: 1 Premium requests
 
       const makeLog = (parity: string) => `=== STDOUT ===
 \`\`\`aamf-json
-{"agent":"parity-verifier","status":"completed","parity":"${parity}","issues":[]}
+{"status":"completed","parity":"${parity}","issues":[]}
 \`\`\`
 === STDERR ===
 `;

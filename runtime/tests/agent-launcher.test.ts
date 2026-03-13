@@ -466,8 +466,8 @@ describe('AgentLauncher', () => {
     });
 
     it('should force success: false and set parseError when aamf-json block is present but schema-invalid', async () => {
-      // wrong agent literal → schema validation fails
-      const aamfBlock = JSON.stringify({ status: 'completed', agent: 'knowledge-builder' });
+      // invalid status value → schema validation fails
+      const aamfBlock = JSON.stringify({ status: 'bogus-status' });
       const script = await createScript('bad-aamf.sh', [
         `printf '\`\`\`aamf-json\\n${aamfBlock}\\n\`\`\`\\n'`,
         'exit 0',
@@ -476,7 +476,7 @@ describe('AgentLauncher', () => {
       const { contextFile, progressDir } = await prepareInvocation('aamf-invalid-001');
 
       const result = await launcher.launchAgent({
-        agent: 'code-migrator',  // schema expects agent === 'code-migrator'
+        agent: 'code-migrator',
         contextFile,
         progressDir,
         phase: 5,
