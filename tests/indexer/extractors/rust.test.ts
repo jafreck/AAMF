@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ParserPool, RustExtractor } from '@aamf/lore';
+import { ParserPool, RustExtractor } from '@jafreck/lore';
 
 function parse(source: string) {
   const pool = new ParserPool();

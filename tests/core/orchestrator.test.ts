@@ -464,7 +464,7 @@ describe('MigrationOrchestrator', () => {
 
     it('executePhase0 should return success: false when timeout is exceeded', async () => {
       // Mock IndexBuilder to simulate a slow build that exceeds the timeout
-      const { IndexBuilder } = await import('@aamf/lore');
+      const { IndexBuilder } = await import('@jafreck/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockImplementation(
         () => new Promise<void>(() => { /* never resolves */ }),
       );
@@ -505,11 +505,11 @@ describe('MigrationOrchestrator', () => {
     });
 
     it.skip('executePhase0 should pass embedder to IndexBuilder when embeddings.enabled is true', async () => {
-      const { IndexBuilder } = await import('@aamf/lore');
+      const { IndexBuilder } = await import('@jafreck/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
       // Mock embedder init() to avoid spawning a real Python process
-      const { SentenceTransformersProvider } = await import('@aamf/lore');
+      const { SentenceTransformersProvider } = await import('@jafreck/lore');
       const initSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'init').mockResolvedValue(undefined);
       const disposeSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'dispose').mockResolvedValue(undefined);
 
@@ -546,11 +546,11 @@ describe('MigrationOrchestrator', () => {
     });
 
     it.skip('executePhase0 should skip embeddings gracefully when ensurePythonDeps fails', async () => {
-      const { IndexBuilder } = await import('@aamf/lore');
+      const { IndexBuilder } = await import('@jafreck/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
       // Mock init to simulate failure (Python not available)
-      const { SentenceTransformersProvider } = await import('@aamf/lore');
+      const { SentenceTransformersProvider } = await import('@jafreck/lore');
       const initSpy = vi.spyOn(SentenceTransformersProvider.prototype, 'init').mockRejectedValue(
         new Error('Embedding subprocess exited with code 1 before handshake'),
       );
@@ -588,10 +588,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should skip build when KB fingerprint matches', async () => {
-      const { IndexBuilder } = await import('@aamf/lore');
+      const { IndexBuilder } = await import('@jafreck/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('@aamf/lore');
+      const dbMod = await import('@jafreck/lore');
 
       const { stat } = await import('node:fs/promises');
       const fsMod = await import('../../src/util/fs.js');
@@ -635,10 +635,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should rebuild when KB fingerprint does not match', async () => {
-      const { IndexBuilder } = await import('@aamf/lore');
+      const { IndexBuilder } = await import('@jafreck/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('@aamf/lore');
+      const dbMod = await import('@jafreck/lore');
 
       const { stat } = await import('node:fs/promises');
       const fsMod = await import('../../src/util/fs.js');
@@ -675,7 +675,7 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should rebuild when no KB database exists', async () => {
-      const { IndexBuilder } = await import('@aamf/lore');
+      const { IndexBuilder } = await import('@jafreck/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
       try {
@@ -697,7 +697,7 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should rebuild when existing KB is corrupt/unreadable', async () => {
-      const { IndexBuilder } = await import('@aamf/lore');
+      const { IndexBuilder } = await import('@jafreck/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
       const dbPath = join(tempDir, '.aamf', 'migration', 'test-project', 'kb.db');
@@ -730,10 +730,10 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should log skip message when fingerprint matches', async () => {
-      const { IndexBuilder } = await import('@aamf/lore');
+      const { IndexBuilder } = await import('@jafreck/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
-      const dbMod = await import('@aamf/lore');
+      const dbMod = await import('@jafreck/lore');
 
       const { stat } = await import('node:fs/promises');
       const fsMod = await import('../../src/util/fs.js');
@@ -775,7 +775,7 @@ describe('MigrationOrchestrator', () => {
     });
 
     it('executePhase0 should log rebuild message when fingerprint does not match', async () => {
-      const { IndexBuilder } = await import('@aamf/lore');
+      const { IndexBuilder } = await import('@jafreck/lore');
       const buildSpy = vi.spyOn(IndexBuilder.prototype, 'build').mockResolvedValue(undefined);
 
       try {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { openDb, setKbMeta, getKbMeta, createVec0Tables, computeSourceFingerprint, getKbFingerprint, setKbFingerprint } from '@aamf/lore';
+import { openDb, setKbMeta, getKbMeta, createVec0Tables, computeSourceFingerprint, getKbFingerprint, setKbFingerprint } from '@jafreck/lore';
 
 describe('openDb', () => {
   let tempDir: string;

@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { MigrationRuntime } from './core/runtime.js';
-import { IndexBuilder, LogLevel, LOG_LEVEL_NAMES } from '@aamf/lore';
+import { IndexBuilder, LogLevel, LOG_LEVEL_NAMES } from '@jafreck/lore';
 import { KbServerProcess } from './core/kb-server-process.js';
 
 const program = new Command()

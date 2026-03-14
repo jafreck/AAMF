@@ -5,7 +5,7 @@
  * and Python extractors.
  */
 import { describe, it, expect } from 'vitest';
-import { ParserPool, CExtractor, CppExtractor, TypeScriptExtractor, JavaScriptExtractor, PythonExtractor } from '@aamf/lore';
+import { ParserPool, CExtractor, CppExtractor, TypeScriptExtractor, JavaScriptExtractor, PythonExtractor } from '@jafreck/lore';
 
 const pool = new ParserPool();
 

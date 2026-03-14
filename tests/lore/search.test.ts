@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { openDb, createVec0Tables, type Database, Qwen3EmbeddingProvider, type EmbeddingProvider } from '@aamf/lore';
+import { openDb, createVec0Tables, type Database, Qwen3EmbeddingProvider, type EmbeddingProvider } from '@jafreck/lore';
 
 const ENABLED = process.env.AAMF_EMBEDDER === '1';
 

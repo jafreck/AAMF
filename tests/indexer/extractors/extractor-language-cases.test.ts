@@ -7,7 +7,7 @@
  * constructor_declaration, and using_directive.
  */
 import { describe, it, expect } from 'vitest';
-import { ParserPool, GoExtractor, RustExtractor, JavaExtractor, CSharpExtractor } from '@aamf/lore';
+import { ParserPool, GoExtractor, RustExtractor, JavaExtractor, CSharpExtractor } from '@jafreck/lore';
 
 const pool = new ParserPool();
 

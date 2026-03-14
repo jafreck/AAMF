@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { walkFiles, type WalkerConfig } from '@aamf/lore';
+import { walkFiles, type WalkerConfig } from '@jafreck/lore';
 
 async function touch(filePath: string): Promise<void> {
   await mkdir(join(filePath, '..'), { recursive: true });

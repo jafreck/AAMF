@@ -73,7 +73,7 @@ export async function buildDependencySummary(
   kbDbPath: string,
   maxLinesPerModule: number = 500,
 ): Promise<DependencySummary> {
-  const lore = await import('@aamf/lore');
+  const lore = await import('@jafreck/lore');
   const db = lore.openReadOnly(kbDbPath);
 
   try {
@@ -167,7 +167,7 @@ export async function buildDependencySummary(
 export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<TaskGraphResult> {
   const { kbDbPath, sourceRoot, maxLinesPerTask, targetLanguage, outputPath, compilationUnits } = options;
 
-  const lore = await import('@aamf/lore');
+  const lore = await import('@jafreck/lore');
   const db = lore.openReadOnly(kbDbPath);
 
   try {

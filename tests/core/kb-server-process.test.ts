@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join, resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { IndexBuilder } from '@aamf/lore';
+import { IndexBuilder } from '@jafreck/lore';
 import { KbServerProcess } from '../../src/core/kb-server-process.js';
 
 const FIXTURE_DIR = resolve(

@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { ParserPool } from '@aamf/lore';
+import { ParserPool } from '@jafreck/lore';
 import {
   walk,
   findFirst,
   nodeSignature,
   emptyResult,
-} from '@aamf/lore';
+} from '@jafreck/lore';
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 

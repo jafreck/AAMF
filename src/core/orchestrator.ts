@@ -35,7 +35,7 @@ import { Logger } from '../logging/logger.js';
 import { fileExists, countFileLines, atomicWrite, readJson, ensureDir } from '../util/fs.js';
 import { spawnWithTimeout } from '../util/process.js';
 import { gitignoreForLanguage } from '../util/gitignore-templates.js';
-import type { EmbeddingProvider } from '@aamf/lore';
+import type { EmbeddingProvider } from '@jafreck/lore';
 import type { KbServerProcess } from './kb-server-process.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import type { Phase4MetricsSnapshot } from '../observability/metrics-collector.js';
@@ -45,7 +45,7 @@ import { buildRuntimePaths } from './runtime-paths.js';
 import { buildTaskGraph, buildDependencySummary, findSCCs } from './task-graph-builder.js';
 import { generateScaffold } from './scaffold.js';
 
-const loadLore = () => import('@aamf/lore');
+const loadLore = () => import('@jafreck/lore');
 const loadKbServerProcess = () => import('./kb-server-process.js');
 
 /** Hardcoded average token estimate per migration task for cost projections. */
@@ -790,7 +790,7 @@ export class MigrationOrchestrator {
 
     // Build Lore-internal logger options from config (defaults to debug).
     const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
-    const loreLoggerOpts: import('@aamf/lore').LoreLoggerOptions = {
+    const loreLoggerOpts: import('@jafreck/lore').LoreLoggerOptions = {
       level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
       logFile: this.paths.loreLogFile,
     };

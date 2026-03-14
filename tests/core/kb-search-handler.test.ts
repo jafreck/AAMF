@@ -7,8 +7,8 @@ import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
-import { handler, type SearchArgs, type SearchResult } from '@aamf/lore/server/tools/search';
-import type { EmbeddingProvider } from '@aamf/lore';
+import { handler, type SearchArgs, type SearchResult } from '@jafreck/lore/server/tools/search';
+import type { EmbeddingProvider } from '@jafreck/lore';
 
 /**
  * Build a minimal in-memory KB database with FTS5 tables for testing search.

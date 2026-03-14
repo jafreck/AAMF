@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ParserPool } from '@aamf/lore';
+import { ParserPool } from '@jafreck/lore';
 
 describe('ParserPool', () => {
   let pool: ParserPool;

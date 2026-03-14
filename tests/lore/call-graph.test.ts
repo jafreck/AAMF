@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join, resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { openDb, type Database, resolveSymbolEdges, topoSort, detectCycles, IndexBuilder } from '@aamf/lore';
+import { openDb, type Database, resolveSymbolEdges, topoSort, detectCycles, IndexBuilder } from '@jafreck/lore';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

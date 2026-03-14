@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ParserPool, CSharpExtractor } from '@aamf/lore';
+import { ParserPool, CSharpExtractor } from '@jafreck/lore';
 
 function parse(source: string) {
   const pool = new ParserPool();

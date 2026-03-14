@@ -266,7 +266,7 @@ The runtime executes migration as a sequence of up to 9 phases (7 standard + 2 o
 
 | Phase | Name | Description |
 |-------|------|-------------|
-| 0 | **KB Indexing** *(optional)* | Builds a SQLite knowledge-base index from the source codebase using `@aamf/lore` with tree-sitter parsing and optional embeddings. Starts an HTTP MCP server for downstream agent access. |
+| 0 | **KB Indexing** *(optional)* | Builds a SQLite knowledge-base index from the source codebase using `@jafreck/lore` with tree-sitter parsing and optional embeddings. Starts an HTTP MCP server for downstream agent access. |
 | 1 | **Impact Assessment** | Scans the source codebase to build a dependency graph, identify file roles, and estimate migration complexity. |
 | 2 | **Knowledge Base Construction** | Extracts patterns, idioms, and domain knowledge from the source code into a structured knowledge base that downstream agents reference. |
 | 3 | **Migration Planning** | Produces an ordered task list — module groups decomposed into granular tasks with dependency ordering. Optionally invokes adjudication for competing strategies. |

@@ -13,13 +13,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join, resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { IndexBuilder, openDb, openReadOnly } from '@aamf/lore';
-import type { Database } from '@aamf/lore';
-import { handler as lookupHandler } from '@aamf/lore/server/tools/lookup';
-import { handler as graphHandler } from '@aamf/lore/server/tools/graph';
-import { handler as searchHandler } from '@aamf/lore/server/tools/search';
-import { handler as snippetHandler } from '@aamf/lore/server/tools/snippet';
-import { handler as metricsHandler } from '@aamf/lore/server/tools/metrics';
+import { IndexBuilder, openDb, openReadOnly } from '@jafreck/lore';
+import type { Database } from '@jafreck/lore';
+import { handler as lookupHandler } from '@jafreck/lore/server/tools/lookup';
+import { handler as graphHandler } from '@jafreck/lore/server/tools/graph';
+import { handler as searchHandler } from '@jafreck/lore/server/tools/search';
+import { handler as snippetHandler } from '@jafreck/lore/server/tools/snippet';
+import { handler as metricsHandler } from '@jafreck/lore/server/tools/metrics';
 
 // ─── Fixture setup ────────────────────────────────────────────────────────────
 

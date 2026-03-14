@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { createLoreMcpServer, openReadOnly, type EmbeddingProvider, type LoreServerOptions, type SearchObserver, LoreLogger, type LoreLoggerOptions } from '@aamf/lore';
+import { createLoreMcpServer, openReadOnly, type EmbeddingProvider, type LoreServerOptions, type SearchObserver, LoreLogger, type LoreLoggerOptions } from '@jafreck/lore';
 import type { McpServerConfig } from '../agents/types.js';
 
 
