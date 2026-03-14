@@ -3,21 +3,42 @@
   "version": "0.1.0",
   "description": "Autonomous Agent Migration Framework",
   "private": true,
+  "type": "module",
+  "bin": {
+    "aamf": "./dist/index.js"
+  },
   "scripts": {
-    "postinstall": "npm run install-runtime",
-    "prebuild": "npm install --prefix runtime",
-    "build": "npm run build --prefix runtime",
-    "test": "npm test --prefix runtime",
-    "install-runtime": "npm install --prefix runtime",
-    "lint": "npm run lint --prefix runtime",
-    "ci:prepush": "npm --prefix runtime run lint",
-    "ci:local": "npm --prefix runtime run lint && npm --prefix runtime run test -- --coverage",
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "ci:prepush": "tsc --noEmit",
+    "ci:local": "tsc --noEmit && vitest run --coverage",
     "hooks:install": "git config core.hooksPath .githooks"
   },
-  "engines": {
-    "node": ">=20.0.0"
+  "dependencies": {
+    "@aamf/lore": "npm:@jafreck/lore@^0.3.7",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.6.2",
+    "chalk": "^5",
+    "commander": "^14",
+    "date-fns": "^4",
+    "fast-glob": "^3.3.3",
+    "p-limit": "^7.3.0",
+    "sqlite-vec": "^0.1.6",
+    "zod": "^4.3"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.0.18"
+    "@types/node": "^25",
+    "@vitest/coverage-v8": "^4.0.18",
+    "tsx": "^4",
+    "typescript": "^5.9",
+    "vitest": "^4"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }

@@ -8,7 +8,10 @@ Typical use cases include porting a 100k+ line Python monolith to TypeScript, a 
 
 ## Repository Layout
 
-- `runtime/` — migration orchestration runtime, agent execution, checkpointing, observability, KB MCP server.
+- `src/` — migration orchestration runtime, agent execution, checkpointing, observability, KB MCP server.
+- `tests/` — unit, integration, and end-to-end tests mirroring the `src/` layout.
+- `agents/` — Markdown prompt templates for each agent role.
+- `docs/` — configuration reference and additional documentation.
 - `@jafreck/lore` (npm package) — extracted knowledge-base indexing library (source walking, tree-sitter parsing, SQLite index, embeddings, MCP server) consumed by the runtime as `@aamf/lore`.
 
 ---
