@@ -257,7 +257,6 @@ Here are the tasks:
     it('should validate a well-formed result JSON', () => {
       const result = TaskResultSchema.parse({
         taskId: 'task-001',
-        agent: 'code-migrator',
         status: 'completed',
         outputFiles: ['src/auth/login.ts'],
         parity: 'pass',
@@ -268,7 +267,7 @@ Here are the tasks:
     });
 
     it('should reject a result with missing taskId', () => {
-      expect(() => TaskResultSchema.parse({ agent: 'x', status: 'completed' })).toThrow();
+      expect(() => TaskResultSchema.parse({ status: 'completed' })).toThrow();
     });
   });
 
@@ -282,7 +281,6 @@ Here are the tasks:
         await mkdir(resultsDir, { recursive: true });
         const sidecar = {
           taskId: 'task-001',
-          agent: 'parity-verifier',
           status: 'completed',
           outputFiles: [],
           parity: 'pass',
@@ -324,7 +322,6 @@ Here are the tasks:
         await mkdir(legacyDir, { recursive: true });
         const sidecar = {
           taskId: 'task-001',
-          agent: 'parity-verifier',
           status: 'completed',
           outputFiles: [],
           parity: 'pass',
@@ -365,24 +362,16 @@ Here are the tasks:
 
   describe('AamfOutputBase schema', () => {
     it('should accept a minimal valid output', () => {
-      const result = AamfOutputBase.parse({ status: 'completed', agent: 'code-migrator' });
+      const result = AamfOutputBase.parse({ status: 'completed' });
       expect(result.status).toBe('completed');
-      expect(result.agent).toBe('code-migrator');
       expect(result.taskId).toBeUndefined();
       expect(result.tokenUsage).toBeUndefined();
       expect(result.notes).toBeUndefined();
     });
 
-    it('should accept output without agent field', () => {
-      const result = AamfOutputBase.parse({ status: 'completed' });
-      expect(result.status).toBe('completed');
-      expect(result.agent).toBeUndefined();
-    });
-
     it('should accept all optional fields', () => {
       const result = AamfOutputBase.parse({
         status: 'needs-review',
-        agent: 'parity-verifier',
         taskId: 'task-007',
         tokenUsage: { prompt: 100, completion: 50, total: 150 },
         notes: 'Some note',
@@ -393,18 +382,13 @@ Here are the tasks:
     });
 
     it('should reject invalid status values', () => {
-      expect(() => AamfOutputBase.parse({ status: 'unknown', agent: 'x' })).toThrow();
-    });
-
-    it('should reject empty agent string', () => {
-      expect(() => AamfOutputBase.parse({ status: 'completed', agent: '' })).toThrow();
+      expect(() => AamfOutputBase.parse({ status: 'unknown' })).toThrow();
     });
 
     it('should reject non-integer tokenUsage fields', () => {
       expect(() =>
         AamfOutputBase.parse({
           status: 'completed',
-          agent: 'x',
           tokenUsage: { prompt: 1.5, completion: 0, total: 1 },
         }),
       ).toThrow();
@@ -412,104 +396,87 @@ Here are the tasks:
 
     it('should accept all valid status enum values', () => {
       for (const status of ['completed', 'failed', 'needs-review'] as const) {
-        expect(() => AamfOutputBase.parse({ status, agent: 'a' })).not.toThrow();
+        expect(() => AamfOutputBase.parse({ status })).not.toThrow();
       }
     });
   });
 
   describe('per-agent output schemas', () => {
-    it('should accept a matching agent literal for MigrationOrchestratorSchema', () => {
-      const result = MigrationOrchestratorSchema.parse({ status: 'completed', agent: 'migration-orchestrator' });
-      expect(result.agent).toBe('migration-orchestrator');
-    });
-
-    it('should reject a wrong agent literal for MigrationOrchestratorSchema', () => {
-      expect(() =>
-        MigrationOrchestratorSchema.parse({ status: 'completed', agent: 'code-migrator' }),
-      ).toThrow();
+    it('should accept valid MigrationOrchestratorSchema output', () => {
+      const result = MigrationOrchestratorSchema.parse({ status: 'completed' });
+      expect(result.status).toBe('completed');
     });
 
     it('should validate KnowledgeBuilderSchema', () => {
-      expect(() => KnowledgeBuilderSchema.parse({ status: 'completed', agent: 'knowledge-builder' })).not.toThrow();
+      expect(() => KnowledgeBuilderSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     it('should validate MigrationPlannerSchema', () => {
-      expect(() => MigrationPlannerSchema.parse({ status: 'completed', agent: 'migration-planner' })).not.toThrow();
+      expect(() => MigrationPlannerSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     it('should validate AdjudicatorSchema', () => {
-      expect(() => AdjudicatorSchema.parse({ status: 'completed', agent: 'adjudicator' })).not.toThrow();
+      expect(() => AdjudicatorSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     it('should validate CodeMigratorSchema', () => {
-      expect(() => CodeMigratorSchema.parse({ status: 'completed', agent: 'code-migrator' })).not.toThrow();
+      expect(() => CodeMigratorSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     it('should validate ParityVerifierSchema', () => {
-      expect(() => ParityVerifierSchema.parse({ status: 'completed', agent: 'parity-verifier', parity: 'pass' })).not.toThrow();
+      expect(() => ParityVerifierSchema.parse({ status: 'completed', parity: 'pass' })).not.toThrow();
     });
 
     it('should validate TestWriterSchema', () => {
-      expect(() => TestWriterSchema.parse({ status: 'completed', agent: 'test-writer' })).not.toThrow();
+      expect(() => TestWriterSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
-    it('should validate ParityFailureResolverSchema with canonical id', () => {
-      expect(() => ParityFailureResolverSchema.parse({ status: 'completed', agent: 'parity-failure-resolver' })).not.toThrow();
-    });
-
-    it('should validate ParityFailureResolverSchema with legacy alias', () => {
-      expect(() => ParityFailureResolverSchema.parse({ status: 'completed', agent: 'failure-recovery' })).not.toThrow();
+    it('should validate ParityFailureResolverSchema', () => {
+      expect(() => ParityFailureResolverSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     it('should validate FinalParityCheckerSchema', () => {
-      expect(() => FinalParityCheckerSchema.parse({ status: 'completed', agent: 'final-parity-checker' })).not.toThrow();
+      expect(() => FinalParityCheckerSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     it('should validate E2eTestCrafterSchema', () => {
-      expect(() => E2eTestCrafterSchema.parse({ status: 'completed', agent: 'e2e-test-crafter' })).not.toThrow();
+      expect(() => E2eTestCrafterSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     it('should validate DocumentationWriterSchema', () => {
-      expect(() => DocumentationWriterSchema.parse({ status: 'completed', agent: 'documentation-writer' })).not.toThrow();
+      expect(() => DocumentationWriterSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     it('should validate MigrationRunnerSchema', () => {
-      expect(() => MigrationRunnerSchema.parse({ status: 'completed', agent: 'migration-runner' })).not.toThrow();
+      expect(() => MigrationRunnerSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     describe('KbIndexerOutput', () => {
       it('should validate with required dbPath field', () => {
         expect(() =>
-          KbIndexerOutput.parse({ status: 'completed', agent: 'kb-indexer', dbPath: '/tmp/kb.db' }),
+          KbIndexerOutput.parse({ status: 'completed', dbPath: '/tmp/kb.db' }),
         ).not.toThrow();
       });
 
       it('should reject missing dbPath', () => {
         expect(() =>
-          KbIndexerOutput.parse({ status: 'completed', agent: 'kb-indexer' }),
+          KbIndexerOutput.parse({ status: 'completed' }),
         ).toThrow();
       });
 
       it('should reject empty dbPath', () => {
         expect(() =>
-          KbIndexerOutput.parse({ status: 'completed', agent: 'kb-indexer', dbPath: '' }),
-        ).toThrow();
-      });
-
-      it('should reject wrong agent literal', () => {
-        expect(() =>
-          KbIndexerOutput.parse({ status: 'completed', agent: 'code-migrator', dbPath: '/tmp/kb.db' }),
+          KbIndexerOutput.parse({ status: 'completed', dbPath: '' }),
         ).toThrow();
       });
 
       it('should parse correctly and expose dbPath', () => {
-        const result = KbIndexerOutput.parse({ status: 'completed', agent: 'kb-indexer', dbPath: '/var/db/kb.sqlite' });
-        expect(result.agent).toBe('kb-indexer');
+        const result = KbIndexerOutput.parse({ status: 'completed', dbPath: '/var/db/kb.sqlite' });
         expect(result.dbPath).toBe('/var/db/kb.sqlite');
       });
 
       it('should parse a KbIndexerOutput aamf-json block', () => {
-        const stdout = '```aamf-json\n{"status":"completed","agent":"kb-indexer","dbPath":"/tmp/kb.db"}\n```';
+        const stdout = '```aamf-json\n{"status":"completed","dbPath":"/tmp/kb.db"}\n```';
         const result = parseAamfOutput(stdout, KbIndexerOutput);
         expect(result.parsed).toBe(true);
         if (result.parsed) {
@@ -524,25 +491,24 @@ Here are the tasks:
       const stdout = `
 Some output text.
 \`\`\`aamf-json
-{"status":"completed","agent":"code-migrator"}
+{"status":"completed"}
 \`\`\`
 `;
       const result = parseAamfOutput(stdout, CodeMigratorSchema);
       expect(result.parsed).toBe(true);
       if (result.parsed) {
         expect(result.data.status).toBe('completed');
-        expect(result.data.agent).toBe('code-migrator');
       }
     });
 
     it('should return the last aamf-json block when multiple are present', () => {
       const stdout = `
 \`\`\`aamf-json
-{"status":"failed","agent":"code-migrator"}
+{"status":"failed"}
 \`\`\`
 intermediate text
 \`\`\`aamf-json
-{"status":"completed","agent":"code-migrator"}
+{"status":"completed"}
 \`\`\`
 `;
       const result = parseAamfOutput(stdout, CodeMigratorSchema);
@@ -570,16 +536,7 @@ intermediate text
     });
 
     it('should return parsed: false for schema validation failure', () => {
-      const stdout = '```aamf-json\n{"status":"invalid-status","agent":"code-migrator"}\n```';
-      const result = parseAamfOutput(stdout, CodeMigratorSchema);
-      expect(result.parsed).toBe(false);
-      if (!result.parsed) {
-        expect(result.error).toContain('schema validation failed');
-      }
-    });
-
-    it('should return parsed: false when agent literal does not match schema', () => {
-      const stdout = '```aamf-json\n{"status":"completed","agent":"knowledge-builder"}\n```';
+      const stdout = '```aamf-json\n{"status":"invalid-status"}\n```';
       const result = parseAamfOutput(stdout, CodeMigratorSchema);
       expect(result.parsed).toBe(false);
       if (!result.parsed) {
@@ -589,7 +546,7 @@ intermediate text
 
     it('should parse optional fields when provided', () => {
       const stdout = `\`\`\`aamf-json
-{"status":"completed","agent":"test-writer","taskId":"task-003","tokenUsage":{"prompt":100,"completion":50,"total":150},"notes":"All good"}
+{"status":"completed","taskId":"task-003","tokenUsage":{"prompt":100,"completion":50,"total":150},"notes":"All good"}
 \`\`\``;
       const result = parseAamfOutput(stdout, TestWriterSchema);
       expect(result.parsed).toBe(true);
@@ -601,31 +558,19 @@ intermediate text
     });
 
     it('should handle CRLF line endings in the fenced block', () => {
-      const stdout = '```aamf-json\r\n{"status":"completed","agent":"adjudicator"}\r\n```';
+      const stdout = '```aamf-json\r\n{"status":"completed"}\r\n```';
       const result = parseAamfOutput(stdout, AdjudicatorSchema);
       expect(result.parsed).toBe(true);
     });
 
-    it('should parse parity-failure-resolver aamf-json with canonical agent id', () => {
-      const stdout = '```aamf-json\n{"status":"completed","agent":"parity-failure-resolver"}\n```';
+    it('should parse parity-failure-resolver aamf-json', () => {
+      const stdout = '```aamf-json\n{"status":"completed"}\n```';
       const result = parseAamfOutput(stdout, ParityFailureResolverSchema);
       expect(result.parsed).toBe(true);
-      if (result.parsed) {
-        expect(result.data.agent).toBe('parity-failure-resolver');
-      }
-    });
-
-    it('should parse parity-failure-resolver aamf-json with legacy failure-recovery id', () => {
-      const stdout = '```aamf-json\n{"status":"completed","agent":"failure-recovery"}\n```';
-      const result = parseAamfOutput(stdout, ParityFailureResolverSchema);
-      expect(result.parsed).toBe(true);
-      if (result.parsed) {
-        expect(result.data.agent).toBe('parity-failure-resolver');
-      }
     });
 
     it('should work with the base AamfOutputBase schema', () => {
-      const stdout = '```aamf-json\n{"status":"needs-review","agent":"any-agent"}\n```';
+      const stdout = '```aamf-json\n{"status":"needs-review"}\n```';
       const result = parseAamfOutput(stdout, AamfOutputBase);
       expect(result.parsed).toBe(true);
       if (result.parsed) {

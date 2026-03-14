@@ -20,168 +20,96 @@ describe('Per-agent output schemas', () => {
   describe('MigrationOrchestratorSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        MigrationOrchestratorSchema.parse({ status: VALID_STATUS, agent: 'migration-orchestrator' }),
-      ).not.toThrow();
-    });
-    it('accepts output without agent field', () => {
-      expect(() =>
         MigrationOrchestratorSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        MigrationOrchestratorSchema.parse({ status: VALID_STATUS, agent: 'knowledge-builder' }),
-      ).toThrow();
     });
   });
 
   describe('KnowledgeBuilderSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        KnowledgeBuilderSchema.parse({ status: VALID_STATUS, agent: 'knowledge-builder' }),
+        KnowledgeBuilderSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        KnowledgeBuilderSchema.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
-      ).toThrow();
     });
   });
 
   describe('MigrationPlannerSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        MigrationPlannerSchema.parse({ status: VALID_STATUS, agent: 'migration-planner' }),
+        MigrationPlannerSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        MigrationPlannerSchema.parse({ status: VALID_STATUS, agent: 'migration-runner' }),
-      ).toThrow();
     });
   });
 
   describe('AdjudicatorSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        AdjudicatorSchema.parse({ status: VALID_STATUS, agent: 'adjudicator' }),
+        AdjudicatorSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        AdjudicatorSchema.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
-      ).toThrow();
     });
   });
 
   describe('CodeMigratorSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        CodeMigratorSchema.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
+        CodeMigratorSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        CodeMigratorSchema.parse({ status: VALID_STATUS, agent: 'adjudicator' }),
-      ).toThrow();
     });
   });
 
   describe('ParityVerifierSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        ParityVerifierSchema.parse({ status: VALID_STATUS, agent: 'parity-verifier', parity: 'pass' }),
+        ParityVerifierSchema.parse({ status: VALID_STATUS, parity: 'pass' }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        ParityVerifierSchema.parse({ status: VALID_STATUS, agent: 'code-migrator', parity: 'pass' }),
-      ).toThrow();
     });
   });
 
   describe('TestWriterSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        TestWriterSchema.parse({ status: VALID_STATUS, agent: 'test-writer' }),
+        TestWriterSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        TestWriterSchema.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
-      ).toThrow();
     });
   });
 
   describe('ParityFailureResolverSchema', () => {
-    it('accepts canonical parity-failure-resolver output', () => {
+    it('accepts valid output', () => {
       expect(() =>
-        ParityFailureResolverSchema.parse({ status: VALID_STATUS, agent: 'parity-failure-resolver' }),
+        ParityFailureResolverSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-
-    it('accepts legacy failure-recovery output for compatibility', () => {
-      expect(() =>
-        ParityFailureResolverSchema.parse({ status: VALID_STATUS, agent: 'failure-recovery' }),
-      ).not.toThrow();
-    });
-
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        ParityFailureResolverSchema.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
-      ).toThrow();
     });
   });
 
   describe('FinalParityCheckerSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        FinalParityCheckerSchema.parse({ status: VALID_STATUS, agent: 'final-parity-checker' }),
+        FinalParityCheckerSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        FinalParityCheckerSchema.parse({ status: VALID_STATUS, agent: 'parity-verifier' }),
-      ).toThrow();
     });
   });
 
   describe('E2eTestCrafterSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        E2eTestCrafterSchema.parse({ status: VALID_STATUS, agent: 'e2e-test-crafter' }),
+        E2eTestCrafterSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        E2eTestCrafterSchema.parse({ status: VALID_STATUS, agent: 'test-writer' }),
-      ).toThrow();
     });
   });
 
   describe('DocumentationWriterSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        DocumentationWriterSchema.parse({ status: VALID_STATUS, agent: 'documentation-writer' }),
+        DocumentationWriterSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        DocumentationWriterSchema.parse({ status: VALID_STATUS, agent: 'code-migrator' }),
-      ).toThrow();
     });
   });
 
   describe('MigrationRunnerSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
-        MigrationRunnerSchema.parse({ status: VALID_STATUS, agent: 'migration-runner' }),
+        MigrationRunnerSchema.parse({ status: VALID_STATUS }),
       ).not.toThrow();
-    });
-    it('rejects wrong agent literal', () => {
-      expect(() =>
-        MigrationRunnerSchema.parse({ status: VALID_STATUS, agent: 'migration-planner' }),
-      ).toThrow();
     });
   });
 });

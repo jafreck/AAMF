@@ -159,8 +159,6 @@ describe('Registry JSON schemas', () => {
         expect(schema.required).not.toContain('agent');
         expect(schema.required).toContain('status');
         expect(schema.required).toContain('outputFiles');
-        const props = schema.properties as Record<string, unknown>;
-        expect(props.agent).toBeDefined();
       });
     });
   }
