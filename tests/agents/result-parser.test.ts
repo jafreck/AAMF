@@ -1,0 +1,1254 @@
+import { describe, it, expect, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  TaskResultSchema,
+  AamfOutputBase,
+  KbIndexerOutput,
+  parseAamfOutput,
+  readTaskResultJson,
+} from '../../src/agents/agent-output-schemas.js';
+import {
+  MigrationOrchestratorSchema,
+  KnowledgeBuilderSchema,
+  MigrationPlannerSchema,
+  AdjudicatorSchema,
+  CodeMigratorSchema,
+  ParityVerifierSchema,
+  TestWriterSchema,
+  ParityFailureResolverSchema,
+  FinalParityCheckerSchema,
+  E2eTestCrafterSchema,
+  DocumentationWriterSchema,
+  MigrationRunnerSchema,
+} from '../../src/agents/registry.js';
+import {
+  parseMigrationPlanContent,
+  parseE2eTestPlanContent,
+  parseE2eTestPlan,
+} from '../../src/agents/plan-parser.js';
+import {
+  parseTokenUsage,
+  parseClaudeTokenUsage,
+  parseCopilotCliUsage,
+} from '../../src/agents/token-usage-parser.js';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
+/** Suppress console output during parsing tests. */
+function silentLogger() {
+  return {
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+  };
+}
+
+describe('ResultParser', () => {
+  describe('parseMigrationPlanContent', () => {
+    it('should parse tasks from migration plan markdown', async () => {
+      const content = await readFile(join(__dirname, '..', 'fixtures', 'sample-migration-plan.md'), 'utf-8');
+      const log = silentLogger();
+      const tasks = parseMigrationPlanContent(content, log);
+      
+      expect(tasks).toHaveLength(3);
+      expect(tasks[0]?.id).toBe('task-001');
+      expect(tasks[0]?.name).toContain('User Authentication');
+      expect(tasks[0]?.complexity).toBe('moderate');
+      expect(tasks[0]?.sourceFiles).toContain('src/auth/login.py');
+      expect(tasks[0]?.dependencies).toHaveLength(0);
+      
+      expect(tasks[1]?.id).toBe('task-002');
+      expect(tasks[1]?.dependencies).toContain('task-001');
+      
+      expect(tasks[2]?.id).toBe('task-003');
+      expect(tasks[2]?.dependencies).toContain('task-001');
+      expect(tasks[2]?.dependencies).toContain('task-002');
+    });
+
+    it('should skip malformed task blocks with missing source files', () => {
+      const content = `## Task: task-001 - Orphan Module
+
+**Description:** A task with no listed inputs
+**Complexity:** simple
+`;
+      const log = silentLogger();
+      const tasks = parseMigrationPlanContent(content, log);
+      expect(tasks).toHaveLength(0);
+      expect(log.error).toHaveBeenCalledWith(expect.stringContaining('no source files'));
+    });
+
+    it('should detect and deduplicate duplicate task IDs', () => {
+      const content = `## Task: task-001 - First Module
+
+**Description:** First task
+**Complexity:** simple
+
+**Source Files:**
+- src/first.py
+
+## Task: task-001 - Duplicate Module
+
+**Description:** Duplicate task
+**Complexity:** simple
+
+**Source Files:**
+- src/duplicate.py
+`;
+      const log = silentLogger();
+      const tasks = parseMigrationPlanContent(content, log);
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0]?.sourceFiles).toContain('src/first.py');
+      expect(log.error).toHaveBeenCalledWith(expect.stringContaining('Duplicate task ID'));
+    });
+
+    it('should warn about dangling dependency references', () => {
+      const content = `## Task: task-001 - Module A
+
+**Description:** First task
+**Complexity:** simple
+
+**Source Files:**
+- src/a.py
+
+**Dependencies:** task-999
+
+## Task: task-002 - Module B
+
+**Description:** Second task
+**Complexity:** simple
+
+**Source Files:**
+- src/b.py
+
+**Dependencies:** task-001, task-888
+`;
+      const log = silentLogger();
+      const tasks = parseMigrationPlanContent(content, log);
+      expect(tasks).toHaveLength(2);
+      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('task-999'));
+      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('task-888'));
+    });
+
+    it('should return empty array for empty plan file', () => {
+      const log = silentLogger();
+      const tasks = parseMigrationPlanContent('', log);
+      expect(tasks).toHaveLength(0);
+    });
+
+    it('should return empty array for plan with only non-task headings', () => {
+      const content = `# Migration Plan
+
+## Overview
+
+This is a plan that has headings but no task definitions.
+
+## Summary
+
+Nothing to migrate.
+
+### Notes
+
+Just notes.
+`;
+      const log = silentLogger();
+      const tasks = parseMigrationPlanContent(content, log);
+      expect(tasks).toHaveLength(0);
+    });
+
+    it('should log an error summary after parsing', () => {
+      const content = `## Task: task-001 - Valid Task
+
+**Description:** A valid task
+**Complexity:** simple
+
+**Source Files:**
+- src/valid.py
+`;
+      const log = silentLogger();
+      parseMigrationPlanContent(content, log);
+      expect(log.info).toHaveBeenCalledWith(expect.stringContaining('1 tasks OK'));
+    });
+
+    it('should not treat structural headings as task blocks', () => {
+      const content = `## Task Summary
+
+This section summarizes all tasks.
+
+## Tasks
+
+Here are the tasks:
+
+## Task: task-001 - Module A
+
+**Description:** First task
+**Complexity:** simple
+
+**Source Files:**
+- src/a.py
+
+## Task: task-002 - Module B
+
+**Description:** Second task
+**Complexity:** simple
+
+**Source Files:**
+- src/b.py
+`;
+      const log = silentLogger();
+      const tasks = parseMigrationPlanContent(content, log);
+      expect(tasks).toHaveLength(2);
+      expect(log.warn).not.toHaveBeenCalledWith(expect.stringContaining('Unparseable block headers'));
+      expect(log.error).not.toHaveBeenCalledWith(expect.stringContaining('Task Summary'));
+      expect(log.error).not.toHaveBeenCalledWith(expect.stringContaining('Tasks'));
+      expect(tasks[0]?.id).toBe('task-001');
+      expect(tasks[1]?.id).toBe('task-002');
+    });
+
+    it('should reject non-canonical "Task N:" headers', () => {
+      const content = `## Task 1: Migrate Constants Module
+
+**Description:** Migrate the constants module
+**Complexity:** simple
+
+**Source Files:**
+- constants.py
+
+**Target Files:**
+- src/constants.ts
+`;
+      const log = silentLogger();
+      const tasks = parseMigrationPlanContent(content, log);
+      // Non-canonical header format should not parse into tasks
+      expect(tasks).toHaveLength(0);
+    });
+
+    it('should only accept task-NNN dependency references', () => {
+      const content = `## Task: task-001 - Module A
+
+**Description:** First task
+**Complexity:** simple
+
+**Source Files:**
+- src/a.py
+
+**Dependencies:** none
+
+## Task: task-002 - Module B
+
+**Description:** Second task
+**Complexity:** simple
+
+**Source Files:**
+- src/b.py
+
+**Dependencies:** task-001, Task 3 (some-file.ts)
+`;
+      const log = silentLogger();
+      const tasks = parseMigrationPlanContent(content, log);
+      expect(tasks).toHaveLength(2);
+      // Only the canonical task-001 reference should be kept
+      expect(tasks[1]?.dependencies).toEqual(['task-001']);
+    });
+  });
+
+  describe('TaskResultSchema', () => {
+    it('should validate a well-formed result JSON', () => {
+      const result = TaskResultSchema.parse({
+        taskId: 'task-001',
+        status: 'completed',
+        outputFiles: ['src/auth/login.ts'],
+        parity: 'pass',
+        issues: [],
+      });
+      expect(result.taskId).toBe('task-001');
+      expect(result.status).toBe('completed');
+    });
+
+    it('should reject a result with missing taskId', () => {
+      expect(() => TaskResultSchema.parse({ status: 'completed' })).toThrow();
+    });
+  });
+
+  describe('readTaskResultJson', () => {
+    it('should read sidecar from artifacts/results/ path', async () => {
+      const { mkdtemp, rm, writeFile, mkdir } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-sidecar-'));
+      try {
+        const resultsDir = join(dir, 'artifacts', 'results');
+        await mkdir(resultsDir, { recursive: true });
+        const sidecar = {
+          taskId: 'task-001',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'pass',
+          issues: [],
+        };
+        await writeFile(
+          join(resultsDir, 'parity-verifier-task-001.result.json'),
+          JSON.stringify(sidecar),
+          'utf-8',
+        );
+        const result = await readTaskResultJson(dir, 'parity-verifier', 'task-001');
+        expect(result).toBeDefined();
+        expect(result?.parity).toBe('pass');
+        expect(result?.issues).toHaveLength(0);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should return undefined when no sidecar file exists', async () => {
+      const { mkdtemp, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-sidecar-'));
+      try {
+        const result = await readTaskResultJson(dir, 'parity-verifier', 'task-999');
+        expect(result).toBeUndefined();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should ignore legacy results/ path and return undefined', async () => {
+      const { mkdtemp, rm, writeFile, mkdir } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-sidecar-'));
+      try {
+        // Write sidecar ONLY to legacy path
+        const legacyDir = join(dir, 'results');
+        await mkdir(legacyDir, { recursive: true });
+        const sidecar = {
+          taskId: 'task-001',
+          status: 'completed',
+          outputFiles: [],
+          parity: 'pass',
+          issues: [],
+        };
+        await writeFile(
+          join(legacyDir, 'parity-verifier-task-001.result.json'),
+          JSON.stringify(sidecar),
+          'utf-8',
+        );
+        // Should NOT find it — legacy path is no longer consulted
+        const result = await readTaskResultJson(dir, 'parity-verifier', 'task-001');
+        expect(result).toBeUndefined();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should return undefined for malformed JSON in sidecar', async () => {
+      const { mkdtemp, rm, writeFile, mkdir } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-sidecar-'));
+      try {
+        const resultsDir = join(dir, 'artifacts', 'results');
+        await mkdir(resultsDir, { recursive: true });
+        await writeFile(
+          join(resultsDir, 'parity-verifier-task-001.result.json'),
+          'not valid json {{{',
+          'utf-8',
+        );
+        const result = await readTaskResultJson(dir, 'parity-verifier', 'task-001');
+        expect(result).toBeUndefined();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('AamfOutputBase schema', () => {
+    it('should accept a minimal valid output', () => {
+      const result = AamfOutputBase.parse({ status: 'completed' });
+      expect(result.status).toBe('completed');
+      expect(result.taskId).toBeUndefined();
+      expect(result.tokenUsage).toBeUndefined();
+      expect(result.notes).toBeUndefined();
+    });
+
+    it('should accept all optional fields', () => {
+      const result = AamfOutputBase.parse({
+        status: 'needs-review',
+        taskId: 'task-007',
+        tokenUsage: { prompt: 100, completion: 50, total: 150 },
+        notes: 'Some note',
+      });
+      expect(result.taskId).toBe('task-007');
+      expect(result.tokenUsage?.total).toBe(150);
+      expect(result.notes).toBe('Some note');
+    });
+
+    it('should reject invalid status values', () => {
+      expect(() => AamfOutputBase.parse({ status: 'unknown' })).toThrow();
+    });
+
+    it('should reject non-integer tokenUsage fields', () => {
+      expect(() =>
+        AamfOutputBase.parse({
+          status: 'completed',
+          tokenUsage: { prompt: 1.5, completion: 0, total: 1 },
+        }),
+      ).toThrow();
+    });
+
+    it('should accept all valid status enum values', () => {
+      for (const status of ['completed', 'failed', 'needs-review'] as const) {
+        expect(() => AamfOutputBase.parse({ status })).not.toThrow();
+      }
+    });
+  });
+
+  describe('per-agent output schemas', () => {
+    it('should accept valid MigrationOrchestratorSchema output', () => {
+      const result = MigrationOrchestratorSchema.parse({ status: 'completed' });
+      expect(result.status).toBe('completed');
+    });
+
+    it('should validate KnowledgeBuilderSchema', () => {
+      expect(() => KnowledgeBuilderSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    it('should validate MigrationPlannerSchema', () => {
+      expect(() => MigrationPlannerSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    it('should validate AdjudicatorSchema', () => {
+      expect(() => AdjudicatorSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    it('should validate CodeMigratorSchema', () => {
+      expect(() => CodeMigratorSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    it('should validate ParityVerifierSchema', () => {
+      expect(() => ParityVerifierSchema.parse({ status: 'completed', parity: 'pass' })).not.toThrow();
+    });
+
+    it('should validate TestWriterSchema', () => {
+      expect(() => TestWriterSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    it('should validate ParityFailureResolverSchema', () => {
+      expect(() => ParityFailureResolverSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    it('should validate FinalParityCheckerSchema', () => {
+      expect(() => FinalParityCheckerSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    it('should validate E2eTestCrafterSchema', () => {
+      expect(() => E2eTestCrafterSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    it('should validate DocumentationWriterSchema', () => {
+      expect(() => DocumentationWriterSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    it('should validate MigrationRunnerSchema', () => {
+      expect(() => MigrationRunnerSchema.parse({ status: 'completed' })).not.toThrow();
+    });
+
+    describe('KbIndexerOutput', () => {
+      it('should validate with required dbPath field', () => {
+        expect(() =>
+          KbIndexerOutput.parse({ status: 'completed', dbPath: '/tmp/kb.db' }),
+        ).not.toThrow();
+      });
+
+      it('should reject missing dbPath', () => {
+        expect(() =>
+          KbIndexerOutput.parse({ status: 'completed' }),
+        ).toThrow();
+      });
+
+      it('should reject empty dbPath', () => {
+        expect(() =>
+          KbIndexerOutput.parse({ status: 'completed', dbPath: '' }),
+        ).toThrow();
+      });
+
+      it('should parse correctly and expose dbPath', () => {
+        const result = KbIndexerOutput.parse({ status: 'completed', dbPath: '/var/db/kb.sqlite' });
+        expect(result.dbPath).toBe('/var/db/kb.sqlite');
+      });
+
+      it('should parse a KbIndexerOutput aamf-json block', () => {
+        const stdout = '```aamf-json\n{"status":"completed","dbPath":"/tmp/kb.db"}\n```';
+        const result = parseAamfOutput(stdout, KbIndexerOutput);
+        expect(result.parsed).toBe(true);
+        if (result.parsed) {
+          expect(result.data.dbPath).toBe('/tmp/kb.db');
+        }
+      });
+    });
+  });
+
+  describe('parseAamfOutput', () => {
+    it('should parse a valid aamf-json block and return data', () => {
+      const stdout = `
+Some output text.
+\`\`\`aamf-json
+{"status":"completed"}
+\`\`\`
+`;
+      const result = parseAamfOutput(stdout, CodeMigratorSchema);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('completed');
+      }
+    });
+
+    it('should return the last aamf-json block when multiple are present', () => {
+      const stdout = `
+\`\`\`aamf-json
+{"status":"failed"}
+\`\`\`
+intermediate text
+\`\`\`aamf-json
+{"status":"completed"}
+\`\`\`
+`;
+      const result = parseAamfOutput(stdout, CodeMigratorSchema);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('completed');
+      }
+    });
+
+    it('should return parsed: false with error "missing aamf-json block" when no block present', () => {
+      const result = parseAamfOutput('no fenced blocks here', AamfOutputBase);
+      expect(result.parsed).toBe(false);
+      if (!result.parsed) {
+        expect(result.error).toContain('missing aamf-json block');
+      }
+    });
+
+    it('should return parsed: false for malformed JSON', () => {
+      const stdout = '```aamf-json\n{not valid json}\n```';
+      const result = parseAamfOutput(stdout, AamfOutputBase);
+      expect(result.parsed).toBe(false);
+      if (!result.parsed) {
+        expect(result.error).toContain('malformed JSON');
+      }
+    });
+
+    it('should return parsed: false for schema validation failure', () => {
+      const stdout = '```aamf-json\n{"status":"invalid-status"}\n```';
+      const result = parseAamfOutput(stdout, CodeMigratorSchema);
+      expect(result.parsed).toBe(false);
+      if (!result.parsed) {
+        expect(result.error).toContain('schema validation failed');
+      }
+    });
+
+    it('should parse optional fields when provided', () => {
+      const stdout = `\`\`\`aamf-json
+{"status":"completed","taskId":"task-003","tokenUsage":{"prompt":100,"completion":50,"total":150},"notes":"All good"}
+\`\`\``;
+      const result = parseAamfOutput(stdout, TestWriterSchema);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.taskId).toBe('task-003');
+        expect(result.data.tokenUsage?.total).toBe(150);
+        expect(result.data.notes).toBe('All good');
+      }
+    });
+
+    it('should handle CRLF line endings in the fenced block', () => {
+      const stdout = '```aamf-json\r\n{"status":"completed"}\r\n```';
+      const result = parseAamfOutput(stdout, AdjudicatorSchema);
+      expect(result.parsed).toBe(true);
+    });
+
+    it('should parse parity-failure-resolver aamf-json', () => {
+      const stdout = '```aamf-json\n{"status":"completed"}\n```';
+      const result = parseAamfOutput(stdout, ParityFailureResolverSchema);
+      expect(result.parsed).toBe(true);
+    });
+
+    it('should work with the base AamfOutputBase schema', () => {
+      const stdout = '```aamf-json\n{"status":"needs-review"}\n```';
+      const result = parseAamfOutput(stdout, AamfOutputBase);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('needs-review');
+      }
+    });
+
+  });
+
+  describe('parseTokenUsage', () => {
+    it('should parse prompt and completion tokens', () => {
+      const output = 'prompt_tokens: 1500\ncompletion_tokens: 800\ntotal_tokens: 2300';
+      const usage = parseTokenUsage(output);
+      expect(usage).toEqual({ prompt: 1500, completion: 800, total: 2300 });
+    });
+
+    it('should parse total-only format', () => {
+      const output = 'Total tokens: 5000';
+      const usage = parseTokenUsage(output);
+      expect(usage).toBeDefined();
+      expect(usage?.total).toBe(5000);
+      // 80% prompt, 20% completion — consistent with CostEstimator.estimateFromTotal
+      expect(usage?.prompt).toBe(4000);
+      expect(usage?.completion).toBe(1000);
+    });
+
+    it('should return undefined for no token info', () => {
+      const usage = parseTokenUsage('some output with no tokens');
+      expect(usage).toBeUndefined();
+    });
+
+    it('should route to parseClaudeTokenUsage when runtime is claude-code', () => {
+      const output = '{"type":"message","usage":{"input_tokens":1200,"output_tokens":400}}';
+      const usage = parseTokenUsage(output, 'claude-code');
+      expect(usage).toEqual({ prompt: 1200, completion: 400, total: 1600 });
+    });
+
+    it('should use regex path when runtime is not claude-code', () => {
+      const output = 'prompt_tokens: 100\ncompletion_tokens: 50\n{"usage":{"input_tokens":999,"output_tokens":999}}';
+      const usage = parseTokenUsage(output);
+      expect(usage).toEqual({ prompt: 100, completion: 50, total: 150 });
+    });
+  });
+
+  describe('parseClaudeTokenUsage', () => {
+    it('should parse Claude JSON usage from stdout', () => {
+      const output = 'Some text\n{"type":"message","usage":{"input_tokens":2000,"output_tokens":500}}\nMore text';
+      const usage = parseClaudeTokenUsage(output);
+      expect(usage).toEqual({ prompt: 2000, completion: 500, total: 2500 });
+    });
+
+    it('should parse Claude JSON usage from stderr', () => {
+      const stderr = '[stderr] {"usage":{"input_tokens":1000,"output_tokens":300}}';
+      const usage = parseClaudeTokenUsage(stderr);
+      expect(usage).toEqual({ prompt: 1000, completion: 300, total: 1300 });
+    });
+
+    it('should populate cachedInput when cache_read_input_tokens is present', () => {
+      const output = '{"usage":{"input_tokens":1500,"output_tokens":400,"cache_read_input_tokens":200}}';
+      const usage = parseClaudeTokenUsage(output);
+      expect(usage?.prompt).toBe(1500);
+      expect(usage?.completion).toBe(400);
+      expect(usage?.total).toBe(1900);
+      expect(usage?.cachedInput).toBe(200);
+    });
+
+    it('should not include cachedInput when cache_read_input_tokens is absent', () => {
+      const output = '{"usage":{"input_tokens":800,"output_tokens":200}}';
+      const usage = parseClaudeTokenUsage(output);
+      expect(usage?.cachedInput).toBeUndefined();
+    });
+
+    it('should return the last usage JSON when multiple are present', () => {
+      const output = [
+        '{"usage":{"input_tokens":100,"output_tokens":50}}',
+        '{"usage":{"input_tokens":900,"output_tokens":300}}',
+      ].join('\n');
+      const usage = parseClaudeTokenUsage(output);
+      expect(usage?.prompt).toBe(900);
+      expect(usage?.completion).toBe(300);
+    });
+
+    it('should return undefined when no Claude usage JSON is found', () => {
+      const usage = parseClaudeTokenUsage('prompt_tokens: 100\ncompletion_tokens: 50');
+      expect(usage).toBeUndefined();
+    });
+  });
+
+  describe('parseCopilotCliUsage', () => {
+    it('should parse a single-model breakdown with tokens_in, tokens_out, tokens_cached', () => {
+      const output = `Total usage est:
+  1 Premium request
+
+Breakdown by AI model:
+  claude-sonnet-4-20250514:
+    tokens_in: 5000, tokens_out: 1200, tokens_cached: 800, premium_requests_est: 1
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 5000, completion: 1200, total: 6200, cachedInput: 800, premiumRequests: 1 });
+    });
+
+    it('should sum across multiple models', () => {
+      const output = `Total usage est:
+  3 Premium requests
+
+Breakdown by AI model:
+  claude-sonnet-4-20250514:
+    tokens_in: 4000, tokens_out: 1000, tokens_cached: 500, premium_requests_est: 2
+  gpt-4o:
+    tokens_in: 2000, tokens_out: 600, premium_requests_est: 1
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 6000, completion: 1600, total: 7600, cachedInput: 500, premiumRequests: 3 });
+    });
+
+    it('should parse numeric shorthand suffixes (k)', () => {
+      const output = `Breakdown by AI model:
+  claude-sonnet-4-20250514:
+    tokens_in: 41.3k, tokens_out: 2.1k, tokens_cached: 13.1k, premium_requests_est: 2
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 41300, completion: 2100, total: 43400, cachedInput: 13100, premiumRequests: 2 });
+    });
+
+    it('should parse numeric shorthand suffixes (m)', () => {
+      const output = `Breakdown by AI model:
+  large-model:
+    tokens_in: 2.5m, tokens_out: 0.5m, tokens_cached: 1m, premium_requests_est: 10
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 2500000, completion: 500000, total: 3000000, cachedInput: 1000000, premiumRequests: 10 });
+    });
+
+    it('should handle singular "Premium request"', () => {
+      const output = `Total usage est:
+  1 Premium request
+
+Breakdown by AI model:
+  gpt-4o:
+    tokens_in: 3000, tokens_out: 500, premium_requests_est: 1
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 3000, completion: 500, total: 3500, premiumRequests: 1 });
+    });
+
+    it('should handle plural "Premium requests"', () => {
+      const output = `Total usage est:
+  5 Premium requests
+
+Breakdown by AI model:
+  gpt-4o:
+    tokens_in: 10000, tokens_out: 2000, tokens_cached: 500, premium_requests_est: 5
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 10000, completion: 2000, total: 12000, cachedInput: 500, premiumRequests: 5 });
+    });
+
+    it('should return undefined for cachedInput when tokens_cached is absent', () => {
+      const output = `Breakdown by AI model:
+  gpt-4o:
+    tokens_in: 2000, tokens_out: 800, premium_requests_est: 1
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toBeDefined();
+      expect(usage?.prompt).toBe(2000);
+      expect(usage?.completion).toBe(800);
+      expect(usage?.total).toBe(2800);
+      expect(usage?.cachedInput).toBeUndefined();
+      expect((usage as any)?.premiumRequests).toBe(1);
+    });
+
+    it('should return undefined when output has no Copilot CLI usage block', () => {
+      const output = 'Some random agent output\nprompt_tokens: 100\ncompletion_tokens: 50';
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toBeUndefined();
+    });
+
+    it('should return undefined when breakdown header exists but no token lines follow', () => {
+      const output = `Breakdown by AI model:\n  (no models used)\n`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toBeUndefined();
+    });
+
+    it('should handle minor spacing variations', () => {
+      const output = `Breakdown by AI model:
+  model-a:
+    tokens_in:41.3k,tokens_out:2.1k,tokens_cached:13.1k,premium_requests_est:2
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 41300, completion: 2100, total: 43400, cachedInput: 13100, premiumRequests: 2 });
+    });
+
+    it('should parse latest footer format (in/out/cached)', () => {
+      const output = `Total usage est:        1 Premium request
+API time spent:         12s
+Total session time:     16s
+Total code changes:     +0 -0
+Breakdown by AI model:
+ claude-sonnet-4.6       87.6k in, 486 out, 43.0k cached (Est. 1 Premium request)
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 87600, completion: 486, total: 88086, cachedInput: 43000, premiumRequests: 1 });
+    });
+
+    it('should parse latest footer format when cached is absent', () => {
+      const output = `Breakdown by AI model:
+ gpt-5-mini              1.2k in, 210 out (Est. 1 Premium request)
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 1200, completion: 210, total: 1410, premiumRequests: 1 });
+    });
+
+    it('should be case-insensitive for the breakdown header', () => {
+      const output = `breakdown by ai model:
+  gpt-4o:
+    tokens_in: 1000, tokens_out: 200, premium_requests_est: 1
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 1000, completion: 200, total: 1200, premiumRequests: 1 });
+    });
+
+    it('should sum mixed shorthand and plain numbers across models', () => {
+      const output = `Breakdown by AI model:
+  model-a:
+    tokens_in: 1.5k, tokens_out: 300, tokens_cached: 200, premium_requests_est: 1
+  model-b:
+    tokens_in: 2000, tokens_out: 0.5k, premium_requests_est: 1
+`;
+      const usage = parseCopilotCliUsage(output);
+      expect(usage).toEqual({ prompt: 3500, completion: 800, total: 4300, cachedInput: 200, premiumRequests: 2 });
+    });
+
+    it('should return undefined for empty string input', () => {
+      const usage = parseCopilotCliUsage('');
+      expect(usage).toBeUndefined();
+    });
+  });
+
+  describe('parseTokenUsage (copilot-cli dispatch)', () => {
+    it('should route to parseCopilotCliUsage when runtime is copilot-cli', () => {
+      const output = `Breakdown by AI model:
+  gpt-4o:
+    tokens_in: 3000, tokens_out: 500, premium_requests_est: 1
+`;
+      const usage = parseTokenUsage(output, 'copilot-cli');
+      expect(usage).toEqual({ prompt: 3000, completion: 500, total: 3500, premiumRequests: 1 });
+    });
+
+    it('should return undefined via copilot-cli dispatch when no usage block', () => {
+      const usage = parseTokenUsage('no copilot cli output here', 'copilot-cli');
+      expect(usage).toBeUndefined();
+    });
+
+    it('should preserve cachedInput through copilot-cli dispatch', () => {
+      const output = `Breakdown by AI model:
+  claude-sonnet-4-20250514:
+    tokens_in: 5000, tokens_out: 1200, tokens_cached: 800, premium_requests_est: 1
+`;
+      const usage = parseTokenUsage(output, 'copilot-cli') as { prompt: number; completion: number; total: number; cachedInput?: number; premiumRequests?: number };
+      expect(usage).toBeDefined();
+      expect(usage.cachedInput).toBe(800);
+      expect(usage.premiumRequests).toBe(1);
+    });
+
+    it('should not fall through to regex path when runtime is copilot-cli', () => {
+      const output = 'prompt_tokens: 999\ncompletion_tokens: 111\nBreakdown by AI model:\n  m:\n    tokens_in: 100, tokens_out: 50, premium_requests_est: 1';
+      const usage = parseTokenUsage(output, 'copilot-cli');
+      expect(usage).toEqual({ prompt: 100, completion: 50, total: 150, premiumRequests: 1 });
+    });
+
+    it('should parse latest footer format via copilot-cli dispatch', () => {
+      const output = `Breakdown by AI model:
+ claude-sonnet-4.6       2.4k in, 100 out, 1.1k cached (Est. 1 Premium request)
+`;
+      const usage = parseTokenUsage(output, 'copilot-cli');
+      expect(usage).toEqual({ prompt: 2400, completion: 100, total: 2500, cachedInput: 1100, premiumRequests: 1 });
+    });
+  });
+
+  describe('parseE2eTestPlanContent', () => {
+    it('should parse multiple suite blocks from a well-formed plan', () => {
+      const content = `# E2E Test Plan
+
+### Suite: suite-001 - Authentication Flow
+
+**Purpose:** Test user authentication end-to-end
+**Framework:** vitest
+**Output Location:** tests/e2e/auth
+
+**Target Files:**
+- src/auth/login.ts
+- src/auth/register.ts
+
+**KB References:**
+- kb-auth-001
+- kb-auth-002
+
+**Scenarios:**
+- User can log in with valid credentials
+- User sees error with invalid password
+
+### Suite: suite-002 - Data Export
+
+**Purpose:** Test CSV and JSON export functionality
+**Framework:** vitest
+**Output Location:** tests/e2e/export
+
+**Target Files:**
+- src/export/csv.ts
+
+**KB References:**
+- kb-export-001
+
+**Scenarios:**
+- Export generates valid CSV
+- Export handles empty datasets
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+
+      expect(suites).toHaveLength(2);
+
+      expect(suites[0]?.id).toBe('suite-001');
+      expect(suites[0]?.name).toBe('Authentication Flow');
+      expect(suites[0]?.purpose).toBe('Test user authentication end-to-end');
+      expect(suites[0]?.framework).toBe('vitest');
+      expect(suites[0]?.outputLocation).toBe('tests/e2e/auth');
+      expect(suites[0]?.targetFiles).toEqual(['src/auth/login.ts', 'src/auth/register.ts']);
+      expect(suites[0]?.kbReferences).toEqual(['kb-auth-001', 'kb-auth-002']);
+      expect(suites[0]?.scenarios).toHaveLength(2);
+
+      expect(suites[1]?.id).toBe('suite-002');
+      expect(suites[1]?.name).toBe('Data Export');
+      expect(suites[1]?.targetFiles).toEqual(['src/export/csv.ts']);
+    });
+
+    it('should handle single-suite plans', () => {
+      const content = `### Suite: suite-001 - Only Suite
+
+**Purpose:** Single suite test
+**Framework:** jest
+**Output Location:** tests/e2e
+
+**Target Files:**
+- src/app.ts
+
+**KB References:**
+- kb-001
+
+**Scenarios:**
+- App launches successfully
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      expect(suites[0]?.id).toBe('suite-001');
+      expect(suites[0]?.name).toBe('Only Suite');
+    });
+
+    it('should return empty array for empty input', () => {
+      const log = silentLogger();
+      expect(parseE2eTestPlanContent('', log)).toEqual([]);
+      expect(parseE2eTestPlanContent('  \n  ', log)).toEqual([]);
+    });
+
+    it('should return empty array for content with no suite headers', () => {
+      const content = `# E2E Test Plan
+
+## Overview
+
+This plan has no suite definitions.
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(0);
+    });
+
+    it('should skip malformed suite blocks and continue', () => {
+      const content = `### Suite: bad-format Missing ID Pattern
+
+No proper fields here.
+
+### Suite: suite-001 - Valid Suite
+
+**Purpose:** A valid suite
+**Framework:** vitest
+**Output Location:** tests/e2e
+
+**Target Files:**
+- src/valid.ts
+
+**KB References:**
+- kb-001
+
+**Scenarios:**
+- Test scenario
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      expect(suites[0]?.id).toBe('suite-001');
+      expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('malformed suite block'));
+    });
+
+    it('should handle suites with missing optional fields gracefully', () => {
+      const content = `### Suite: suite-001 - Minimal Suite
+
+**Purpose:** Minimal
+**Framework:** vitest
+**Output Location:** tests/e2e
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      expect(suites[0]?.targetFiles).toEqual([]);
+      expect(suites[0]?.kbReferences).toEqual([]);
+      expect(suites[0]?.scenarios).toEqual([]);
+    });
+
+    it('should handle colon separator in suite header', () => {
+      const content = `### Suite: suite-001: Colon Separated
+
+**Purpose:** Suite with colon separator
+**Framework:** pytest
+**Output Location:** tests/e2e
+
+**Target Files:**
+- src/main.py
+
+**Scenarios:**
+- Basic test
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      expect(suites[0]?.id).toBe('suite-001');
+      expect(suites[0]?.name).toBe('Colon Separated');
+    });
+
+    it('should handle alternate bold-colon formatting (**Purpose**:)', () => {
+      const content = `### Suite: suite-001 - Alt Format
+
+**Purpose**: Alternate bold-colon format
+**Framework**: vitest
+**Output Location**: tests/e2e/alt
+
+**Target Files:**
+- src/alt.ts
+
+**KB References:**
+- kb-alt-001
+
+**Scenarios:**
+- Alternate scenario
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      expect(suites[0]?.purpose).toBe('Alternate bold-colon format');
+      expect(suites[0]?.framework).toBe('vitest');
+      expect(suites[0]?.outputLocation).toBe('tests/e2e/alt');
+    });
+
+    it('should strip backticks from list items', () => {
+      const content = `### Suite: suite-001 - Backtick Suite
+
+**Purpose:** Test backtick stripping
+**Framework:** vitest
+**Output Location:** tests/e2e
+
+**Target Files:**
+- \`src/foo.ts\`
+- \`src/bar.ts\`
+
+**KB References:**
+- \`kb-ref-001\`
+
+**Scenarios:**
+- Scenario one
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      expect(suites[0]?.targetFiles).toEqual(['src/foo.ts', 'src/bar.ts']);
+      expect(suites[0]?.kbReferences).toEqual(['kb-ref-001']);
+    });
+
+    it('should use default console logger when no logger is provided', () => {
+      const content = `### Suite: bad-format Missing ID Pattern
+
+No proper fields here.
+`;
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const suites = parseE2eTestPlanContent(content);
+        expect(suites).toHaveLength(0);
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('malformed suite block'));
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('should parse three or more suite blocks', () => {
+      const content = `# E2E Test Plan
+
+### Suite: suite-001 - First
+
+**Purpose:** First suite
+**Framework:** vitest
+**Output Location:** tests/e2e/first
+
+**Target Files:**
+- src/first.ts
+
+**Scenarios:**
+- First scenario
+
+### Suite: suite-002 - Second
+
+**Purpose:** Second suite
+**Framework:** vitest
+**Output Location:** tests/e2e/second
+
+**Target Files:**
+- src/second.ts
+
+**Scenarios:**
+- Second scenario
+
+### Suite: suite-003 - Third
+
+**Purpose:** Third suite
+**Framework:** jest
+**Output Location:** tests/e2e/third
+
+**Target Files:**
+- src/third.ts
+
+**Scenarios:**
+- Third scenario
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(3);
+      expect(suites.map(s => s.id)).toEqual(['suite-001', 'suite-002', 'suite-003']);
+      expect(suites.map(s => s.name)).toEqual(['First', 'Second', 'Third']);
+      expect(suites[2]?.framework).toBe('jest');
+    });
+
+    it('should return all E2eSuiteBrief fields with correct types', () => {
+      const content = `### Suite: suite-001 - Type Check
+
+**Purpose:** Verify field types
+**Framework:** vitest
+**Output Location:** tests/e2e/types
+
+**Target Files:**
+- src/types.ts
+
+**KB References:**
+- kb-001
+
+**Scenarios:**
+- Scenario A
+- Scenario B
+`;
+      const log = silentLogger();
+      const suites = parseE2eTestPlanContent(content, log);
+      expect(suites).toHaveLength(1);
+      const suite = suites[0]!;
+      expect(typeof suite.id).toBe('string');
+      expect(typeof suite.name).toBe('string');
+      expect(typeof suite.purpose).toBe('string');
+      expect(Array.isArray(suite.targetFiles)).toBe(true);
+      expect(Array.isArray(suite.kbReferences)).toBe(true);
+      expect(typeof suite.framework).toBe('string');
+      expect(typeof suite.outputLocation).toBe('string');
+      expect(Array.isArray(suite.scenarios)).toBe(true);
+      expect(suite.scenarios).toHaveLength(2);
+    });
+  });
+
+  describe('parseE2eTestPlan (file-based)', () => {
+    it('should read a file and return parsed suites', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-e2e-'));
+      try {
+        const planContent = `# E2E Test Plan
+
+### Suite: suite-001 - File Based Suite
+
+**Purpose:** Test file-based parsing
+**Framework:** vitest
+**Output Location:** tests/e2e/file
+
+**Target Files:**
+- src/file.ts
+
+**KB References:**
+- kb-file-001
+
+**Scenarios:**
+- File scenario A
+- File scenario B
+`;
+        const planPath = join(dir, 'e2e-test-plan.md');
+        await writeFile(planPath, planContent, 'utf-8');
+        const suites = await parseE2eTestPlan(planPath);
+        expect(suites).toHaveLength(1);
+        expect(suites[0]?.id).toBe('suite-001');
+        expect(suites[0]?.name).toBe('File Based Suite');
+        expect(suites[0]?.purpose).toBe('Test file-based parsing');
+        expect(suites[0]?.targetFiles).toEqual(['src/file.ts']);
+        expect(suites[0]?.scenarios).toHaveLength(2);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should return empty array for an empty file', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-e2e-'));
+      try {
+        const planPath = join(dir, 'e2e-test-plan.md');
+        await writeFile(planPath, '', 'utf-8');
+        const suites = await parseE2eTestPlan(planPath);
+        expect(suites).toEqual([]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should throw when the file does not exist', async () => {
+      await expect(
+        parseE2eTestPlan('/nonexistent/path/e2e-test-plan.md'),
+      ).rejects.toThrow();
+    });
+
+    it('should parse multiple suites from a file', async () => {
+      const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const dir = await mkdtemp(join(tmpdir(), 'aamf-rp-e2e-'));
+      try {
+        const planContent = `### Suite: suite-001 - Alpha
+
+**Purpose:** Alpha suite
+**Framework:** vitest
+**Output Location:** tests/e2e/alpha
+
+**Target Files:**
+- src/alpha.ts
+
+**Scenarios:**
+- Alpha scenario
+
+### Suite: suite-002 - Beta
+
+**Purpose:** Beta suite
+**Framework:** vitest
+**Output Location:** tests/e2e/beta
+
+**Target Files:**
+- src/beta.ts
+
+**Scenarios:**
+- Beta scenario
+`;
+        const planPath = join(dir, 'e2e-test-plan.md');
+        await writeFile(planPath, planContent, 'utf-8');
+        const suites = await parseE2eTestPlan(planPath);
+        expect(suites).toHaveLength(2);
+        expect(suites[0]?.id).toBe('suite-001');
+        expect(suites[1]?.id).toBe('suite-002');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
+});

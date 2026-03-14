@@ -26,19 +26,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            runtime/node_modules
-          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('runtime/package-lock.json') }}
+            node_modules
+          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-${{ matrix.node-version }}-
 
       - name: Install dependencies
-        working-directory: runtime
         run: npm ci
 
       - name: Type check
-        working-directory: runtime
         run: npx tsc --noEmit
 
       - name: Unit tests
-        working-directory: runtime
         run: npx vitest run --coverage

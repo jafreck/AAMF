@@ -25,29 +25,25 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            runtime/node_modules
-          key: ${{ runner.os }}-node-22.x-${{ hashFiles('runtime/package-lock.json') }}
+            node_modules
+          key: ${{ runner.os }}-node-22.x-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-22.x-
 
       - name: Install dependencies
-        working-directory: runtime
         run: npm ci
 
       - name: Type check
-        working-directory: runtime
         run: npx tsc --noEmit
 
       - name: Unit tests
-        working-directory: runtime
         run: npx vitest run
 
       - name: Build
-        working-directory: runtime
         run: npx tsc
 
       - name: Package dist
-        run: tar -czf runtime-dist.tar.gz -C runtime dist
+        run: tar -czf aamf-dist.tar.gz dist
 
       - name: Create GitHub Release
         id: create_release
@@ -77,6 +73,6 @@ jobs:
                 repo: context.repo.repo,
                 tag: context.ref_name,
               })).data.id,
-              name: 'runtime-dist.tar.gz',
-              data: fs.readFileSync('runtime-dist.tar.gz'),
+              name: 'aamf-dist.tar.gz',
+              data: fs.readFileSync('aamf-dist.tar.gz'),
             });

@@ -8,8 +8,11 @@ Typical use cases include porting a 100k+ line Python monolith to TypeScript, a 
 
 ## Repository Layout
 
-- `runtime/` — migration orchestration runtime, agent execution, checkpointing, observability, KB MCP server.
-- `@jafreck/lore` (npm package) — extracted knowledge-base indexing library (source walking, tree-sitter parsing, SQLite index, embeddings, MCP server) consumed by the runtime as `@aamf/lore`.
+- `src/` — migration orchestration runtime, agent execution, checkpointing, observability, KB MCP server.
+- `tests/` — unit, integration, and end-to-end tests mirroring the `src/` layout.
+- `agents/` — Markdown prompt templates for each agent role.
+- `docs/` — configuration reference and additional documentation.
+- `@jafreck/lore` (npm package) — extracted knowledge-base indexing library (source walking, tree-sitter parsing, SQLite index, embeddings, MCP server) consumed by the runtime as `@jafreck/lore`.
 
 ---
 
@@ -139,7 +142,7 @@ Context saturation is the primary constraint when migrating large codebases. AAM
 
 ### Knowledge Base Access via MCP
 
-When Phase 0 (KB Indexing) is enabled, the runtime builds a SQLite knowledge-base index from source code using `@aamf/lore`. After indexing, it starts an in-process HTTP MCP server (`KbServerProcess`) on a random local port. The MCP server exposes the knowledge base for agent queries via the Model Context Protocol.
+When Phase 0 (KB Indexing) is enabled, the runtime builds a SQLite knowledge-base index from source code using `@jafreck/lore`. After indexing, it starts an in-process HTTP MCP server (`KbServerProcess`) on a random local port. The MCP server exposes the knowledge base for agent queries via the Model Context Protocol.
 
 Agent invocations receive the server's URL through MCP config injection, giving every agent efficient access to the indexed codebase (file content, symbols, dependencies, and optional semantic/embedding search) without saturating its context window.
 
@@ -174,7 +177,7 @@ AAMF defines 16 specialized agent roles. Each corresponds to a `.agent.md` file 
 
 ### Phase 0 — KB Indexing (Optional)
 
-When `options.kbIndex.enabled` is set (or `AAMF_USE_KB_INDEX=1`), the runtime uses `@aamf/lore` to build a SQLite knowledge-base index from the source codebase. This phase:
+When `options.kbIndex.enabled` is set (or `AAMF_USE_KB_INDEX=1`), the runtime uses `@jafreck/lore` to build a SQLite knowledge-base index from the source codebase. This phase:
 
 1. Computes a source fingerprint and skips rebuilding if the hash matches a previous run.
 2. Walks the source tree with tree-sitter parsing (C, C++, C#, Go, Java, JavaScript, Python, Rust, TypeScript).
