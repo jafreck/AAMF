@@ -13,9 +13,16 @@ import { fileExists, atomicWrite, ensureDir, readJson } from '../../util/fs.js';
 import { assertPhaseSuccess } from './shared.js';
 import { buildTaskGraph, buildDependencySummary } from '../../core/task-graph-builder.js';
 
+/** Extended PhaseResult that carries the structured task graph data for downstream steps. */
+export interface TaskGraphOutput extends PhaseResult {
+  tasks: MigrationTask[];
+  sccs: string[][];
+  compilationUnits: CompilationUnit[];
+}
+
 export async function buildTaskGraphStep(
   flowCtx: FlowExecutionContext<MigrationFlowContext>,
-): Promise<PhaseResult> {
+): Promise<TaskGraphOutput> {
   const ctx = flowCtx.context;
   const start = Date.now();
   const planningDir = ctx.paths.artifactsPlanningDir;
@@ -42,14 +49,19 @@ export async function buildTaskGraphStep(
       outputParsed: true,
       structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs, compilationUnits },
     };
-    return { phase: 1, name: 'Task Graph Construction', success: true, outputPath: mergedTasksFile, duration: Date.now() - start };
+    return {
+      phase: 1, name: 'Task Graph Construction', success: true,
+      outputPath: mergedTasksFile, duration: Date.now() - start,
+      tasks: allTasks, sccs: taskGraphSCCs, compilationUnits,
+    };
   }
 
   // Verify KB exists
   if (!(await fileExists(ctx.paths.kbDbFile))) {
-    const failResultNoKb: PhaseResult = {
+    const failResultNoKb: TaskGraphOutput = {
       phase: 1, name: 'Task Graph Construction', success: false, duration: Date.now() - start,
       error: 'Lore KB database (kb.db) not found — Phase 0 must complete first',
+      tasks: [], sccs: [], compilationUnits: [],
     };
     assertPhaseSuccess(failResultNoKb);
     return failResultNoKb;
@@ -111,11 +123,15 @@ export async function buildTaskGraphStep(
       structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs, compilationUnits },
     };
 
-    return { phase: 1, name: 'Task Graph Construction', success: true, outputPath: mergedTasksFile, duration: Date.now() - start };
+    return {
+      phase: 1, name: 'Task Graph Construction', success: true,
+      outputPath: mergedTasksFile, duration: Date.now() - start,
+      tasks: allTasks, sccs: taskGraphSCCs, compilationUnits,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     ctx.logger.error(`Failed to build task graph: ${msg}`);
-    const failResultBuild: PhaseResult = { phase: 1, name: 'Task Graph Construction', success: false, duration: Date.now() - start, error: `Lore task-graph build failed: ${msg}` };
+    const failResultBuild: TaskGraphOutput = { phase: 1, name: 'Task Graph Construction', success: false, duration: Date.now() - start, error: `Lore task-graph build failed: ${msg}`, tasks: [], sccs: [], compilationUnits: [] };
     assertPhaseSuccess(failResultBuild);
     return failResultBuild;
   }

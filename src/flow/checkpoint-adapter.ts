@@ -7,8 +7,6 @@ import type { FlowCheckpointAdapter, FlowCheckpointSnapshot } from '@cadre-dev/f
 import type { CheckpointManager } from '../core/checkpoint.js';
 import type { MigrationFlowContext } from './context.js';
 
-const FLOW_CHECKPOINT_KEY = '__flowCheckpoint';
-
 /**
  * Wraps AAMF's existing {@link CheckpointManager} to satisfy the framework's
  * {@link FlowCheckpointAdapter} contract.
@@ -21,7 +19,7 @@ export class AamfFlowCheckpointAdapter implements FlowCheckpointAdapter<Migratio
 
   async load(flowId: string): Promise<FlowCheckpointSnapshot<MigrationFlowContext> | null> {
     const state = this.checkpoint.getState();
-    const stored = (state as unknown as Record<string, unknown>)[FLOW_CHECKPOINT_KEY];
+    const stored = state.__flowCheckpoint;
     if (!stored || typeof stored !== 'object') return null;
     const snapshot = stored as FlowCheckpointSnapshot<MigrationFlowContext>;
     if (snapshot.flowId !== flowId) return null;
@@ -43,7 +41,43 @@ export class AamfFlowCheckpointAdapter implements FlowCheckpointAdapter<Migratio
       // Do not persist context — it contains non-serialisable service references.
       // The context is reconstructed from the runtime on resume.
     };
-    (state as unknown as Record<string, unknown>)[FLOW_CHECKPOINT_KEY] = serialisable;
+    state.__flowCheckpoint = serialisable;
+    await this.checkpoint.save(state);
+  }
+}
+
+// ─── Phase 5 Nested Flow Checkpoint ─────────────────────────────────
+
+
+/**
+ * Checkpoint adapter for Phase 5's nested flow.
+ * Stores checkpoint state under a dedicated key separate from the top-level flow.
+ */
+export class Phase5CheckpointAdapter implements FlowCheckpointAdapter<MigrationFlowContext> {
+  constructor(private readonly checkpoint: CheckpointManager) {}
+
+  async load(flowId: string): Promise<FlowCheckpointSnapshot<MigrationFlowContext> | null> {
+    const state = this.checkpoint.getState();
+    const stored = state.__phase5FlowCheckpoint;
+    if (!stored || typeof stored !== 'object') return null;
+    const snapshot = stored as FlowCheckpointSnapshot<MigrationFlowContext>;
+    if (snapshot.flowId !== flowId) return null;
+    return snapshot;
+  }
+
+  async save(snapshot: FlowCheckpointSnapshot<MigrationFlowContext>): Promise<void> {
+    const state = this.checkpoint.getState();
+    const serialisable: FlowCheckpointSnapshot<Record<string, unknown>> = {
+      flowId: snapshot.flowId,
+      status: snapshot.status,
+      startedAt: snapshot.startedAt,
+      updatedAt: snapshot.updatedAt,
+      completedExecutionIds: snapshot.completedExecutionIds,
+      outputs: snapshot.outputs,
+      executionOutputs: snapshot.executionOutputs,
+      error: snapshot.error,
+    };
+    state.__phase5FlowCheckpoint = serialisable;
     await this.checkpoint.save(state);
   }
 }

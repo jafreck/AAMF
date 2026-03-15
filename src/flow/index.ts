@@ -5,8 +5,9 @@
  */
 
 export { migrationFlow, buildFlowUpToPhase, nodeIdToPhase } from './migration-flow.js';
-export { AamfFlowCheckpointAdapter } from './checkpoint-adapter.js';
+export { AamfFlowCheckpointAdapter, Phase5CheckpointAdapter } from './checkpoint-adapter.js';
 export type { MigrationFlowContext } from './context.js';
+export type { TaskGraphOutput } from './steps/task-graph.js';
 export type {
   ParityResultData,
   RetryTargetDetails,

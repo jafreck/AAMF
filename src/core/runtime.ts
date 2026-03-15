@@ -19,7 +19,7 @@ import { generateAgentDefinitions } from '../agents/generator.js';
 import { ContextBuilder } from '../agents/context-builder.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
-import { FlowRunner } from '@cadre-dev/framework/flow';
+import { FlowRunner, type FlowRunnerOptions } from '@cadre-dev/framework/flow';
 import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToPhase } from '../flow/index.js';
 import { MigrationError } from '../flow/steps/shared.js';
 import type { MigrationFlowContext } from '../flow/index.js';
@@ -275,16 +275,14 @@ export class MigrationRuntime {
     const runner = new FlowRunner<MigrationFlowContext>();
 
     try {
-      // FlowRunnerOptions in @cadre-dev/framework@0.1.0 lacks hooks/signal.
-      // These properties exist in the runtime implementation; cast until 0.2.0.
-      const runnerOptions: Record<string, unknown> = {
+      const runnerOptions: FlowRunnerOptions<MigrationFlowContext> = {
         checkpoint: checkpointAdapter,
         signal: this.abortController.signal,
         hooks: {
-          onNodeStart: async (nodeId: string) => {
+          onNodeStart: async (nodeId) => {
             this.logger.setPhase(nodeIdToPhase(nodeId));
           },
-          onNodeComplete: async (nodeId: string, _node: unknown, output: unknown) => {
+          onNodeComplete: async (nodeId, _node, output) => {
             const phaseResult = output as PhaseResult | undefined;
             if (phaseResult && typeof phaseResult === 'object' && 'phase' in phaseResult) {
               phaseResults.push(phaseResult);
@@ -304,13 +302,13 @@ export class MigrationRuntime {
               this.progress.setTokenUsage(tokenTracker.toCheckpointData());
             }
           },
-          onNodeSkip: async (nodeId: string) => {
+          onNodeSkip: async (nodeId) => {
             this.logger.info(`Flow node skipped (checkpoint resume): ${nodeId}`);
           },
         },
       };
 
-      const flowResult = await runner.run(flow, flowContext, runnerOptions as any);
+      const flowResult = await runner.run(flow, flowContext, runnerOptions);
 
       // Status may be 'failed', 'cancelled', or 'timed-out' in newer framework versions
       const status = flowResult.status as string;

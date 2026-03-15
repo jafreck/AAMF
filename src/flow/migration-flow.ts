@@ -14,12 +14,14 @@ import {
   conditional,
   loop,
   parallel,
+  fromStep,
   type FlowDefinition,
   type FlowNode,
 } from '@cadre-dev/framework/flow';
 
 import type { MigrationFlowContext } from './context.js';
 import type { PhaseResult } from '../agents/types.js';
+import type { TaskGraphOutput } from './steps/task-graph.js';
 import { checkBudget } from './steps/shared.js';
 
 // Step implementations
@@ -78,42 +80,51 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
     // ── Phase 1 — Task Graph Construction (deterministic) ──
     step<MigrationFlowContext>({
       id: 'task-graph-construction',
+      dependsOn: ['kb-index'],
       run: buildTaskGraphStep,
     }),
 
-    // ── Phase 3 — Knowledge Base Construction ──
+    // ── Phase 3 — Knowledge Base Construction + budget gate ──
     step<MigrationFlowContext>({
       id: 'kb-construction',
+      dependsOn: ['task-graph-construction'],
       run: launchKnowledgeBuilder,
     }),
     gate<MigrationFlowContext>({
       id: 'budget-check-3',
+      dependsOn: ['kb-construction'],
       evaluate: budgetOk,
     }),
 
-    // ── Phase 4 — Migration Strategy ──
+    // ── Phase 4 — Migration Strategy + budget gate ──
     step<MigrationFlowContext>({
       id: 'migration-planning',
+      dependsOn: ['budget-check-3'],
       run: launchMigrationPlanner,
     }),
     gate<MigrationFlowContext>({
       id: 'budget-check-4',
+      dependsOn: ['migration-planning'],
       evaluate: budgetOk,
     }),
 
-    // ── Phase 5 — Iterative Migration ──
+    // ── Phase 5 — Iterative Migration + budget gate ──
     step<MigrationFlowContext>({
       id: 'iterative-migration',
-      run: executeIterativeMigration,
+      dependsOn: ['budget-check-4'],
+      input: fromStep('task-graph-construction'),
+      run: (ctx, input) => executeIterativeMigration(ctx, input as TaskGraphOutput | undefined),
     }),
     gate<MigrationFlowContext>({
       id: 'budget-check-5',
+      dependsOn: ['iterative-migration'],
       evaluate: budgetOk,
     }),
 
     // ── Phase 6 — Final Parity Verification (loopback) ──
     loop<MigrationFlowContext>({
       id: 'final-parity-loop',
+      dependsOn: ['budget-check-5'],
       maxIterations: 3,
       do: [
         step<MigrationFlowContext>({
@@ -127,10 +138,12 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
     // ── Phase 7 — E2E Testing & Documentation (parallel) ──
     step<MigrationFlowContext>({
       id: 'e2e-test-plan',
+      dependsOn: ['final-parity-loop'],
       run: launchE2eTestCrafter,
     }),
     parallel<MigrationFlowContext>({
       id: 'finalization',
+      dependsOn: ['e2e-test-plan'],
       branches: {
         e2e: [
           step<MigrationFlowContext>({
@@ -150,6 +163,7 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
     // ── Phase 8 — Idiomatic Refactor (optional, review-refactor loop) ──
     conditional<MigrationFlowContext>({
       id: 'idiomatic-refactor-gate',
+      dependsOn: ['finalization'],
       when: (ctx) => ctx.context.config.options.idiomaticRefactor?.enabled === true,
       then: [
         loop<MigrationFlowContext>({
@@ -169,6 +183,7 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
     // ── Phase 9 — Completion ──
     step<MigrationFlowContext>({
       id: 'completion',
+      dependsOn: ['idiomatic-refactor-gate'],
       run: finalizeAndReport,
     }),
   ],

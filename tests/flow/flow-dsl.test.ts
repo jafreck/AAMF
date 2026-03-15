@@ -50,6 +50,20 @@ describe('migrationFlow', () => {
     expect(ids.indexOf('iterative-migration')).toBeLessThan(ids.indexOf('final-parity-loop'));
     expect(ids.indexOf('final-parity-loop')).toBeLessThan(ids.indexOf('finalization'));
   });
+
+  it('should have explicit dependsOn on all non-root nodes', () => {
+    for (const node of migrationFlow.nodes.slice(1)) {
+      expect(node.dependsOn, `node ${node.id} missing dependsOn`).toBeDefined();
+      expect(node.dependsOn!.length, `node ${node.id} has empty dependsOn`).toBeGreaterThan(0);
+    }
+  });
+
+  it('should have budget gates depend on their corresponding step', () => {
+    const nodeMap = new Map(migrationFlow.nodes.map(n => [n.id, n]));
+    expect(nodeMap.get('budget-check-3')!.dependsOn).toContain('kb-construction');
+    expect(nodeMap.get('budget-check-4')!.dependsOn).toContain('migration-planning');
+    expect(nodeMap.get('budget-check-5')!.dependsOn).toContain('iterative-migration');
+  });
 });
 
 // ─── nodeIdToPhase ───────────────────────────────────────────────────────────
