@@ -34,7 +34,7 @@ export async function launchMigrationPlanner(
     if (!planResult.success) {
       const failResult: PhaseResult = {
         phase: 4, name: 'Migration Strategy', success: false, duration: Date.now() - start,
-        error: planResult.error, exitCode: planResult.exitCode, stderr: planResult.stderr,
+        error: planResult.error, exitCode: planResult.exitCode ?? undefined, stderr: planResult.stderr,
       };
       assertPhaseSuccess(failResult);
     }

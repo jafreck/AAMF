@@ -168,7 +168,7 @@ const KB_AWARE_AGENTS: AgentName[] = [
 export function buildInvocation(
   ctx: MigrationFlowContext,
   agent: AgentName,
-  contextFile: string,
+  contextInfo: { contextPath: string; outputPath: string },
   phase: number,
   taskId?: string,
   task?: MigrationTask,
@@ -215,13 +215,19 @@ export function buildInvocation(
   }
 
   return {
-    agent, contextFile,
-    progressDir: ctx.paths.root,
-    phase, taskId, timeout,
+    agent,
+    contextPath: contextInfo.contextPath,
+    outputPath: contextInfo.outputPath,
+    phase,
+    workItemId: taskId ?? '',
+    timeout,
     ...(modelOverride ? { modelOverride } : {}),
-    ...(routingTier ? { routingTier, routingReason } : {}),
-    ...(mcpConfig ? { mcpConfig } : {}),
-    ...(kbDbPath ? { kbDbPath } : {}),
+    extensions: {
+      progressDir: ctx.paths.root,
+      ...(routingTier ? { routingTier, routingReason } : {}),
+      ...(mcpConfig ? { mcpConfig } : {}),
+      ...(kbDbPath ? { kbDbPath } : {}),
+    },
   };
 }
 
@@ -313,10 +319,11 @@ export async function launchAgentWithEvents(
   const invocationId = randomUUID();
   const taggedInvocation = { ...invocation, invocationId };
   const startTime = new Date().toISOString();
+  const taskId = invocation.workItemId || undefined;
 
   ctx.logger.event({
     type: 'agent-launched', agent: invocation.agent,
-    taskId: invocation.taskId, phase: invocation.phase, invocationId,
+    taskId, phase: invocation.phase, invocationId,
   });
 
   const result = await ctx.launcher.launchAgent(taggedInvocation);
@@ -324,13 +331,13 @@ export async function launchAgentWithEvents(
   if (result.success) {
     ctx.logger.event({
       type: 'agent-completed', agent: result.agent,
-      taskId: result.taskId, success: true,
+      taskId: result.workItemId || undefined, success: true,
       duration: result.duration, invocationId: result.invocationId,
     });
   } else {
     ctx.logger.event({
       type: 'agent-failed', agent: result.agent,
-      taskId: result.taskId, error: result.error ?? 'unknown',
+      taskId: result.workItemId || undefined, error: result.error ?? 'unknown',
       invocationId: result.invocationId,
     });
   }
@@ -338,14 +345,16 @@ export async function launchAgentWithEvents(
   const endTime = new Date().toISOString();
   const configModel = ctx.config.agentBackend.model ?? 'unknown';
   const model = invocation.modelOverride ?? configModel;
-  const tokensPrompt = result.tokenUsage?.prompt ?? 0;
-  const tokensCompletion = result.tokenUsage?.completion ?? 0;
-  const tokensTotal = result.tokenUsage?.total ?? 0;
+  const tokensInput = result.tokenUsage?.input ?? 0;
+  const tokensOutput = result.tokenUsage?.output ?? 0;
+  const tokensTotal = tokensInput + tokensOutput;
   const costEstimate = ctx.costEstimator.estimate(
-    model, tokensPrompt, tokensCompletion, result.tokenUsage?.cachedInput,
+    model, tokensInput, tokensOutput, result.tokenUsage?.cachedInput,
   );
 
-  const routingDecision = ctx.config.options.modelRouting?.enabled && invocation.routingTier
+  const routingTier = invocation.extensions?.routingTier;
+  const routingReason = invocation.extensions?.routingReason;
+  const routingDecision = ctx.config.options.modelRouting?.enabled && routingTier
     ? (() => {
         const defaultModel = ctx.config.options.modelRouting!.defaultModel ?? configModel;
         const projectedCost = ctx.costEstimator.projectCost(model, AVG_TOKENS_PER_TASK).total;
@@ -354,20 +363,23 @@ export async function launchAgentWithEvents(
       })()
     : undefined;
 
+  const attemptNumber = invocation.extensions?.attemptNumber ?? 1;
+  const maxAttempts = invocation.extensions?.maxAttempts ?? 1;
+
   const metric: InvocationMetric = {
-    runId: ctx.runId, phase: invocation.phase ?? 0,
-    taskId: invocation.taskId ?? '', agentType: invocation.agent,
+    runId: ctx.runId, phase: invocation.phase,
+    taskId: taskId ?? '', agentType: invocation.agent,
     invocationId, startTime, endTime,
     durationMs: result.duration,
-    attemptNumber: invocation.attemptNumber ?? 1,
-    maxAttempts: invocation.maxAttempts ?? 1,
-    wasRetry: (invocation.attemptNumber ?? 1) > 1,
+    attemptNumber,
+    maxAttempts,
+    wasRetry: attemptNumber > 1,
     status: result.success ? 'success' : 'failed',
-    model, tokensPrompt, tokensCompletion, tokensTotal,
+    model, tokensPrompt: tokensInput, tokensCompletion: tokensOutput, tokensTotal,
     costUsd: costEstimate.total,
     ...(result.tokenUsage?.cachedInput != null ? { cachedTokens: result.tokenUsage.cachedInput } : {}),
-    ...(result.tokenUsage?.premiumRequests != null ? { premiumRequests: result.tokenUsage.premiumRequests } : {}),
-    ...(invocation.routingTier ? { routingTier: invocation.routingTier, routingReason: invocation.routingReason } : {}),
+    ...(result.extensions?.premiumRequests != null ? { premiumRequests: result.extensions.premiumRequests } : {}),
+    ...(routingTier ? { routingTier, routingReason } : {}),
     ...(routingDecision ? { escalationCostUsd: routingDecision.incrementalCost } : {}),
   };
 
@@ -386,7 +398,8 @@ export async function launchAgentWithEvents(
 
 export function recordTokens(ctx: MigrationFlowContext, result: AgentResult, phase: number): void {
   if (result.tokenUsage) {
-    ctx.tokenTracker.record(result.agent, phase, result.tokenUsage.total, result.tokenUsage.cachedInput, result.taskId);
+    const total = result.tokenUsage.input + result.tokenUsage.output;
+    ctx.tokenTracker.record(result.agent, phase, total, result.tokenUsage.cachedInput, result.workItemId || undefined);
     const state = ctx.checkpoint.getState();
     state.tokenUsage = ctx.tokenTracker.toCheckpointData();
   }
@@ -774,8 +787,8 @@ export async function raiseTerminalExhaustion(ctx: MigrationFlowContext, details
 // ─── Parity Helpers ────────────────────────────────────────────────────
 
 export function storeParityResult(ctx: MigrationFlowContext, agentResult: AgentResult, taskId: string): void {
-  if (!agentResult.outputParsed || !agentResult.structuredOutput) return;
-  const out = agentResult.structuredOutput as Record<string, unknown>;
+  if (!agentResult.extensions.outputParsed || !agentResult.extensions.structuredOutput) return;
+  const out = agentResult.extensions.structuredOutput as Record<string, unknown>;
   const parity = out.parity;
   if (parity !== 'pass' && parity !== 'partial' && parity !== 'fail') return;
   const issues = Array.isArray(out.issues) ? out.issues as ParityResultData['issues'] : [];
@@ -821,8 +834,8 @@ export function getParityIssueSummary(ctx: MigrationFlowContext, taskId: string)
 }
 
 export function resolverReducedScope(result: AgentResult): boolean {
-  if (!result.outputParsed || !result.structuredOutput) return false;
-  return (result.structuredOutput as Record<string, unknown>).scopeReduced === true;
+  if (!result.extensions.outputParsed || !result.extensions.structuredOutput) return false;
+  return (result.extensions.structuredOutput as Record<string, unknown>).scopeReduced === true;
 }
 
 function rehydrateParityFromLog(ctx: MigrationFlowContext, taskId: string): ParityResultData | undefined {

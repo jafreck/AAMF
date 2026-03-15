@@ -45,9 +45,14 @@ export async function buildTaskGraphStep(
     }
     ctx.phase1TaskGraphResult = {
       agent: 'migration-planner', exitCode: 0, success: true,
-      outputFiles: [mergedTasksFile], duration: Date.now() - start,
-      outputParsed: true,
-      structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs, compilationUnits },
+      workItemId: '', timedOut: false, duration: Date.now() - start,
+      stdout: '', stderr: '', tokenUsage: null,
+      outputPath: mergedTasksFile, outputExists: true,
+      extensions: {
+        outputFiles: [mergedTasksFile],
+        outputParsed: true,
+        structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs, compilationUnits },
+      },
     };
     return {
       phase: 1, name: 'Task Graph Construction', success: true,
@@ -118,9 +123,14 @@ export async function buildTaskGraphStep(
 
     ctx.phase1TaskGraphResult = {
       agent: 'migration-planner', exitCode: 0, success: true,
-      outputFiles: [mergedTasksFile], duration: Date.now() - start,
-      outputParsed: true,
-      structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs, compilationUnits },
+      workItemId: '', timedOut: false, duration: Date.now() - start,
+      stdout: '', stderr: '', tokenUsage: null,
+      outputPath: mergedTasksFile, outputExists: true,
+      extensions: {
+        outputFiles: [mergedTasksFile],
+        outputParsed: true,
+        structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs, compilationUnits },
+      },
     };
 
     return {

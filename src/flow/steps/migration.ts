@@ -84,8 +84,11 @@ async function runMigrateSubstep(
             }, task.id);
             if (retryDecision.tier !== 'normal') {
               migratorInv.modelOverride = retryDecision.selectedModel;
-              migratorInv.routingTier = retryDecision.tier;
-              migratorInv.routingReason = retryDecision.reason;
+              migratorInv.extensions = {
+                ...migratorInv.extensions,
+                routingTier: retryDecision.tier,
+                routingReason: retryDecision.reason,
+              };
               if (!ctx.routedTaskIds.has(task.id)) ctx.routedTaskIds.add(task.id);
               const defaultModel = getDefaultRoutingModel(ctx);
               const projectedCost = ctx.costEstimator.projectCost(retryDecision.selectedModel, AVG_TOKENS_PER_TASK).total;
@@ -112,7 +115,8 @@ async function runMigrateSubstep(
         kbEntry: task.knowledgeBaseRef, ...taskScopePayload(task),
         remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
       });
-      migratorInv.contextFile = retryContext;
+      migratorInv.contextPath = retryContext.contextPath;
+      migratorInv.outputPath = retryContext.outputPath;
       const recoveryCtx = await ctx.contextBuilder.buildContext('parity-failure-resolver', 5, taskId, {
         failureReport: lastError, sourceFile: task.sourceFiles[0], targetFile: task.targetFiles[0],
         kbEntry: task.knowledgeBaseRef, attemptNumber: ctx.config.options.maxRetriesPerTask,
@@ -589,8 +593,8 @@ export async function executeIterativeMigration(
   let tasks: MigrationTask[];
   if (input?.tasks && Array.isArray(input.tasks)) {
     tasks = input.tasks;
-  } else if (ctx.phase1TaskGraphResult?.outputParsed && Array.isArray(ctx.phase1TaskGraphResult.structuredOutput?.['tasks'])) {
-    tasks = ctx.phase1TaskGraphResult.structuredOutput['tasks'] as MigrationTask[];
+  } else if (ctx.phase1TaskGraphResult?.extensions.outputParsed && Array.isArray(ctx.phase1TaskGraphResult.extensions.structuredOutput?.['tasks'])) {
+    tasks = ctx.phase1TaskGraphResult.extensions.structuredOutput['tasks'] as MigrationTask[];
   } else {
     if (!(await fileExists(planPath))) {
       const mergedPlanPath = join(ctx.paths.artifactsPlanningDir, 'tasks-merged.json');
@@ -652,7 +656,7 @@ export async function executeIterativeMigration(
 
   // 2. Topological sort — SCC-aware
   let sccs: string[][] = input?.sccs ?? 
-    (ctx.phase1TaskGraphResult?.structuredOutput?.['sccs'] as string[][] | undefined) ?? [];
+    (ctx.phase1TaskGraphResult?.extensions.structuredOutput?.['sccs'] as string[][] | undefined) ?? [];
   if (sccs.length === 0) {
     const sccsFile = join(ctx.paths.artifactsPlanningDir, 'sccs.json');
     if (await fileExists(sccsFile)) {

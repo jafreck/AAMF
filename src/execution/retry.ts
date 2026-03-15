@@ -68,12 +68,20 @@ export class RetryExecutor {
   async executeWithRetry(invocation: AgentInvocation, options: RetryOptions): Promise<RetryResult> {
     let lastResult: AgentResult | null = null;
     let recoveryAttempted = false;
-    const label = `${invocation.agent}${invocation.taskId ? ` (${invocation.taskId})` : ''}`;
+    const taskId = invocation.workItemId || undefined;
+    const label = `${invocation.agent}${taskId ? ` (${taskId})` : ''}`;
 
     const frameworkResult = await this.frameworkRetry.execute<AgentResult>({
       fn: async (attempt: number) => {
         this.logger.info(`Attempt ${attempt}/${options.maxAttempts} for ${label}`);
-        const attemptInv = { ...invocation, attemptNumber: attempt, maxAttempts: options.maxAttempts };
+        const attemptInv: AgentInvocation = {
+          ...invocation,
+          extensions: {
+            ...invocation.extensions,
+            attemptNumber: attempt,
+            maxAttempts: options.maxAttempts,
+          },
+        };
         const result = await this.launcher(attemptInv);
         lastResult = result;
         if (!result.success) {
@@ -109,17 +117,17 @@ export class RetryExecutor {
         : undefined,
 
       onExhausted: async (err: unknown) => {
-        if (!options.onExhausted || !invocation.taskId) return null;
+        if (!options.onExhausted || !taskId) return null;
         const errorStr = err instanceof AgentLogicalFailure
           ? err.result.error ?? 'unknown' : String(err);
-        const recoveryInvocation = await options.onExhausted(invocation.taskId, errorStr);
+        const recoveryInvocation = await options.onExhausted(taskId, errorStr);
         if (!recoveryInvocation) return null;
 
-        this.logger.info(`Attempting parity-failure-resolver for ${invocation.taskId}`);
+        this.logger.info(`Attempting parity-failure-resolver for ${taskId}`);
         recoveryAttempted = true;
         const recoveryResult = await this.launcher(recoveryInvocation);
         if (recoveryResult.success) {
-          this.logger.info(`Recovery succeeded, retrying original task ${invocation.taskId}`);
+          this.logger.info(`Recovery succeeded, retrying original task ${taskId}`);
           return RETRY_ORIGINAL;
         }
         lastResult = recoveryResult;
@@ -140,13 +148,18 @@ export class RetryExecutor {
     return {
       ...(lastResult ?? {
         agent: invocation.agent,
-        taskId: invocation.taskId,
+        workItemId: invocation.workItemId,
         exitCode: 1,
         success: false,
-        outputFiles: [],
+        timedOut: false,
         duration: 0,
-        outputParsed: false,
+        stdout: '',
+        stderr: '',
+        tokenUsage: null,
+        outputPath: invocation.outputPath,
+        outputExists: false,
         error: frameworkResult.error ?? 'all retries exhausted',
+        extensions: {},
       }),
       attempts: frameworkResult.attempts,
       recoveryAttempted: frameworkResult.recoveryUsed || recoveryAttempted,

@@ -24,10 +24,10 @@ describe('RetryExecutor', () => {
   function makeInvocation(overrides?: Partial<AgentInvocation>): AgentInvocation {
     return {
       agent: 'code-migrator',
-      contextFile: '/tmp/context.json',
-      progressDir: '/tmp/progress',
+      contextPath: '/tmp/context.json',
+      outputPath: '',
       phase: 5,
-      taskId: 'task-001',
+      workItemId: 'task-001',
       ...overrides,
     };
   }
@@ -57,20 +57,18 @@ describe('RetryExecutor', () => {
         if (attempt < 3) {
           return {
             agent: inv.agent,
-            taskId: inv.taskId,
+            workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
-            outputFiles: [],
             duration: 100,
             error: `Attempt ${attempt} failed`,
           };
         }
         return {
           agent: inv.agent,
-          taskId: inv.taskId,
+          workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
-          outputFiles: [],
           duration: 100,
         };
       };
@@ -148,13 +146,13 @@ describe('RetryExecutor', () => {
         // Succeed on 3rd call to verify fast-retry happens
         if (launchCount >= 3) {
           return {
-            agent: inv.agent, taskId: inv.taskId,
-            exitCode: 0, success: true, outputFiles: [], duration: 100, outputParsed: false,
+            agent: inv.agent, workItemId: inv.workItemId,
+            exitCode: 0, success: true, outputFiles: [], duration: 100, extensions: { outputParsed: false },
           };
         }
         return {
-          agent: inv.agent, taskId: inv.taskId,
-          exitCode: 1, success: false, outputFiles: [], duration: 100, outputParsed: false,
+          agent: inv.agent, workItemId: inv.workItemId,
+          exitCode: 1, success: false, outputFiles: [], duration: 100, extensions: { outputParsed: false },
           error: 'Execution failed: CAPIError: 503 {"error":{"message":"HTTP/2 GOAWAY connection terminated","type":"connection_error"}}',
         };
       };
@@ -228,10 +226,10 @@ describe('RetryExecutor', () => {
 
       const recoveryInvocation: AgentInvocation = {
         agent: 'parity-failure-resolver',
-        contextFile: '/tmp/recovery-ctx.json',
-        progressDir: '/tmp/progress',
+        contextPath: '/tmp/recovery-ctx.json',
+        outputPath: '',
         phase: 5,
-        taskId: 'task-001',
+        workItemId: 'task-001',
       };
 
       const onExhausted = vi.fn().mockResolvedValue(recoveryInvocation);
@@ -253,10 +251,9 @@ describe('RetryExecutor', () => {
         if (inv.agent === 'parity-failure-resolver') {
           return {
             agent: inv.agent,
-            taskId: inv.taskId,
+            workItemId: inv.workItemId,
             exitCode: 0,
             success: true,
-            outputFiles: [],
             duration: 100,
           };
         }
@@ -264,20 +261,18 @@ describe('RetryExecutor', () => {
         if (callCount <= 2) {
           return {
             agent: inv.agent,
-            taskId: inv.taskId,
+            workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
-            outputFiles: [],
             duration: 100,
             error: 'Failed',
           };
         }
         return {
           agent: inv.agent,
-          taskId: inv.taskId,
+          workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
-          outputFiles: [],
           duration: 100,
         };
       };
@@ -287,10 +282,10 @@ describe('RetryExecutor', () => {
 
       const recoveryInvocation: AgentInvocation = {
         agent: 'parity-failure-resolver',
-        contextFile: '/tmp/recovery-ctx.json',
-        progressDir: '/tmp/progress',
+        contextPath: '/tmp/recovery-ctx.json',
+        outputPath: '',
         phase: 5,
-        taskId: 'task-001',
+        workItemId: 'task-001',
       };
 
       const result = await executor.executeWithRetry(makeInvocation(), {
@@ -307,10 +302,9 @@ describe('RetryExecutor', () => {
       // Both code-migrator and parity-failure-resolver always fail
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
         agent: inv.agent,
-        taskId: inv.taskId,
+        workItemId: inv.workItemId,
         exitCode: 1,
         success: false,
-        outputFiles: [],
         duration: 100,
         error: 'Failed',
       });
@@ -320,10 +314,10 @@ describe('RetryExecutor', () => {
 
       const recoveryInvocation: AgentInvocation = {
         agent: 'parity-failure-resolver',
-        contextFile: '/tmp/recovery.json',
-        progressDir: '/tmp/progress',
+        contextPath: '/tmp/recovery.json',
+        outputPath: '',
         phase: 5,
-        taskId: 'task-001',
+        workItemId: 'task-001',
       };
 
       const result = await executor.executeWithRetry(makeInvocation(), {
@@ -354,7 +348,7 @@ describe('RetryExecutor', () => {
       expect(onExhausted).toHaveBeenCalled();
     });
 
-    it('should skip recovery when invocation has no taskId', async () => {
+    it('should skip recovery when invocation has no workItemId', async () => {
       const launcher = createFailingLauncher(['code-migrator']);
       const logger = createSilentLogger(tempDir);
       const executor = new RetryExecutor(launcher, logger);
@@ -362,7 +356,7 @@ describe('RetryExecutor', () => {
       const onExhausted = vi.fn();
 
       const result = await executor.executeWithRetry(
-        makeInvocation({ taskId: undefined }),
+        makeInvocation({ workItemId: '' }),
         {
           maxAttempts: 2,
           initialDelayMs: 0,
@@ -400,20 +394,18 @@ describe('RetryExecutor', () => {
         if (attempt < 2) {
           return {
             agent: inv.agent,
-            taskId: inv.taskId,
+            workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
-            outputFiles: [],
             duration: 100,
             error: 'Failed',
           };
         }
         return {
           agent: inv.agent,
-          taskId: inv.taskId,
+          workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
-          outputFiles: [],
           duration: 100,
         };
       };
@@ -462,10 +454,9 @@ describe('RetryExecutor', () => {
     it('should set wasRetry to true on recovery path', async () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
         agent: inv.agent,
-        taskId: inv.taskId,
+        workItemId: inv.workItemId,
         exitCode: inv.agent === 'parity-failure-resolver' ? 0 : 1,
         success: inv.agent === 'parity-failure-resolver',
-        outputFiles: [],
         duration: 100,
         error: inv.agent === 'parity-failure-resolver' ? undefined : 'Failed',
       });
@@ -475,10 +466,10 @@ describe('RetryExecutor', () => {
 
       const recoveryInvocation: AgentInvocation = {
         agent: 'parity-failure-resolver',
-        contextFile: '/tmp/recovery.json',
-        progressDir: '/tmp/progress',
+        contextPath: '/tmp/recovery.json',
+        outputPath: '',
         phase: 5,
-        taskId: 'task-001',
+        workItemId: 'task-001',
       };
 
       const result = await executor.executeWithRetry(makeInvocation(), {

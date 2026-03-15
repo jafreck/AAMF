@@ -584,17 +584,17 @@ intermediate text
     it('should parse prompt and completion tokens', () => {
       const output = 'prompt_tokens: 1500\ncompletion_tokens: 800\ntotal_tokens: 2300';
       const usage = parseTokenUsage(output);
-      expect(usage).toEqual({ prompt: 1500, completion: 800, total: 2300 });
+      expect(usage).toEqual({ input: 1500, output: 800 });
     });
 
     it('should parse total-only format', () => {
       const output = 'Total tokens: 5000';
       const usage = parseTokenUsage(output);
       expect(usage).toBeDefined();
-      expect(usage?.total).toBe(5000);
+      expect((usage ? usage.input + usage.output : undefined)).toBe(5000);
       // 80% prompt, 20% completion — consistent with CostEstimator.estimateFromTotal
-      expect(usage?.prompt).toBe(4000);
-      expect(usage?.completion).toBe(1000);
+      expect(usage?.input).toBe(4000);
+      expect(usage?.output).toBe(1000);
     });
 
     it('should return undefined for no token info', () => {
@@ -605,13 +605,13 @@ intermediate text
     it('should route to parseClaudeTokenUsage when runtime is claude-code', () => {
       const output = '{"type":"message","usage":{"input_tokens":1200,"output_tokens":400}}';
       const usage = parseTokenUsage(output, 'claude-code');
-      expect(usage).toEqual({ prompt: 1200, completion: 400, total: 1600 });
+      expect(usage).toEqual({ input: 1200, output: 400 });
     });
 
     it('should use regex path when runtime is not claude-code', () => {
       const output = 'prompt_tokens: 100\ncompletion_tokens: 50\n{"usage":{"input_tokens":999,"output_tokens":999}}';
       const usage = parseTokenUsage(output);
-      expect(usage).toEqual({ prompt: 100, completion: 50, total: 150 });
+      expect(usage).toEqual({ input: 100, output: 50 });
     });
   });
 
@@ -619,21 +619,21 @@ intermediate text
     it('should parse Claude JSON usage from stdout', () => {
       const output = 'Some text\n{"type":"message","usage":{"input_tokens":2000,"output_tokens":500}}\nMore text';
       const usage = parseClaudeTokenUsage(output);
-      expect(usage).toEqual({ prompt: 2000, completion: 500, total: 2500 });
+      expect(usage).toEqual({ input: 2000, output: 500 });
     });
 
     it('should parse Claude JSON usage from stderr', () => {
       const stderr = '[stderr] {"usage":{"input_tokens":1000,"output_tokens":300}}';
       const usage = parseClaudeTokenUsage(stderr);
-      expect(usage).toEqual({ prompt: 1000, completion: 300, total: 1300 });
+      expect(usage).toEqual({ input: 1000, output: 300 });
     });
 
     it('should populate cachedInput when cache_read_input_tokens is present', () => {
       const output = '{"usage":{"input_tokens":1500,"output_tokens":400,"cache_read_input_tokens":200}}';
       const usage = parseClaudeTokenUsage(output);
-      expect(usage?.prompt).toBe(1500);
-      expect(usage?.completion).toBe(400);
-      expect(usage?.total).toBe(1900);
+      expect(usage?.input).toBe(1500);
+      expect(usage?.output).toBe(400);
+      expect((usage ? usage.input + usage.output : undefined)).toBe(1900);
       expect(usage?.cachedInput).toBe(200);
     });
 
@@ -649,8 +649,8 @@ intermediate text
         '{"usage":{"input_tokens":900,"output_tokens":300}}',
       ].join('\n');
       const usage = parseClaudeTokenUsage(output);
-      expect(usage?.prompt).toBe(900);
-      expect(usage?.completion).toBe(300);
+      expect(usage?.input).toBe(900);
+      expect(usage?.output).toBe(300);
     });
 
     it('should return undefined when no Claude usage JSON is found', () => {
@@ -669,7 +669,7 @@ Breakdown by AI model:
     tokens_in: 5000, tokens_out: 1200, tokens_cached: 800, premium_requests_est: 1
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 5000, completion: 1200, total: 6200, cachedInput: 800, premiumRequests: 1 });
+      expect(usage).toEqual({ input: 5000, output: 1200, cachedInput: 800, premiumRequests: 1 });
     });
 
     it('should sum across multiple models', () => {
@@ -683,7 +683,7 @@ Breakdown by AI model:
     tokens_in: 2000, tokens_out: 600, premium_requests_est: 1
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 6000, completion: 1600, total: 7600, cachedInput: 500, premiumRequests: 3 });
+      expect(usage).toEqual({ input: 6000, output: 1600, cachedInput: 500, premiumRequests: 3 });
     });
 
     it('should parse numeric shorthand suffixes (k)', () => {
@@ -692,7 +692,7 @@ Breakdown by AI model:
     tokens_in: 41.3k, tokens_out: 2.1k, tokens_cached: 13.1k, premium_requests_est: 2
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 41300, completion: 2100, total: 43400, cachedInput: 13100, premiumRequests: 2 });
+      expect(usage).toEqual({ input: 41300, output: 2100, cachedInput: 13100, premiumRequests: 2 });
     });
 
     it('should parse numeric shorthand suffixes (m)', () => {
@@ -701,7 +701,7 @@ Breakdown by AI model:
     tokens_in: 2.5m, tokens_out: 0.5m, tokens_cached: 1m, premium_requests_est: 10
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 2500000, completion: 500000, total: 3000000, cachedInput: 1000000, premiumRequests: 10 });
+      expect(usage).toEqual({ input: 2500000, output: 500000, cachedInput: 1000000, premiumRequests: 10 });
     });
 
     it('should handle singular "Premium request"', () => {
@@ -713,7 +713,7 @@ Breakdown by AI model:
     tokens_in: 3000, tokens_out: 500, premium_requests_est: 1
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 3000, completion: 500, total: 3500, premiumRequests: 1 });
+      expect(usage).toEqual({ input: 3000, output: 500, premiumRequests: 1 });
     });
 
     it('should handle plural "Premium requests"', () => {
@@ -725,7 +725,7 @@ Breakdown by AI model:
     tokens_in: 10000, tokens_out: 2000, tokens_cached: 500, premium_requests_est: 5
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 10000, completion: 2000, total: 12000, cachedInput: 500, premiumRequests: 5 });
+      expect(usage).toEqual({ input: 10000, output: 2000, cachedInput: 500, premiumRequests: 5 });
     });
 
     it('should return undefined for cachedInput when tokens_cached is absent', () => {
@@ -735,9 +735,9 @@ Breakdown by AI model:
 `;
       const usage = parseCopilotCliUsage(output);
       expect(usage).toBeDefined();
-      expect(usage?.prompt).toBe(2000);
-      expect(usage?.completion).toBe(800);
-      expect(usage?.total).toBe(2800);
+      expect(usage?.input).toBe(2000);
+      expect(usage?.output).toBe(800);
+      expect((usage ? usage.input + usage.output : undefined)).toBe(2800);
       expect(usage?.cachedInput).toBeUndefined();
       expect((usage as any)?.premiumRequests).toBe(1);
     });
@@ -760,7 +760,7 @@ Breakdown by AI model:
     tokens_in:41.3k,tokens_out:2.1k,tokens_cached:13.1k,premium_requests_est:2
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 41300, completion: 2100, total: 43400, cachedInput: 13100, premiumRequests: 2 });
+      expect(usage).toEqual({ input: 41300, output: 2100, cachedInput: 13100, premiumRequests: 2 });
     });
 
     it('should parse latest footer format (in/out/cached)', () => {
@@ -772,7 +772,7 @@ Breakdown by AI model:
  claude-sonnet-4.6       87.6k in, 486 out, 43.0k cached (Est. 1 Premium request)
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 87600, completion: 486, total: 88086, cachedInput: 43000, premiumRequests: 1 });
+      expect(usage).toEqual({ input: 87600, output: 486, cachedInput: 43000, premiumRequests: 1 });
     });
 
     it('should parse latest footer format when cached is absent', () => {
@@ -780,7 +780,7 @@ Breakdown by AI model:
  gpt-5-mini              1.2k in, 210 out (Est. 1 Premium request)
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 1200, completion: 210, total: 1410, premiumRequests: 1 });
+      expect(usage).toEqual({ input: 1200, output: 210, premiumRequests: 1 });
     });
 
     it('should be case-insensitive for the breakdown header', () => {
@@ -789,7 +789,7 @@ Breakdown by AI model:
     tokens_in: 1000, tokens_out: 200, premium_requests_est: 1
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 1000, completion: 200, total: 1200, premiumRequests: 1 });
+      expect(usage).toEqual({ input: 1000, output: 200, premiumRequests: 1 });
     });
 
     it('should sum mixed shorthand and plain numbers across models', () => {
@@ -800,7 +800,7 @@ Breakdown by AI model:
     tokens_in: 2000, tokens_out: 0.5k, premium_requests_est: 1
 `;
       const usage = parseCopilotCliUsage(output);
-      expect(usage).toEqual({ prompt: 3500, completion: 800, total: 4300, cachedInput: 200, premiumRequests: 2 });
+      expect(usage).toEqual({ input: 3500, output: 800, cachedInput: 200, premiumRequests: 2 });
     });
 
     it('should return undefined for empty string input', () => {
@@ -816,7 +816,7 @@ Breakdown by AI model:
     tokens_in: 3000, tokens_out: 500, premium_requests_est: 1
 `;
       const usage = parseTokenUsage(output, 'copilot-cli');
-      expect(usage).toEqual({ prompt: 3000, completion: 500, total: 3500, premiumRequests: 1 });
+      expect(usage).toEqual({ input: 3000, output: 500, premiumRequests: 1 });
     });
 
     it('should return undefined via copilot-cli dispatch when no usage block', () => {
@@ -829,7 +829,7 @@ Breakdown by AI model:
   claude-sonnet-4-20250514:
     tokens_in: 5000, tokens_out: 1200, tokens_cached: 800, premium_requests_est: 1
 `;
-      const usage = parseTokenUsage(output, 'copilot-cli') as { prompt: number; completion: number; total: number; cachedInput?: number; premiumRequests?: number };
+      const usage = parseTokenUsage(output, 'copilot-cli') as { input: number; output: number; cachedInput?: number; premiumRequests?: number };
       expect(usage).toBeDefined();
       expect(usage.cachedInput).toBe(800);
       expect(usage.premiumRequests).toBe(1);
@@ -838,7 +838,7 @@ Breakdown by AI model:
     it('should not fall through to regex path when runtime is copilot-cli', () => {
       const output = 'prompt_tokens: 999\ncompletion_tokens: 111\nBreakdown by AI model:\n  m:\n    tokens_in: 100, tokens_out: 50, premium_requests_est: 1';
       const usage = parseTokenUsage(output, 'copilot-cli');
-      expect(usage).toEqual({ prompt: 100, completion: 50, total: 150, premiumRequests: 1 });
+      expect(usage).toEqual({ input: 100, output: 50, premiumRequests: 1 });
     });
 
     it('should parse latest footer format via copilot-cli dispatch', () => {
@@ -846,7 +846,7 @@ Breakdown by AI model:
  claude-sonnet-4.6       2.4k in, 100 out, 1.1k cached (Est. 1 Premium request)
 `;
       const usage = parseTokenUsage(output, 'copilot-cli');
-      expect(usage).toEqual({ prompt: 2400, completion: 100, total: 2500, cachedInput: 1100, premiumRequests: 1 });
+      expect(usage).toEqual({ input: 2400, output: 100, cachedInput: 1100, premiumRequests: 1 });
     });
   });
 

@@ -400,7 +400,7 @@ describe('recordRetryTarget', () => {
 describe('launchAgentWithEvents', () => {
   it('should record metrics and emit events', async () => {
     const launcherFn = createMockLauncher(() => ({
-      tokenUsage: { prompt: 100, completion: 50, total: 150 },
+      tokenUsage: { input: 100, output: 50 },
     }));
     env = await setupFlowTest(launcherFn);
 
@@ -409,10 +409,10 @@ describe('launchAgentWithEvents', () => {
 
     const result = await launchAgentWithEvents(env.ctx, {
       agent: 'code-migrator',
-      contextFile: '/tmp/ctx.json',
-      progressDir: env.ctx.paths.root,
+      contextPath: '/tmp/ctx.json',
+      outputPath: '',
       phase: 5,
-      taskId: 'task-001',
+      workItemId: 'task-001',
       timeout: 300_000,
     });
 
@@ -432,9 +432,10 @@ describe('launchAgentWithEvents', () => {
 
     await launchAgentWithEvents(env.ctx, {
       agent: 'code-migrator',
-      contextFile: '/tmp/ctx.json',
-      progressDir: env.ctx.paths.root,
+      contextPath: '/tmp/ctx.json',
+      outputPath: '',
       phase: 5,
+      workItemId: '',
       timeout: 300_000,
     });
 
@@ -639,8 +640,8 @@ describe('recordTokens', () => {
       success: true,
       outputFiles: [] as string[],
       duration: 100,
-      outputParsed: false,
-      tokenUsage: { prompt: 1000, completion: 500, total: 1500 },
+      extensions: { outputParsed: false },
+      tokenUsage: { input: 1000, output: 500 },
     };
 
     recordTokens(env.ctx, fakeResult, 5);
@@ -657,7 +658,7 @@ describe('recordTokens', () => {
       success: true,
       outputFiles: [] as string[],
       duration: 100,
-      outputParsed: false,
+      extensions: { outputParsed: false },
     };
 
     recordTokens(env.ctx, fakeResult as any, 5);

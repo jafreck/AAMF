@@ -75,7 +75,7 @@ describe('ContextBuilder', () => {
 
   describe('Context File Creation', () => {
     it('should write context JSON to the contexts directory', async () => {
-      const contextPath = await builder.buildContext('knowledge-builder', 3);
+      const { contextPath } = await builder.buildContext('knowledge-builder', 3);
 
       expect(contextPath).toContain('contexts');
       expect(await fileExists(contextPath)).toBe(true);
@@ -85,7 +85,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should include correct base fields in context', async () => {
-      const contextPath = await builder.buildContext('knowledge-builder', 3);
+      const { contextPath } = await builder.buildContext('knowledge-builder', 3);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.agent).toBe('knowledge-builder');
@@ -99,7 +99,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should include optional taskId when provided', async () => {
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001');
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001');
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.taskId).toBe('task-001');
@@ -110,7 +110,7 @@ describe('ContextBuilder', () => {
 
   describe('Per-Agent File Routing', () => {
     it('should route knowledge-builder to source, output to KB dir', async () => {
-      const contextPath = await builder.buildContext('knowledge-builder', 3);
+      const { contextPath } = await builder.buildContext('knowledge-builder', 3);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/source');
@@ -119,7 +119,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route migration-planner to KB index + dependency summary', async () => {
-      const contextPath = await builder.buildContext('migration-planner', 4);
+      const { contextPath } = await builder.buildContext('migration-planner', 4);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles.some((f: string) => f.includes('index.md'))).toBe(true);
@@ -130,7 +130,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should include executionStrategy in migration-planner payload with default config', async () => {
-      const contextPath = await builder.buildContext('migration-planner', 4);
+      const { contextPath } = await builder.buildContext('migration-planner', 4);
       const context = await readJson<AgentContext>(contextPath);
       const strategy = context.payload?.executionStrategy as Record<string, unknown>;
 
@@ -171,7 +171,7 @@ describe('ContextBuilder', () => {
         },
       });
       const b = new ContextBuilder(config, progressDir, paths);
-      const contextPath = await b.buildContext('migration-planner', 4);
+      const { contextPath } = await b.buildContext('migration-planner', 4);
       const context = await readJson<AgentContext>(contextPath);
       const strategy = context.payload?.executionStrategy as Record<string, unknown>;
 
@@ -185,7 +185,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route adjudicator to competing strategies file', async () => {
-      const contextPath = await builder.buildContext('adjudicator', 3, undefined, {
+      const { contextPath } = await builder.buildContext('adjudicator', 3, undefined, {
         competingStrategiesFile: '/tmp/strategies.md',
         decisionType: 'migration-strategy',
       });
@@ -196,7 +196,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should default adjudicator decisionType and allow empty competing strategies input', async () => {
-      const contextPath = await builder.buildContext('adjudicator', 3);
+      const { contextPath } = await builder.buildContext('adjudicator', 3);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toEqual([]);
@@ -205,7 +205,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route code-migrator with task-specific source/target files', async () => {
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
         kbEntry: 'kb/auth.md',
@@ -219,12 +219,12 @@ describe('ContextBuilder', () => {
     });
 
     it('should include remediationContext in code-migrator payload for recovery-triggered remigration', async () => {
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
         remediationContext: {
           failureKind: 'parity',
-          failureTarget: { wave: 1, taskId: 'task-001', check: 'auth-parity' },
+          failureTarget: { wave: 1, workItemId: 'task-001', check: 'auth-parity' },
           artifactPaths: ['/tmp/parity/task-001.md'],
           expectedSuccessCondition: 'Parity report returns minor-or-better',
         },
@@ -240,13 +240,13 @@ describe('ContextBuilder', () => {
     });
 
     it('should not include .md artifact paths as inputFiles for code-migrator during recovery (structured context only)', async () => {
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
         kbEntry: 'kb/auth.md',
         remediationContext: {
           failureKind: 'parity',
-          failureTarget: { taskId: 'task-001', check: 'parity-verifier' },
+          failureTarget: { workItemId: 'task-001', check: 'parity-verifier' },
           artifactPaths: ['/tmp/parity/task-001.md', '/tmp/source/auth.py', '/tmp/target/auth.rs'],
           expectedSuccessCondition: 'Parity passes',
         },
@@ -260,12 +260,12 @@ describe('ContextBuilder', () => {
     });
 
     it('should not include adjudicationReportPath as inputFile for code-migrator during recovery (structured context only)', async () => {
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
         remediationContext: {
           failureKind: 'parity',
-          failureTarget: { taskId: 'task-001', check: 'parity-verifier' },
+          failureTarget: { workItemId: 'task-001', check: 'parity-verifier' },
           artifactPaths: ['/tmp/parity/task-001.md'],
           expectedSuccessCondition: 'Parity passes',
           adjudicationReportPath: '/tmp/adjudication/task-001.md',
@@ -279,7 +279,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should not add recovery inputFiles for code-migrator without remediationContext', async () => {
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
         kbEntry: 'kb/auth.md',
@@ -293,11 +293,11 @@ describe('ContextBuilder', () => {
     it('should prioritize nested remediationContext payload for code-migrator when both shapes are provided', async () => {
       const nestedRemediation = {
         failureKind: 'parity',
-        failureTarget: { wave: 1, taskId: 'task-001', check: 'parity' },
+        failureTarget: { wave: 1, workItemId: 'task-001', check: 'parity' },
         artifactPaths: ['/tmp/parity.md'],
         expectedSuccessCondition: 'Parity delta is minor-or-better',
       };
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
         remediationContext: nestedRemediation,
@@ -309,7 +309,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route parity-verifier to source + target files', async () => {
-      const contextPath = await builder.buildContext('parity-verifier', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('parity-verifier', 4, 'task-001', {
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
       });
@@ -321,7 +321,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should include taskScope in parity-verifier payload when provided', async () => {
-      const contextPath = await builder.buildContext('parity-verifier', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('parity-verifier', 4, 'task-001', {
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
         taskScope: {
@@ -340,7 +340,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should omit taskScope from parity-verifier payload when not provided', async () => {
-      const contextPath = await builder.buildContext('parity-verifier', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('parity-verifier', 4, 'task-001', {
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
       });
@@ -350,7 +350,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route test-writer to target file + KB entry', async () => {
-      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFile: 'src/auth.ts',
         kbEntry: 'kb/auth.md',
         testType: 'unit',
@@ -363,7 +363,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should include taskScope in test-writer payload when provided', async () => {
-      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFile: 'src/auth.ts',
         kbEntry: 'kb/auth.md',
         testType: 'unit',
@@ -382,7 +382,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should set test-writer outputPath to target root, not a subdirectory', async () => {
-      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFile: 'src/auth.ts',
       });
       const context = await readJson<AgentContext>(contextPath);
@@ -392,7 +392,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should include parityReport in test-writer inputFiles when provided', async () => {
-      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFile: 'src/auth.ts',
         parityReport: '/tmp/parity/auth-report.md',
       });
@@ -404,7 +404,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should default test-writer testType to unit when not specified', async () => {
-      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFile: 'src/auth.ts',
       });
       const context = await readJson<AgentContext>(contextPath);
@@ -423,7 +423,7 @@ describe('ContextBuilder', () => {
         outputLocation: '/tmp/target/tests/e2e/auth',
         scenarios: ['Login flow', 'Token refresh', 'Logout'],
       };
-      const contextPath = await builder.buildContext('test-writer', 6, 'suite-001', {
+      const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-001', {
         e2eSuiteBrief: suiteBrief,
       });
       const context = await readJson<AgentContext>(contextPath);
@@ -452,7 +452,7 @@ describe('ContextBuilder', () => {
         outputLocation: '',
         scenarios: ['Charge card'],
       };
-      const contextPath = await builder.buildContext('test-writer', 6, 'suite-002', {
+      const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-002', {
         e2eSuiteBrief: suiteBrief,
       });
       const context = await readJson<AgentContext>(contextPath);
@@ -462,7 +462,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should not change Phase 5 test-writer context when e2eSuiteBrief is absent', async () => {
-      const contextPath = await builder.buildContext('test-writer', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFile: 'src/auth.ts',
         kbEntry: 'kb/auth.md',
         testType: 'unit',
@@ -483,7 +483,7 @@ describe('ContextBuilder', () => {
         kbReferences: 42,
         outputLocation: '/tmp/target/tests/e2e/bad',
       };
-      const contextPath = await builder.buildContext('test-writer', 6, 'suite-bad', {
+      const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-bad', {
         e2eSuiteBrief: suiteBrief,
       });
       const context = await readJson<AgentContext>(contextPath);
@@ -494,7 +494,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should fall through to Phase 5 path when e2eSuiteBrief is not a record', async () => {
-      const contextPath = await builder.buildContext('test-writer', 6, 'suite-str', {
+      const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-str', {
         e2eSuiteBrief: 'not-an-object',
         targetFile: 'src/payments.ts',
       });
@@ -515,7 +515,7 @@ describe('ContextBuilder', () => {
         outputLocation: '/tmp/target/tests/e2e/app',
         scenarios: ['Boot'],
       };
-      const contextPath = await builder.buildContext('test-writer', 6, 'suite-tid', {
+      const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-tid', {
         e2eSuiteBrief: suiteBrief,
       });
       const context = await readJson<AgentContext>(contextPath);
@@ -533,7 +533,7 @@ describe('ContextBuilder', () => {
         outputLocation: '/tmp/target/tests/e2e/empty',
         scenarios: [],
       };
-      const contextPath = await builder.buildContext('test-writer', 6, 'suite-empty', {
+      const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-empty', {
         e2eSuiteBrief: suiteBrief,
       });
       const context = await readJson<AgentContext>(contextPath);
@@ -544,7 +544,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route parity-failure-resolver with source/target (no failureReport in inputFiles)', async () => {
-      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -561,7 +561,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should include taskScope in parity-failure-resolver payload when provided', async () => {
-      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: 'Parity failed',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -583,7 +583,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should include taskScope in code-migrator payload when provided', async () => {
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
         kbEntry: 'kb/auth.md',
@@ -602,7 +602,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should omit taskScope from code-migrator payload when not provided', async () => {
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001', {
         sourceFiles: ['src/auth.py'],
         targetFiles: ['src/auth.ts'],
       });
@@ -612,14 +612,14 @@ describe('ContextBuilder', () => {
     });
 
     it('should preserve remediation payload fields in parity-failure-resolver payload', async () => {
-      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
         kbEntry: 'kb/auth.md',
         attemptNumber: 2,
         failureKind: 'command',
-        failureTarget: { wave: 2, taskId: 'task-001', check: 'test' },
+        failureTarget: { wave: 2, workItemId: 'task-001', check: 'test' },
         artifactPaths: ['/tmp/failure.md', '/tmp/test.log'],
         expectedSuccessCondition: 'Test command exits with code 0',
       });
@@ -641,7 +641,7 @@ describe('ContextBuilder', () => {
         ' --> examples/common.rs:256:2',
       ].join('\n');
 
-      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'wave-1', {
+      const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'wave-1', {
         failureReport: inlineFailure,
         failureType: 'test',
         sourceFile: 'examples/common.h',
@@ -657,13 +657,13 @@ describe('ContextBuilder', () => {
     });
 
     it('should support legacy remediation alias in parity-failure-resolver payload', async () => {
-      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
         remediation: {
           failureKind: 'build',
-          failureTarget: { wave: 2, taskId: 'task-001', check: 'build' },
+          failureTarget: { wave: 2, workItemId: 'task-001', check: 'build' },
           artifactPaths: ['/tmp/build.log'],
           expectedSuccessCondition: 'Build command exits with code 0',
         },
@@ -676,7 +676,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should omit remediationContext when nested remediation payload is not an object', async () => {
-      const contextPath = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
+      const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
         sourceFile: 'src/auth.py',
         targetFile: 'src/auth.ts',
@@ -688,7 +688,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route final-parity-checker to source + output + plan', async () => {
-      const contextPath = await builder.buildContext('final-parity-checker', 5);
+      const { contextPath } = await builder.buildContext('final-parity-checker', 5);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/source');
@@ -698,7 +698,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route e2e-test-crafter to KB architecture docs', async () => {
-      const contextPath = await builder.buildContext('e2e-test-crafter', 6);
+      const { contextPath } = await builder.buildContext('e2e-test-crafter', 6);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles.some((f: string) => f.includes('architecture.md'))).toBe(true);
@@ -707,7 +707,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route documentation-writer to KB + plan', async () => {
-      const contextPath = await builder.buildContext('documentation-writer', 6);
+      const { contextPath } = await builder.buildContext('documentation-writer', 6);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles.some((f: string) => f.includes('knowledge-base'))).toBe(true);
@@ -718,7 +718,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route idiomatic-reviewer to target output dir', async () => {
-      const contextPath = await builder.buildContext('idiomatic-reviewer', 8);
+      const { contextPath } = await builder.buildContext('idiomatic-reviewer', 8);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/target');
@@ -733,7 +733,7 @@ describe('ContextBuilder', () => {
         suggestion: 'Replace with Array.prototype.map()',
         details: 'The for-loop iterates over an array and pushes to a new array, which is the exact use case for map().',
       };
-      const contextPath = await builder.buildContext('idiomatic-refactorer', 8, undefined, {
+      const { contextPath } = await builder.buildContext('idiomatic-refactorer', 8, undefined, {
         targetFile: '/tmp/target/src/utils.ts',
         issue,
       });
@@ -748,7 +748,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should use default routing for unknown/orchestrator agents', async () => {
-      const contextPath = await builder.buildContext('migration-orchestrator', 1);
+      const { contextPath } = await builder.buildContext('migration-orchestrator', 1);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/source');
@@ -765,14 +765,14 @@ describe('ContextBuilder', () => {
       });
       const guidanceBuilder = new ContextBuilder(config, progressDir, paths);
 
-      const contextPath = await guidanceBuilder.buildContext('code-migrator', 4, 'task-001');
+      const { contextPath } = await guidanceBuilder.buildContext('code-migrator', 4, 'task-001');
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.guidance).toEqual(['Do not use wrapper crates', 'Write native Rust port']);
     });
 
     it('should omit guidance from context when config has no guidance', async () => {
-      const contextPath = await builder.buildContext('code-migrator', 4, 'task-001');
+      const { contextPath } = await builder.buildContext('code-migrator', 4, 'task-001');
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.guidance).toBeUndefined();
@@ -782,7 +782,7 @@ describe('ContextBuilder', () => {
       const config = createMockConfig({ guidance: [] });
       const emptyGuidanceBuilder = new ContextBuilder(config, progressDir, paths);
 
-      const contextPath = await emptyGuidanceBuilder.buildContext('migration-planner', 4);
+      const { contextPath } = await emptyGuidanceBuilder.buildContext('migration-planner', 4);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.guidance).toBeUndefined();
@@ -795,7 +795,7 @@ describe('ContextBuilder', () => {
       const guidanceBuilder = new ContextBuilder(config, progressDir, paths);
 
       for (const agent of ['migration-planner', 'code-migrator', 'parity-verifier'] as const) {
-        const contextPath = await guidanceBuilder.buildContext(agent, 1, 'task-001');
+        const { contextPath } = await guidanceBuilder.buildContext(agent, 1, 'task-001');
         const context = await readJson<AgentContext>(contextPath);
         expect(context.guidance).toEqual(['No FFI bindings allowed']);
       }

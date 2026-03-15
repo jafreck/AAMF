@@ -34,7 +34,7 @@ describe('runFinalParityIteration', () => {
   it('should return fixes: 0 when parity checker finds no issues', async () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'final-parity-checker') {
-        return { outputParsed: true, structuredOutput: { fixes: [] } };
+        return { extensions: { outputParsed: true, structuredOutput: { fixes: [] } } };
       }
       return {};
     });
@@ -51,13 +51,12 @@ describe('runFinalParityIteration', () => {
       if (inv.agent === 'final-parity-checker') {
         parityCallCount++;
         return {
-          outputParsed: true,
-          structuredOutput: {
+          extensions: { outputParsed: true, structuredOutput: {
             fixes: [
               { description: 'Missing error handling', sourceFile: 'src/auth.py', targetFile: 'src/auth.ts' },
               { description: 'Wrong import', sourceFile: 'src/db.py', targetFile: 'src/db.ts' },
             ],
-          },
+          } },
         };
       }
       return {};
@@ -79,13 +78,12 @@ describe('runFinalParityIteration', () => {
       if (inv.agent === 'final-parity-checker') {
         parityCallCount++;
         return {
-          outputParsed: true,
-          structuredOutput: {
+          extensions: { outputParsed: true, structuredOutput: {
             fixes: [
               { description: 'fix a', sourceFile: 'src/a.py', targetFile: 'src/a.ts' },
               { description: 'fix b', sourceFile: 'src/b.py', targetFile: 'src/b.ts' },
             ],
-          },
+          } },
         };
       }
       return {};
@@ -103,7 +101,7 @@ describe('runFinalParityIteration', () => {
     // Should only apply fix at index 1 (index 0 was already done)
     const fixTaskIds = env.mockLauncher.invocations
       .filter(i => i.agent === 'code-migrator' && i.phase === 6)
-      .map(i => i.taskId);
+      .map(i => i.workItemId);
     expect(fixTaskIds).toContain('fix-0-1');
     expect(fixTaskIds).not.toContain('fix-0-0');
   });
@@ -180,7 +178,7 @@ describe('launchE2eSuiteWriters', () => {
 
     const testWriterInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'test-writer');
     expect(testWriterInvocations).toHaveLength(3);
-    const suiteIds = testWriterInvocations.map(i => i.taskId);
+    const suiteIds = testWriterInvocations.map(i => i.workItemId);
     expect(suiteIds).toEqual(expect.arrayContaining(['suite-001', 'suite-002', 'suite-003']));
   });
 
@@ -205,7 +203,7 @@ describe('launchE2eSuiteWriters', () => {
 
     const suiteIds = env.mockLauncher.invocations
       .filter(i => i.agent === 'test-writer')
-      .map(i => i.taskId);
+      .map(i => i.workItemId);
     expect(suiteIds).not.toContain('suite-001');
     expect(suiteIds).toContain('suite-002');
   });
@@ -254,7 +252,7 @@ describe('runIdiomaticReviewIteration', () => {
   it('should return issues: 0 when no idiomatic issues found', async () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
-        return { outputParsed: true, structuredOutput: { issues: [] } };
+        return { extensions: { outputParsed: true, structuredOutput: { issues: [] } } };
       }
       return {};
     });
@@ -272,13 +270,12 @@ describe('runIdiomaticReviewIteration', () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
         return {
-          outputParsed: true,
-          structuredOutput: {
+          extensions: { outputParsed: true, structuredOutput: {
             issues: [
               { file: 'src/main.ts', issue: 'use const', suggestion: 'replace let with const' },
               { file: 'src/utils.ts', issue: 'use map', suggestion: 'replace for loop with map' },
             ],
-          },
+          } },
         };
       }
       return {};
@@ -296,13 +293,12 @@ describe('runIdiomaticReviewIteration', () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
         return {
-          outputParsed: true,
-          structuredOutput: {
+          extensions: { outputParsed: true, structuredOutput: {
             issues: [
               { file: 'src/a.ts', issue: 'issue a', suggestion: 'fix a' },
               { file: 'src/b.ts', issue: 'issue b', suggestion: 'fix b' },
             ],
-          },
+          } },
         };
       }
       return {};

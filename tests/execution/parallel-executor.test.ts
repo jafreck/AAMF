@@ -20,10 +20,10 @@ describe('ParallelExecutor', () => {
   function makeInvocation(id: string): AgentInvocation {
     return {
       agent: 'code-migrator',
-      contextFile: `/tmp/context-${id}.json`,
-      progressDir: '/tmp/progress',
+      contextPath: `/tmp/context-${id}.json`,
+      outputPath: '',
       phase: 4,
-      taskId: id,
+      workItemId: id,
     };
   }
 
@@ -36,9 +36,9 @@ describe('ParallelExecutor', () => {
     const results = await executor.executeAll(invocations);
 
     expect(results).toHaveLength(3);
-    expect(results[0]!.taskId).toBe('a');
-    expect(results[1]!.taskId).toBe('b');
-    expect(results[2]!.taskId).toBe('c');
+    expect(results[0]!.workItemId).toBe('a');
+    expect(results[1]!.workItemId).toBe('b');
+    expect(results[2]!.workItemId).toBe('c');
     for (const r of results) {
       expect(r.success).toBe(true);
     }
@@ -56,10 +56,9 @@ describe('ParallelExecutor', () => {
       currentConcurrent--;
       return {
         agent: inv.agent,
-        taskId: inv.taskId,
+        workItemId: inv.workItemId,
         exitCode: 0,
         success: true,
-        outputFiles: [],
         duration: 50,
       };
     };
@@ -81,7 +80,7 @@ describe('ParallelExecutor', () => {
 
   it('should handle mixed success/failure', async () => {
     const launcher = createMockLauncher((inv) => {
-      if (inv.taskId === 'b') {
+      if (inv.workItemId === 'b') {
         return { exitCode: 1, success: false, error: 'Task b failed' };
       }
       return {};
@@ -101,15 +100,14 @@ describe('ParallelExecutor', () => {
 
   it('should catch exceptions from launcher and return error result', async () => {
     const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
-      if (inv.taskId === 'b') {
+      if (inv.workItemId === 'b') {
         throw new Error('Launcher crashed');
       }
       return {
         agent: inv.agent,
-        taskId: inv.taskId,
+        workItemId: inv.workItemId,
         exitCode: 0,
         success: true,
-        outputFiles: [],
         duration: 100,
       };
     };
@@ -143,12 +141,17 @@ describe('ParallelExecutor', () => {
       // Verify that each invocation produces its own isolated result regardless of concurrency
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
         agent: inv.agent,
-        taskId: inv.taskId,
+        workItemId: inv.workItemId,
         exitCode: 0,
         success: true,
-        outputFiles: [`/output/${inv.taskId}.ts`],
+        timedOut: false,
         duration: 10,
-        outputParsed: false,
+        stdout: '',
+        stderr: '',
+        tokenUsage: null,
+        outputPath: inv.outputPath,
+        outputExists: false,
+        extensions: { outputParsed: false, outputFiles: [`/output/${inv.workItemId}.ts`] },
       });
 
       const logger = createSilentLogger(tempDir);
@@ -156,10 +159,10 @@ describe('ParallelExecutor', () => {
       const invocations = ['a', 'b', 'c'].map(makeInvocation);
       const results = await executor.executeAll(invocations);
 
-      // Each result's outputFiles should reflect only that invocation's data
-      expect(results[0]!.outputFiles).toEqual(['/output/a.ts']);
-      expect(results[1]!.outputFiles).toEqual(['/output/b.ts']);
-      expect(results[2]!.outputFiles).toEqual(['/output/c.ts']);
+      // Each result's extensions.outputFiles should reflect only that invocation's data
+      expect(results[0]!.extensions.outputFiles).toEqual(['/output/a.ts']);
+      expect(results[1]!.extensions.outputFiles).toEqual(['/output/b.ts']);
+      expect(results[2]!.extensions.outputFiles).toEqual(['/output/c.ts']);
     });
   });
 
@@ -179,10 +182,9 @@ describe('ParallelExecutor', () => {
         await new Promise((r) => setTimeout(r, 50));
         return {
           agent: inv.agent,
-          taskId: inv.taskId,
+          workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
-          outputFiles: [],
           duration: 50,
         };
       };
@@ -200,10 +202,9 @@ describe('ParallelExecutor', () => {
         await new Promise((r) => setTimeout(r, 10));
         return {
           agent: inv.agent,
-          taskId: inv.taskId,
+          workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
-          outputFiles: [],
           duration: 10,
         };
       };
@@ -227,13 +228,12 @@ describe('ParallelExecutor', () => {
 
     it('should track peak concurrency even when invocations throw', async () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
-        if (inv.taskId === 'b') throw new Error('crash');
+        if (inv.workItemId === 'b') throw new Error('crash');
         return {
           agent: inv.agent,
-          taskId: inv.taskId,
+          workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
-          outputFiles: [],
           duration: 10,
         };
       };

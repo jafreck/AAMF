@@ -63,7 +63,7 @@ describe('launchKnowledgeBuilder', () => {
 
   it('should record token usage from agent result', async () => {
     const launcherFn = createMockLauncher(() => ({
-      tokenUsage: { prompt: 1000, completion: 500, total: 1500 },
+      tokenUsage: { input: 1000, output: 500 },
     }));
     env = await setupFlowTest(launcherFn);
 

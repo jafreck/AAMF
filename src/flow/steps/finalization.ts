@@ -32,7 +32,7 @@ export async function launchE2eTestCrafter(
   const completedAgents = new Set(phase7Cursor.completedAgents);
 
   if (completedAgents.has('e2e-test-crafter')) {
-    return { agent: 'e2e-test-crafter', exitCode: 0, success: true, outputFiles: [], duration: 0, outputParsed: false };
+    return { agent: 'e2e-test-crafter', workItemId: '', exitCode: 0, success: true, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, extensions: {} };
   }
 
   const e2eCtx = await ctx.contextBuilder.buildContext('e2e-test-crafter', 6, undefined, { planOnly: true });
@@ -121,7 +121,7 @@ export async function launchDocWriter(
   const completedAgents = new Set(phase7Cursor.completedAgents);
 
   if (completedAgents.has('documentation-writer')) {
-    return { agent: 'documentation-writer', exitCode: 0, success: true, outputFiles: [], duration: 0, outputParsed: false };
+    return { agent: 'documentation-writer', workItemId: '', exitCode: 0, success: true, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, extensions: {} };
   }
 
   const docCtx = await ctx.contextBuilder.buildContext('documentation-writer', 7);
@@ -153,7 +153,7 @@ async function executeSuiteWithRetry(
   completedAgents: Set<string>, completedSuites: Set<string>,
 ): Promise<AgentResult> {
   if (isSuiteBudgetExceeded(ctx, suite.id)) {
-    return { agent: 'test-writer', taskId: suite.id, exitCode: 1, success: false, outputFiles: [], duration: 0, outputParsed: false, error: `Budget exceeded before suite ${suite.id}` };
+    return { agent: 'test-writer', workItemId: suite.id, exitCode: 1, success: false, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, error: `Budget exceeded before suite ${suite.id}`, extensions: {} };
   }
   const suiteCtx = await ctx.contextBuilder.buildContext('test-writer', 6, suite.id, { e2eSuiteBrief: suite });
   const retryExec = new RetryExecutor(inv => launchAgentWithEvents(ctx, inv), ctx.logger);
