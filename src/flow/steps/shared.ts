@@ -593,7 +593,7 @@ export async function runCommandWithRecovery(
   label: string,
   command: string,
   task: MigrationTask,
-  queue: TaskQueue,
+  queue?: TaskQueue,
   options?: {
     initialFailure?: CommandExecutionResult;
     wave?: number;

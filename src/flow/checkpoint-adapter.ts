@@ -47,3 +47,40 @@ export class AamfFlowCheckpointAdapter implements FlowCheckpointAdapter<Migratio
     await this.checkpoint.save(state);
   }
 }
+
+// ─── Phase 5 Nested Flow Checkpoint ─────────────────────────────────
+
+const PHASE5_CHECKPOINT_KEY = '__phase5FlowCheckpoint';
+
+/**
+ * Checkpoint adapter for Phase 5's nested flow.
+ * Stores checkpoint state under a dedicated key separate from the top-level flow.
+ */
+export class Phase5CheckpointAdapter implements FlowCheckpointAdapter<MigrationFlowContext> {
+  constructor(private readonly checkpoint: CheckpointManager) {}
+
+  async load(flowId: string): Promise<FlowCheckpointSnapshot<MigrationFlowContext> | null> {
+    const state = this.checkpoint.getState();
+    const stored = (state as unknown as Record<string, unknown>)[PHASE5_CHECKPOINT_KEY];
+    if (!stored || typeof stored !== 'object') return null;
+    const snapshot = stored as FlowCheckpointSnapshot<MigrationFlowContext>;
+    if (snapshot.flowId !== flowId) return null;
+    return snapshot;
+  }
+
+  async save(snapshot: FlowCheckpointSnapshot<MigrationFlowContext>): Promise<void> {
+    const state = this.checkpoint.getState();
+    const serialisable: FlowCheckpointSnapshot<Record<string, unknown>> = {
+      flowId: snapshot.flowId,
+      status: snapshot.status,
+      startedAt: snapshot.startedAt,
+      updatedAt: snapshot.updatedAt,
+      completedExecutionIds: snapshot.completedExecutionIds,
+      outputs: snapshot.outputs,
+      executionOutputs: snapshot.executionOutputs,
+      error: snapshot.error,
+    };
+    (state as unknown as Record<string, unknown>)[PHASE5_CHECKPOINT_KEY] = serialisable;
+    await this.checkpoint.save(state);
+  }
+}

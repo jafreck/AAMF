@@ -19,8 +19,8 @@ import { generateAgentDefinitions } from '../agents/generator.js';
 import { ContextBuilder } from '../agents/context-builder.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
-import { FlowRunner } from '@cadre-dev/framework/flow';
-import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToPhase } from '../flow/index.js';
+import { FlowRunner, type FlowRunnerOptions } from '@cadre-dev/framework/flow';
+import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase } from '../flow/index.js';
 import { MigrationError } from '../flow/steps/shared.js';
 import type { MigrationFlowContext } from '../flow/index.js';
 import { getAgentsForPhase } from '../agents/registry.js';
@@ -275,42 +275,35 @@ export class MigrationRuntime {
     const runner = new FlowRunner<MigrationFlowContext>();
 
     try {
-      // FlowRunnerOptions in @cadre-dev/framework@0.1.0 lacks hooks/signal.
-      // These properties exist in the runtime implementation; cast until 0.2.0.
-      const runnerOptions: Record<string, unknown> = {
+      const runnerOptions: FlowRunnerOptions<MigrationFlowContext> = {
         checkpoint: checkpointAdapter,
-        signal: this.abortController.signal,
-        hooks: {
-          onNodeStart: async (nodeId: string) => {
-            this.logger.setPhase(nodeIdToPhase(nodeId));
-          },
-          onNodeComplete: async (nodeId: string, _node: unknown, output: unknown) => {
-            const phaseResult = output as PhaseResult | undefined;
-            if (phaseResult && typeof phaseResult === 'object' && 'phase' in phaseResult) {
-              phaseResults.push(phaseResult);
-
-              // Start KB server after Phase 0
-              if (phaseResult.phase === 0 && phaseResult.success && !flowContext.kbServer) {
-                await this.startKbServer(flowContext);
-              }
-
-              // All phases are critical — success is asserted inside the step.
-              // If we reach onNodeComplete, the step succeeded.
-              await this.checkpoint.completePhase(phaseResult.phase, phaseResult.outputPath ?? '');
-              await this.progress.updatePhase(phaseResult.phase, 'completed');
-              this.logger.event({ type: 'phase-completed', phase: phaseResult.phase, name: phaseResult.name, success: true, duration: phaseResult.duration });
-
-              // Token usage sync
-              this.progress.setTokenUsage(tokenTracker.toCheckpointData());
-            }
-          },
-          onNodeSkip: async (nodeId: string) => {
-            this.logger.info(`Flow node skipped (checkpoint resume): ${nodeId}`);
-          },
-        },
       };
 
-      const flowResult = await runner.run(flow, flowContext, runnerOptions as any);
+      const flowResult = await runner.run(flow, flowContext, runnerOptions);
+
+      // Collect phase results from flow outputs
+      for (const output of Object.values(flowResult.outputs)) {
+        const phaseResult = output as PhaseResult | undefined;
+        if (phaseResult && typeof phaseResult === 'object' && 'phase' in phaseResult) {
+          phaseResults.push(phaseResult);
+        }
+      }
+
+      // Start KB server after Phase 0 if not already running
+      if (!flowContext.kbServer) {
+        const p0 = phaseResults.find(r => r.phase === 0);
+        if (p0?.success) await this.startKbServer(flowContext);
+      }
+
+      // Sync phase completion tracking
+      for (const pr of phaseResults) {
+        if (pr.success) {
+          await this.checkpoint.completePhase(pr.phase, pr.outputPath ?? '');
+          await this.progress.updatePhase(pr.phase, 'completed');
+          this.logger.event({ type: 'phase-completed', phase: pr.phase, name: pr.name, success: true, duration: pr.duration });
+        }
+      }
+      this.progress.setTokenUsage(tokenTracker.toCheckpointData());
 
       // Status may be 'failed', 'cancelled', or 'timed-out' in newer framework versions
       const status = flowResult.status as string;
