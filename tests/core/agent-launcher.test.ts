@@ -742,7 +742,7 @@ describe('AgentLauncher', () => {
           maxLinesPerTask: 500,
           dryRun: false,
           resume: false,
-          invocationDelayMs: 200,
+          invocationDelayMs: 50,
           buildConcurrency: 1,
           continueOnBlocked: true,
           maxBlockedTasks: 0,

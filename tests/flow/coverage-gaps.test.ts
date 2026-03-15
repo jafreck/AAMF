@@ -146,7 +146,14 @@ describe('launchE2eSuiteWriters — budget and retry', () => {
       { id: 'suite-001', name: 'Auth E2E' },
     ]);
 
-    await expect(launchE2eSuiteWriters(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
+    // Eliminate real backoff sleeps in RetryExecutor
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((fn: (...args: unknown[]) => void) => origSetTimeout(fn, 0)) as typeof globalThis.setTimeout;
+    try {
+      await expect(launchE2eSuiteWriters(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
+    } finally {
+      globalThis.setTimeout = origSetTimeout;
+    }
   });
 
   it('should report suites: 0 when plan contains empty suites', async () => {
