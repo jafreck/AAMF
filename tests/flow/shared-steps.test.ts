@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import {
   classifyError,
   MigrationError,
@@ -18,6 +18,12 @@ import {
   checkBudget,
   taskScopePayload,
   buildRemediationContext,
+  storeParityResult,
+  checkParityResult,
+  hasNonMinorParityIssues,
+  getParityIssueSummary,
+  resolverReducedScope,
+  buildInvocation,
   AVG_TOKENS_PER_TASK,
   RETRY_OVERHEAD_MULTIPLIER,
 } from '../../src/flow/steps/shared.js';
@@ -60,6 +66,7 @@ function mockContext(overrides: Record<string, unknown> = {}): MigrationFlowCont
     },
     routedTaskIds: new Set<string>(),
     escalationCostUsd: 0,
+    parityResults: new Map(),
     checkpoint: { getState: () => ({}), save: async () => {} },
     paths: { root: '/tmp/test', kbDbFile: '/tmp/test/kb.db' },
     kbServer: undefined,
@@ -431,5 +438,172 @@ describe('buildRemediationContext', () => {
     expect(ctx.failureTarget.wave).toBe(1);
     // Deduplicates artifact paths
     expect(ctx.artifactPaths).toEqual(['/out/task-001.ts']);
+  });
+});
+
+// ─── Parity Helpers ──────────────────────────────────────────────────────────
+
+describe('storeParityResult', () => {
+  it('should store parity result in context map', () => {
+    const ctx = mockContext();
+    const agentResult = {
+      outputParsed: true,
+      structuredOutput: {
+        agent: 'parity-verifier', status: 'completed',
+        parity: 'partial',
+        issues: [{ severity: 'major', description: 'divergence', details: 'test', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' }],
+      },
+    };
+    storeParityResult(ctx, agentResult as any, 'task-001');
+    expect(ctx.parityResults.get('task-001')).toBeDefined();
+    expect(ctx.parityResults.get('task-001')!.parity).toBe('partial');
+  });
+
+  it('should not store when outputParsed is false', () => {
+    const ctx = mockContext();
+    storeParityResult(ctx, { outputParsed: false } as any, 'task-001');
+    expect(ctx.parityResults.has('task-001')).toBe(false);
+  });
+});
+
+describe('checkParityResult', () => {
+  it('should return true for pass', () => {
+    const ctx = mockContext();
+    ctx.parityResults.set('task-001', { parity: 'pass', issues: [] });
+    expect(checkParityResult(ctx, 'task-001')).toBe(true);
+  });
+
+  it('should return true for partial with only minor issues', () => {
+    const ctx = mockContext();
+    ctx.parityResults.set('task-001', {
+      parity: 'partial',
+      issues: [{ severity: 'minor', description: 'style', details: 'nit', sourceLocation: 'a:1' }],
+    } as any);
+    expect(checkParityResult(ctx, 'task-001')).toBe(true);
+  });
+
+  it('should return false for fail', () => {
+    const ctx = mockContext();
+    ctx.parityResults.set('task-001', {
+      parity: 'fail',
+      issues: [{ severity: 'critical', description: 'missing', details: 'gone', sourceLocation: 'a:1' }],
+    } as any);
+    expect(checkParityResult(ctx, 'task-001')).toBe(false);
+  });
+
+  it('should return false when no result exists (fail-closed)', () => {
+    const ctx = mockContext();
+    expect(checkParityResult(ctx, 'nonexistent')).toBe(false);
+  });
+});
+
+describe('hasNonMinorParityIssues', () => {
+  it('should return true when critical issues exist', () => {
+    const ctx = mockContext();
+    ctx.parityResults.set('task-001', {
+      parity: 'fail',
+      issues: [{ severity: 'critical', description: 'missing', details: 'test', sourceLocation: 'a:1' }],
+    } as any);
+    expect(hasNonMinorParityIssues(ctx, 'task-001')).toBe(true);
+  });
+
+  it('should return false when only minor issues', () => {
+    const ctx = mockContext();
+    ctx.parityResults.set('task-001', {
+      parity: 'partial',
+      issues: [{ severity: 'minor', description: 'style', details: 'nit', sourceLocation: 'a:1' }],
+    } as any);
+    expect(hasNonMinorParityIssues(ctx, 'task-001')).toBe(false);
+  });
+
+  it('should return false for empty issues', () => {
+    const ctx = mockContext();
+    ctx.parityResults.set('task-001', { parity: 'pass', issues: [] });
+    expect(hasNonMinorParityIssues(ctx, 'task-001')).toBe(false);
+  });
+
+  it('should return true when no result exists (fail-closed)', () => {
+    const ctx = mockContext();
+    expect(hasNonMinorParityIssues(ctx, 'nonexistent')).toBe(true);
+  });
+});
+
+describe('getParityIssueSummary', () => {
+  it('should return undefined when no result exists', () => {
+    const ctx = mockContext();
+    expect(getParityIssueSummary(ctx, 'nonexistent')).toBeUndefined();
+  });
+
+  it('should return summary string for issues', () => {
+    const ctx = mockContext();
+    ctx.parityResults.set('task-001', {
+      parity: 'fail',
+      issues: [
+        { severity: 'critical', description: 'missing export', details: '', sourceLocation: 'a:1' },
+        { severity: 'major', description: 'wrong logic', details: '', sourceLocation: 'a:2' },
+      ],
+    } as any);
+    const summary = getParityIssueSummary(ctx, 'task-001');
+    expect(summary).toBeDefined();
+    expect(summary).toContain('critical');
+  });
+});
+
+describe('resolverReducedScope', () => {
+  it('should return true when scopeReduced is true', () => {
+    const result = { outputParsed: true, structuredOutput: { scopeReduced: true } };
+    expect(resolverReducedScope(result as any)).toBe(true);
+  });
+
+  it('should return false when scopeReduced is false', () => {
+    const result = { outputParsed: true, structuredOutput: { scopeReduced: false } };
+    expect(resolverReducedScope(result as any)).toBe(false);
+  });
+
+  it('should return false when outputParsed is false', () => {
+    const result = { outputParsed: false };
+    expect(resolverReducedScope(result as any)).toBe(false);
+  });
+
+  it('should return false when scopeReduced is absent', () => {
+    const result = { outputParsed: true, structuredOutput: { status: 'completed' } };
+    expect(resolverReducedScope(result as any)).toBe(false);
+  });
+});
+
+// ─── buildInvocation ─────────────────────────────────────────────────────────
+
+describe('buildInvocation', () => {
+  it('should construct a basic invocation with agent and phase', () => {
+    const ctx = mockContext();
+    const inv = buildInvocation(ctx, 'knowledge-builder', '/tmp/ctx.json', 3);
+    expect(inv.agent).toBe('knowledge-builder');
+    expect(inv.contextFile).toBe('/tmp/ctx.json');
+    expect(inv.phase).toBe(3);
+    expect(inv.timeout).toBe(300_000);
+  });
+
+  it('should include taskId when provided', () => {
+    const ctx = mockContext();
+    const inv = buildInvocation(ctx, 'code-migrator', '/tmp/ctx.json', 5, 'task-001');
+    expect(inv.taskId).toBe('task-001');
+  });
+
+  it('should use phase-specific timeout', () => {
+    const ctx = mockContext({ agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000, phaseTimeouts: { 5: 600_000 } } });
+    const inv = buildInvocation(ctx, 'code-migrator', '/tmp/ctx.json', 5);
+    expect(inv.timeout).toBe(600_000);
+  });
+
+  it('should apply failureRecoveryModel for parity-failure-resolver', () => {
+    const ctx = mockContext({ agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000, failureRecoveryModel: 'gpt-4o-fallback' } });
+    const inv = buildInvocation(ctx, 'parity-failure-resolver', '/tmp/ctx.json', 5);
+    expect(inv.modelOverride).toBe('gpt-4o-fallback');
+  });
+
+  it('should not set mcpConfig when kbServer is undefined', () => {
+    const ctx = mockContext();
+    const inv = buildInvocation(ctx, 'knowledge-builder', '/tmp/ctx.json', 3);
+    expect(inv.mcpConfig).toBeUndefined();
   });
 });
