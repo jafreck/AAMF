@@ -222,6 +222,10 @@ describe('runCommandWithRecovery', () => {
       return { exitCode: 0, stdout: 'ok', stderr: '', killed: false };
     });
 
+    // Eliminate real backoff sleeps — resolve setTimeout callbacks immediately
+    const origSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((fn: (...args: unknown[]) => void) => origSetTimeout(fn, 0)) as typeof globalThis.setTimeout;
+
     const task = makeTask('task-001');
     const queue = new TaskQueue([task]);
 
@@ -230,6 +234,7 @@ describe('runCommandWithRecovery', () => {
       expect(result).toBe(true);
       expect(callCount).toBeGreaterThan(1);
     } finally {
+      globalThis.setTimeout = origSetTimeout;
       spawnSpy.mockRestore();
     }
   });

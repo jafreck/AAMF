@@ -207,7 +207,14 @@ describe('executeIterativeMigration (Phase 5)', () => {
         options: { maxRetriesPerTask: 2 },
       });
 
-      await expect(executeIterativeMigration(env.flowCtx)).rejects.toThrow();
+      // Eliminate real backoff sleeps in RetryExecutor
+      const origSetTimeout = globalThis.setTimeout;
+      globalThis.setTimeout = ((fn: (...args: unknown[]) => void) => origSetTimeout(fn, 0)) as typeof globalThis.setTimeout;
+      try {
+        await expect(executeIterativeMigration(env.flowCtx)).rejects.toThrow();
+      } finally {
+        globalThis.setTimeout = origSetTimeout;
+      }
     });
 
     it('should throw on command recovery exhaustion', async () => {
@@ -261,7 +268,14 @@ describe('executeIterativeMigration (Phase 5)', () => {
         agentBackend: { runtime: 'copilot', failureRecoveryModel: 'gpt-4.1-mini' },
       });
 
-      await executeIterativeMigration(env.flowCtx);
+      // Eliminate real backoff sleeps in RetryExecutor
+      const origSetTimeout = globalThis.setTimeout;
+      globalThis.setTimeout = ((fn: (...args: unknown[]) => void) => origSetTimeout(fn, 0)) as typeof globalThis.setTimeout;
+      try {
+        await executeIterativeMigration(env.flowCtx);
+      } finally {
+        globalThis.setTimeout = origSetTimeout;
+      }
 
       const migratorRetries = capturedInvocations.filter(
         i => i.agent === 'code-migrator' && i.taskId === 'task-001',
