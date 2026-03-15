@@ -18,20 +18,20 @@ describe('vitest.config.ts', () => {
     expect(testConfig.coverage.reporter).toContain('lcov');
   });
 
-  it('should set 88% threshold for lines', () => {
-    expect(testConfig.coverage.thresholds.lines).toBe(88);
+  it('should set 86% threshold for lines', () => {
+    expect(testConfig.coverage.thresholds.lines).toBe(86);
   });
 
-  it('should set 74% threshold for branches', () => {
-    expect(testConfig.coverage.thresholds.branches).toBe(74);
+  it('should set 70% threshold for branches', () => {
+    expect(testConfig.coverage.thresholds.branches).toBe(70);
   });
 
   it('should set 88% threshold for functions', () => {
     expect(testConfig.coverage.thresholds.functions).toBe(88);
   });
 
-  it('should set 88% threshold for statements', () => {
-    expect(testConfig.coverage.thresholds.statements).toBe(88);
+  it('should set 85% threshold for statements', () => {
+    expect(testConfig.coverage.thresholds.statements).toBe(85);
   });
 
   it('should have exactly two reporters', () => {

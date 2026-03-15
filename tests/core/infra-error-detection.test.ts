@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyError } from '../../src/core/orchestrator.js';
+import { classifyError } from '../../src/flow/index.js';
 
 describe('classifyError', () => {
   // ─── File Lock Patterns ──────────────────────────────────────────
