@@ -271,15 +271,29 @@ describe('MigrationRuntime', () => {
       expect(runtime.progress.reconstructFromCheckpoint).toHaveBeenCalledWith(state);
     });
 
-    it.skip('runs flow runner on non-dry run, flushes logger, and returns result', async () => {
-      // TODO: Update to mock FlowRunner.prototype.run instead of MigrationOrchestrator
-      const runtime = new MigrationRuntime() as any;
-      const orchestratorResult = makeResult({
-        phases: [{ phase: 1, name: 'Test Phase', success: true, duration: 10, outputPath: '/tmp/out' }],
+    it('runs flow runner on non-dry run, flushes logger, and returns result', async () => {
+      const { FlowRunner } = await import('@cadre-dev/framework/flow');
+      const flowRunnerRunSpy = vi.spyOn(FlowRunner.prototype, 'run').mockResolvedValue({
+        status: 'completed',
+        outputs: new Map(),
       });
 
-      const runSpy = vi.spyOn(MigrationOrchestrator.prototype, 'run').mockResolvedValue(orchestratorResult);
+      const runtime = new MigrationRuntime() as any;
       const printSummarySpy = vi.spyOn(runtime, 'printSummary').mockImplementation(() => {});
+      const checkpointState = {
+        projectName: 'test-project',
+        currentPhase: 0,
+        completedPhases: [],
+        completedTasks: [],
+        failedTasks: [],
+        blockedTasks: [],
+        completedTaskDurationsMs: [],
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        startedAt: '2026-01-01',
+        lastCheckpoint: '2026-01-01',
+        resumeCount: 0,
+        phaseOutputs: {},
+      };
 
       runtime.config = {
         projectName: 'test-project',
@@ -294,36 +308,239 @@ describe('MigrationRuntime', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 1,
+          git: { enabled: false },
         },
         agentBackend: {
           runtime: 'copilot',
           model: 'claude-sonnet-4',
+          timeout: 300_000,
+          agentDir: '.github/agents',
         },
+        source: { path: '/tmp/source', language: 'python' },
+        target: { language: 'typescript', outputPath: '/tmp/target' },
+        environment: {},
       };
       runtime.checkpoint = {
         load: vi.fn().mockResolvedValue(undefined),
+        getState: vi.fn().mockReturnValue({ ...checkpointState }),
+        getResumePoint: vi.fn().mockReturnValue({ phase: 0 }),
+        save: vi.fn().mockResolvedValue(undefined),
       };
       runtime.progress = {
         initialize: vi.fn().mockResolvedValue(undefined),
         reconstructFromCheckpoint: vi.fn(),
+        appendEvent: vi.fn().mockResolvedValue(undefined),
+        finalize: vi.fn().mockResolvedValue(undefined),
+        setTokenUsage: vi.fn(),
+        setCumulativeDuration: vi.fn(),
+        setTotalTasks: vi.fn(),
+        updatePhase: vi.fn().mockResolvedValue(undefined),
       };
-      runtime.launcher = {};
+      runtime.launcher = {
+        getResolvedPath: () => undefined,
+        launchAgent: vi.fn().mockResolvedValue({ exitCode: 0, success: true, outputFiles: [], duration: 0 }),
+      };
       runtime.logger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+        event: vi.fn(),
         flush: vi.fn().mockResolvedValue(undefined),
+        setPhase: vi.fn(),
       };
       runtime.projectRoot = '/tmp/project';
-      runtime.runId = 'run-123';
+      runtime.runId = 'test-run-id';
+      runtime.paths = {
+        root: '/tmp/.aamf/test-project',
+        stateDir: '/tmp/.aamf/test-project/state',
+        artifactsDir: '/tmp/.aamf/test-project/artifacts',
+        artifactsPlanningDir: '/tmp/.aamf/test-project/artifacts/planning',
+        artifactsContextsDir: '/tmp/.aamf/test-project/artifacts/contexts',
+        metricsDir: '/tmp/.aamf/test-project/metrics',
+        metricsInvocationsFile: '/tmp/.aamf/test-project/metrics/invocations.jsonl',
+        logsDir: '/tmp/.aamf/test-project/logs',
+        logsRuntimeDir: '/tmp/.aamf/test-project/logs/runtime',
+        logsAgentsDir: '/tmp/.aamf/test-project/logs/agents',
+        logsCommandsDir: '/tmp/.aamf/test-project/logs/commands',
+        logsCommandBuildDir: '/tmp/.aamf/test-project/logs/commands/build',
+        logsCommandTestDir: '/tmp/.aamf/test-project/logs/commands/test',
+        logsCommandFormatDir: '/tmp/.aamf/test-project/logs/commands/format',
+        logsCommandLintDir: '/tmp/.aamf/test-project/logs/commands/lint',
+        loreLogFile: '/tmp/.aamf/test-project/logs/lore.log',
+        reportsDir: '/tmp/.aamf/test-project/reports',
+        reportsObservabilityDir: '/tmp/.aamf/test-project/reports/observability',
+        progressReportFile: '/tmp/.aamf/test-project/progress.md',
+        kbDbFile: '/tmp/.aamf/test-project/kb.db',
+        competingStrategiesFile: '/tmp/.aamf/test-project/artifacts/planning/competing-strategies.md',
+        migrationPlanFile: '/tmp/.aamf/test-project/artifacts/planning/migration-plan.md',
+      };
+      runtime.progressDir = runtime.paths.root;
 
       const result = await runtime.run();
 
-      expect(result).toEqual(orchestratorResult);
-      expect(runtime.progress.initialize).toHaveBeenCalledTimes(1);
-      expect(runtime.logger.flush).toHaveBeenCalledTimes(1);
-      expect(runSpy).toHaveBeenCalledTimes(1);
-      expect(printSummarySpy).toHaveBeenCalledWith(orchestratorResult);
+      expect(result.success).toBe(true);
+      expect(result.projectName).toBe('test-project');
+      expect(flowRunnerRunSpy).toHaveBeenCalledTimes(1);
+      expect(runtime.logger.flush).toHaveBeenCalled();
+      expect(printSummarySpy).toHaveBeenCalled();
 
-      runSpy.mockRestore();
+      flowRunnerRunSpy.mockRestore();
       printSummarySpy.mockRestore();
+    });
+
+    it('handles MigrationError from flow runner and records failed phase', async () => {
+      const { FlowRunner } = await import('@cadre-dev/framework/flow');
+      const { MigrationError } = await import('../../src/flow/steps/shared.js');
+      const failedPhaseResult = { phase: 3, name: 'KB Construction', success: false, duration: 100, error: 'KB build failed' };
+      const flowRunnerRunSpy = vi.spyOn(FlowRunner.prototype, 'run').mockRejectedValue(
+        new MigrationError(3, 'KB Construction', failedPhaseResult),
+      );
+
+      const runtime = new MigrationRuntime() as any;
+      const printSummarySpy = vi.spyOn(runtime, 'printSummary').mockImplementation(() => {});
+      const checkpointState = {
+        projectName: 'test-project',
+        currentPhase: 0,
+        completedPhases: [],
+        completedTasks: [],
+        failedTasks: [],
+        blockedTasks: [],
+        completedTaskDurationsMs: [],
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        resumeCount: 0,
+        phaseOutputs: {},
+      };
+
+      runtime.config = {
+        projectName: 'test-project',
+        options: {
+          resume: false, dryRun: false,
+          maxParallelAgents: 1, buildConcurrency: 1,
+          git: { enabled: false },
+        },
+        agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000 },
+        source: { path: '/tmp/source', language: 'python' },
+        target: { language: 'typescript', outputPath: '/tmp/target' },
+        environment: {},
+      };
+      runtime.checkpoint = {
+        load: vi.fn().mockResolvedValue(undefined),
+        getState: vi.fn().mockReturnValue({ ...checkpointState }),
+        getResumePoint: vi.fn().mockReturnValue({ phase: 0 }),
+        save: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.progress = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        reconstructFromCheckpoint: vi.fn(),
+        appendEvent: vi.fn().mockResolvedValue(undefined),
+        finalize: vi.fn().mockResolvedValue(undefined),
+        setTokenUsage: vi.fn(),
+        setCumulativeDuration: vi.fn(),
+        updatePhase: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.launcher = { getResolvedPath: () => undefined };
+      runtime.logger = {
+        info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+        event: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), setPhase: vi.fn(),
+      };
+      runtime.projectRoot = '/tmp/project';
+      runtime.runId = 'test-run-id';
+      runtime.paths = {
+        root: '/tmp/.aamf/test-project',
+        kbDbFile: '/tmp/.aamf/test-project/kb.db',
+        metricsDir: '/tmp/.aamf/test-project/metrics',
+        reportsObservabilityDir: '/tmp/.aamf/test-project/reports/observability',
+        progressReportFile: '/tmp/.aamf/test-project/progress.md',
+      };
+      runtime.progressDir = runtime.paths.root;
+
+      const result = await runtime.run();
+
+      expect(result.success).toBe(false);
+      expect(result.phases.length).toBe(1);
+      expect(result.phases[0]!.phase).toBe(3);
+      expect(result.phases[0]!.success).toBe(false);
+      // Should have recorded the failed phase event
+      expect(runtime.logger.event).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'phase-failed', phase: 3 }),
+      );
+
+      flowRunnerRunSpy.mockRestore();
+      printSummarySpy.mockRestore();
+    });
+
+    it('filters stale failed/blocked tasks from completed set', async () => {
+      const { FlowRunner } = await import('@cadre-dev/framework/flow');
+      const flowRunnerRunSpy = vi.spyOn(FlowRunner.prototype, 'run').mockResolvedValue({
+        status: 'completed', outputs: new Map(),
+      });
+
+      const runtime = new MigrationRuntime() as any;
+      vi.spyOn(runtime, 'printSummary').mockImplementation(() => {});
+      const checkpointState = {
+        projectName: 'test-project',
+        currentPhase: 5,
+        completedPhases: [1, 2, 3, 4, 5],
+        completedTasks: ['task-001', 'task-002'],
+        failedTasks: [{ taskId: 'task-001', error: 'stale' }],
+        blockedTasks: ['task-001'],
+        completedTaskDurationsMs: [1000, 2000],
+        tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+        resumeCount: 0,
+        phaseOutputs: {},
+      };
+
+      runtime.config = {
+        projectName: 'test-project',
+        options: {
+          resume: false, dryRun: false,
+          maxParallelAgents: 1, buildConcurrency: 1,
+          git: { enabled: false },
+        },
+        agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000 },
+        source: { path: '/tmp/source', language: 'python' },
+        target: { language: 'typescript', outputPath: '/tmp/target' },
+        environment: {},
+      };
+      runtime.checkpoint = {
+        load: vi.fn().mockResolvedValue(undefined),
+        getState: vi.fn().mockReturnValue(checkpointState),
+        getResumePoint: vi.fn().mockReturnValue({ phase: 0 }),
+        save: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.progress = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        reconstructFromCheckpoint: vi.fn(),
+        appendEvent: vi.fn().mockResolvedValue(undefined),
+        finalize: vi.fn().mockResolvedValue(undefined),
+        setTokenUsage: vi.fn(),
+        setCumulativeDuration: vi.fn(),
+        updatePhase: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.launcher = { getResolvedPath: () => undefined };
+      runtime.logger = {
+        info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+        event: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), setPhase: vi.fn(),
+      };
+      runtime.projectRoot = '/tmp/project';
+      runtime.runId = 'test-run-id';
+      runtime.paths = {
+        root: '/tmp/.aamf/test-project',
+        kbDbFile: '/tmp/.aamf/test-project/kb.db',
+        metricsDir: '/tmp/.aamf/test-project/metrics',
+        reportsObservabilityDir: '/tmp/.aamf/test-project/reports/observability',
+        progressReportFile: '/tmp/.aamf/test-project/progress.md',
+      };
+      runtime.progressDir = runtime.paths.root;
+
+      const result = await runtime.run();
+
+      // task-001 is in completedTasks, so it should be filtered from failedTasks and blockedTasks
+      expect(result.failedTasks).toEqual([]);
+      expect(result.blockedTasks).toEqual([]);
+
+      flowRunnerRunSpy.mockRestore();
     });
   });
 

@@ -17,15 +17,14 @@ export default defineConfig({
         'src/flow/steps/task-graph.ts',
       ],
       // Thresholds apply globally (not per-file)
-      // Lowered from 88/74 after flow DSL refactor: step files contain deep
-      // integration logic (wave-barriers, convergence, command recovery) that
-      // the old orchestrator.test.ts covered end-to-end. Step-level unit tests
-      // cover the main code paths; full coverage requires e2e test fixtures.
+      // Raised after comprehensive step-level unit tests for flow DSL:
+      // wave-barrier mode, command recovery, runtime FlowRunner integration,
+      // scaffold verification, error paths, and phase cursor helpers.
       thresholds: {
-        lines: 80,
-        branches: 64,
-        functions: 85,
-        statements: 79,
+        lines: 86,
+        branches: 70,
+        functions: 88,
+        statements: 85,
       },
     },
   },
