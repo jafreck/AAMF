@@ -25,25 +25,19 @@ describe('CostEstimator', () => {
     expect(result.total).toBe(18.00);
   });
 
-  it('should fall back to default pricing ($5/$15) for unknown model and warn', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('should fall back to default pricing ($5/$15) for unknown model', () => {
     const est = new CostEstimator();
     const result = est.estimate('unknown-model-xyz', 1_000_000, 1_000_000);
     expect(result.input).toBe(5.00);
     expect(result.output).toBe(15.00);
     expect(result.total).toBe(20.00);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('unknown-model-xyz'));
-    warnSpy.mockRestore();
   });
 
-  it('should only warn once per unknown model', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('should use the same default pricing for repeated unknown models', () => {
     const est = new CostEstimator();
-    est.estimate('new-unknown', 1_000, 1_000);
-    est.estimate('new-unknown', 1_000, 1_000);
-    const calls = warnSpy.mock.calls.filter(c => String(c[0]).includes('new-unknown'));
-    expect(calls).toHaveLength(1);
-    warnSpy.mockRestore();
+    const r1 = est.estimate('new-unknown', 1_000_000, 1_000_000);
+    const r2 = est.estimate('new-unknown', 1_000_000, 1_000_000);
+    expect(r1.total).toBe(r2.total);
   });
 
   it('should use costOverrides when provided', () => {

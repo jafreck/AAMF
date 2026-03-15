@@ -1,7 +1,12 @@
 /**
  * @module cost-estimator
  * Estimates monetary cost from token usage for common LLM models.
+ *
+ * Delegates to @cadre-dev/framework's CostEstimator, passing AAMF's
+ * 50+ model pricing table via the `models` config. AAMF-specific
+ * methods (projectCost, formatCost) wrap the framework's API.
  */
+import { CostEstimator as FrameworkCostEstimator } from '@cadre-dev/framework/core';
 
 /** Pricing per 1 M tokens (USD) for input and output. */
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
@@ -57,10 +62,9 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   'o3':                     { input:  2.00, output:   8.00 },
   'o3-pro':                 { input: 20.00, output:  80.00 },
   'o4-mini':                { input:  1.10, output:   4.40 },
+  // ── Default fallback ─────────────────────────────────────────────
+  'default':                { input:  5.00, output:  15.00 },
 };
-
-/** Default fallback pricing when a model is unknown and no overrides exist. */
-const DEFAULT_PRICING: { input: number; output: number } = { input: 5.00, output: 15.00 };
 
 /** Per-model cost override from user configuration. */
 export interface CostOverride {
@@ -68,55 +72,43 @@ export interface CostOverride {
   output: number;
 }
 
-/** Callback used by CostEstimator to emit warnings (defaults to console.warn). */
-export type WarnFn = (message: string) => void;
-
 /**
  * Estimates the monetary cost of LLM API calls based on token counts
  * and per-model pricing tables.
  *
- * Resolution order:
- * 1. User-supplied `costOverrides` (from config)
- * 2. Built-in `MODEL_PRICING` table
- * 3. Generic default ($5/$15 per 1M tokens) with a log warning
+ * Delegates to @cadre-dev/framework's CostEstimator for the core math,
+ * supplying AAMF's pricing table as the `models` config. The framework
+ * uses per-1K pricing; AAMF's table is per-1M — converted on construction.
  */
 export class CostEstimator {
-  private readonly overrides: Record<string, CostOverride>;
-  private readonly warnedModels = new Set<string>();
-  private readonly warn: WarnFn;
+  private readonly inner: FrameworkCostEstimator;
 
-  constructor(costOverrides?: Record<string, CostOverride>, warn?: WarnFn) {
-    this.overrides = costOverrides ?? {};
-    this.warn = warn ?? console.warn.bind(console);
-  }
-
-  /**
-   * Resolve pricing for a given model using the three-tier fallback chain.
-   */
-  private resolvePricing(model: string): { input: number; output: number } {
-    // 1. Check user overrides
-    if (this.overrides[model]) return this.overrides[model];
-    // 2. Check built-in table
-    if (MODEL_PRICING[model]) return MODEL_PRICING[model];
-    // 3. Fall back to default and warn once
-    if (!this.warnedModels.has(model)) {
-      this.warnedModels.add(model);
-      this.warn(
-        `[CostEstimator] Unknown model "${model}" — using default pricing ($${DEFAULT_PRICING.input}/$${DEFAULT_PRICING.output} per 1M tokens). ` +
-        `Consider adding costOverrides for this model in your config.`,
-      );
+  constructor(costOverrides?: Record<string, CostOverride>) {
+    // Convert AAMF's per-1M pricing to framework's per-1K convention
+    const per1K: Record<string, { input: number; output: number }> = {};
+    for (const [model, pricing] of Object.entries(MODEL_PRICING)) {
+      per1K[model] = { input: pricing.input / 1000, output: pricing.output / 1000 };
     }
-    return DEFAULT_PRICING;
+    let overrides1K: Record<string, { input: number; output: number }> | undefined;
+    if (costOverrides) {
+      overrides1K = {};
+      for (const [model, pricing] of Object.entries(costOverrides)) {
+        overrides1K[model] = { input: pricing.input / 1000, output: pricing.output / 1000 };
+      }
+    }
+    this.inner = new FrameworkCostEstimator({
+      models: per1K,
+      costOverrides: overrides1K,
+      cacheDiscount: 0.5,      // AAMF bills cached tokens at 50% of input price
+      defaultInputRatio: 0.8,  // 80/20 prompt/completion split for total-only estimates
+    });
   }
 
   /**
    * Estimate cost given explicit prompt and completion token counts.
    *
-   * @param model - Model identifier.
-   * @param promptTokens - Total number of input / prompt tokens (includes cached tokens).
-   * @param completionTokens - Number of output / completion tokens.
-   * @param cachedInputTokens - Number of cached input tokens (subset of promptTokens, billed at 50% of input price).
-   * @returns Breakdown of input (non-cached), output, cached, and total cost in USD.
+   * Returns: input = cost of non-cached prompt tokens, cached = cost of
+   * cached tokens at 50% rate, output = completion cost, total = sum.
    */
   estimate(
     model: string,
@@ -124,57 +116,48 @@ export class CostEstimator {
     completionTokens: number,
     cachedInputTokens?: number,
   ): { input: number; output: number; cached: number; total: number } {
-    const pricing = this.resolvePricing(model);
-    const nonCachedPrompt = Math.max(0, promptTokens - (cachedInputTokens ?? 0));
-    const input = (nonCachedPrompt / 1_000_000) * pricing.input;
-    const output = (completionTokens / 1_000_000) * pricing.output;
-    const cached = cachedInputTokens !== undefined
-      ? (cachedInputTokens / 1_000_000) * pricing.input * 0.5
-      : 0;
-    return { input, output, cached, total: input + output + cached };
+    const outputEst = this.inner.estimateDetailed(0, completionTokens, model);
+    const output = outputEst.outputCost;
+
+    if (cachedInputTokens !== undefined && cachedInputTokens > 0) {
+      const nonCachedPrompt = Math.max(0, promptTokens - cachedInputTokens);
+      const nonCachedEst = this.inner.estimateDetailed(nonCachedPrompt, 0, model);
+      // Cached tokens billed at 50% of input price
+      const cachedEst = this.inner.estimateDetailed(cachedInputTokens, 0, model);
+      const cached = cachedEst.inputCost * 0.5;
+      const input = nonCachedEst.inputCost;
+      return { input, output, cached, total: input + output + cached };
+    }
+
+    const inputEst = this.inner.estimateDetailed(promptTokens, 0, model);
+    return { input: inputEst.inputCost, output, cached: 0, total: inputEst.inputCost + output };
   }
 
   /**
-   * Estimate cost from a single total-token count by assuming an
-   * 80 % prompt / 20 % completion split (reflecting agentic workloads
-   * with large context windows).
-   *
-   * @param model - Model identifier.
-   * @param totalTokens - Combined token count.
-   * @returns Breakdown of input, output, and total cost in USD.
+   * Estimate cost from a single total-token count.
    */
   estimateFromTotal(
     model: string,
     totalTokens: number,
   ): { input: number; output: number; total: number } {
-    const promptTokens = Math.round(totalTokens * 0.8);
-    const completionTokens = totalTokens - promptTokens;
-    return this.estimate(model, promptTokens, completionTokens);
+    const est = this.inner.estimate(totalTokens, model);
+    return { input: est.inputCost, output: est.outputCost, total: est.totalCost };
   }
 
   /**
-   * Project the cost of a single invocation given a model and average
-   * token count. Used for pre-invocation cap enforcement.
-   *
-   * @param model - Model identifier.
-   * @param avgTokensPerTask - Estimated total tokens for the invocation.
-   * @returns Projected total cost in USD.
+   * Project the cost of a single invocation given a model and average token count.
    */
   projectCost(model: string, avgTokensPerTask: number): { total: number } {
-    const { total } = this.estimateFromTotal(model, avgTokensPerTask);
-    return { total };
+    return { total: this.estimateFromTotal(model, avgTokensPerTask).total };
   }
 
   /** Return the list of model identifiers with known pricing. */
   getSupportedModels(): string[] {
-    return Object.keys(MODEL_PRICING);
+    return Object.keys(MODEL_PRICING).filter(k => k !== 'default');
   }
 
   /**
    * Format a numeric cost value as a USD string (four decimal places).
-   *
-   * @param cost - Cost in USD.
-   * @returns Formatted string, e.g. `"$0.0125"`.
    */
   static formatCost(cost: number): string {
     return `$${cost.toFixed(4)}`;
