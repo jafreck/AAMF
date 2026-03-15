@@ -21,6 +21,7 @@ import {
 
 import type { MigrationFlowContext } from './context.js';
 import type { PhaseResult } from '../agents/types.js';
+import type { TaskGraphOutput } from './steps/task-graph.js';
 import { checkBudget } from './steps/shared.js';
 
 // Step implementations
@@ -112,7 +113,7 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       id: 'iterative-migration',
       dependsOn: ['budget-check-4'],
       input: fromStep('task-graph-construction'),
-      run: (ctx, input) => executeIterativeMigration(ctx, input as import('./steps/task-graph.js').TaskGraphOutput | undefined),
+      run: (ctx, input) => executeIterativeMigration(ctx, input as TaskGraphOutput | undefined),
     }),
     gate<MigrationFlowContext>({
       id: 'budget-check-5',

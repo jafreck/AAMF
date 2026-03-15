@@ -8,7 +8,7 @@
 import { join } from 'node:path';
 import {
   defineFlow, step, loop, parallel, conditional,
-  FlowRunner, type FlowDefinition, type FlowNode,
+  FlowRunner, type FlowDefinition, type FlowNode, type FlowRunResult,
 } from '@cadre-dev/framework/flow';
 import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
 import type { MigrationFlowContext, WaveValidationResult } from '../context.js';
@@ -438,11 +438,24 @@ function buildWaveBarrierFlow(
     const waveTasks = waves[w]!;
     const prevDep = w > 0 ? [`wave-${w - 1}-commit`] : undefined;
 
-    // Wave task execution (parallel branches)
+    // Wave start marker — emit lifecycle event
     const waveTasksCopy = waveTasks;
+    const waveTaskIds = waveTasksCopy.map(t => t.id);
+    nodes.push(step<MigrationFlowContext>({
+      id: `wave-${w}-start`,
+      dependsOn: prevDep,
+      run: async (c) => {
+        if (c.context.phase5Snapshot) c.context.phase5Snapshot.waveCount++;
+        c.context.logger.info(`Wave ${w}: migrating ${waveTasksCopy.length} task(s)`);
+        c.context.logger.event({ type: 'wave-started', wave: w, taskIds: waveTaskIds });
+        await c.context.progress.appendWaveLifecycle({ wave: w, milestone: 'started' });
+      },
+    }));
+
+    // Wave task execution (parallel branches)
     nodes.push(parallel<MigrationFlowContext>({
       id: `wave-${w}-tasks`,
-      dependsOn: prevDep,
+      dependsOn: [`wave-${w}-start`],
       branches: Object.fromEntries(waveTasksCopy.map(task => [
         task.id,
         [step<MigrationFlowContext>({
@@ -452,10 +465,22 @@ function buildWaveBarrierFlow(
       ])),
     }));
 
+    // Barrier entry marker
+    nodes.push(step<MigrationFlowContext>({
+      id: `wave-${w}-barrier-enter`,
+      dependsOn: [`wave-${w}-tasks`],
+      run: async (c) => {
+        c.context.logger.event({ type: 'wave-completed', wave: w, taskIds: waveTaskIds, duration: 0 });
+        await c.context.progress.appendWaveLifecycle({ wave: w, milestone: 'completed' });
+        c.context.logger.event({ type: 'wave-barrier-entered', wave: w });
+        await c.context.progress.appendWaveLifecycle({ wave: w, milestone: 'barrier-entered' });
+      },
+    }));
+
     // Convergence loop: validate → conditional fix → re-validate
     nodes.push(loop<MigrationFlowContext>({
       id: `wave-${w}-convergence`,
-      dependsOn: [`wave-${w}-tasks`],
+      dependsOn: [`wave-${w}-barrier-enter`],
       maxIterations: maxConvergence,
       do: [
         step<MigrationFlowContext>({
@@ -495,7 +520,7 @@ function buildWaveBarrierFlow(
       },
     }));
 
-    // Wave commit
+    // Wave commit + barrier release
     nodes.push(step<MigrationFlowContext>({
       id: `wave-${w}-commit`,
       dependsOn: [`wave-${w}-check`],
@@ -503,6 +528,8 @@ function buildWaveBarrierFlow(
         c.context.deferGitCommits = false;
         await commitForWave(c.context, w, waveTasksCopy.map(t => t.id));
         c.context.deferGitCommits = true;
+        c.context.logger.event({ type: 'wave-barrier-released', wave: w, duration: 0 });
+        await c.context.progress.appendWaveLifecycle({ wave: w, milestone: 'barrier-released' });
       },
     }));
   }
@@ -687,13 +714,14 @@ export async function executeIterativeMigration(
 
   let flowSuccess = false;
   let flowError: string | undefined;
+  let flowResult: FlowRunResult<MigrationFlowContext> | undefined;
   try {
-    const result = await runner.run(phase5Flow, ctx, {
+    flowResult = await runner.run(phase5Flow, ctx, {
       checkpoint: phase5Checkpoint,
       concurrency: phase5Concurrency,
     });
-    flowSuccess = result.status === 'completed';
-    if (result.error) flowError = result.error.message;
+    flowSuccess = flowResult.status === 'completed';
+    if (flowResult.error) flowError = flowResult.error.message;
   } catch (error) {
     // The framework wraps step errors in FlowExecutionError with original as cause
     const rootCause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
@@ -710,18 +738,40 @@ export async function executeIterativeMigration(
     }
   }
 
+  // Count actually completed tasks from the nested flow result
+  let completedTaskCount = 0;
+  for (const task of sortedTasks) {
+    // A task is complete if its /complete (per-task) or /migrate (wave) substep ran
+    const completeId = executionMode === 'wave-barrier'
+      ? `${task.id}/migrate`
+      : `${task.id}/complete`;
+    const isCompleted = flowResult?.completedExecutionIds?.some(
+      (id: string) => id.includes(completeId),
+    );
+    if (isCompleted) completedTaskCount++;
+  }
+
+  // Run wave-end quality gates (for non-wave-barrier modes with non-enforce policy)
+  let waveEndGateError: string | undefined;
+  const gateMode = getQualityGateMode(ctx);
+  if (flowSuccess && gateMode !== 'enforce') {
+    waveEndGateError = await runWaveEndQualityGates(ctx, sortedTasks);
+  }
+
   if (ctx.phase5Snapshot) {
     ctx.phase5Snapshot.phase4DurationMs = Date.now() - start;
-    ctx.phase5Snapshot.completedTaskCount = sortedTasks.length;
+    ctx.phase5Snapshot.completedTaskCount = completedTaskCount;
     ctx.metricsCollector.setPhase4Snapshot(ctx.phase5Snapshot);
     ctx.phase5Snapshot = undefined;
   }
 
   const phase5Result: PhaseResult = {
     phase: 5, name: 'Iterative Migration',
-    success: flowSuccess,
+    success: flowSuccess && !waveEndGateError,
     outputPath: ctx.config.target.outputPath, duration: Date.now() - start,
-    error: flowSuccess ? undefined : flowError ?? 'Phase 5 nested flow did not complete successfully',
+    error: !flowSuccess
+      ? flowError ?? 'Phase 5 nested flow did not complete successfully'
+      : waveEndGateError ?? undefined,
   };
   assertPhaseSuccess(phase5Result);
   return phase5Result;

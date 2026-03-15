@@ -414,7 +414,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       // Pre-populate the Phase 5 nested flow checkpoint with completed execution IDs.
       // The framework skips nodes whose execution ID is already in completedExecutionIds.
       const state = env.checkpoint.getState();
-      (state as Record<string, unknown>)['__phase5FlowCheckpoint'] = {
+      state.__phase5FlowCheckpoint = {
         flowId: 'phase-5-per-task',
         status: 'completed',
         startedAt: new Date().toISOString(),

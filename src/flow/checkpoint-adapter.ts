@@ -7,8 +7,6 @@ import type { FlowCheckpointAdapter, FlowCheckpointSnapshot } from '@cadre-dev/f
 import type { CheckpointManager } from '../core/checkpoint.js';
 import type { MigrationFlowContext } from './context.js';
 
-const FLOW_CHECKPOINT_KEY = '__flowCheckpoint';
-
 /**
  * Wraps AAMF's existing {@link CheckpointManager} to satisfy the framework's
  * {@link FlowCheckpointAdapter} contract.
@@ -21,7 +19,7 @@ export class AamfFlowCheckpointAdapter implements FlowCheckpointAdapter<Migratio
 
   async load(flowId: string): Promise<FlowCheckpointSnapshot<MigrationFlowContext> | null> {
     const state = this.checkpoint.getState();
-    const stored = (state as unknown as Record<string, unknown>)[FLOW_CHECKPOINT_KEY];
+    const stored = state.__flowCheckpoint;
     if (!stored || typeof stored !== 'object') return null;
     const snapshot = stored as FlowCheckpointSnapshot<MigrationFlowContext>;
     if (snapshot.flowId !== flowId) return null;
@@ -43,14 +41,13 @@ export class AamfFlowCheckpointAdapter implements FlowCheckpointAdapter<Migratio
       // Do not persist context — it contains non-serialisable service references.
       // The context is reconstructed from the runtime on resume.
     };
-    (state as unknown as Record<string, unknown>)[FLOW_CHECKPOINT_KEY] = serialisable;
+    state.__flowCheckpoint = serialisable;
     await this.checkpoint.save(state);
   }
 }
 
 // ─── Phase 5 Nested Flow Checkpoint ─────────────────────────────────
 
-const PHASE5_CHECKPOINT_KEY = '__phase5FlowCheckpoint';
 
 /**
  * Checkpoint adapter for Phase 5's nested flow.
@@ -61,7 +58,7 @@ export class Phase5CheckpointAdapter implements FlowCheckpointAdapter<MigrationF
 
   async load(flowId: string): Promise<FlowCheckpointSnapshot<MigrationFlowContext> | null> {
     const state = this.checkpoint.getState();
-    const stored = (state as unknown as Record<string, unknown>)[PHASE5_CHECKPOINT_KEY];
+    const stored = state.__phase5FlowCheckpoint;
     if (!stored || typeof stored !== 'object') return null;
     const snapshot = stored as FlowCheckpointSnapshot<MigrationFlowContext>;
     if (snapshot.flowId !== flowId) return null;
@@ -80,7 +77,7 @@ export class Phase5CheckpointAdapter implements FlowCheckpointAdapter<MigrationF
       executionOutputs: snapshot.executionOutputs,
       error: snapshot.error,
     };
-    (state as unknown as Record<string, unknown>)[PHASE5_CHECKPOINT_KEY] = serialisable;
+    state.__phase5FlowCheckpoint = serialisable;
     await this.checkpoint.save(state);
   }
 }

@@ -58,7 +58,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     }
   });
 
-  it('should emit task-related events during wave execution', async () => {
+  it('should emit wave lifecycle events', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK], {
       options: {
@@ -79,12 +79,12 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     try {
       await executeIterativeMigration(env.flowCtx);
 
-      // With the nested FlowRunner, wave lifecycle events are not emitted.
-      // Instead, task-level agent events are still emitted.
-      const agentEvents = events.filter(e =>
-        typeof e.type === 'string' && (e.type === 'agent-launched' || e.type === 'agent-completed'),
+      const waveEvents = events.filter(e =>
+        typeof e.type === 'string' && e.type.startsWith('wave-'),
       );
-      expect(agentEvents.length).toBeGreaterThan(0);
+      expect(waveEvents.length).toBeGreaterThan(0);
+      expect(waveEvents.some(e => e.type === 'wave-started')).toBe(true);
+      expect(waveEvents.some(e => e.type === 'wave-completed')).toBe(true);
     } finally {
       spawnSpy.mockRestore();
     }
@@ -211,7 +211,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     // Pre-populate the Phase 5 nested flow checkpoint with task-001 completed.
     // The framework skips nodes whose execution ID is already completed.
     const state = env.checkpoint.getState();
-    (state as Record<string, unknown>)['__phase5FlowCheckpoint'] = {
+    state.__phase5FlowCheckpoint = {
       flowId: 'phase-5-wave-barrier',
       status: 'completed',
       startedAt: new Date().toISOString(),

@@ -84,6 +84,10 @@ export interface CheckpointState {
   adjudicationEvents?: AdjudicationEventRecord[];
   /** Per-phase deterministic resume cursors for mid-stage checkpointing. */
   phaseCursors?: PhaseCursorMap;
+  /** Top-level flow checkpoint snapshot (managed by AamfFlowCheckpointAdapter). */
+  __flowCheckpoint?: unknown;
+  /** Phase 5 nested flow checkpoint snapshot (managed by Phase5CheckpointAdapter). */
+  __phase5FlowCheckpoint?: unknown;
 }
 
 export interface CheckpointFailedTask {
