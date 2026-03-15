@@ -1,5 +1,9 @@
 import { AgentInvocation, AgentResult, AgentLauncherFn } from '../agents/types.js';
-import { Logger } from '../logging/logger.js';
+import {
+  RetryExecutor as FrameworkRetryExecutor,
+  RETRY_ORIGINAL,
+  type LoggerLike,
+} from '@cadre-dev/framework/runtime';
 
 /** Configuration options for retry behaviour. */
 export interface RetryOptions {
@@ -29,101 +33,124 @@ export type RetryResult = AgentResult & {
 };
 
 /**
- * Executes agent invocations with retry logic and optional parity-failure-resolver escalation.
+ * Signals that an agent invocation succeeded on the CLI level (exit 0) but the
+ * result indicates logical failure (success: false). Used to bridge AAMF's
+ * return-value-based failure signalling with the framework's exception-based retry.
+ */
+class AgentLogicalFailure extends Error {
+  constructor(readonly result: AgentResult) {
+    super(result.error ?? 'agent returned success=false');
+  }
+}
+
+/** Heuristic classification for transient infrastructure/model transport failures. */
+function isInfrastructureFailure(errorText: string): boolean {
+  return /\b503\b|goaway|connection_error|service unavailable|network error|connection (refused|reset|timed out)|deadline exceeded|timed? ?out/i
+    .test(errorText);
+}
+
+/**
+ * Executes agent invocations with retry logic and optional recovery escalation.
  *
- * When all retry attempts are exhausted, the executor can optionally invoke an
- * `onExhausted` callback to produce a recovery invocation. If recovery succeeds,
- * the original task is retried once more.
+ * Delegates the retry loop to @cadre-dev/framework's RetryExecutor, using:
+ *   - computeDelay for infrastructure fast-retry (250 ms–2 s) vs standard backoff
+ *   - async onRetry for checkpoint writes between attempts
+ *   - RETRY_ORIGINAL for recovery-then-retry-original pattern
  */
 export class RetryExecutor {
-  constructor(private launcher: AgentLauncherFn, private logger: Logger) {}
+  private readonly frameworkRetry: FrameworkRetryExecutor;
 
-  /** Heuristic classification for transient infrastructure/model transport failures. */
-  private isInfrastructureFailure(errorText: string): boolean {
-    return /\b503\b|goaway|connection_error|service unavailable|network error|connection (refused|reset|timed out)|deadline exceeded|timed? ?out/i
-      .test(errorText);
-  }
-
-  /**
-   * Calculate backoff delay with exponential increase and jitter.
-   * delay = min(initialDelay * 2^(attempt-1) + random jitter, maxDelay)
-   */
-  private calculateBackoff(
-    attempt: number,
-    initialDelayMs: number,
-    maxDelayMs: number,
-    isInfrastructureFailure: boolean,
-  ): number {
-    if (isInfrastructureFailure) {
-      // For transient infra/model transport failures, retry quickly.
-      // Keep waits short to avoid long stalls between attempts.
-      const exponential = 250 * Math.pow(2, attempt - 1);
-      const jitter = Math.random() * 100;
-      return Math.min(exponential + jitter, 2_000);
-    }
-
-    const exponential = initialDelayMs * Math.pow(2, attempt - 1);
-    const jitter = Math.random() * initialDelayMs * 0.5;
-    return Math.min(exponential + jitter, maxDelayMs);
-  }
-
-  /** Sleep for a given number of milliseconds. */
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  constructor(private launcher: AgentLauncherFn, private logger: LoggerLike) {
+    this.frameworkRetry = new FrameworkRetryExecutor(logger);
   }
 
   /** Execute with retries and exponential backoff. Returns the result of the last attempt. */
   async executeWithRetry(invocation: AgentInvocation, options: RetryOptions): Promise<RetryResult> {
-    const initialDelayMs = options.initialDelayMs ?? 1_000;
-    const maxDelayMs = options.maxDelayMs ?? 30_000;
     let lastResult: AgentResult | null = null;
     let recoveryAttempted = false;
+    const label = `${invocation.agent}${invocation.taskId ? ` (${invocation.taskId})` : ''}`;
 
-    for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
-      this.logger.info(`Attempt ${attempt}/${options.maxAttempts} for ${invocation.agent}${invocation.taskId ? ` (${invocation.taskId})` : ''}`);
-
-      const attemptInv = { ...invocation, attemptNumber: attempt, maxAttempts: options.maxAttempts };
-      lastResult = await this.launcher(attemptInv);
-
-      if (lastResult.success) {
-        return { ...lastResult, attempts: attempt, recoveryAttempted, wasRetry: attempt > 1 };
-      }
-
-      this.logger.warn(`Attempt ${attempt} failed: ${lastResult.error ?? 'unknown error'}`);
-
-      if (attempt < options.maxAttempts) {
-        if (options.onRetry) {
-          await options.onRetry(attempt, lastResult.error ?? 'unknown error');
+    const frameworkResult = await this.frameworkRetry.execute<AgentResult>({
+      fn: async (attempt: number) => {
+        this.logger.info(`Attempt ${attempt}/${options.maxAttempts} for ${label}`);
+        const attemptInv = { ...invocation, attemptNumber: attempt, maxAttempts: options.maxAttempts };
+        const result = await this.launcher(attemptInv);
+        lastResult = result;
+        if (!result.success) {
+          throw new AgentLogicalFailure(result);
         }
+        return result;
+      },
+      maxAttempts: options.maxAttempts,
+      baseDelayMs: options.initialDelayMs ?? 1_000,
+      maxDelayMs: options.maxDelayMs ?? 30_000,
 
-        const errorText = lastResult.error ?? 'unknown error';
-        const isInfra = this.isInfrastructureFailure(errorText);
-        const delay = this.calculateBackoff(attempt, initialDelayMs, maxDelayMs, isInfra);
-        this.logger.info(
-          `Backing off ${Math.round(delay)}ms before retry ${attempt + 1}` +
-          (isInfra ? ' (infra-fast-retry)' : ''),
-        );
-        await this.sleep(delay);
-      }
-    }
+      // Error-adaptive delay: fast profile for transient infra errors,
+      // standard exponential backoff for logical failures.
+      computeDelay: (attempt, error, defaults) => {
+        const errorText = error instanceof AgentLogicalFailure
+          ? error.result.error ?? '' : String(error);
+        if (isInfrastructureFailure(errorText)) {
+          const exponential = 250 * Math.pow(2, attempt - 1);
+          const jitter = Math.random() * 100;
+          return Math.min(exponential + jitter, 2_000);
+        }
+        const exponential = defaults.baseDelayMs * Math.pow(2, attempt - 1);
+        const jitter = Math.random() * defaults.baseDelayMs * 0.5;
+        return Math.min(exponential + jitter, defaults.maxDelayMs);
+      },
 
-    // All retries exhausted — try recovery if configured
-    if (options.onExhausted && invocation.taskId) {
-      const recoveryInvocation = await options.onExhausted(invocation.taskId, lastResult?.error ?? 'unknown');
-      if (recoveryInvocation) {
+      onRetry: options.onRetry
+        ? async (attempt, err) => {
+            const errorStr = err instanceof AgentLogicalFailure
+              ? err.result.error ?? 'unknown error' : String(err);
+            await options.onRetry!(attempt, errorStr);
+          }
+        : undefined,
+
+      onExhausted: async (err: unknown) => {
+        if (!options.onExhausted || !invocation.taskId) return null;
+        const errorStr = err instanceof AgentLogicalFailure
+          ? err.result.error ?? 'unknown' : String(err);
+        const recoveryInvocation = await options.onExhausted(invocation.taskId, errorStr);
+        if (!recoveryInvocation) return null;
+
         this.logger.info(`Attempting parity-failure-resolver for ${invocation.taskId}`);
         recoveryAttempted = true;
         const recoveryResult = await this.launcher(recoveryInvocation);
         if (recoveryResult.success) {
-          // After recovery, retry the original once more
           this.logger.info(`Recovery succeeded, retrying original task ${invocation.taskId}`);
-          const retryResult = await this.launcher({ ...invocation, attemptNumber: options.maxAttempts + 1, maxAttempts: options.maxAttempts + 1 });
-          return { ...retryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true, wasRetry: true };
+          return RETRY_ORIGINAL;
         }
-        return { ...recoveryResult, attempts: options.maxAttempts + 1, recoveryAttempted: true, wasRetry: true };
-      }
+        lastResult = recoveryResult;
+        return null;
+      },
+      description: label,
+    });
+
+    if (frameworkResult.success && frameworkResult.result) {
+      return {
+        ...frameworkResult.result,
+        attempts: frameworkResult.attempts,
+        recoveryAttempted: frameworkResult.recoveryUsed || recoveryAttempted,
+        wasRetry: frameworkResult.attempts > 1,
+      };
     }
 
-    return { ...lastResult!, attempts: options.maxAttempts, recoveryAttempted, wasRetry: options.maxAttempts > 1 };
+    return {
+      ...(lastResult ?? {
+        agent: invocation.agent,
+        taskId: invocation.taskId,
+        exitCode: 1,
+        success: false,
+        outputFiles: [],
+        duration: 0,
+        outputParsed: false,
+        error: frameworkResult.error ?? 'all retries exhausted',
+      }),
+      attempts: frameworkResult.attempts,
+      recoveryAttempted: frameworkResult.recoveryUsed || recoveryAttempted,
+      wasRetry: frameworkResult.attempts > 1,
+    } as RetryResult;
   }
 }

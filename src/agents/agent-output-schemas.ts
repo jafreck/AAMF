@@ -8,6 +8,7 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { fileExists, readJson } from '../util/fs.js';
+import { extractCadreJsonWithError } from '@cadre-dev/framework/runtime';
 
 /**
  * Base Zod schema for structured output blocks emitted by AAMF agents.
@@ -67,12 +68,18 @@ export const KbIndexerOutput = AamfOutputBase.extend({
 // ─── Parsing helpers ─────────────────────────────────────────────────────────
 
 /**
- * Extract and validate the last ```aamf-json fenced block from agent stdout.
+ * Extract and validate the last ```aamf-json (or ```cadre-json) fenced block
+ * from agent stdout.
+ *
+ * Tries AAMF's native ```aamf-json marker first, then falls back to the
+ * @cadre-dev/framework's ```cadre-json extractor (which includes additional
+ * error-recovery heuristics like unescaped-quote repair).
  */
 export function parseAamfOutput<T extends z.ZodTypeAny>(
   stdout: string,
   schema: T,
 ): { data: z.infer<T>; parsed: true } | { parsed: false; error: string } {
+  // Primary: try aamf-json block (AAMF's native format)
   const blockRegex = /```aamf-json\r?\n([\s\S]*?)```/g;
   let lastMatch: RegExpExecArray | null = null;
   let match: RegExpExecArray | null;
@@ -80,15 +87,24 @@ export function parseAamfOutput<T extends z.ZodTypeAny>(
     lastMatch = match;
   }
 
-  if (!lastMatch) {
-    return { parsed: false, error: MISSING_BLOCK_ERROR };
-  }
-
   let raw: unknown;
-  try {
-    raw = JSON.parse(lastMatch[1]!.trim());
-  } catch (err) {
-    return { parsed: false, error: `malformed JSON in aamf-json block: ${String(err)}` };
+
+  if (lastMatch) {
+    try {
+      raw = JSON.parse(lastMatch[1]!.trim());
+    } catch (err) {
+      return { parsed: false, error: `malformed JSON in aamf-json block: ${String(err)}` };
+    }
+  } else {
+    // Fallback: try cadre-json block via the framework's extractor.
+    // This enables forward-compatibility with agents that emit cadre-json
+    // blocks and benefits from the framework's unescaped-quote recovery.
+    const cadreResult = extractCadreJsonWithError(stdout);
+    if (cadreResult.parsed !== null) {
+      raw = cadreResult.parsed;
+    } else {
+      return { parsed: false, error: MISSING_BLOCK_ERROR };
+    }
   }
 
   const result = schema.safeParse(raw);

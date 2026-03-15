@@ -99,36 +99,21 @@ function claudeCodeDescriptor(config: MigrationConfig): CliBackendDescriptor {
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
 
+import { stripVSCodeEnv as frameworkStripVSCodeEnv } from '@cadre-dev/framework/runtime';
+
 /**
  * Strip VS Code / Electron IPC environment variables so that CLI
  * invocations don't register with the running VS Code instance and instead
  * run in a truly headless, out-of-process mode.
+ *
+ * Delegates to @cadre-dev/framework's stripVSCodeEnv (which strips all
+ * VSCODE_* and ELECTRON_* prefixed variables) and additionally strips
+ * GIT_ASKPASS and TERM_PROGRAM for full headless isolation.
  */
 function stripVSCodeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const stripped: NodeJS.ProcessEnv = {};
-  const blocklist = [
-    'VSCODE_IPC_HOOK_CLI',
-    'VSCODE_IPC_HOOK',
-    'VSCODE_GIT_IPC_HANDLE',
-    'VSCODE_GIT_ASKPASS_NODE',
-    'VSCODE_GIT_ASKPASS_EXTRA_ARGS',
-    'VSCODE_GIT_ASKPASS_MAIN',
-    'VSCODE_INJECTION',
-    'VSCODE_PID',
-    'VSCODE_CWD',
-    'VSCODE_NLS_CONFIG',
-    'VSCODE_HANDLES_SIGPIPE',
-    'VSCODE_HANDLES_UNCAUGHT_ERRORS',
-    'ELECTRON_RUN_AS_NODE',
-    'ELECTRON_NO_ASAR',
-    'GIT_ASKPASS',
-    'TERM_PROGRAM',          // Often set to 'vscode'
-  ];
-  for (const [key, value] of Object.entries(env)) {
-    if (!blocklist.includes(key) && !key.startsWith('VSCODE_')) {
-      stripped[key] = value;
-    }
-  }
+  const stripped = frameworkStripVSCodeEnv(env as Record<string, string | undefined>) as NodeJS.ProcessEnv;
+  delete stripped['GIT_ASKPASS'];
+  delete stripped['TERM_PROGRAM'];
   return stripped;
 }
 

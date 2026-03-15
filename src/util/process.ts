@@ -1,8 +1,6 @@
 import { spawn, execFile, type SpawnOptions } from 'node:child_process';
 import { platform, homedir } from 'node:os';
-
-/** Tracks PIDs of all active detached child processes spawned by spawnWithTimeout. */
-const activeChildPids = new Set<number>();
+import { trackProcess, killAllTrackedProcesses } from '@cadre-dev/framework/runtime';
 
 /** Result returned after a spawned child process completes. */
 export interface SpawnResult {
@@ -43,7 +41,7 @@ export async function spawnWithTimeout(
     // (e.g. Electron helpers spawned by the copilot CLI) via process.kill(-pid).
     const child = spawn(command, args, { ...spawnOpts, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 
-    if (child.pid != null) activeChildPids.add(child.pid);
+    trackProcess(child);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -60,7 +58,6 @@ export async function spawnWithTimeout(
       settled = true;
       if (timer) clearTimeout(timer);
       if (closeFallbackTimer) clearTimeout(closeFallbackTimer);
-      if (child.pid != null) activeChildPids.delete(child.pid);
 
       // Close read ends so inherited FDs in helper processes cannot keep
       // the parent event loop alive indefinitely.
@@ -120,7 +117,6 @@ export async function spawnWithTimeout(
     child.on('error', (err) => {
       if (timer) clearTimeout(timer);
       if (closeFallbackTimer) clearTimeout(closeFallbackTimer);
-      if (child.pid != null) activeChildPids.delete(child.pid);
       if (settled) return;
       settled = true;
       reject(err);
@@ -131,14 +127,12 @@ export async function spawnWithTimeout(
 /**
  * Kill all active child processes spawned by spawnWithTimeout.
  *
- * Iterates the PID registry and sends SIGKILL to each process group.
- * Used by the shutdown handler to prevent orphaned agent processes
- * when the runtime receives SIGINT/SIGTERM.
+ * Delegates to the @cadre-dev/framework process tracker which sends SIGTERM
+ * to each tracked process group. Used by the shutdown handler to prevent
+ * orphaned agent processes when the runtime receives SIGINT/SIGTERM.
  */
-export async function killAllActiveProcesses(): Promise<void> {
-  const pids = [...activeChildPids];
-  activeChildPids.clear();
-  await Promise.all(pids.map(pid => killProcessTree(pid)));
+export function killAllActiveProcesses(): void {
+  killAllTrackedProcesses();
 }
 
 /**

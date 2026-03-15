@@ -133,23 +133,23 @@ describe('spawnWithTimeout', () => {
       // Give it a moment to spawn
       await new Promise(r => setTimeout(r, 200));
       // Kill all active — this should terminate the child
-      await killAllActiveProcesses();
+      killAllActiveProcesses();
       const result = await promise;
       expect(result.killed).toBe(false); // killed flag is set by timeout, not external kill
       expect(result.exitCode).not.toBe(0);
     });
 
-    it('should be a no-op when no processes are active', async () => {
-      await expect(killAllActiveProcesses()).resolves.toBeUndefined();
+    it('should be a no-op when no processes are active', () => {
+      expect(() => killAllActiveProcesses()).not.toThrow();
     });
 
     it('should clear the registry after killing', async () => {
       const promise = spawnWithTimeout('node', ['-e', 'setTimeout(() => {}, 60000)']);
       await new Promise(r => setTimeout(r, 200));
-      await killAllActiveProcesses();
+      killAllActiveProcesses();
       await promise;
       // Second call should be a no-op (registry was cleared)
-      await expect(killAllActiveProcesses()).resolves.toBeUndefined();
+      expect(() => killAllActiveProcesses()).not.toThrow();
     });
   });
 });
