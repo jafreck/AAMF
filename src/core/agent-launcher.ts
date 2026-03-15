@@ -699,10 +699,9 @@ export class AgentLauncher {
       }
     }
     this.lastInvocationTime = Date.now();
-    const queueDelay = Date.now() - queueStart;
     const result = await this.runner.run(invocation);
-    if (queueDelay > 0) {
-      result.queueDelay = queueDelay;
+    if (delay > 0) {
+      result.queueDelay = Date.now() - queueStart;
     }
     return result;
   }
