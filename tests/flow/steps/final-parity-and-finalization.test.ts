@@ -7,10 +7,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
-import { runFinalParityIteration, noFixesNeeded } from '../../src/flow/steps/final-parity.js';
-import { launchE2eTestCrafter, launchE2eSuiteWriters, launchDocWriter } from '../../src/flow/steps/finalization.js';
-import { runIdiomaticReviewIteration, noIdiomaticIssues } from '../../src/flow/steps/idiomatic-refactor.js';
-import { finalizeAndReport } from '../../src/flow/steps/completion.js';
+import { runFinalParityIteration, noFixesNeeded } from '../../../src/flow/steps/final-parity.js';
+import { launchE2eTestCrafter, launchE2eSuiteWriters, launchDocWriter } from '../../../src/flow/steps/finalization.js';
+import { runIdiomaticReviewIteration, noIdiomaticIssues } from '../../../src/flow/steps/idiomatic-refactor.js';
+import { finalizeAndReport } from '../../../src/flow/steps/completion.js';
 import {
   setupFlowTest,
   setupFlowTestWithTasks,
@@ -19,8 +19,8 @@ import {
   writeE2eTestPlan,
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
-} from '../helpers/flow-mocks.js';
-import type { FlowTestEnv } from '../helpers/flow-mocks.js';
+} from '../../helpers/flow-mocks.js';
+import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
 
 let env: FlowTestEnv;
 

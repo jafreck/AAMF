@@ -277,38 +277,28 @@ export class MigrationRuntime {
     try {
       const runnerOptions: FlowRunnerOptions<MigrationFlowContext> = {
         checkpoint: checkpointAdapter,
-        signal: this.abortController.signal,
-        hooks: {
-          onNodeStart: async (nodeId) => {
-            this.logger.setPhase(nodeIdToPhase(nodeId));
-          },
-          onNodeComplete: async (nodeId, _node, output) => {
-            const phaseResult = output as PhaseResult | undefined;
-            if (phaseResult && typeof phaseResult === 'object' && 'phase' in phaseResult) {
-              phaseResults.push(phaseResult);
-
-              // Start KB server after Phase 0
-              if (phaseResult.phase === 0 && phaseResult.success && !flowContext.kbServer) {
-                await this.startKbServer(flowContext);
-              }
-
-              // All phases are critical — success is asserted inside the step.
-              // If we reach onNodeComplete, the step succeeded.
-              await this.checkpoint.completePhase(phaseResult.phase, phaseResult.outputPath ?? '');
-              await this.progress.updatePhase(phaseResult.phase, 'completed');
-              this.logger.event({ type: 'phase-completed', phase: phaseResult.phase, name: phaseResult.name, success: true, duration: phaseResult.duration });
-
-              // Token usage sync
-              this.progress.setTokenUsage(tokenTracker.toCheckpointData());
-            }
-          },
-          onNodeSkip: async (nodeId) => {
-            this.logger.info(`Flow node skipped (checkpoint resume): ${nodeId}`);
-          },
-        },
       };
 
       const flowResult = await runner.run(flow, flowContext, runnerOptions);
+
+      // Process phase results from execution outputs
+      for (const output of Object.values(flowResult.executionOutputs ?? {})) {
+        const phaseResult = output as PhaseResult | undefined;
+        if (phaseResult && typeof phaseResult === 'object' && 'phase' in phaseResult) {
+          phaseResults.push(phaseResult);
+
+          // Start KB server after Phase 0
+          if (phaseResult.phase === 0 && phaseResult.success && !flowContext.kbServer) {
+            await this.startKbServer(flowContext);
+          }
+
+          await this.checkpoint.completePhase(phaseResult.phase, phaseResult.outputPath ?? '');
+          await this.progress.updatePhase(phaseResult.phase, 'completed');
+          this.logger.event({ type: 'phase-completed', phase: phaseResult.phase, name: phaseResult.name, success: true, duration: phaseResult.duration });
+
+          this.progress.setTokenUsage(tokenTracker.toCheckpointData());
+        }
+      }
 
       // Status may be 'failed', 'cancelled', or 'timed-out' in newer framework versions
       const status = flowResult.status as string;
