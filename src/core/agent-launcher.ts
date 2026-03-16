@@ -193,7 +193,7 @@ function adaptLogger(logger: Logger): BackendLoggerLike {
 function toFrameworkInvocation(inv: AgentInvocation): FrameworkInvocation {
   return {
     agent: inv.agent,
-    issueNumber: 0,
+    workItemId: inv.workItemId ?? '',
     phase: inv.phase,
     contextPath: inv.contextPath,
     outputPath: inv.outputPath,
