@@ -14,7 +14,7 @@ import { writeFile, mkdir, readFile } from 'node:fs/promises';
 // ─── flow/index.ts barrel import ─────────────────────────────────────────────
 
 // Static import to ensure v8 coverage tracks the barrel file
-import * as flowModule from '../../src/flow/index.js';
+import * as flowModule from '../../../src/flow/index.js';
 
 describe('flow/index.ts barrel exports', () => {
   it('should export migrationFlow', () => {
@@ -48,7 +48,7 @@ describe('flow/index.ts barrel exports', () => {
 
 // ─── Phase 6 failure paths ──────────────────────────────────────────────────
 
-import { runFinalParityIteration } from '../../src/flow/steps/final-parity.js';
+import { runFinalParityIteration } from '../../../src/flow/steps/final-parity.js';
 import {
   setupFlowTest,
   setupFlowTestWithTasks,
@@ -57,8 +57,8 @@ import {
   writeE2eTestPlan,
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
-} from '../helpers/flow-mocks.js';
-import type { FlowTestEnv } from '../helpers/flow-mocks.js';
+} from '../../helpers/flow-mocks.js';
+import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
 
 let env: FlowTestEnv;
 
@@ -109,7 +109,7 @@ describe('runFinalParityIteration — failure paths', () => {
 
 // ─── Phase 7 — Finalization: suite retry & budget ────────────────────────────
 
-import { launchE2eSuiteWriters, launchE2eTestCrafter, launchDocWriter } from '../../src/flow/steps/finalization.js';
+import { launchE2eSuiteWriters, launchE2eTestCrafter, launchDocWriter } from '../../../src/flow/steps/finalization.js';
 
 describe('launchE2eSuiteWriters — budget and retry', () => {
   it('should skip suites when token budget is exceeded', async () => {
@@ -211,7 +211,7 @@ describe('launchDocWriter — failure path', () => {
 
 // ─── Phase 4 — Planning (scaffold verification, adjudicator heuristic) ──────
 
-import { launchMigrationPlanner } from '../../src/flow/steps/planning.js';
+import { launchMigrationPlanner } from '../../../src/flow/steps/planning.js';
 
 describe('launchMigrationPlanner — extended', () => {
   it('should detect strategy-* variant artifacts and log warning', async () => {
@@ -292,7 +292,7 @@ describe('launchMigrationPlanner — extended', () => {
       }]),
     );
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });
@@ -333,7 +333,7 @@ describe('launchMigrationPlanner — extended', () => {
       }]),
     );
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 1, stdout: '', stderr: 'compile error', killed: false,
     });
@@ -354,7 +354,7 @@ describe('launchMigrationPlanner — extended', () => {
 
 // ─── Phase 8 — Idiomatic Refactor: failure + format/lint ─────────────────────
 
-import { runIdiomaticReviewIteration, noIdiomaticIssues } from '../../src/flow/steps/idiomatic-refactor.js';
+import { runIdiomaticReviewIteration, noIdiomaticIssues } from '../../../src/flow/steps/idiomatic-refactor.js';
 
 describe('runIdiomaticReviewIteration — failure paths', () => {
   it('should throw when idiomatic-reviewer fails', async () => {
@@ -433,7 +433,7 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
       },
     });
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });

@@ -35,7 +35,7 @@ import {
   checkBudget,
   getParityIssueSummary,
   checkParityResult,
-} from '../../src/flow/steps/shared.js';
+} from '../../../src/flow/steps/shared.js';
 import {
   setupFlowTest,
   setupFlowTestWithTasks,
@@ -43,9 +43,9 @@ import {
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
   makeTask,
-} from '../helpers/flow-mocks.js';
-import type { FlowTestEnv } from '../helpers/flow-mocks.js';
-import { TaskQueue } from '../../src/execution/task-queue.js';
+} from '../../helpers/flow-mocks.js';
+import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
+import { TaskQueue } from '../../../src/execution/task-queue.js';
 
 let env: FlowTestEnv;
 
@@ -60,7 +60,7 @@ describe('runCommand', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'build ok', stderr: '', killed: false,
     });
@@ -77,7 +77,7 @@ describe('runCommand', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 1, stdout: '', stderr: 'compile error', killed: false,
     });
@@ -95,7 +95,7 @@ describe('runCommand', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 1, stdout: '', stderr: 'no space left on device', killed: false,
     });
@@ -113,7 +113,7 @@ describe('runCommand', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockRejectedValue(
       new Error('spawn ENOENT'),
     );
@@ -131,7 +131,7 @@ describe('runCommand', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 137, stdout: '', stderr: '', killed: true,
     });
@@ -160,7 +160,7 @@ describe('runCommand', () => {
       recoveryLoopTimeMs: 0,
     };
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: '', stderr: '', killed: false,
     });
@@ -190,7 +190,7 @@ describe('runCommandWithRecovery', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });
@@ -213,7 +213,7 @@ describe('runCommandWithRecovery', () => {
     });
 
     let callCount = 0;
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async () => {
       callCount++;
       if (callCount <= 1) {
@@ -241,7 +241,7 @@ describe('runCommandWithRecovery', () => {
     });
 
     let buildCallCount = 0;
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async () => {
       buildCallCount++;
       if (buildCallCount <= 2) {
@@ -271,7 +271,7 @@ describe('runCommandWithRecovery', () => {
       options: { maxRetriesPerTask: 1, maxInfraRetries: 0 },
     });
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 1, stdout: '', stderr: 'always fails', killed: false,
     });
@@ -294,7 +294,7 @@ describe('runCommandWithRecovery', () => {
       options: { maxRetriesPerTask: 1, maxInfraRetries: 0 },
     });
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 1, stdout: '', stderr: 'always fails', killed: false,
     });
@@ -552,7 +552,7 @@ describe('Git automation helpers', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout');
 
     try {
@@ -567,7 +567,7 @@ describe('Git automation helpers', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout');
 
     try {
@@ -582,7 +582,7 @@ describe('Git automation helpers', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout');
 
     try {
@@ -600,7 +600,7 @@ describe('Git automation helpers', () => {
     });
     env.ctx.deferGitCommits = true;
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout');
 
     try {
@@ -615,7 +615,7 @@ describe('Git automation helpers', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout');
 
     try {

@@ -8,14 +8,14 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
-import { launchKnowledgeBuilder } from '../../src/flow/steps/kb-construction.js';
-import { launchMigrationPlanner } from '../../src/flow/steps/planning.js';
+import { launchKnowledgeBuilder } from '../../../src/flow/steps/kb-construction.js';
+import { launchMigrationPlanner } from '../../../src/flow/steps/planning.js';
 import {
   setupFlowTest,
   createMockLauncher,
   createFailingLauncher,
-} from '../helpers/flow-mocks.js';
-import type { FlowTestEnv } from '../helpers/flow-mocks.js';
+} from '../../helpers/flow-mocks.js';
+import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
 
 let env: FlowTestEnv;
 
