@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@cadre-dev/framework": "0.2.1",
-    "@jafreck/lore": "^0.3.7",
+    "@jafreck/lore": "^0.3.8",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.6.2",

@@ -112,7 +112,7 @@ export class KbServerProcess {
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),
           });
-          const mcpServer = createLoreMcpServer(db, dbPath, embedder, serverOptions);
+          const mcpServer = await createLoreMcpServer(db, dbPath, embedder, serverOptions);
           await mcpServer.connect(transport);
 
           // Store session once the transport assigns an ID.

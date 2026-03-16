@@ -60,6 +60,15 @@ function createTestDb(dbPath: string): Database.Database {
       ref_line INTEGER NOT NULL, ref_character INTEGER,
       resolved_type_signature TEXT, definition_uri TEXT, definition_path TEXT
     );
+    CREATE TABLE IF NOT EXISTS symbol_metrics (
+      symbol_id   INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
+      line_count  INTEGER NOT NULL,
+      param_count INTEGER NOT NULL,
+      cyclomatic  INTEGER NOT NULL,
+      max_nesting INTEGER NOT NULL,
+      layer       TEXT    NOT NULL DEFAULT 'baseline',
+      generation  INTEGER NOT NULL DEFAULT 0
+    );
   `);
   return db;
 }
