@@ -412,7 +412,7 @@ describe('ContextBuilder', () => {
       expect(context.payload?.testType).toBe('unit');
     });
 
-    it('should route Phase 7 per-suite test-writer with e2eSuiteBrief payload', async () => {
+    it('should route Phase 6 per-suite test-writer with e2eSuiteBrief payload', async () => {
       const suiteBrief = {
         id: 'suite-001',
         name: 'Auth E2E',
@@ -461,7 +461,7 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe('/tmp/target');
     });
 
-    it('should not change Phase 5 test-writer context when e2eSuiteBrief is absent', async () => {
+    it('should not change Phase 4 test-writer context when e2eSuiteBrief is absent', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFile: 'src/auth.ts',
         kbEntry: 'kb/auth.md',
@@ -493,7 +493,7 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe('/tmp/target/tests/e2e/bad');
     });
 
-    it('should fall through to Phase 5 path when e2eSuiteBrief is not a record', async () => {
+    it('should fall through to Phase 4 path when e2eSuiteBrief is not a record', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-str', {
         e2eSuiteBrief: 'not-an-object',
         targetFile: 'src/payments.ts',

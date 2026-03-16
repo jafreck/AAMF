@@ -1,5 +1,5 @@
 /**
- * Phase 5 — Iterative Migration
+ * Phase 4 — Iterative Migration
  *
  * The core migration loop, supporting both per-task and wave-barrier
  * execution modes.  Extracted from orchestrator.ts (previously ~2500 lines).
@@ -20,7 +20,7 @@ import { ParallelExecutor } from '../../execution/parallel-executor.js';
 import { TaskQueue } from '../../execution/task-queue.js';
 import { RetryExecutor } from '../../execution/retry.js';
 import { CostEstimator } from '../../budget/cost-estimator.js';
-import { Phase5CheckpointAdapter } from '../checkpoint-adapter.js';
+import { Phase4CheckpointAdapter } from '../checkpoint-adapter.js';
 import { fileExists, readJson, countFileLines } from '../../util/fs.js';
 
 import {
@@ -41,7 +41,7 @@ import {
 
 // ─── Substep Functions ───────────────────────────────────────────────
 // Each function executes one logical substep within a per-task migration.
-// The framework's checkpoint skip replaces the manual hasPhase5Substep guards.
+// The framework's checkpoint skip replaces the manual hasPhase4Substep guards.
 
 async function runMigrateSubstep(
   ctx: MigrationFlowContext, task: MigrationTask, retryExec: RetryExecutor,
@@ -423,7 +423,7 @@ function buildPerTaskFlow(
     }));
   }
 
-  return defineFlow('phase-5-per-task', nodes);
+  return defineFlow('phase-4-per-task', nodes);
 }
 
 /**
@@ -449,7 +449,7 @@ function buildWaveBarrierFlow(
       id: `wave-${w}-start`,
       dependsOn: prevDep,
       run: async (c) => {
-        if (c.context.phase5Snapshot) c.context.phase5Snapshot.waveCount++;
+        if (c.context.phase4Snapshot) c.context.phase4Snapshot.waveCount++;
         c.context.logger.info(`Wave ${w}: migrating ${waveTasksCopy.length} task(s)`);
         c.context.logger.event({ type: 'wave-started', wave: w, taskIds: waveTaskIds });
         await c.context.progress.appendWaveLifecycle({ wave: w, milestone: 'started' });
@@ -538,7 +538,7 @@ function buildWaveBarrierFlow(
     }));
   }
 
-  return defineFlow('phase-5-wave-barrier', nodes);
+  return defineFlow('phase-4-wave-barrier', nodes);
 }
 
 /**
@@ -603,7 +603,7 @@ export async function executeIterativeMigration(
         tasks = await readJson<MigrationTask[]>(mergedPlanPath);
       } else {
         const failResultNoPlan: PhaseResult = {
-          phase: 5, name: 'Iterative Migration', success: false, duration: Date.now() - start,
+          phase: 4, name: 'Iterative Migration', success: false, duration: Date.now() - start,
           error: 'migration-plan.md and tasks-merged.json not found — Phase 1 may not have completed',
         };
         assertPhaseSuccess(failResultNoPlan);
@@ -616,7 +616,7 @@ export async function executeIterativeMigration(
   }
   if (tasks.length === 0) {
     ctx.logger.warn('No tasks found in migration plan');
-    return { phase: 5, name: 'Iterative Migration', success: true, outputPath: ctx.config.target.outputPath, duration: Date.now() - start };
+    return { phase: 4, name: 'Iterative Migration', success: true, outputPath: ctx.config.target.outputPath, duration: Date.now() - start };
   }
 
   // 1b. Validate maxLinesPerTask
@@ -641,15 +641,15 @@ export async function executeIterativeMigration(
   const model = getConfiguredRuntimeModel(ctx);
   const projected = ctx.costEstimator.estimateFromTotal(model, estimatedTotalTokens);
   ctx.logger.info(
-    `Phase 5: ${taskCount} tasks, estimated ~${estimatedTotalTokens.toLocaleString()} tokens, ` +
+    `Phase 4: ${taskCount} tasks, estimated ~${estimatedTotalTokens.toLocaleString()} tokens, ` +
     `projected cost: ${CostEstimator.formatCost(projected.total)} (${model})`,
   );
-  await ctx.progress.appendEvent(`Phase 5 projection: ${taskCount} tasks, ~${CostEstimator.formatCost(projected.total)} estimated`);
+  await ctx.progress.appendEvent(`Phase 4 projection: ${taskCount} tasks, ~${CostEstimator.formatCost(projected.total)} estimated`);
   if (ctx.config.options.tokenBudget) {
     const currentUsage = ctx.tokenTracker.getTotal();
     if (currentUsage + estimatedTotalTokens > ctx.config.options.tokenBudget) {
       ctx.logger.warn(
-        `Projected Phase 5 usage (${estimatedTotalTokens.toLocaleString()}) plus current (${currentUsage.toLocaleString()}) exceeds budget`,
+        `Projected Phase 4 usage (${estimatedTotalTokens.toLocaleString()}) plus current (${currentUsage.toLocaleString()}) exceeds budget`,
       );
     }
   }
@@ -686,16 +686,16 @@ export async function executeIterativeMigration(
     sortedTasks = TaskQueue.topologicalSort(tasks);
   }
 
-  // 3. Build and execute nested Phase 5 flow
+  // 3. Build and execute nested Phase 4 flow
   const retryExec = new RetryExecutor(
     (inv) => launchAgentWithEvents(ctx, inv), ctx.logger,
   );
   const executionMode = ctx.config.options.executionMode ?? 'per-task';
-  const phase5Concurrency =
+  const phase4Concurrency =
     isGitAutomationEnabled(ctx) && executionMode !== 'wave-barrier'
       ? 1 : ctx.config.options.maxParallelAgents;
 
-  ctx.phase5Snapshot = {
+  ctx.phase4Snapshot = {
     executionMode, phase4DurationMs: 0, completedTaskCount: 0,
     waveCount: 0, waveValidationRuns: 0, waveConvergenceIterations: 0,
     waveConvergenceFailures: 0, waveConvergenceLimitHits: 0,
@@ -709,20 +709,20 @@ export async function executeIterativeMigration(
     ctx.deferGitCommits = true;
   }
 
-  const phase5Flow = executionMode === 'wave-barrier'
+  const phase4Flow = executionMode === 'wave-barrier'
     ? buildWaveBarrierFlow(ctx, sortedTasks, retryExec)
     : buildPerTaskFlow(ctx, sortedTasks, retryExec);
 
-  const phase5Checkpoint = new Phase5CheckpointAdapter(ctx.checkpoint);
+  const phase4Checkpoint = new Phase4CheckpointAdapter(ctx.checkpoint);
   const runner = new FlowRunner<MigrationFlowContext>();
 
   let flowSuccess = false;
   let flowError: string | undefined;
   let flowResult: FlowRunResult<MigrationFlowContext> | undefined;
   try {
-    flowResult = await runner.run(phase5Flow, ctx, {
-      checkpoint: phase5Checkpoint,
-      concurrency: phase5Concurrency,
+    flowResult = await runner.run(phase4Flow, ctx, {
+      checkpoint: phase4Checkpoint,
+      concurrency: phase4Concurrency,
     });
     flowSuccess = flowResult.status === 'completed';
     if (flowResult.error) flowError = flowResult.error.message;
@@ -734,7 +734,7 @@ export async function executeIterativeMigration(
     } else {
       flowError = error instanceof Error ? error.message : String(error);
     }
-    ctx.logger.error(`Phase 5 nested flow failed: ${flowError}`);
+    ctx.logger.error(`Phase 4 nested flow failed: ${flowError}`);
     flowSuccess = false;
   } finally {
     if (executionMode === 'wave-barrier') {
@@ -762,29 +762,29 @@ export async function executeIterativeMigration(
     waveEndGateError = await runWaveEndQualityGates(ctx, sortedTasks);
   }
 
-  if (ctx.phase5Snapshot) {
-    ctx.phase5Snapshot.phase4DurationMs = Date.now() - start;
-    ctx.phase5Snapshot.completedTaskCount = completedTaskCount;
-    ctx.metricsCollector.setPhase4Snapshot(ctx.phase5Snapshot);
-    ctx.phase5Snapshot = undefined;
+  if (ctx.phase4Snapshot) {
+    ctx.phase4Snapshot.phase4DurationMs = Date.now() - start;
+    ctx.phase4Snapshot.completedTaskCount = completedTaskCount;
+    ctx.metricsCollector.setPhase4Snapshot(ctx.phase4Snapshot);
+    ctx.phase4Snapshot = undefined;
   }
 
-  const phase5Result: PhaseResult = {
-    phase: 5, name: 'Iterative Migration',
+  const phase4Result: PhaseResult = {
+    phase: 4, name: 'Iterative Migration',
     success: flowSuccess && !waveEndGateError,
     outputPath: ctx.config.target.outputPath, duration: Date.now() - start,
     error: !flowSuccess
-      ? flowError ?? 'Phase 5 nested flow did not complete successfully'
+      ? flowError ?? 'Phase 4 nested flow did not complete successfully'
       : waveEndGateError ?? undefined,
   };
-  assertPhaseSuccess(phase5Result);
-  return phase5Result;
+  assertPhaseSuccess(phase4Result);
+  return phase4Result;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 async function runWaveValidation(ctx: MigrationFlowContext, wave: number): Promise<WaveValidationResult> {
-  if (ctx.phase5Snapshot) ctx.phase5Snapshot.waveValidationRuns++;
+  if (ctx.phase4Snapshot) ctx.phase4Snapshot.waveValidationRuns++;
   const waveTaskId = `wave-${wave}`;
   if (ctx.config.target.formatCommand) {
     const format = await runCommand(ctx, 'format', ctx.config.target.formatCommand, waveTaskId);

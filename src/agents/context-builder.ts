@@ -211,7 +211,7 @@ export class ContextBuilder {
         };
 
       case 'test-writer': {
-        // Phase 7 per-suite E2E path: payload carries a full suite brief
+        // Phase 6 per-suite E2E path: payload carries a full suite brief
         if (this.isRecord(payload?.e2eSuiteBrief)) {
           const brief = payload!.e2eSuiteBrief as Record<string, unknown>;
           const targetFiles = Array.isArray(brief.targetFiles) ? (brief.targetFiles as string[]) : [];
@@ -222,7 +222,7 @@ export class ContextBuilder {
             agentPayload: { taskId, testType: 'e2e', e2eSuiteBrief: brief },
           };
         }
-        // Phase 5 unit-test path (unchanged)
+        // Phase 4 unit-test path (unchanged)
         return {
           inputFiles: [
             ...(payload?.targetFile ? [String(payload.targetFile)] : []),
@@ -311,7 +311,7 @@ export class ContextBuilder {
   /**
    * Build the execution-strategy descriptor from the current config.
    * Injected into the planning agents' payload so they can reason about
-   * how Phase 5 will execute their task graph.
+   * how Phase 4 will execute their task graph.
    */
   private buildExecutionStrategy(): import('./types.js').ExecutionStrategy {
     const opts = this.config.options;

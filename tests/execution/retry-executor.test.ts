@@ -26,7 +26,7 @@ describe('RetryExecutor', () => {
       agent: 'code-migrator',
       contextPath: '/tmp/context.json',
       outputPath: '',
-      phase: 5,
+      phase: 4,
       workItemId: 'task-001',
       ...overrides,
     };
@@ -228,7 +228,7 @@ describe('RetryExecutor', () => {
         agent: 'parity-failure-resolver',
         contextPath: '/tmp/recovery-ctx.json',
         outputPath: '',
-        phase: 5,
+        phase: 4,
         workItemId: 'task-001',
       };
 
@@ -284,7 +284,7 @@ describe('RetryExecutor', () => {
         agent: 'parity-failure-resolver',
         contextPath: '/tmp/recovery-ctx.json',
         outputPath: '',
-        phase: 5,
+        phase: 4,
         workItemId: 'task-001',
       };
 
@@ -316,7 +316,7 @@ describe('RetryExecutor', () => {
         agent: 'parity-failure-resolver',
         contextPath: '/tmp/recovery.json',
         outputPath: '',
-        phase: 5,
+        phase: 4,
         workItemId: 'task-001',
       };
 
@@ -468,7 +468,7 @@ describe('RetryExecutor', () => {
         agent: 'parity-failure-resolver',
         contextPath: '/tmp/recovery.json',
         outputPath: '',
-        phase: 5,
+        phase: 4,
         workItemId: 'task-001',
       };
 

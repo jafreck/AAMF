@@ -50,15 +50,15 @@ export class AamfFlowCheckpointAdapter implements FlowCheckpointAdapter<Migratio
 
 
 /**
- * Checkpoint adapter for Phase 5's nested flow.
+ * Checkpoint adapter for Phase 4's nested flow.
  * Stores checkpoint state under a dedicated key separate from the top-level flow.
  */
-export class Phase5CheckpointAdapter implements FlowCheckpointAdapter<MigrationFlowContext> {
+export class Phase4CheckpointAdapter implements FlowCheckpointAdapter<MigrationFlowContext> {
   constructor(private readonly checkpoint: CheckpointManager) {}
 
   async load(flowId: string): Promise<FlowCheckpointSnapshot<MigrationFlowContext> | null> {
     const state = this.checkpoint.getState();
-    const stored = state.__phase5FlowCheckpoint;
+    const stored = state.__phase4FlowCheckpoint;
     if (!stored || typeof stored !== 'object') return null;
     const snapshot = stored as FlowCheckpointSnapshot<MigrationFlowContext>;
     if (snapshot.flowId !== flowId) return null;
@@ -77,7 +77,7 @@ export class Phase5CheckpointAdapter implements FlowCheckpointAdapter<MigrationF
       executionOutputs: snapshot.executionOutputs,
       error: snapshot.error,
     };
-    state.__phase5FlowCheckpoint = serialisable;
+    state.__phase4FlowCheckpoint = serialisable;
     await this.checkpoint.save(state);
   }
 }

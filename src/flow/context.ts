@@ -110,7 +110,7 @@ export interface MigrationFlowContext {
   kbServer?: KbServerProcess;
   /** Embedding provider - created during Phase 0 */
   embedder?: EmbeddingProvider;
-  /** Task graph result from Phase 1 for Phase 5 consumption */
+  /** Task graph result from Phase 1 for Phase 4 consumption */
   phase1TaskGraphResult?: AgentResult;
   /** Peak concurrency observed across all ParallelExecutor instances */
   peakConcurrency: number;
@@ -120,8 +120,8 @@ export interface MigrationFlowContext {
   routedTaskIds: Set<string>;
   /** Cumulative projected escalation cost (USD) */
   escalationCostUsd: number;
-  /** Phase 5 observability counters */
-  phase5Snapshot?: Phase4MetricsSnapshot;
+  /** Phase 4 observability counters */
+  phase4Snapshot?: Phase4MetricsSnapshot;
   /** When true, per-task/per-agent git commits are suppressed (wave-barrier mode) */
   deferGitCommits: boolean;
 }

@@ -1,8 +1,8 @@
 /**
- * Phase 6 — Final Parity Verification (step-level tests)
- * Phase 7 — E2E Testing & Documentation (step-level tests)
- * Phase 8 — Idiomatic Refactor (step-level tests)
- * Phase 9 — Completion (step-level tests)
+ * Phase 5 — Final Parity Verification (step-level tests)
+ * Phase 6 — E2E Testing & Documentation (step-level tests)
+ * Phase 7 — Idiomatic Refactor (step-level tests)
+ * Phase 8 — Completion (step-level tests)
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
@@ -28,7 +28,7 @@ afterEach(async () => {
   if (env) await env.cleanup();
 });
 
-// ─── Phase 6 — Final Parity Verification ────────────────────────────────────
+// ─── Phase 5 — Final Parity Verification ────────────────────────────────────
 
 describe('runFinalParityIteration', () => {
   it('should return fixes: 0 when parity checker finds no issues', async () => {
@@ -67,7 +67,7 @@ describe('runFinalParityIteration', () => {
 
     expect(result.fixes).toBe(2);
     const codeMigratorInPhase6 = env.mockLauncher.invocations.filter(
-      i => i.agent === 'code-migrator' && i.phase === 6,
+      i => i.agent === 'code-migrator' && i.phase === 5,
     );
     expect(codeMigratorInPhase6).toHaveLength(2);
   });
@@ -93,14 +93,14 @@ describe('runFinalParityIteration', () => {
     // Set cursor to indicate fix 0 was already done
     const state = env.checkpoint.getState();
     state.phaseCursors ??= {};
-    state.phaseCursors['6'] = { iteration: 0, fixIndex: 1, lastSuccessfulStep: 'fix-started' };
+    state.phaseCursors['5'] = { iteration: 0, fixIndex: 1, lastSuccessfulStep: 'fix-started' };
     await env.checkpoint.save(state);
 
     await runFinalParityIteration(env.flowCtx);
 
     // Should only apply fix at index 1 (index 0 was already done)
     const fixTaskIds = env.mockLauncher.invocations
-      .filter(i => i.agent === 'code-migrator' && i.phase === 6)
+      .filter(i => i.agent === 'code-migrator' && i.phase === 5)
       .map(i => i.workItemId);
     expect(fixTaskIds).toContain('fix-0-1');
     expect(fixTaskIds).not.toContain('fix-0-0');
@@ -131,7 +131,7 @@ describe('noFixesNeeded', () => {
   });
 });
 
-// ─── Phase 7 — E2E Testing & Documentation ──────────────────────────────────
+// ─── Phase 6 — E2E Testing & Documentation ──────────────────────────────────
 
 describe('launchE2eTestCrafter', () => {
   it('should invoke e2e-test-crafter agent', async () => {
@@ -150,7 +150,7 @@ describe('launchE2eTestCrafter', () => {
 
     const state = env.checkpoint.getState();
     state.phaseCursors ??= {};
-    state.phaseCursors['7'] = { completedAgents: ['e2e-test-crafter'], lastSuccessfulStep: 'completed-e2e-test-crafter' };
+    state.phaseCursors['6'] = { completedAgents: ['e2e-test-crafter'], lastSuccessfulStep: 'completed-e2e-test-crafter' };
     await env.checkpoint.save(state);
 
     await launchE2eTestCrafter(env.flowCtx);
@@ -196,7 +196,7 @@ describe('launchE2eSuiteWriters', () => {
 
     const state = env.checkpoint.getState();
     state.phaseCursors ??= {};
-    state.phaseCursors['7'] = { completedAgents: ['e2e-test-crafter'], completedSuites: ['suite-001'], lastSuccessfulStep: 'completed-suite-suite-001' };
+    state.phaseCursors['6'] = { completedAgents: ['e2e-test-crafter'], completedSuites: ['suite-001'], lastSuccessfulStep: 'completed-suite-suite-001' };
     await env.checkpoint.save(state);
 
     await launchE2eSuiteWriters(env.flowCtx);
@@ -237,7 +237,7 @@ describe('launchDocWriter', () => {
 
     const state = env.checkpoint.getState();
     state.phaseCursors ??= {};
-    state.phaseCursors['7'] = { completedAgents: ['documentation-writer'], completedSuites: [], lastSuccessfulStep: 'completed-documentation-writer' };
+    state.phaseCursors['6'] = { completedAgents: ['documentation-writer'], completedSuites: [], lastSuccessfulStep: 'completed-documentation-writer' };
     await env.checkpoint.save(state);
 
     await launchDocWriter(env.flowCtx);
@@ -246,7 +246,7 @@ describe('launchDocWriter', () => {
   });
 });
 
-// ─── Phase 8 — Idiomatic Refactor ───────────────────────────────────────────
+// ─── Phase 7 — Idiomatic Refactor ───────────────────────────────────────────
 
 describe('runIdiomaticReviewIteration', () => {
   it('should return issues: 0 when no idiomatic issues found', async () => {
@@ -307,7 +307,7 @@ describe('runIdiomaticReviewIteration', () => {
 
     const state = env.checkpoint.getState();
     state.phaseCursors ??= {};
-    state.phaseCursors['8'] = { iteration: 0, issueIndex: 1, currentFile: 'src/b.ts', lastSuccessfulStep: 'refactor-started' };
+    state.phaseCursors['7'] = { iteration: 0, issueIndex: 1, currentFile: 'src/b.ts', lastSuccessfulStep: 'refactor-started' };
     await env.checkpoint.save(state);
 
     await runIdiomaticReviewIteration(env.flowCtx);
@@ -317,16 +317,16 @@ describe('runIdiomaticReviewIteration', () => {
   });
 });
 
-// ─── Phase 9 — Completion ───────────────────────────────────────────────────
+// ─── Phase 8 — Completion ───────────────────────────────────────────────────
 
 describe('finalizeAndReport', () => {
-  it('should return success with phase 9', async () => {
+  it('should return success with phase 8', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
     const result = await finalizeAndReport(env.flowCtx);
 
-    expect(result.phase).toBe(9);
+    expect(result.phase).toBe(8);
     expect(result.name).toBe('Completion');
     expect(result.success).toBe(true);
   });

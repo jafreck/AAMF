@@ -43,7 +43,7 @@ describe('ProgressWriter', () => {
 
   it('should update phase status', async () => {
     await writer.initialize(config);
-    await writer.updatePhase(1, 'completed');
+    await writer.updatePhase(2, 'completed');
 
     const content = await readFile(progressFile, 'utf-8');
     expect(content).toContain('✅');
@@ -51,7 +51,7 @@ describe('ProgressWriter', () => {
 
   it('should persist exitCode and stderr in phase record when provided', async () => {
     await writer.initialize(config);
-    await writer.updatePhase(1, 'failed', 'agent crashed', 127, 'command not found');
+    await writer.updatePhase(2, 'failed', 'agent crashed', 127, 'command not found');
 
     const content = await readFile(progressFile, 'utf-8');
     expect(content).toContain('exitCode: 127');
@@ -61,7 +61,7 @@ describe('ProgressWriter', () => {
 
   it('should not include exitCode or stderr when not provided', async () => {
     await writer.initialize(config);
-    await writer.updatePhase(1, 'failed', 'some error');
+    await writer.updatePhase(2, 'failed', 'some error');
 
     const content = await readFile(progressFile, 'utf-8');
     expect(content).toContain('some error');
@@ -230,9 +230,9 @@ describe('ProgressWriter', () => {
   describe('Resume & Edge Cases', () => {
     it('should rewrite all phases to pending on re-initialization', async () => {
       await writer.initialize(config);
-      await writer.updatePhase(1, 'completed');
       await writer.updatePhase(2, 'completed');
       await writer.updatePhase(3, 'completed');
+      await writer.updatePhase(4, 'completed');
 
       // Re-initialize should reset everything
       await writer.initialize(config);
@@ -403,9 +403,9 @@ describe('ProgressWriter', () => {
       const state = {
         projectName: 'test-project',
         version: 1,
-        currentPhase: 3,
+        currentPhase: 4,
         currentTask: null,
-        completedPhases: [1, 2],
+        completedPhases: [2, 3],
         completedTasks: [],
         failedTasks: [],
         blockedTasks: [],
@@ -435,9 +435,9 @@ describe('ProgressWriter', () => {
       const state = {
         projectName: 'test-project',
         version: 1,
-        currentPhase: 3,
+        currentPhase: 4,
         currentTask: null,
-        completedPhases: [1, 2],
+        completedPhases: [2, 3],
         completedTasks: [],
         failedTasks: [],
         blockedTasks: [],
@@ -475,9 +475,9 @@ describe('ProgressWriter', () => {
       const state = {
         projectName: 'test-project',
         version: 1,
-        currentPhase: 4,
+        currentPhase: 5,
         currentTask: null,
-        completedPhases: [1, 2, 3],
+        completedPhases: [2, 3, 4],
         completedTasks: ['task-001'],
         failedTasks: [],
         blockedTasks: [],

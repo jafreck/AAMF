@@ -13,7 +13,7 @@ function makeInvocation(overrides?: Partial<AgentInvocation>): AgentInvocation {
     agent: 'code-migrator',
     contextPath: '/tmp/context.json',
     outputPath: '/tmp/output',
-    phase: 5,
+    phase: 4,
     workItemId: 'task-001',
     ...overrides,
   };

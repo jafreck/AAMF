@@ -229,13 +229,12 @@ describe('MetricsCollector', () => {
     it('should count retries correctly', () => {
       collector.record(makeMetric({ wasRetry: false }));
       collector.record(makeMetric({ wasRetry: true, agentType: 'code-migrator', phase: 4 }));
-      collector.record(makeMetric({ wasRetry: true, agentType: 'test-writer', phase: 5 }));
+      collector.record(makeMetric({ wasRetry: true, agentType: 'test-writer', phase: 4 }));
       const agg = collector.getAggregates();
       expect(agg.totalRetries).toBe(2);
       expect(agg.retriesByAgent['code-migrator']).toBe(1);
       expect(agg.retriesByAgent['test-writer']).toBe(1);
-      expect(agg.retriesByPhase[4]).toBe(1);
-      expect(agg.retriesByPhase[5]).toBe(1);
+      expect(agg.retriesByPhase[4]).toBe(2);
     });
 
     it('should sum tokens and cost by agent', () => {

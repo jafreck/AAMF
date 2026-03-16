@@ -60,13 +60,13 @@ function budgetOk(ctx: { context: MigrationFlowContext }): boolean {
  *
  *   Phase 0  → KB Indexing (deterministic)
  *   Phase 1  → Task Graph Construction (deterministic)
- *   Phase 3  → Knowledge Base Construction → budget gate
- *   Phase 4  → Migration Strategy → budget gate
- *   Phase 5  → Iterative Migration → budget gate
- *   Phase 6  → Final Parity (loop: check → fix, until no fixes or max 3)
- *   Phase 7  → E2E Testing & Documentation (parallel: suites + docs)
- *   Phase 8  → Idiomatic Refactor (conditional → loop: review → refactor)
- *   Phase 9  → Completion
+ *   Phase 2  → Knowledge Base Construction → budget gate
+ *   Phase 3  → Migration Strategy → budget gate
+ *   Phase 4  → Iterative Migration → budget gate
+ *   Phase 5  → Final Parity (loop: check → fix, until no fixes or max 3)
+ *   Phase 6  → E2E Testing & Documentation (parallel: suites + docs)
+ *   Phase 7  → Idiomatic Refactor (conditional → loop: review → refactor)
+ *   Phase 8  → Completion
  */
 export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<MigrationFlowContext>(
   'aamf-migration',
@@ -84,47 +84,47 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       run: buildTaskGraphStep,
     }),
 
-    // ── Phase 3 — Knowledge Base Construction + budget gate ──
+    // ── Phase 2 — Knowledge Base Construction + budget gate ──
     step<MigrationFlowContext>({
       id: 'kb-construction',
       dependsOn: ['task-graph-construction'],
       run: launchKnowledgeBuilder,
     }),
     gate<MigrationFlowContext>({
-      id: 'budget-check-3',
+      id: 'budget-check-2',
       dependsOn: ['kb-construction'],
       evaluate: budgetOk,
     }),
 
-    // ── Phase 4 — Migration Strategy + budget gate ──
+    // ── Phase 3 — Migration Strategy + budget gate ──
     step<MigrationFlowContext>({
       id: 'migration-planning',
-      dependsOn: ['budget-check-3'],
+      dependsOn: ['budget-check-2'],
       run: launchMigrationPlanner,
     }),
     gate<MigrationFlowContext>({
-      id: 'budget-check-4',
+      id: 'budget-check-3',
       dependsOn: ['migration-planning'],
       evaluate: budgetOk,
     }),
 
-    // ── Phase 5 — Iterative Migration + budget gate ──
+    // ── Phase 4 — Iterative Migration + budget gate ──
     step<MigrationFlowContext>({
       id: 'iterative-migration',
-      dependsOn: ['budget-check-4'],
+      dependsOn: ['budget-check-3'],
       input: fromStep('task-graph-construction'),
       run: (ctx, input) => executeIterativeMigration(ctx, input as TaskGraphOutput | undefined),
     }),
     gate<MigrationFlowContext>({
-      id: 'budget-check-5',
+      id: 'budget-check-4',
       dependsOn: ['iterative-migration'],
       evaluate: budgetOk,
     }),
 
-    // ── Phase 6 — Final Parity Verification (loopback) ──
+    // ── Phase 5 — Final Parity Verification (loopback) ──
     loop<MigrationFlowContext>({
       id: 'final-parity-loop',
-      dependsOn: ['budget-check-5'],
+      dependsOn: ['budget-check-4'],
       maxIterations: 3,
       do: [
         step<MigrationFlowContext>({
@@ -135,7 +135,7 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       until: noFixesNeeded,
     }),
 
-    // ── Phase 7 — E2E Testing & Documentation (parallel) ──
+    // ── Phase 6 — E2E Testing & Documentation (parallel) ──
     step<MigrationFlowContext>({
       id: 'e2e-test-plan',
       dependsOn: ['final-parity-loop'],
@@ -160,7 +160,7 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       },
     }),
 
-    // ── Phase 8 — Idiomatic Refactor (optional, review-refactor loop) ──
+    // ── Phase 7 — Idiomatic Refactor (optional, review-refactor loop) ──
     conditional<MigrationFlowContext>({
       id: 'idiomatic-refactor-gate',
       dependsOn: ['finalization'],
@@ -180,14 +180,14 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       ],
     }),
 
-    // ── Phase 9 — Completion ──
+    // ── Phase 8 — Completion ──
     step<MigrationFlowContext>({
       id: 'completion',
       dependsOn: ['idiomatic-refactor-gate'],
       run: finalizeAndReport,
     }),
   ],
-  'AAMF migration pipeline — 9 phases (0-1, 3-9) from KB indexing through completion',
+  'AAMF migration pipeline — 9 phases (0-8) from KB indexing through completion',
 );
 
 /**
@@ -197,22 +197,22 @@ export function nodeIdToPhase(nodeId: string): number {
   const map: Record<string, number> = {
     'kb-index': 0,
     'task-graph-construction': 1,
-    'kb-construction': 3,
+    'kb-construction': 2,
+    'budget-check-2': 2,
+    'migration-planning': 3,
     'budget-check-3': 3,
-    'migration-planning': 4,
+    'iterative-migration': 4,
     'budget-check-4': 4,
-    'iterative-migration': 5,
-    'budget-check-5': 5,
-    'final-parity-loop': 6,
-    'final-parity-iteration': 6,
-    'e2e-test-plan': 7,
-    'finalization': 7,
-    'e2e-suite-writers': 7,
-    'documentation-writer': 7,
-    'idiomatic-refactor-gate': 8,
-    'idiomatic-loop': 8,
-    'idiomatic-iteration': 8,
-    'completion': 9,
+    'final-parity-loop': 5,
+    'final-parity-iteration': 5,
+    'e2e-test-plan': 6,
+    'finalization': 6,
+    'e2e-suite-writers': 6,
+    'documentation-writer': 6,
+    'idiomatic-refactor-gate': 7,
+    'idiomatic-loop': 7,
+    'idiomatic-iteration': 7,
+    'completion': 8,
   };
   return map[nodeId] ?? -1;
 }
@@ -221,17 +221,16 @@ export function nodeIdToPhase(nodeId: string): number {
  * Ordered list of phase boundary node IDs for `--phase` filtering.
  * Each entry is the last top-level node ID belonging to that phase.
  */
-const PHASE_BOUNDARY_NODE_IDS: readonly (string | undefined)[] = [
+const PHASE_BOUNDARY_NODE_IDS: readonly string[] = [
   'kb-index',                // Phase 0
   'task-graph-construction', // Phase 1
-  undefined,               // Phase 2 (removed — impact assessor)
+  'budget-check-2',         // Phase 2
   'budget-check-3',         // Phase 3
   'budget-check-4',         // Phase 4
-  'budget-check-5',         // Phase 5
-  'final-parity-loop',      // Phase 6
-  'finalization',           // Phase 7
-  'idiomatic-refactor-gate', // Phase 8
-  'completion',             // Phase 9
+  'final-parity-loop',      // Phase 5
+  'finalization',           // Phase 6
+  'idiomatic-refactor-gate', // Phase 7
+  'completion',             // Phase 8
 ];
 
 /**
@@ -239,7 +238,7 @@ const PHASE_BOUNDARY_NODE_IDS: readonly (string | undefined)[] = [
  * Used to implement `--phase N` (run/resume up to and including phase N).
  */
 export function buildFlowUpToPhase(maxPhase: number): FlowDefinition<MigrationFlowContext> {
-  if (maxPhase >= 9) return migrationFlow;
+  if (maxPhase >= 8) return migrationFlow;
 
   const lastNodeId = PHASE_BOUNDARY_NODE_IDS[maxPhase];
   if (!lastNodeId) return migrationFlow;

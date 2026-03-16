@@ -42,7 +42,7 @@ import { TaskQueue } from '../../execution/task-queue.js';
 
 /** Hardcoded average token estimate per migration task for cost projections. */
 export const AVG_TOKENS_PER_TASK = 100_000;
-/** Hardcoded retry-overhead multiplier for aggregate Phase 5 cost projections. */
+/** Hardcoded retry-overhead multiplier for aggregate Phase 4 cost projections. */
 export const RETRY_OVERHEAD_MULTIPLIER = 1.25;
 
 // ─── Infrastructure Error Detection ──────────────────────────────────────
@@ -81,7 +81,7 @@ export class TerminalExhaustionError extends Error {
       details.check ? `check=${details.check}` : undefined,
     ].filter((part): part is string => !!part);
     const location = locationParts.length > 0 ? ` (${locationParts.join(', ')})` : '';
-    super(`Phase 5 terminal exhaustion: ${details.reasonCode}${location} - ${details.summary}`);
+    super(`Phase 4 terminal exhaustion: ${details.reasonCode}${location} - ${details.summary}`);
     this.name = 'TerminalExhaustionError';
   }
 }
@@ -552,11 +552,11 @@ export async function runCommand(
   command: string,
   taskId: string,
 ): Promise<CommandExecutionResult> {
-  if (ctx.phase5Snapshot) {
-    if (label === 'build') ctx.phase5Snapshot.buildCommandRuns++;
-    if (label === 'test') ctx.phase5Snapshot.testCommandRuns++;
-    if (label === 'format') ctx.phase5Snapshot.formatCommandRuns++;
-    if (label === 'lint') ctx.phase5Snapshot.lintCommandRuns++;
+  if (ctx.phase4Snapshot) {
+    if (label === 'build') ctx.phase4Snapshot.buildCommandRuns++;
+    if (label === 'test') ctx.phase4Snapshot.testCommandRuns++;
+    if (label === 'format') ctx.phase4Snapshot.formatCommandRuns++;
+    if (label === 'lint') ctx.phase4Snapshot.lintCommandRuns++;
   }
   return ctx.buildLimiter(async () => {
     const timeout = getRuntimeTimeout(ctx);
@@ -631,7 +631,7 @@ export async function runCommandWithRecovery(
   let infraAttempt = 0;
   while (cmdResult.infraError && infraAttempt < maxInfraRetries) {
     infraAttempt++;
-    if (ctx.phase5Snapshot) ctx.phase5Snapshot.commandInfraRetries++;
+    if (ctx.phase4Snapshot) ctx.phase4Snapshot.commandInfraRetries++;
     const backoffMs = Math.min(1000 * Math.pow(2, infraAttempt - 1), 30_000);
     ctx.logger.warn(
       `${label} failed for ${task.id} with infra error "${cmdResult.infraError}", ` +
@@ -640,7 +640,7 @@ export async function runCommandWithRecovery(
     await new Promise(resolve => setTimeout(resolve, backoffMs));
     cmdResult = await runCommand(ctx, label, command, task.id);
     if (cmdResult.success) {
-      if (ctx.phase5Snapshot) ctx.phase5Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
+      if (ctx.phase4Snapshot) ctx.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
       ctx.logger.info(`${label} recovered for ${task.id} after infra retry ${infraAttempt}`);
       return true;
     }
@@ -649,7 +649,7 @@ export async function runCommandWithRecovery(
 
   // Code-quality recovery loop
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (ctx.phase5Snapshot) ctx.phase5Snapshot.commandRecoveryAttempts++;
+    if (ctx.phase4Snapshot) ctx.phase4Snapshot.commandRecoveryAttempts++;
     await recordRetryTarget(ctx, {
       scope: retryScope, attempt, maxAttempts,
       taskId: task.id, wave: options?.wave, check: label,
@@ -703,13 +703,13 @@ export async function runCommandWithRecovery(
 
     cmdResult = await runCommand(ctx, label, command, task.id);
     if (cmdResult.success) {
-      if (ctx.phase5Snapshot) ctx.phase5Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
+      if (ctx.phase4Snapshot) ctx.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
       ctx.logger.info(`${label} recovered for ${task.id} on attempt ${attempt}`);
       return true;
     }
   }
 
-  if (ctx.phase5Snapshot) ctx.phase5Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
+  if (ctx.phase4Snapshot) ctx.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
 
   if (options?.suppressTerminalOnExhaustion) {
     ctx.logger.warn(
@@ -861,7 +861,7 @@ function rehydrateParityFromLog(ctx: MigrationFlowContext, taskId: string): Pari
   }
 }
 
-// ─── Phase 5 Checkpoint Helpers ────────────────────────────────────────
+// ─── Phase 4 Checkpoint Helpers ──────────────────────────────────────────
 
 function getPhaseCursors(ctx: MigrationFlowContext) {
   const state = ctx.checkpoint.getState();
@@ -869,63 +869,63 @@ function getPhaseCursors(ctx: MigrationFlowContext) {
   return state.phaseCursors;
 }
 
-export function getPhase5TaskState(ctx: MigrationFlowContext, taskId: string): { completedSubsteps: string[]; lastSuccessfulStep?: string } {
+export function getPhase4TaskState(ctx: MigrationFlowContext, taskId: string): { completedSubsteps: string[]; lastSuccessfulStep?: string } {
   const phaseCursors = getPhaseCursors(ctx);
-  phaseCursors['5'] ??= { tasks: {} };
-  phaseCursors['5'].tasks ??= {};
-  phaseCursors['5'].tasks[taskId] ??= { completedSubsteps: [] };
-  return phaseCursors['5'].tasks[taskId];
+  phaseCursors['4'] ??= { tasks: {} };
+  phaseCursors['4'].tasks ??= {};
+  phaseCursors['4'].tasks[taskId] ??= { completedSubsteps: [] };
+  return phaseCursors['4'].tasks[taskId];
 }
 
-export function hasPhase5Substep(ctx: MigrationFlowContext, taskId: string, substep: string): boolean {
-  return getPhase5TaskState(ctx, taskId).completedSubsteps.includes(substep);
+export function hasPhase4Substep(ctx: MigrationFlowContext, taskId: string, substep: string): boolean {
+  return getPhase4TaskState(ctx, taskId).completedSubsteps.includes(substep);
 }
 
-export async function markPhase5Substep(ctx: MigrationFlowContext, taskId: string, substep: string): Promise<void> {
-  const taskState = getPhase5TaskState(ctx, taskId);
+export async function markPhase4Substep(ctx: MigrationFlowContext, taskId: string, substep: string): Promise<void> {
+  const taskState = getPhase4TaskState(ctx, taskId);
   if (!taskState.completedSubsteps.includes(substep)) taskState.completedSubsteps.push(substep);
   taskState.lastSuccessfulStep = substep;
   await ctx.checkpoint.save(ctx.checkpoint.getState());
 }
 
-// Phase 6/7/8 cursors
+// Phase 5/6/7 cursors
 
-export function getPhase6Cursor(ctx: MigrationFlowContext): { iteration: number; fixIndex: number; lastSuccessfulStep?: string; hadUnresolvedFixes?: boolean } {
+export function getPhase5Cursor(ctx: MigrationFlowContext): { iteration: number; fixIndex: number; lastSuccessfulStep?: string; hadUnresolvedFixes?: boolean } {
   const phaseCursors = getPhaseCursors(ctx);
-  phaseCursors['6'] ??= { iteration: 0, fixIndex: 0 };
-  phaseCursors['6'].iteration ??= 0;
-  phaseCursors['6'].fixIndex ??= 0;
-  phaseCursors['6'].hadUnresolvedFixes ??= false;
-  return phaseCursors['6'];
+  phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };
+  phaseCursors['5'].iteration ??= 0;
+  phaseCursors['5'].fixIndex ??= 0;
+  phaseCursors['5'].hadUnresolvedFixes ??= false;
+  return phaseCursors['5'];
 }
 
-export async function savePhase6Cursor(ctx: MigrationFlowContext, cursor: { iteration: number; fixIndex: number; lastSuccessfulStep?: string; hadUnresolvedFixes?: boolean }): Promise<void> {
+export async function savePhase5Cursor(ctx: MigrationFlowContext, cursor: { iteration: number; fixIndex: number; lastSuccessfulStep?: string; hadUnresolvedFixes?: boolean }): Promise<void> {
+  getPhaseCursors(ctx)['5'] = cursor;
+  await ctx.checkpoint.save(ctx.checkpoint.getState());
+}
+
+export function getPhase6Cursor(ctx: MigrationFlowContext): { completedAgents: string[]; completedSuites: string[]; lastSuccessfulStep?: string } {
+  const phaseCursors = getPhaseCursors(ctx);
+  phaseCursors['6'] ??= { completedAgents: [] };
+  phaseCursors['6'].completedAgents ??= [];
+  phaseCursors['6'].completedSuites ??= [];
+  return phaseCursors['6'] as { completedAgents: string[]; completedSuites: string[]; lastSuccessfulStep?: string };
+}
+
+export async function savePhase6Cursor(ctx: MigrationFlowContext, cursor: { completedAgents: string[]; completedSuites?: string[]; lastSuccessfulStep?: string }): Promise<void> {
   getPhaseCursors(ctx)['6'] = cursor;
   await ctx.checkpoint.save(ctx.checkpoint.getState());
 }
 
-export function getPhase7Cursor(ctx: MigrationFlowContext): { completedAgents: string[]; completedSuites: string[]; lastSuccessfulStep?: string } {
+export function getPhase7Cursor(ctx: MigrationFlowContext): { iteration: number; issueIndex: number; currentFile?: string; lastSuccessfulStep?: string } {
   const phaseCursors = getPhaseCursors(ctx);
-  phaseCursors['7'] ??= { completedAgents: [] };
-  phaseCursors['7'].completedAgents ??= [];
-  phaseCursors['7'].completedSuites ??= [];
-  return phaseCursors['7'] as { completedAgents: string[]; completedSuites: string[]; lastSuccessfulStep?: string };
+  phaseCursors['7'] ??= { iteration: 0, issueIndex: 0 };
+  phaseCursors['7'].iteration ??= 0;
+  phaseCursors['7'].issueIndex ??= 0;
+  return phaseCursors['7'];
 }
 
-export async function savePhase7Cursor(ctx: MigrationFlowContext, cursor: { completedAgents: string[]; completedSuites?: string[]; lastSuccessfulStep?: string }): Promise<void> {
+export async function savePhase7Cursor(ctx: MigrationFlowContext, cursor: { iteration: number; issueIndex: number; currentFile?: string; lastSuccessfulStep?: string }): Promise<void> {
   getPhaseCursors(ctx)['7'] = cursor;
-  await ctx.checkpoint.save(ctx.checkpoint.getState());
-}
-
-export function getPhase8Cursor(ctx: MigrationFlowContext): { iteration: number; issueIndex: number; currentFile?: string; lastSuccessfulStep?: string } {
-  const phaseCursors = getPhaseCursors(ctx);
-  phaseCursors['8'] ??= { iteration: 0, issueIndex: 0 };
-  phaseCursors['8'].iteration ??= 0;
-  phaseCursors['8'].issueIndex ??= 0;
-  return phaseCursors['8'];
-}
-
-export async function savePhase8Cursor(ctx: MigrationFlowContext, cursor: { iteration: number; issueIndex: number; currentFile?: string; lastSuccessfulStep?: string }): Promise<void> {
-  getPhaseCursors(ctx)['8'] = cursor;
   await ctx.checkpoint.save(ctx.checkpoint.getState());
 }

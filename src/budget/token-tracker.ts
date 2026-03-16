@@ -50,7 +50,7 @@ export class TokenTracker {
   /**
    * Return token usage keyed by task ID.
    * Only contains entries for invocations where a taskId was provided
-   * (typically Phase 5 migration tasks).
+   * (typically Phase 4 migration tasks).
    */
   getByTask(): Record<string, number> {
     return { ...this.byTask };

@@ -1,5 +1,5 @@
 /**
- * Phase 4 — Migration Strategy (planning + adjudication + scaffold)
+ * Phase 3 — Migration Strategy (planning + adjudication + scaffold)
  */
 
 import { join } from 'node:path';
@@ -26,14 +26,14 @@ export async function launchMigrationPlanner(
 
   // Step 4a: migration-planner + optional adjudicator
   if (!checkpointState.phase3aComplete) {
-    const planContext = await ctx.contextBuilder.buildContext('migration-planner', 4);
-    const planInv = buildInvocation(ctx, 'migration-planner', planContext, 4);
+    const planContext = await ctx.contextBuilder.buildContext('migration-planner', 3);
+    const planInv = buildInvocation(ctx, 'migration-planner', planContext, 3);
     const planResult = await launchAgentWithEvents(ctx, planInv);
-    recordTokens(ctx, planResult, 4);
+    recordTokens(ctx, planResult, 3);
 
     if (!planResult.success) {
       const failResult: PhaseResult = {
-        phase: 4, name: 'Migration Strategy', success: false, duration: Date.now() - start,
+        phase: 3, name: 'Migration Strategy', success: false, duration: Date.now() - start,
         error: planResult.error, exitCode: planResult.exitCode ?? undefined, stderr: planResult.stderr,
       };
       assertPhaseSuccess(failResult);
@@ -42,12 +42,12 @@ export async function launchMigrationPlanner(
     // Adjudicator
     const adjudicationFile = ctx.paths.competingStrategiesFile;
     if (await fileExists(adjudicationFile)) {
-      const adjCtx = await ctx.contextBuilder.buildContext('adjudicator', 4, undefined, {
+      const adjCtx = await ctx.contextBuilder.buildContext('adjudicator', 3, undefined, {
         competingStrategiesFile: adjudicationFile, decisionType: 'migration-strategy',
       });
-      const adjInv = buildInvocation(ctx, 'adjudicator', adjCtx, 4);
+      const adjInv = buildInvocation(ctx, 'adjudicator', adjCtx, 3);
       const adjResult = await launchAgentWithEvents(ctx, adjInv);
-      recordTokens(ctx, adjResult, 4);
+      recordTokens(ctx, adjResult, 3);
     } else {
       try {
         const planningEntries = await readdir(planningDir);
@@ -65,9 +65,9 @@ export async function launchMigrationPlanner(
     }
 
     await ctx.checkpoint.completePhase3a();
-    ctx.logger.info('Phase 4 step 4a complete: migration-planner wrote strategy');
+    ctx.logger.info('Phase 3 step 3a complete: migration-planner wrote strategy');
   } else {
-    ctx.logger.info('Resuming Phase 4 — strategy already complete');
+    ctx.logger.info('Resuming Phase 3 — strategy already complete');
   }
 
   // Step 4b: scaffold
@@ -104,11 +104,11 @@ export async function launchMigrationPlanner(
     }
     await ctx.checkpoint.completeScaffold();
   } else {
-    ctx.logger.info('Resuming Phase 4 — scaffold already generated');
+    ctx.logger.info('Resuming Phase 3 — scaffold already generated');
   }
 
   return {
-    phase: 4, name: 'Migration Strategy', success: true,
+    phase: 3, name: 'Migration Strategy', success: true,
     outputPath: join(planningDir, 'strategy.md'), duration: Date.now() - start,
   };
 }

@@ -31,14 +31,13 @@ describe('migrationFlow', () => {
   it('should not contain the removed impact-assessment node', () => {
     const ids = migrationFlow.nodes.map((n) => n.id);
     expect(ids).not.toContain('impact-assessment');
-    expect(ids).not.toContain('budget-check-2');
   });
 
   it('should have budget gates after phases 3-5', () => {
     const ids = migrationFlow.nodes.map((n) => n.id);
+    expect(ids).toContain('budget-check-2');
     expect(ids).toContain('budget-check-3');
     expect(ids).toContain('budget-check-4');
-    expect(ids).toContain('budget-check-5');
   });
 
   it('should enforce declaration order (kb-index before task-graph before kb-construction)', () => {
@@ -60,9 +59,9 @@ describe('migrationFlow', () => {
 
   it('should have budget gates depend on their corresponding step', () => {
     const nodeMap = new Map(migrationFlow.nodes.map(n => [n.id, n]));
-    expect(nodeMap.get('budget-check-3')!.dependsOn).toContain('kb-construction');
-    expect(nodeMap.get('budget-check-4')!.dependsOn).toContain('migration-planning');
-    expect(nodeMap.get('budget-check-5')!.dependsOn).toContain('iterative-migration');
+    expect(nodeMap.get('budget-check-2')!.dependsOn).toContain('kb-construction');
+    expect(nodeMap.get('budget-check-3')!.dependsOn).toContain('migration-planning');
+    expect(nodeMap.get('budget-check-4')!.dependsOn).toContain('iterative-migration');
   });
 });
 
@@ -77,41 +76,41 @@ describe('nodeIdToPhase', () => {
     expect(nodeIdToPhase('task-graph-construction')).toBe(1);
   });
 
-  it('should return 3 for kb-construction and its budget-check', () => {
-    expect(nodeIdToPhase('kb-construction')).toBe(3);
+  it('should return 2 for kb-construction and its budget-check', () => {
+    expect(nodeIdToPhase('kb-construction')).toBe(2);
+    expect(nodeIdToPhase('budget-check-2')).toBe(2);
+  });
+
+  it('should return 3 for migration-planning and its budget-check', () => {
+    expect(nodeIdToPhase('migration-planning')).toBe(3);
     expect(nodeIdToPhase('budget-check-3')).toBe(3);
   });
 
-  it('should return 4 for migration-planning and its budget-check', () => {
-    expect(nodeIdToPhase('migration-planning')).toBe(4);
+  it('should return 4 for iterative-migration and its budget-check', () => {
+    expect(nodeIdToPhase('iterative-migration')).toBe(4);
     expect(nodeIdToPhase('budget-check-4')).toBe(4);
   });
 
-  it('should return 5 for iterative-migration and its budget-check', () => {
-    expect(nodeIdToPhase('iterative-migration')).toBe(5);
-    expect(nodeIdToPhase('budget-check-5')).toBe(5);
+  it('should return 5 for final-parity-loop and final-parity-iteration', () => {
+    expect(nodeIdToPhase('final-parity-loop')).toBe(5);
+    expect(nodeIdToPhase('final-parity-iteration')).toBe(5);
   });
 
-  it('should return 6 for final-parity-loop and final-parity-iteration', () => {
-    expect(nodeIdToPhase('final-parity-loop')).toBe(6);
-    expect(nodeIdToPhase('final-parity-iteration')).toBe(6);
+  it('should return 6 for all phase-6 nodes', () => {
+    expect(nodeIdToPhase('e2e-test-plan')).toBe(6);
+    expect(nodeIdToPhase('finalization')).toBe(6);
+    expect(nodeIdToPhase('e2e-suite-writers')).toBe(6);
+    expect(nodeIdToPhase('documentation-writer')).toBe(6);
   });
 
-  it('should return 7 for all phase-7 nodes', () => {
-    expect(nodeIdToPhase('e2e-test-plan')).toBe(7);
-    expect(nodeIdToPhase('finalization')).toBe(7);
-    expect(nodeIdToPhase('e2e-suite-writers')).toBe(7);
-    expect(nodeIdToPhase('documentation-writer')).toBe(7);
+  it('should return 7 for idiomatic-refactor nodes', () => {
+    expect(nodeIdToPhase('idiomatic-refactor-gate')).toBe(7);
+    expect(nodeIdToPhase('idiomatic-loop')).toBe(7);
+    expect(nodeIdToPhase('idiomatic-iteration')).toBe(7);
   });
 
-  it('should return 8 for idiomatic-refactor nodes', () => {
-    expect(nodeIdToPhase('idiomatic-refactor-gate')).toBe(8);
-    expect(nodeIdToPhase('idiomatic-loop')).toBe(8);
-    expect(nodeIdToPhase('idiomatic-iteration')).toBe(8);
-  });
-
-  it('should return 9 for completion', () => {
-    expect(nodeIdToPhase('completion')).toBe(9);
+  it('should return 8 for completion', () => {
+    expect(nodeIdToPhase('completion')).toBe(8);
   });
 
   it('should return -1 for unknown node IDs', () => {
@@ -148,11 +147,14 @@ describe('buildFlowUpToPhase', () => {
     expect(ids).not.toContain('kb-construction');
   });
 
-  it('should handle phase 2 (removed phase) gracefully', () => {
-    // Phase 2 was removed — buildFlowUpToPhase should return a valid flow
+  it('should truncate to phase 2 (up through budget-check-2)', () => {
     const flow = buildFlowUpToPhase(2);
     expect(flow).toBeDefined();
     expect(flow.id).toBe('aamf-migration');
+    const ids = flow.nodes.map((n) => n.id);
+    expect(ids).toContain('kb-construction');
+    expect(ids).toContain('budget-check-2');
+    expect(ids).not.toContain('migration-planning');
   });
 
   it('should truncate to phase 3 (up through budget-check-3)', () => {
@@ -161,19 +163,19 @@ describe('buildFlowUpToPhase', () => {
     expect(ids).toContain('kb-index');
     expect(ids).toContain('kb-construction');
     expect(ids).toContain('budget-check-3');
-    expect(ids).not.toContain('migration-planning');
+    expect(ids).not.toContain('iterative-migration');
   });
 
-  it('should truncate to phase 5 (up through budget-check-5)', () => {
-    const flow = buildFlowUpToPhase(5);
+  it('should truncate to phase 4 (up through budget-check-4)', () => {
+    const flow = buildFlowUpToPhase(4);
     const ids = flow.nodes.map((n) => n.id);
     expect(ids).toContain('iterative-migration');
-    expect(ids).toContain('budget-check-5');
+    expect(ids).toContain('budget-check-4');
     expect(ids).not.toContain('final-parity-loop');
   });
 
   it('should preserve the flow id in truncated flows', () => {
-    const flow = buildFlowUpToPhase(4);
+    const flow = buildFlowUpToPhase(3);
     expect(flow.id).toBe('aamf-migration');
   });
 });
@@ -182,27 +184,27 @@ describe('buildFlowUpToPhase', () => {
 
 describe('MigrationError', () => {
   it('should construct with phase, name, and result', () => {
-    const result = { phase: 3, name: 'KB Construction', success: false, duration: 100, error: 'test failure' };
-    const err = new MigrationError(3, 'KB Construction', result);
+    const result = { phase: 2, name: 'KB Construction', success: false, duration: 100, error: 'test failure' };
+    const err = new MigrationError(2, 'KB Construction', result);
 
-    expect(err.phaseId).toBe(3);
+    expect(err.phaseId).toBe(2);
     expect(err.phaseName).toBe('KB Construction');
     expect(err.result).toBe(result);
-    expect(err.message).toContain('Phase 3');
+    expect(err.message).toContain('Phase 2');
     expect(err.message).toContain('KB Construction');
     expect(err.message).toContain('test failure');
   });
 
   it('should have name "MigrationError"', () => {
-    const result = { phase: 3, name: 'KB', success: false, duration: 0 };
-    const err = new MigrationError(3, 'KB', result);
+    const result = { phase: 2, name: 'KB', success: false, duration: 0 };
+    const err = new MigrationError(2, 'KB', result);
     expect(err.name).toBe('MigrationError');
     expect(err).toBeInstanceOf(Error);
   });
 
   it('should fallback to "unknown error" when result has no error message', () => {
-    const result = { phase: 5, name: 'Iterative Migration', success: false, duration: 0 };
-    const err = new MigrationError(5, 'Iterative Migration', result);
+    const result = { phase: 4, name: 'Iterative Migration', success: false, duration: 0 };
+    const err = new MigrationError(4, 'Iterative Migration', result);
     expect(err.message).toContain('unknown error');
   });
 });

@@ -161,7 +161,7 @@ describe('assertPhaseSuccess', () => {
   });
 
   it('should throw MigrationError for failed result', () => {
-    const result = { phase: 3, name: 'KB Construction', success: false, duration: 100, error: 'build failed' };
+    const result = { phase: 2, name: 'KB Construction', success: false, duration: 100, error: 'build failed' };
     expect(() => assertPhaseSuccess(result)).toThrow(MigrationError);
   });
 });
@@ -170,12 +170,12 @@ describe('assertPhaseSuccess', () => {
 
 describe('MigrationError', () => {
   it('should construct with phase, name, and result', () => {
-    const result = { phase: 3, name: 'KB Construction', success: false, duration: 100, error: 'something' };
-    const err = new MigrationError(3, 'KB Construction', result);
-    expect(err.phaseId).toBe(3);
+    const result = { phase: 2, name: 'KB Construction', success: false, duration: 100, error: 'something' };
+    const err = new MigrationError(2, 'KB Construction', result);
+    expect(err.phaseId).toBe(2);
     expect(err.phaseName).toBe('KB Construction');
     expect(err.result).toBe(result);
-    expect(err.message).toContain('Phase 3');
+    expect(err.message).toContain('Phase 2');
     expect(err.message).toContain('something');
     expect(err.name).toBe('MigrationError');
   });
@@ -578,10 +578,10 @@ describe('resolverReducedScope', () => {
 describe('buildInvocation', () => {
   it('should construct a basic invocation with agent and phase', () => {
     const ctx = mockContext();
-    const inv = buildInvocation(ctx, 'knowledge-builder', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 3);
+    const inv = buildInvocation(ctx, 'knowledge-builder', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 2);
     expect(inv.agent).toBe('knowledge-builder');
     expect(inv.contextPath).toBe('/tmp/ctx.json');
-    expect(inv.phase).toBe(3);
+    expect(inv.phase).toBe(2);
     expect(inv.timeout).toBe(300_000);
   });
 

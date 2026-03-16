@@ -1,5 +1,5 @@
 /**
- * Phase 6 — Final Parity Verification
+ * Phase 5 — Final Parity Verification
  *
  * Exported as a single-iteration step for the `loop()` DSL node in
  * migration-flow.ts.  Each iteration runs final-parity-checker, applies
@@ -14,7 +14,7 @@ import { toAgentRemediationContext } from '../../agents/types.js';
 import {
   buildInvocation, launchAgentWithEvents, recordTokens,
   commitForAgent, buildRemediationContext,
-  getPhase6Cursor, savePhase6Cursor,
+  getPhase5Cursor, savePhase5Cursor,
   assertPhaseSuccess,
 } from './shared.js';
 
@@ -26,17 +26,17 @@ export async function runFinalParityIteration(
   flowCtx: FlowExecutionContext<MigrationFlowContext>,
 ): Promise<{ fixes: number }> {
   const ctx = flowCtx.context;
-  const phase6Cursor = getPhase6Cursor(ctx);
+  const phase5Cursor = getPhase5Cursor(ctx);
 
   // Run final-parity-checker
-  const ctxFile = await ctx.contextBuilder.buildContext('final-parity-checker', 6);
-  const inv = buildInvocation(ctx, 'final-parity-checker', ctxFile, 6);
+  const ctxFile = await ctx.contextBuilder.buildContext('final-parity-checker', 5);
+  const inv = buildInvocation(ctx, 'final-parity-checker', ctxFile, 5);
   const result = await launchAgentWithEvents(ctx, inv);
-  recordTokens(ctx, result, 6);
+  recordTokens(ctx, result, 5);
 
   if (!result.success) {
     const failResult: PhaseResult = {
-      phase: 6, name: 'Final Parity Verification', success: false,
+      phase: 5, name: 'Final Parity Verification', success: false,
       duration: 0, error: result.error, exitCode: result.exitCode ?? undefined, stderr: result.stderr,
     };
     assertPhaseSuccess(failResult);
@@ -49,7 +49,7 @@ export async function runFinalParityIteration(
   } else {
     ctx.logger.warn('Final-parity-checker structured output unavailable');
     const failResult: PhaseResult = {
-      phase: 6, name: 'Final Parity Verification', success: false,
+      phase: 5, name: 'Final Parity Verification', success: false,
       duration: 0, error: 'No structured output with fixes array',
     };
     assertPhaseSuccess(failResult);
@@ -58,8 +58,8 @@ export async function runFinalParityIteration(
 
   if (fixes.length === 0) {
     ctx.logger.info('Final parity check passed — no fixes needed');
-    await savePhase6Cursor(ctx, {
-      iteration: phase6Cursor.iteration + 1, fixIndex: 0,
+    await savePhase5Cursor(ctx, {
+      iteration: phase5Cursor.iteration + 1, fixIndex: 0,
       lastSuccessfulStep: 'no-fixes',
     });
     return { fixes: 0 };
@@ -68,12 +68,12 @@ export async function runFinalParityIteration(
   ctx.logger.info(`Final parity found ${fixes.length} issue(s), applying fixes`);
 
   // Apply fixes
-  const resumeFixIndex = Math.max(0, phase6Cursor.fixIndex);
+  const resumeFixIndex = Math.max(0, phase5Cursor.fixIndex);
   for (let fixIndex = resumeFixIndex; fixIndex < fixes.length; fixIndex++) {
     const fix = fixes[fixIndex]!;
-    const fixTaskId = `fix-${phase6Cursor.iteration}-${fixIndex}`;
-    await savePhase6Cursor(ctx, {
-      iteration: phase6Cursor.iteration, fixIndex,
+    const fixTaskId = `fix-${phase5Cursor.iteration}-${fixIndex}`;
+    await savePhase5Cursor(ctx, {
+      iteration: phase5Cursor.iteration, fixIndex,
       lastSuccessfulStep: 'fix-started',
     });
 
@@ -87,7 +87,7 @@ export async function runFinalParityIteration(
       expectedSuccessCondition: `Parity issue resolved: ${fix.description}`,
     });
 
-    const fixCtx = await ctx.contextBuilder.buildContext('code-migrator', 5, fixTaskId, {
+    const fixCtx = await ctx.contextBuilder.buildContext('code-migrator', 4, fixTaskId, {
       sourceFiles: fix.sourceFile ? [fix.sourceFile] : [],
       targetFiles: fix.targetFile ? [fix.targetFile] : [],
       taskScope: {
@@ -97,21 +97,21 @@ export async function runFinalParityIteration(
       },
       remediationContext: toAgentRemediationContext(fixRemediation),
     });
-    const fixInv = buildInvocation(ctx, 'code-migrator', fixCtx, 6, fixTaskId);
+    const fixInv = buildInvocation(ctx, 'code-migrator', fixCtx, 5, fixTaskId);
     const fixResult = await launchAgentWithEvents(ctx, fixInv);
-    recordTokens(ctx, fixResult, 6);
+    recordTokens(ctx, fixResult, 5);
 
     if (fixResult.success) {
-      await commitForAgent(ctx, 'code-migrator', 6, fixTaskId);
-      await savePhase6Cursor(ctx, {
-        iteration: phase6Cursor.iteration, fixIndex: fixIndex + 1,
+      await commitForAgent(ctx, 'code-migrator', 5, fixTaskId);
+      await savePhase5Cursor(ctx, {
+        iteration: phase5Cursor.iteration, fixIndex: fixIndex + 1,
         lastSuccessfulStep: 'fix-applied',
       });
     }
   }
 
-  await savePhase6Cursor(ctx, {
-    iteration: phase6Cursor.iteration + 1, fixIndex: 0,
+  await savePhase5Cursor(ctx, {
+    iteration: phase5Cursor.iteration + 1, fixIndex: 0,
     lastSuccessfulStep: 'iteration-complete',
   });
 
@@ -119,7 +119,7 @@ export async function runFinalParityIteration(
 }
 
 /**
- * `until` predicate for the Phase 6 loop — returns true when no fixes
+ * `until` predicate for the Phase 5 loop — returns true when no fixes
  * were found in the last iteration (the loop node output).
  */
 export function noFixesNeeded(

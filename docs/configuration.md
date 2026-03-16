@@ -181,7 +181,7 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | `options.git.authorName` | `string` | `'AAMF Migration Bot'` | Git author name. |
 | `options.git.authorEmail` | `string` | `'aamf@local.invalid'` | Git author email. |
 
-#### Idiomatic Refactor (Phase 8)
+#### Idiomatic Refactor (Phase 7)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -262,21 +262,21 @@ npx aamf kb-server --db ./kb.db
 
 ### Migration Phases
 
-The runtime executes migration as a sequence of up to 9 phases (7 standard + 2 optional), each driven by one or more specialized agents:
+The runtime executes migration as a sequence of **9 phases** (0–8), each driven by one or more specialized agents:
 
 | Phase | Name | Description |
 |-------|------|-------------|
-| 0 | **KB Indexing** *(optional)* | Builds a SQLite knowledge-base index from the source codebase using `@jafreck/lore` with tree-sitter parsing and optional embeddings. Starts an HTTP MCP server for downstream agent access. |
-| 1 | **Impact Assessment** | Scans the source codebase to build a dependency graph, identify file roles, and estimate migration complexity. |
+| 0 | **KB Indexing** | Builds a SQLite knowledge-base index from the source codebase using `@jafreck/lore` with tree-sitter parsing and optional embeddings. Starts an HTTP MCP server for downstream agent access. |
+| 1 | **Task Graph Construction** | Builds a deterministic call-graph: SCC contraction → greedy merge → topologically-sorted task list. |
 | 2 | **Knowledge Base Construction** | Extracts patterns, idioms, and domain knowledge from the source code into a structured knowledge base that downstream agents reference. |
 | 3 | **Migration Planning** | Produces an ordered task list — module groups decomposed into granular tasks with dependency ordering. Optionally invokes adjudication for competing strategies. |
 | 4 | **Iterative Migration** | The main execution loop. Supports per-task and wave-barrier scheduling with migration/validation cycles, infrastructure error classification, failure adjudication, model routing, and git automation. |
 | 5 | **Final Parity Verification** | Compares the migrated codebase against the source to verify functional equivalence, with loopback fix capability. |
 | 6 | **E2E Testing & Documentation** | Generates end-to-end tests and migration documentation. |
-| 8 | **Idiomatic Refactor** *(optional)* | Reviews migrated code for non-idiomatic patterns and applies targeted refactoring with git commits. |
-| 7 | **Completion** | Finalizes artifacts, writes the summary report, generates the observability report, and cleans up. |
+| 7 | **Idiomatic Refactor** *(optional)* | Reviews migrated code for non-idiomatic patterns and applies targeted refactoring with git commits. |
+| 8 | **Completion** | Finalizes artifacts, writes the summary report, generates the observability report, and cleans up. |
 
-Execution order is 0→1→2→3→4→5→6→8→7. Phase 0 requires `kbIndex.enabled`. Phase 8 requires `idiomaticRefactor.enabled`.
+Execution order is 0→1→2→3→4→5→6→7→8. Phase 7 requires `idiomaticRefactor.enabled`.
 
 ### Runtime ↔ Agent Boundary
 

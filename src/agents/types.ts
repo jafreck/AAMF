@@ -229,7 +229,7 @@ export interface AgentContext {
 /**
  * Execution-topology context passed to planning agents (`migration-planner`,
  * `migration-planner`) so they can tailor task granularity, grouping, and
- * dependency design to the actual Phase 5 execution mode.
+ * dependency design to the actual Phase 4 execution mode.
  *
  * Agents that receive this in their `payload.executionStrategy` can, for
  * example, co-locate related files into the same wave-friendly grouping,
@@ -237,7 +237,7 @@ export interface AgentContext {
  * calibrate task complexity against the available recovery budget.
  */
 export interface ExecutionStrategy {
-  /** Phase 5 execution mode: `'per-task'` (serial) or `'wave-barrier'` (concurrent waves). */
+  /** Phase 4 execution mode: `'per-task'` (serial) or `'wave-barrier'` (concurrent waves). */
   executionMode: 'per-task' | 'wave-barrier';
 
   /** Maximum number of agent subprocesses running in parallel. */
@@ -277,7 +277,7 @@ export interface ExecutionStrategy {
  * Location details describing which wave/task/check failed and needs remediation.
  */
 export interface RemediationTargetContext {
-  /** Phase 5 wave number when the failure occurred. */
+  /** Phase 4 wave number when the failure occurred. */
   wave?: number;
   /** Task identifier associated with the failure. */
   taskId?: string;
@@ -350,7 +350,7 @@ export interface PriorRecoveryAttempt {
 
 // ─── Terminal Exhaustion Contracts ────────────────────────────────────────────
 
-/** Canonical terminal exhaustion reason codes for Phase 5 fail-fast outcomes. */
+/** Canonical terminal exhaustion reason codes for Phase 4 fail-fast outcomes. */
 export type TerminalReasonCode =
   | 'wave-convergence-exhausted'
   | 'task-retries-exhausted'
@@ -362,7 +362,7 @@ export type TerminalReasonCode =
 /**
  * A discrete E2E test suite definition extracted from the e2e-test-crafter's
  * plan output.  Each brief describes one test suite that will be handed to
- * an independent `test-writer` agent invocation during Phase 7 fan-out.
+ * an independent `test-writer` agent invocation during Phase 6 fan-out.
  */
 export interface E2eSuiteBrief {
   /** Unique suite identifier, e.g. `"suite-001"`. */

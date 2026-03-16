@@ -65,7 +65,7 @@ describe('AamfFlowCheckpointAdapter', () => {
 describe('flow/index re-exports', () => {
   it('should export MigrationError', () => {
     expect(MigrationError).toBeDefined();
-    const err = new MigrationError(3, 'KB', { phase: 3, name: 'KB', success: false, duration: 0 });
+    const err = new MigrationError(2, 'KB', { phase: 2, name: 'KB', success: false, duration: 0 });
     expect(err).toBeInstanceOf(Error);
   });
 

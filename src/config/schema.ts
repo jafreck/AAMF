@@ -49,20 +49,20 @@ export const MigrationConfigSchema = z.object({
      */
     buildConcurrency: z.number().int().min(0).max(10).default(1),
     /**
-     * Maximum number of concurrent test-writer suites in Phase 7 fan-out.
+     * Maximum number of concurrent test-writer suites in Phase 6 fan-out.
      * Controls how many E2E test suites can be generated in parallel,
-     * separate from the general Phase 5 parallelism (`maxParallelAgents`).
+     * separate from the general Phase 4 parallelism (`maxParallelAgents`).
      * When omitted, defaults to the value of `maxParallelAgents`.
      */
     maxE2eSuiteConcurrency: z.number().int().min(1).max(10).optional(),
     /**
-     * Phase 5 execution strategy.
+     * Phase 4 execution strategy.
      * - `per-task`: existing behavior (migrate + validate task-by-task).
      * - `wave-barrier`: migrate in waves, then validate between waves.
      */
     executionMode: z.enum(['per-task', 'wave-barrier']).default('per-task'),
     /**
-     * Controls for Phase 5 wave/barrier execution mode.
+     * Controls for Phase 4 wave/barrier execution mode.
      * These values are ignored in `per-task` mode.
      */
     waveControl: z.object({
@@ -74,11 +74,11 @@ export const MigrationConfigSchema = z.object({
      * Whether to continue executing independent tasks when one is blocked.
      * When `true` (default), the orchestrator skips blocked tasks and their
      * dependents, continuing with any remaining ready tasks.
-     * When `false`, Phase 5 halts on the first blocked task.
+     * When `false`, Phase 4 halts on the first blocked task.
      */
     continueOnBlocked: z.boolean().default(true),
     /**
-     * Maximum number of blocked tasks before Phase 5 is halted.
+     * Maximum number of blocked tasks before Phase 4 is halted.
      * Only applies when `continueOnBlocked` is `true`. Default: unlimited (0).
      */
     maxBlockedTasks: z.number().int().min(0).default(1),
@@ -93,9 +93,9 @@ export const MigrationConfigSchema = z.object({
     maxInfraRetries: z.number().int().min(0).max(10).default(3),
 
     /**
-     * Options for the optional idiomatic refactor phase (Phase 8).
+     * Options for the optional idiomatic refactor phase (Phase 7).
      * When enabled, the idiomatic-reviewer and idiomatic-refactorer agents
-     * run after Phase 7 to improve code idiomaticness.
+     * run after Phase 6 to improve code idiomaticness.
      */
     idiomaticRefactor: z.object({
       enabled: z.boolean().default(false),
@@ -200,7 +200,7 @@ export const MigrationConfigSchema = z.object({
      *
      * When enabled, AAMF ensures `target.outputPath` is a Git repository and
      * creates granular commits during migration (per code-modifying agent and
-     * per completed Phase 5 task).
+     * per completed Phase 4 task).
      */
     git: z.object({
       /** Enable automatic git init/add/commit operations. */
@@ -209,7 +209,7 @@ export const MigrationConfigSchema = z.object({
       autoInit: z.boolean().default(true),
       /** Commit after successful code-modifying agent invocations. */
       commitByAgent: z.boolean().default(true),
-      /** Commit after each successfully completed Phase 5 task. */
+      /** Commit after each successfully completed Phase 4 task. */
       commitPerTask: z.boolean().default(true),
       /** Allow empty git commits for task-level markers when no files changed. */
       allowEmptyTaskCommits: z.boolean().default(true),

@@ -45,12 +45,12 @@ export class ProgressWriter {
     this.retryTargets = [];
     this.terminalExhaustion = undefined;
     this.adjudicationEvents = [];
-    this.phases.set(1, { name: 'Knowledge Base Construction', status: 'pending' });
-    this.phases.set(2, { name: 'Migration Planning', status: 'pending' });
-    this.phases.set(3, { name: 'Iterative Migration', status: 'pending' });
-    this.phases.set(4, { name: 'Final Parity Verification', status: 'pending' });
-    this.phases.set(5, { name: 'E2E Testing & Documentation', status: 'pending' });
-    this.phases.set(6, { name: 'Completion', status: 'pending' });
+    this.phases.set(2, { name: 'Knowledge Base Construction', status: 'pending' });
+    this.phases.set(3, { name: 'Migration Planning', status: 'pending' });
+    this.phases.set(4, { name: 'Iterative Migration', status: 'pending' });
+    this.phases.set(5, { name: 'Final Parity Verification', status: 'pending' });
+    this.phases.set(6, { name: 'E2E Testing & Documentation', status: 'pending' });
+    this.phases.set(8, { name: 'Completion', status: 'pending' });
 
     await this.write(config.projectName);
   }
@@ -58,10 +58,14 @@ export class ProgressWriter {
   /** Reconstruct progress state from a checkpoint (used on resume). */
   reconstructFromCheckpoint(state: CheckpointState): void {
     // Ensure phase definitions exist
-    const phaseNames = ['Knowledge Base Construction', 'Migration Planning', 'Iterative Migration', 'Final Parity Verification', 'E2E Testing & Documentation', 'Completion'];
-    for (let i = 0; i < phaseNames.length; i++) {
-      if (!this.phases.has(i + 1)) {
-        this.phases.set(i + 1, { name: phaseNames[i]!, status: 'pending' });
+    const phaseNames: [number, string][] = [
+      [2, 'Knowledge Base Construction'], [3, 'Migration Planning'],
+      [4, 'Iterative Migration'], [5, 'Final Parity Verification'],
+      [6, 'E2E Testing & Documentation'], [8, 'Completion'],
+    ];
+    for (const [id, name] of phaseNames) {
+      if (!this.phases.has(id)) {
+        this.phases.set(id, { name, status: 'pending' });
       }
     }
 
@@ -72,7 +76,7 @@ export class ProgressWriter {
     }
 
     // Mark current phase as in-progress
-    if (state.currentPhase <= 7) {
+    if (state.currentPhase <= 8) {
       const current = this.phases.get(state.currentPhase);
       if (current) current.status = 'in-progress';
     }
@@ -125,7 +129,7 @@ export class ProgressWriter {
     this.totalTasks = count;
   }
 
-  /** Update task progress within Phase 5 */
+  /** Update task progress within Phase 4 */
   async updateTask(taskId: string, status: string, details?: TaskDetails): Promise<void> {
     this.tasks.set(taskId, { status, details });
     await this.writeCurrentState();
@@ -267,7 +271,7 @@ export class ProgressWriter {
       md += '\n';
     }
 
-    // Task progress bar (Phase 5)
+    // Task progress bar (Phase 4)
     if (this.totalTasks > 0) {
       md += `## Task Progress\n\n`;
       const migratedTasks = [...this.tasks.values()].filter(t => t.status === 'migrated').length;
