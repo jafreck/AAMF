@@ -26,9 +26,9 @@ import {
   buildInvocation,
   AVG_TOKENS_PER_TASK,
   RETRY_OVERHEAD_MULTIPLIER,
-} from '../../src/flow/steps/shared.js';
-import type { MigrationFlowContext } from '../../src/flow/context.js';
-import type { MigrationTask } from '../../src/agents/types.js';
+} from '../../../src/flow/steps/shared.js';
+import type { MigrationFlowContext } from '../../../src/flow/context.js';
+import type { MigrationTask } from '../../../src/agents/types.js';
 
 // ─── Minimal mock context factory ────────────────────────────────────────────
 

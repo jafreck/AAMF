@@ -8,7 +8,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
-import { executeIterativeMigration } from '../../src/flow/steps/migration.js';
+import { executeIterativeMigration } from '../../../src/flow/steps/migration.js';
 import {
   setupFlowTestWithTasks,
   createMockLauncher,
@@ -16,9 +16,9 @@ import {
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
   withParityOutput,
-} from '../helpers/flow-mocks.js';
-import type { FlowTestEnv } from '../helpers/flow-mocks.js';
-import type { AgentInvocation, AgentResult, MigrationTask } from '../../src/agents/types.js';
+} from '../../helpers/flow-mocks.js';
+import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
+import type { AgentInvocation, AgentResult, MigrationTask } from '../../../src/agents/types.js';
 
 let env: FlowTestEnv;
 
@@ -222,8 +222,8 @@ describe('executeIterativeMigration (Phase 5)', () => {
       });
 
       // Mock runCommand to always fail builds
-      const { runCommand } = await import('../../src/flow/steps/shared.js');
-      const spawnMod = await import('../../src/util/process.js');
+      const { runCommand } = await import('../../../src/flow/steps/shared.js');
+      const spawnMod = await import('../../../src/util/process.js');
       const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
         exitCode: 1, stdout: '', stderr: 'build failed', killed: false,
       });
@@ -382,7 +382,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
 
       await executeIterativeMigration(env.flowCtx);
 
-      const { fileExists } = await import('../../src/util/fs.js');
+      const { fileExists } = await import('../../../src/util/fs.js');
       const exists = await fileExists(env.ctx.paths.metricsInvocationsFile);
       expect(exists).toBe(true);
     });

@@ -8,7 +8,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { writeFile, mkdir } from 'node:fs/promises';
-import { executeIterativeMigration } from '../../src/flow/steps/migration.js';
+import { executeIterativeMigration } from '../../../src/flow/steps/migration.js';
 import {
   setupFlowTestWithTasks,
   createMockLauncher,
@@ -16,9 +16,9 @@ import {
   SINGLE_AUTH_TASK,
   withParityPassOutput,
   makeTask,
-} from '../helpers/flow-mocks.js';
-import type { FlowTestEnv } from '../helpers/flow-mocks.js';
-import type { AgentInvocation, AgentResult } from '../../src/agents/types.js';
+} from '../../helpers/flow-mocks.js';
+import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
+import type { AgentInvocation, AgentResult } from '../../../src/agents/types.js';
 
 let env: FlowTestEnv;
 
@@ -40,7 +40,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     // Mock spawnWithTimeout to succeed for wave validation commands
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });
@@ -71,7 +71,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     const events: Array<Record<string, unknown>> = [];
     vi.spyOn(env.logger, 'event').mockImplementation((ev) => { events.push(ev as any); });
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });
@@ -109,7 +109,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       return origFn(inv);
     };
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });
@@ -142,7 +142,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     let buildCallCount = 0;
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async (cmd, args) => {
       buildCallCount++;
       if (buildCallCount <= 1) {
@@ -182,7 +182,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     // Build always fails → convergence can't succeed
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 1, stdout: '', stderr: 'build always fails', killed: false,
     });
@@ -224,7 +224,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     };
     await env.checkpoint.save(state);
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });
@@ -265,7 +265,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       },
     });
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });
@@ -293,7 +293,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       },
     });
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });
@@ -311,7 +311,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
   it('should fail when no migration plan is available', async () => {
     const launcherFn = createMockLauncher();
     // Use setupFlowTest (not WithTasks) to avoid writing tasks-merged.json
-    const { setupFlowTest } = await import('../helpers/flow-mocks.js');
+    const { setupFlowTest } = await import('../../helpers/flow-mocks.js');
     env = await setupFlowTest(launcherFn);
 
     // Clear the phase1TaskGraphResult so no plan data is available
@@ -348,7 +348,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       },
     });
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnCalls: string[] = [];
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async (_cmd, args) => {
       const cmdStr = Array.isArray(args) ? args.join(' ') : String(args);
@@ -378,7 +378,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       },
     });
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     // Always fail build commands — in strict/enforce mode, this causes failure
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 1, stdout: '', stderr: 'build fail', killed: false,
@@ -416,7 +416,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       },
     });
 
-    const spawnMod = await import('../../src/util/process.js');
+    const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
       exitCode: 0, stdout: 'ok', stderr: '', killed: false,
     });

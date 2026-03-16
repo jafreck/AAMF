@@ -84,23 +84,18 @@ export class CostEstimator {
   private readonly inner: FrameworkCostEstimator;
 
   constructor(costOverrides?: Record<string, CostOverride>) {
-    // Convert AAMF's per-1M pricing to framework's per-1K convention
-    const per1K: Record<string, { input: number; output: number }> = {};
+    // Merge AAMF's built-in pricing with user overrides, converting per-1M to per-1K
+    const merged: Record<string, { input: number; output: number }> = {};
     for (const [model, pricing] of Object.entries(MODEL_PRICING)) {
-      per1K[model] = { input: pricing.input / 1000, output: pricing.output / 1000 };
+      merged[model] = { input: pricing.input / 1000, output: pricing.output / 1000 };
     }
-    let overrides1K: Record<string, { input: number; output: number }> | undefined;
     if (costOverrides) {
-      overrides1K = {};
       for (const [model, pricing] of Object.entries(costOverrides)) {
-        overrides1K[model] = { input: pricing.input / 1000, output: pricing.output / 1000 };
+        merged[model] = { input: pricing.input / 1000, output: pricing.output / 1000 };
       }
     }
     this.inner = new FrameworkCostEstimator({
-      models: per1K,
-      costOverrides: overrides1K,
-      cacheDiscount: 0.5,      // AAMF bills cached tokens at 50% of input price
-      defaultInputRatio: 0.8,  // 80/20 prompt/completion split for total-only estimates
+      costOverrides: merged,
     });
   }
 
@@ -135,13 +130,16 @@ export class CostEstimator {
 
   /**
    * Estimate cost from a single total-token count.
+   * Uses AAMF's 80/20 prompt/completion split.
    */
   estimateFromTotal(
     model: string,
     totalTokens: number,
   ): { input: number; output: number; total: number } {
-    const est = this.inner.estimate(totalTokens, model);
-    return { input: est.inputCost, output: est.outputCost, total: est.totalCost };
+    const promptTokens = Math.round(totalTokens * 0.8);
+    const completionTokens = totalTokens - promptTokens;
+    const est = this.estimate(model, promptTokens, completionTokens);
+    return { input: est.input, output: est.output, total: est.total };
   }
 
   /**

@@ -11,7 +11,6 @@ import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import pLimit from 'p-limit';
 import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
-import { classifyError as frameworkClassifyError } from '@cadre-dev/framework/runtime';
 import type {
   AgentInvocation,
   AgentResult,
@@ -69,9 +68,6 @@ export function classifyError(errorOutput: string): string | undefined {
   for (const { pattern, label } of INFRASTRUCTURE_ERROR_PATTERNS) {
     if (pattern.test(errorOutput)) return label;
   }
-  // Fall back to framework's binary classifier which covers additional
-  // infra patterns (Docker, Git remote, ENOMEM, socket hang up, etc.).
-  if (frameworkClassifyError(errorOutput) === 'infra') return 'infra-other';
   return undefined;
 }
 
