@@ -447,11 +447,13 @@ describe('storeParityResult', () => {
   it('should store parity result in context map', () => {
     const ctx = mockContext();
     const agentResult = {
-      outputParsed: true,
-      structuredOutput: {
-        agent: 'parity-verifier', status: 'completed',
-        parity: 'partial',
-        issues: [{ severity: 'major', description: 'divergence', details: 'test', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' }],
+      extensions: {
+        outputParsed: true,
+        structuredOutput: {
+          agent: 'parity-verifier', status: 'completed',
+          parity: 'partial',
+          issues: [{ severity: 'major', description: 'divergence', details: 'test', sourceLocation: 'a.py:1', targetLocation: 'a.ts:1' }],
+        },
       },
     };
     storeParityResult(ctx, agentResult as any, 'task-001');
@@ -461,7 +463,7 @@ describe('storeParityResult', () => {
 
   it('should not store when outputParsed is false', () => {
     const ctx = mockContext();
-    storeParityResult(ctx, { outputParsed: false } as any, 'task-001');
+    storeParityResult(ctx, { extensions: { outputParsed: false } } as any, 'task-001');
     expect(ctx.parityResults.has('task-001')).toBe(false);
   });
 });
@@ -551,22 +553,22 @@ describe('getParityIssueSummary', () => {
 
 describe('resolverReducedScope', () => {
   it('should return true when scopeReduced is true', () => {
-    const result = { outputParsed: true, structuredOutput: { scopeReduced: true } };
+    const result = { extensions: { outputParsed: true, structuredOutput: { scopeReduced: true } } };
     expect(resolverReducedScope(result as any)).toBe(true);
   });
 
   it('should return false when scopeReduced is false', () => {
-    const result = { outputParsed: true, structuredOutput: { scopeReduced: false } };
+    const result = { extensions: { outputParsed: true, structuredOutput: { scopeReduced: false } } };
     expect(resolverReducedScope(result as any)).toBe(false);
   });
 
   it('should return false when outputParsed is false', () => {
-    const result = { outputParsed: false };
+    const result = { extensions: { outputParsed: false } };
     expect(resolverReducedScope(result as any)).toBe(false);
   });
 
   it('should return false when scopeReduced is absent', () => {
-    const result = { outputParsed: true, structuredOutput: { status: 'completed' } };
+    const result = { extensions: { outputParsed: true, structuredOutput: { status: 'completed' } } };
     expect(resolverReducedScope(result as any)).toBe(false);
   });
 });
@@ -576,34 +578,34 @@ describe('resolverReducedScope', () => {
 describe('buildInvocation', () => {
   it('should construct a basic invocation with agent and phase', () => {
     const ctx = mockContext();
-    const inv = buildInvocation(ctx, 'knowledge-builder', '/tmp/ctx.json', 3);
+    const inv = buildInvocation(ctx, 'knowledge-builder', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 3);
     expect(inv.agent).toBe('knowledge-builder');
-    expect(inv.contextFile).toBe('/tmp/ctx.json');
+    expect(inv.contextPath).toBe('/tmp/ctx.json');
     expect(inv.phase).toBe(3);
     expect(inv.timeout).toBe(300_000);
   });
 
-  it('should include taskId when provided', () => {
+  it('should include workItemId when provided', () => {
     const ctx = mockContext();
-    const inv = buildInvocation(ctx, 'code-migrator', '/tmp/ctx.json', 5, 'task-001');
-    expect(inv.taskId).toBe('task-001');
+    const inv = buildInvocation(ctx, 'code-migrator', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 5, 'task-001');
+    expect(inv.workItemId).toBe('task-001');
   });
 
   it('should use phase-specific timeout', () => {
     const ctx = mockContext({ agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000, phaseTimeouts: { 5: 600_000 } } });
-    const inv = buildInvocation(ctx, 'code-migrator', '/tmp/ctx.json', 5);
+    const inv = buildInvocation(ctx, 'code-migrator', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 5);
     expect(inv.timeout).toBe(600_000);
   });
 
   it('should apply failureRecoveryModel for parity-failure-resolver', () => {
     const ctx = mockContext({ agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000, failureRecoveryModel: 'gpt-4o-fallback' } });
-    const inv = buildInvocation(ctx, 'parity-failure-resolver', '/tmp/ctx.json', 5);
+    const inv = buildInvocation(ctx, 'parity-failure-resolver', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 5);
     expect(inv.modelOverride).toBe('gpt-4o-fallback');
   });
 
   it('should not set mcpConfig when kbServer is undefined', () => {
     const ctx = mockContext();
-    const inv = buildInvocation(ctx, 'knowledge-builder', '/tmp/ctx.json', 3);
-    expect(inv.mcpConfig).toBeUndefined();
+    const inv = buildInvocation(ctx, 'knowledge-builder', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 3);
+    expect(inv.extensions?.mcpConfig).toBeUndefined();
   });
 });

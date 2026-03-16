@@ -37,15 +37,15 @@ export async function runFinalParityIteration(
   if (!result.success) {
     const failResult: PhaseResult = {
       phase: 6, name: 'Final Parity Verification', success: false,
-      duration: 0, error: result.error, exitCode: result.exitCode, stderr: result.stderr,
+      duration: 0, error: result.error, exitCode: result.exitCode ?? undefined, stderr: result.stderr,
     };
     assertPhaseSuccess(failResult);
   }
 
   // Parse fixes from structured output
   let fixes: Array<{ description: string; sourceFile: string; targetFile: string }>;
-  if (result.outputParsed && Array.isArray(result.structuredOutput?.['fixes'])) {
-    fixes = result.structuredOutput['fixes'] as typeof fixes;
+  if (result.extensions.outputParsed && Array.isArray(result.extensions.structuredOutput?.['fixes'])) {
+    fixes = result.extensions.structuredOutput['fixes'] as typeof fixes;
   } else {
     ctx.logger.warn('Final-parity-checker structured output unavailable');
     const failResult: PhaseResult = {

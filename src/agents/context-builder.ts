@@ -34,14 +34,14 @@ export class ContextBuilder {
    * @param phase - The current migration phase number.
    * @param taskId - Optional task identifier within the phase.
    * @param payload - Optional additional data for the agent.
-   * @returns The absolute path to the written context JSON file.
+   * @returns The context path and output path for the invocation.
    */
   async buildContext(
     agent: AgentName,
     phase: number,
     taskId?: string,
     payload?: Record<string, unknown>,
-  ): Promise<string> {
+  ): Promise<{ contextPath: string; outputPath: string }> {
     const context = this.createContext(agent, phase, taskId, payload);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${agent}-${taskId ?? 'main'}-${timestamp}.json`;
@@ -49,7 +49,7 @@ export class ContextBuilder {
     await ensureDir(contextDir);
     const contextPath = join(contextDir, filename);
     await writeJson(contextPath, context);
-    return contextPath;
+    return { contextPath, outputPath: context.outputPath };
   }
 
   private isRecord(value: unknown): value is Record<string, unknown> {

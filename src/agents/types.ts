@@ -49,24 +49,41 @@ export interface McpServerConfig {
  * run, including the context file path, progress directory, and optional
  * overrides such as timeout or extra arguments.
  */
+/** AAMF-specific extensions on AgentInvocation (not in the framework). */
+export interface AgentInvocationExtensions {
+  /** Progress directory, typically `.aamf/migration/{projectName}`. */
+  progressDir?: string;
+  /** Arbitrary key-value pairs forwarded to the agent process. */
+  additionalArgs?: Record<string, string>;
+  /** MCP server config for the KB server; serialised as --mcp-config to the agent subprocess. */
+  mcpConfig?: McpServerConfig;
+  /** Path to the KB SQLite database; injected as KB_DB_PATH env var into the agent subprocess. */
+  kbDbPath?: string;
+  /** Routing tier assigned by the model routing policy (undefined when routing is inactive). */
+  routingTier?: ModelTier;
+  /** Human-readable reason for the routing decision. */
+  routingReason?: string;
+  /** Current attempt number (1-based), set by RetryExecutor. */
+  attemptNumber?: number;
+  /** Maximum attempts allowed, set by RetryExecutor. */
+  maxAttempts?: number;
+}
+
 export interface AgentInvocation {
   /** The agent to invoke. */
   agent: AgentName;
 
   /** Absolute or workspace-relative path to the context JSON file. */
-  contextFile: string;
+  contextPath: string;
 
-  /** Progress directory, typically `.aamf/migration/{projectName}`. */
-  progressDir: string;
+  /** Expected output path(s). */
+  outputPath: string;
 
   /** Migration phase number (1-based). */
-  phase?: number;
+  phase: number;
 
-  /** Unique task identifier when the agent operates on a single task. */
-  taskId?: string;
-
-  /** Arbitrary key-value pairs forwarded to the agent process. */
-  additionalArgs?: Record<string, string>;
+  /** Work-item identifier (mapped from taskId; empty string for non-task phases). */
+  workItemId: string;
 
   /** Timeout in milliseconds; overrides the default agent timeout. */
   timeout?: number;
@@ -74,79 +91,25 @@ export interface AgentInvocation {
   /** Model override for this single invocation (e.g. fallback model on infra failures). */
   modelOverride?: string;
 
-  /** MCP server config for the KB server; serialised as --mcp-config to the agent subprocess. */
-  mcpConfig?: McpServerConfig;
-
-  /** Path to the KB SQLite database; injected as KB_DB_PATH env var into the agent subprocess. */
-  kbDbPath?: string;
-
   /** Pre-generated invocation ID for log correlation; runners use this instead of generating their own. */
   invocationId?: string;
 
-  /** Routing tier assigned by the model routing policy (undefined when routing is inactive). */
-  routingTier?: ModelTier;
-
-  /** Human-readable reason for the routing decision. */
-  routingReason?: string;
-
-  /** Current attempt number (1-based), set by RetryExecutor. */
-  attemptNumber?: number;
-
-  /** Maximum attempts allowed, set by RetryExecutor. */
-  maxAttempts?: number;
+  /** AAMF-specific extension fields not present in the framework. */
+  extensions?: AgentInvocationExtensions;
 }
 
-/**
- * The outcome of a single agent execution.
- *
- * Returned by the runner after an agent process completes (or fails).
- */
-export interface AgentResult {
-  /** The agent that produced this result. */
-  agent: AgentName;
-
-  /** Task identifier, when the invocation targeted a specific task. */
-  taskId?: string;
-
-  /** Process exit code (`0` = success). */
-  exitCode: number;
-
-  /** Convenience flag derived from `exitCode === 0`. */
-  success: boolean;
-
+/** AAMF-specific extensions on AgentResult (not in the framework). */
+export interface AgentResultExtensions {
   /** Files created or modified by the agent during execution. */
-  outputFiles: string[];
-
-  /** Wall-clock duration of the agent run in milliseconds. */
-  duration: number;
-
-  /** Optional token-usage breakdown reported by the agent. */
-  tokenUsage?: { prompt: number; completion: number; total: number; cachedInput?: number; premiumRequests?: number };
-
-  /** Captured stderr or error message when the agent fails. */
-  error?: string;
-
-  /** Raw stderr output from the agent process. */
-  stderr?: string;
-
+  outputFiles?: string[];
   /** Structured data parsed from the agent's output, if applicable. */
   structuredOutput?: Record<string, unknown>;
-
   /** Whether the agent's output was successfully parsed into structured form. */
-  outputParsed: boolean;
-
+  outputParsed?: boolean;
   /** Error message describing why output parsing failed, if applicable. */
   parseError?: string;
-
-  /** Unique identifier for this specific invocation, for log correlation. */
-  invocationId?: string;
-
-  /** Time in milliseconds the invocation spent waiting in the queue before launch. */
-  queueDelay?: number;
-
-  /** Time in milliseconds from process spawn to the first output file being detected. */
-  spawnToFirstOutput?: number;
-
+  /** Estimated premium requests consumed (Copilot only). */
+  premiumRequests?: number;
   /** Structured event data from `copilot --output-format json`, when available. */
   copilotEvents?: {
     totalEvents: number;
@@ -160,6 +123,59 @@ export interface AgentResult {
     };
     errorCount: number;
   };
+  /** Time in milliseconds the invocation spent waiting in the queue before launch. */
+  queueDelay?: number;
+  /** Time in milliseconds from process spawn to the first output file being detected. */
+  spawnToFirstOutput?: number;
+}
+
+/**
+ * The outcome of a single agent execution.
+ *
+ * Returned by the runner after an agent process completes (or fails).
+ */
+export interface AgentResult {
+  /** The agent that produced this result. */
+  agent: AgentName;
+
+  /** Work-item identifier (mapped from taskId; empty string for non-task phases). */
+  workItemId: string;
+
+  /** Process exit code (`0` = success, `null` if not available). */
+  exitCode: number | null;
+
+  /** Convenience flag derived from `exitCode === 0`. */
+  success: boolean;
+
+  /** Whether the agent was killed due to timeout. */
+  timedOut: boolean;
+
+  /** Wall-clock duration of the agent run in milliseconds. */
+  duration: number;
+
+  /** Full stdout from the agent process. */
+  stdout: string;
+
+  /** Full stderr from the agent process. */
+  stderr: string;
+
+  /** Token-usage breakdown reported by the agent. */
+  tokenUsage: { input: number; output: number; cachedInput?: number } | null;
+
+  /** Path to the output file(s) the agent produced. */
+  outputPath: string;
+
+  /** Whether the expected output file exists. */
+  outputExists: boolean;
+
+  /** Captured error message when the agent fails. */
+  error?: string;
+
+  /** Unique identifier for this specific invocation, for log correlation. */
+  invocationId?: string;
+
+  /** AAMF-specific extension fields not present in the framework. */
+  extensions: AgentResultExtensions;
 }
 
 // ─── Agent Context ───────────────────────────────────────────────────────────
@@ -167,7 +183,7 @@ export interface AgentResult {
 /**
  * Contextual data passed to an agent at invocation time.
  *
- * Serialised to JSON and written to `contextFile` so that the agent can
+ * Serialised to JSON and written to `contextPath` so that the agent can
  * read its configuration, input files, and output expectations.
  */
 export interface AgentContext {

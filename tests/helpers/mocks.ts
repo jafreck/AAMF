@@ -22,13 +22,17 @@ export function createMockLauncher(
   return async (inv: AgentInvocation): Promise<AgentResult> => {
     const base: AgentResult = {
       agent: inv.agent,
-      taskId: inv.taskId,
+      workItemId: inv.workItemId,
       exitCode: 0,
       success: true,
-      outputFiles: [],
+      timedOut: false,
       duration: 100,
-      tokenUsage: { prompt: 500, completion: 200, total: 700 },
-      outputParsed: false,
+      stdout: '',
+      stderr: '',
+      tokenUsage: { input: 500, output: 200 },
+      outputPath: inv.outputPath,
+      outputExists: false,
+      extensions: { outputParsed: false },
     };
 
     if (typeof overrides === 'function') {

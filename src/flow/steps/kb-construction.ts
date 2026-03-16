@@ -29,7 +29,7 @@ export async function launchKnowledgeBuilder(
     const failResult: PhaseResult = {
       phase: 3, name: 'Knowledge Base Construction', success: false,
       duration: Date.now() - start, error: kbResult.error,
-      exitCode: kbResult.exitCode, stderr: kbResult.stderr,
+      exitCode: kbResult.exitCode ?? undefined, stderr: kbResult.stderr,
     };
     assertPhaseSuccess(failResult);
   }

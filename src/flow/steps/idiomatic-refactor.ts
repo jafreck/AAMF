@@ -37,14 +37,14 @@ export async function runIdiomaticReviewIteration(
     const failResult: PhaseResult = {
       phase: 8, name: 'Idiomatic Refactor', success: false,
       duration: Date.now() - start, error: reviewResult.error,
-      exitCode: reviewResult.exitCode, stderr: reviewResult.stderr,
+      exitCode: reviewResult.exitCode ?? undefined, stderr: reviewResult.stderr,
     };
     assertPhaseSuccess(failResult);
   }
 
   let issues: Array<{ file: string; location: string; issue: string; suggestion: string; details: string }>;
-  if (reviewResult.outputParsed && Array.isArray(reviewResult.structuredOutput?.['issues'])) {
-    issues = reviewResult.structuredOutput['issues'] as typeof issues;
+  if (reviewResult.extensions.outputParsed && Array.isArray(reviewResult.extensions.structuredOutput?.['issues'])) {
+    issues = reviewResult.extensions.structuredOutput['issues'] as typeof issues;
   } else {
     ctx.logger.warn('Idiomatic-reviewer structured output unavailable');
     const failResult: PhaseResult = {

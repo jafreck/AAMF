@@ -81,8 +81,7 @@ describe('runFinalParityIteration — failure paths', () => {
         // leaves structuredOutput alone, but set outputParsed=false so
         // the step's condition `outputParsed && Array.isArray(...)` is false.
         return {
-          outputParsed: false,
-          structuredOutput: { fixes: [{ description: 'dummy' }] },
+          extensions: { outputParsed: false, structuredOutput: { fixes: [{ description: 'dummy' }] } },
         };
       }
       return {};
@@ -374,7 +373,7 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
     //
     // The only way to trigger this path is for the agent to succeed but
     // outputParsed to remain false — which means the wrapper must also
-    // not override it.  The wrapper checks `!result.structuredOutput ||
+    // not override it.  The wrapper checks `!result.extensions.structuredOutput ||
     // !Array.isArray(...)` — if structuredOutput already has an array
     // issues field, it leaves it alone.  So we set structuredOutput with
     // a valid array of issues and outputParsed=false.  But then the check
@@ -385,8 +384,7 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
         // withParityPassOutput wrapper leaves it alone, but set
         // outputParsed = false so the actual step code rejects it.
         return {
-          outputParsed: false,
-          structuredOutput: { issues: [{ file: 'a.ts', issue: 'test' }] },
+          extensions: { outputParsed: false, structuredOutput: { issues: [{ file: 'a.ts', issue: 'test' }] } },
         };
       }
       return {};
@@ -400,10 +398,9 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
         return {
-          outputParsed: true,
-          structuredOutput: {
+          extensions: { outputParsed: true, structuredOutput: {
             issues: [{ file: 'src/a.ts', issue: 'test', suggestion: 'fix' }],
-          },
+          } },
         };
       }
       if (inv.agent === 'idiomatic-refactorer') {
@@ -420,10 +417,9 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
         return {
-          outputParsed: true,
-          structuredOutput: {
+          extensions: { outputParsed: true, structuredOutput: {
             issues: [{ file: 'src/a.ts', issue: 'test', suggestion: 'fix' }],
-          },
+          } },
         };
       }
       return {};

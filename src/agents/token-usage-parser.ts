@@ -11,7 +11,7 @@
  */
 export function parseClaudeTokenUsage(
   output: string,
-): { prompt: number; completion: number; total: number; cachedInput?: number } | undefined {
+): { input: number; output: number; cachedInput?: number } | undefined {
   const usageRegex = /\{[^{}]*"usage"\s*:\s*\{[^{}]*"input_tokens"\s*:\s*(\d+)[^{}]*"output_tokens"\s*:\s*(\d+)[^{}]*\}/g;
   let lastMatch: RegExpExecArray | null = null;
   let match: RegExpExecArray | null;
@@ -21,13 +21,13 @@ export function parseClaudeTokenUsage(
 
   if (!lastMatch) return undefined;
 
-  const prompt = parseInt(lastMatch[1]!, 10);
-  const completion = parseInt(lastMatch[2]!, 10);
+  const inputTokens = parseInt(lastMatch[1]!, 10);
+  const outputTokens = parseInt(lastMatch[2]!, 10);
 
   const cacheMatch = lastMatch[0].match(/"cache_read_input_tokens"\s*:\s*(\d+)/);
   const cachedInput = cacheMatch ? parseInt(cacheMatch[1]!, 10) : undefined;
 
-  return { prompt, completion, total: prompt + completion, ...(cachedInput !== undefined && { cachedInput }) };
+  return { input: inputTokens, output: outputTokens, ...(cachedInput !== undefined && { cachedInput }) };
 }
 
 /**
@@ -48,7 +48,7 @@ function parseShorthandNumber(value: string): number {
  */
 export function parseCopilotCliUsage(
   output: string,
-): { prompt: number; completion: number; total: number; cachedInput?: number; premiumRequests?: number } | undefined {
+): { input: number; output: number; cachedInput?: number; premiumRequests?: number } | undefined {
   const breakdownMatch = output.match(/Breakdown by AI model:/i);
   if (!breakdownMatch) return undefined;
 
@@ -57,8 +57,8 @@ export function parseCopilotCliUsage(
   const tokenLineRegexLegacy = /tokens_in:\s*([\d.]+[kmKM]?)\s*,\s*tokens_out:\s*([\d.]+[kmKM]?)(?:\s*,\s*tokens_cached:\s*([\d.]+[kmKM]?))?(?:\s*,\s*premium_requests_est:\s*(\d+))?/g;
   const tokenLineRegexCurrent = /([\d.]+[kmKM]?)\s+in\s*,\s*([\d.]+[kmKM]?)\s+out(?:\s*,\s*([\d.]+[kmKM]?)\s+cached)?(?:\s*\(Est\.\s*(\d+)\s+Premium\s+requests?\))?/gi;
 
-  let totalPrompt = 0;
-  let totalCompletion = 0;
+  let totalInput = 0;
+  let totalOutput = 0;
   let totalCached = 0;
   let hasCached = false;
   let totalPremium = 0;
@@ -67,8 +67,8 @@ export function parseCopilotCliUsage(
 
   const consume = (lineMatch: RegExpExecArray): void => {
     foundAny = true;
-    totalPrompt += parseShorthandNumber(lineMatch[1]!);
-    totalCompletion += parseShorthandNumber(lineMatch[2]!);
+    totalInput += parseShorthandNumber(lineMatch[1]!);
+    totalOutput += parseShorthandNumber(lineMatch[2]!);
     if (lineMatch[3]) {
       totalCached += parseShorthandNumber(lineMatch[3]!);
       hasCached = true;
@@ -90,9 +90,8 @@ export function parseCopilotCliUsage(
   if (!foundAny) return undefined;
 
   return {
-    prompt: totalPrompt,
-    completion: totalCompletion,
-    total: totalPrompt + totalCompletion,
+    input: totalInput,
+    output: totalOutput,
     ...(hasCached ? { cachedInput: totalCached } : {}),
     ...(hasPremium ? { premiumRequests: totalPremium } : {}),
   };
@@ -109,7 +108,7 @@ export function parseCopilotCliUsage(
 export function parseTokenUsage(
   output: string,
   runtime?: string,
-): { prompt: number; completion: number; total: number } | undefined {
+): { input: number; output: number; cachedInput?: number; premiumRequests?: number } | undefined {
   if (runtime === 'claude-code') {
     return parseClaudeTokenUsage(output);
   }
@@ -122,18 +121,14 @@ export function parseTokenUsage(
   const totalMatch = output.match(/total[\s_-]*tokens?:?\s*(\d+)/i);
 
   if (promptMatch && completionMatch) {
-    const prompt = parseInt(promptMatch[1]!, 10);
-    const completion = parseInt(completionMatch[1]!, 10);
-    return {
-      prompt,
-      completion,
-      total: totalMatch ? parseInt(totalMatch[1]!, 10) : prompt + completion,
-    };
+    const inputTokens = parseInt(promptMatch[1]!, 10);
+    const outputTokens = parseInt(completionMatch[1]!, 10);
+    return { input: inputTokens, output: outputTokens };
   }
 
   if (totalMatch) {
     const total = parseInt(totalMatch[1]!, 10);
-    return { prompt: Math.round(total * 0.8), completion: total - Math.round(total * 0.8), total };
+    return { input: Math.round(total * 0.8), output: total - Math.round(total * 0.8) };
   }
 
   return undefined;

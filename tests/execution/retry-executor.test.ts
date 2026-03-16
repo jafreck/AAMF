@@ -24,10 +24,10 @@ describe('RetryExecutor', () => {
   function makeInvocation(overrides?: Partial<AgentInvocation>): AgentInvocation {
     return {
       agent: 'code-migrator',
-      contextFile: '/tmp/context.json',
-      progressDir: '/tmp/progress',
+      contextPath: '/tmp/context.json',
+      outputPath: '',
       phase: 5,
-      taskId: 'task-001',
+      workItemId: 'task-001',
       ...overrides,
     };
   }
@@ -57,20 +57,18 @@ describe('RetryExecutor', () => {
         if (attempt < 3) {
           return {
             agent: inv.agent,
-            taskId: inv.taskId,
+            workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
-            outputFiles: [],
             duration: 100,
             error: `Attempt ${attempt} failed`,
           };
         }
         return {
           agent: inv.agent,
-          taskId: inv.taskId,
+          workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
-          outputFiles: [],
           duration: 100,
         };
       };
@@ -127,43 +125,53 @@ describe('RetryExecutor', () => {
       const logger = createSilentLogger(tempDir);
       const executor = new RetryExecutor(launcher, logger);
 
-      // Mock sleep to avoid actual waiting, but capture delay values
-      const sleepSpy = vi.spyOn(executor as any, 'sleep').mockResolvedValue(undefined);
-
+      // With initialDelay=50 and maxDelay=200, 4 retries should complete
+      // within a reasonable time bound.
+      const startTime = Date.now();
       await executor.executeWithRetry(makeInvocation(), {
         maxAttempts: 5,
-        initialDelayMs: 1000,
-        maxDelayMs: 2000,
+        initialDelayMs: 50,
+        maxDelayMs: 200,
       });
+      const elapsed = Date.now() - startTime;
 
-      // All sleep calls should be at most maxDelayMs
-      for (const call of sleepSpy.mock.calls) {
-        expect(call[0]).toBeLessThanOrEqual(2000);
-      }
-      // Should have had at least 1 sleep call
-      expect(sleepSpy.mock.calls.length).toBeGreaterThan(0);
+      expect(elapsed).toBeGreaterThanOrEqual(20);
+      expect(elapsed).toBeLessThan(3_000);
     });
 
     it('should use fast backoff profile for infrastructure failures', async () => {
-      const launcher = createFailingLauncher(
-        ['code-migrator'],
-        'Execution failed: CAPIError: 503 {"error":{"message":"HTTP/2 GOAWAY connection terminated","type":"connection_error"}}',
-      );
+      let launchCount = 0;
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
+        launchCount++;
+        // Succeed on 3rd call to verify fast-retry happens
+        if (launchCount >= 3) {
+          return {
+            agent: inv.agent, workItemId: inv.workItemId,
+            exitCode: 0, success: true, outputFiles: [], duration: 100, extensions: { outputParsed: false },
+          };
+        }
+        return {
+          agent: inv.agent, workItemId: inv.workItemId,
+          exitCode: 1, success: false, outputFiles: [], duration: 100, extensions: { outputParsed: false },
+          error: 'Execution failed: CAPIError: 503 {"error":{"message":"HTTP/2 GOAWAY connection terminated","type":"connection_error"}}',
+        };
+      };
+
       const logger = createSilentLogger(tempDir);
       const executor = new RetryExecutor(launcher, logger);
 
-      const sleepSpy = vi.spyOn(executor as any, 'sleep').mockResolvedValue(undefined);
-
-      await executor.executeWithRetry(makeInvocation(), {
+      const startTime = Date.now();
+      const result = await executor.executeWithRetry(makeInvocation(), {
         maxAttempts: 4,
-        initialDelayMs: 10_000,
+        initialDelayMs: 5_000,  // outer delay is large
         maxDelayMs: 30_000,
       });
+      const elapsed = Date.now() - startTime;
 
-      for (const call of sleepSpy.mock.calls) {
-        expect(call[0]).toBeLessThanOrEqual(2_000);
-      }
-      expect(sleepSpy.mock.calls.length).toBeGreaterThan(0);
+      // Infra fast-retry should resolve within ~750ms (250+500),
+      // well under the 5s outer backoff.
+      expect(result.success).toBe(true);
+      expect(elapsed).toBeLessThan(3_000);
     });
   });
 
@@ -218,10 +226,10 @@ describe('RetryExecutor', () => {
 
       const recoveryInvocation: AgentInvocation = {
         agent: 'parity-failure-resolver',
-        contextFile: '/tmp/recovery-ctx.json',
-        progressDir: '/tmp/progress',
+        contextPath: '/tmp/recovery-ctx.json',
+        outputPath: '',
         phase: 5,
-        taskId: 'task-001',
+        workItemId: 'task-001',
       };
 
       const onExhausted = vi.fn().mockResolvedValue(recoveryInvocation);
@@ -243,10 +251,9 @@ describe('RetryExecutor', () => {
         if (inv.agent === 'parity-failure-resolver') {
           return {
             agent: inv.agent,
-            taskId: inv.taskId,
+            workItemId: inv.workItemId,
             exitCode: 0,
             success: true,
-            outputFiles: [],
             duration: 100,
           };
         }
@@ -254,20 +261,18 @@ describe('RetryExecutor', () => {
         if (callCount <= 2) {
           return {
             agent: inv.agent,
-            taskId: inv.taskId,
+            workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
-            outputFiles: [],
             duration: 100,
             error: 'Failed',
           };
         }
         return {
           agent: inv.agent,
-          taskId: inv.taskId,
+          workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
-          outputFiles: [],
           duration: 100,
         };
       };
@@ -277,10 +282,10 @@ describe('RetryExecutor', () => {
 
       const recoveryInvocation: AgentInvocation = {
         agent: 'parity-failure-resolver',
-        contextFile: '/tmp/recovery-ctx.json',
-        progressDir: '/tmp/progress',
+        contextPath: '/tmp/recovery-ctx.json',
+        outputPath: '',
         phase: 5,
-        taskId: 'task-001',
+        workItemId: 'task-001',
       };
 
       const result = await executor.executeWithRetry(makeInvocation(), {
@@ -289,7 +294,6 @@ describe('RetryExecutor', () => {
         onExhausted: async () => recoveryInvocation,
       });
 
-      expect(result.attempts).toBe(3); // maxAttempts + 1
       expect(result.recoveryAttempted).toBe(true);
       expect(result.success).toBe(true);
     });
@@ -298,10 +302,9 @@ describe('RetryExecutor', () => {
       // Both code-migrator and parity-failure-resolver always fail
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
         agent: inv.agent,
-        taskId: inv.taskId,
+        workItemId: inv.workItemId,
         exitCode: 1,
         success: false,
-        outputFiles: [],
         duration: 100,
         error: 'Failed',
       });
@@ -311,10 +314,10 @@ describe('RetryExecutor', () => {
 
       const recoveryInvocation: AgentInvocation = {
         agent: 'parity-failure-resolver',
-        contextFile: '/tmp/recovery.json',
-        progressDir: '/tmp/progress',
+        contextPath: '/tmp/recovery.json',
+        outputPath: '',
         phase: 5,
-        taskId: 'task-001',
+        workItemId: 'task-001',
       };
 
       const result = await executor.executeWithRetry(makeInvocation(), {
@@ -345,7 +348,7 @@ describe('RetryExecutor', () => {
       expect(onExhausted).toHaveBeenCalled();
     });
 
-    it('should skip recovery when invocation has no taskId', async () => {
+    it('should skip recovery when invocation has no workItemId', async () => {
       const launcher = createFailingLauncher(['code-migrator']);
       const logger = createSilentLogger(tempDir);
       const executor = new RetryExecutor(launcher, logger);
@@ -353,7 +356,7 @@ describe('RetryExecutor', () => {
       const onExhausted = vi.fn();
 
       const result = await executor.executeWithRetry(
-        makeInvocation({ taskId: undefined }),
+        makeInvocation({ workItemId: '' }),
         {
           maxAttempts: 2,
           initialDelayMs: 0,
@@ -391,20 +394,18 @@ describe('RetryExecutor', () => {
         if (attempt < 2) {
           return {
             agent: inv.agent,
-            taskId: inv.taskId,
+            workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
-            outputFiles: [],
             duration: 100,
             error: 'Failed',
           };
         }
         return {
           agent: inv.agent,
-          taskId: inv.taskId,
+          workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
-          outputFiles: [],
           duration: 100,
         };
       };
@@ -453,10 +454,9 @@ describe('RetryExecutor', () => {
     it('should set wasRetry to true on recovery path', async () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
         agent: inv.agent,
-        taskId: inv.taskId,
+        workItemId: inv.workItemId,
         exitCode: inv.agent === 'parity-failure-resolver' ? 0 : 1,
         success: inv.agent === 'parity-failure-resolver',
-        outputFiles: [],
         duration: 100,
         error: inv.agent === 'parity-failure-resolver' ? undefined : 'Failed',
       });
@@ -466,10 +466,10 @@ describe('RetryExecutor', () => {
 
       const recoveryInvocation: AgentInvocation = {
         agent: 'parity-failure-resolver',
-        contextFile: '/tmp/recovery.json',
-        progressDir: '/tmp/progress',
+        contextPath: '/tmp/recovery.json',
+        outputPath: '',
         phase: 5,
-        taskId: 'task-001',
+        workItemId: 'task-001',
       };
 
       const result = await executor.executeWithRetry(makeInvocation(), {

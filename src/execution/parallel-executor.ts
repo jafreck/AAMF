@@ -32,13 +32,13 @@ export class ParallelExecutor {
         if (this._activeCount > this._peakConcurrency) {
           this._peakConcurrency = this._activeCount;
         }
-        this.logger.info(`[${i + 1}/${invocations.length}] Launching ${inv.agent}${inv.taskId ? ` (${inv.taskId})` : ''}`);
+        this.logger.info(`[${i + 1}/${invocations.length}] Launching ${inv.agent}${inv.workItemId ? ` (${inv.workItemId})` : ''}`);
         try {
           const result = await this.launcher(inv);
           if (result.success) {
-            this.logger.info(`Completed ${inv.agent}${inv.taskId ? ` (${inv.taskId})` : ''} in ${result.duration}ms`);
+            this.logger.info(`Completed ${inv.agent}${inv.workItemId ? ` (${inv.workItemId})` : ''} in ${result.duration}ms`);
           } else {
-            this.logger.error(`Failed ${inv.agent}${inv.taskId ? ` (${inv.taskId})` : ''}: ${result.error ?? 'unknown'}`);
+            this.logger.error(`Failed ${inv.agent}${inv.workItemId ? ` (${inv.workItemId})` : ''}: ${result.error ?? 'unknown'}`);
           }
           return result;
         } catch (err) {
@@ -46,13 +46,18 @@ export class ParallelExecutor {
           this.logger.error(`Exception in ${inv.agent}: ${error}`);
           return {
             agent: inv.agent,
-            taskId: inv.taskId,
+            workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
-            outputFiles: [],
+            timedOut: false,
             duration: 0,
-            outputParsed: false,
+            stdout: '',
+            stderr: '',
+            tokenUsage: null,
+            outputPath: inv.outputPath,
+            outputExists: false,
             error,
+            extensions: {},
           } satisfies AgentResult;
         } finally {
           this._activeCount--;

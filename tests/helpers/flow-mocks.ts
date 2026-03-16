@@ -76,26 +76,26 @@ export function withParityPassOutput(
 ): (inv: AgentInvocation) => Promise<AgentResult> {
   return async (inv: AgentInvocation): Promise<AgentResult> => {
     const result = await fn(inv);
-    if (inv.agent === 'parity-verifier' && inv.taskId) {
-      if (!result.structuredOutput || !(result.structuredOutput as any).parity) {
-        result.structuredOutput = {
-          ...(result.structuredOutput ?? {}),
-          agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+    if (inv.agent === 'parity-verifier' && inv.workItemId) {
+      if (!result.extensions.structuredOutput || !(result.extensions.structuredOutput as any).parity) {
+        result.extensions.structuredOutput = {
+          ...(result.extensions.structuredOutput ?? {}),
+          agent: 'parity-verifier', status: 'completed', taskId: inv.workItemId,
           parity: 'pass', issues: [],
         };
-        result.outputParsed = true;
+        result.extensions.outputParsed = true;
       }
     }
     if (inv.agent === 'final-parity-checker') {
-      if (!result.structuredOutput || !Array.isArray((result.structuredOutput as any).fixes)) {
-        result.structuredOutput = { ...(result.structuredOutput ?? {}), fixes: [] };
-        result.outputParsed = true;
+      if (!result.extensions.structuredOutput || !Array.isArray((result.extensions.structuredOutput as any).fixes)) {
+        result.extensions.structuredOutput = { ...(result.extensions.structuredOutput ?? {}), fixes: [] };
+        result.extensions.outputParsed = true;
       }
     }
     if (inv.agent === 'idiomatic-reviewer') {
-      if (!result.structuredOutput || !Array.isArray((result.structuredOutput as any).issues)) {
-        result.structuredOutput = { ...(result.structuredOutput ?? {}), issues: [] };
-        result.outputParsed = true;
+      if (!result.extensions.structuredOutput || !Array.isArray((result.extensions.structuredOutput as any).issues)) {
+        result.extensions.structuredOutput = { ...(result.extensions.structuredOutput ?? {}), issues: [] };
+        result.extensions.outputParsed = true;
       }
     }
     return result;
@@ -108,22 +108,22 @@ export function withParityOutput(
 ): (inv: AgentInvocation) => Promise<AgentResult> {
   return async (inv: AgentInvocation): Promise<AgentResult> => {
     const result = await fn(inv);
-    if (inv.agent === 'parity-verifier' && inv.taskId) {
-      const override = overrides[inv.taskId];
+    if (inv.agent === 'parity-verifier' && inv.workItemId) {
+      const override = overrides[inv.workItemId];
       if (override) {
-        result.structuredOutput = {
-          ...(result.structuredOutput ?? {}),
-          agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+        result.extensions.structuredOutput = {
+          ...(result.extensions.structuredOutput ?? {}),
+          agent: 'parity-verifier', status: 'completed', taskId: inv.workItemId,
           parity: override.parity, issues: override.issues,
         };
-        result.outputParsed = true;
-      } else if (!result.structuredOutput || !(result.structuredOutput as any).parity) {
-        result.structuredOutput = {
-          ...(result.structuredOutput ?? {}),
-          agent: 'parity-verifier', status: 'completed', taskId: inv.taskId,
+        result.extensions.outputParsed = true;
+      } else if (!result.extensions.structuredOutput || !(result.extensions.structuredOutput as any).parity) {
+        result.extensions.structuredOutput = {
+          ...(result.extensions.structuredOutput ?? {}),
+          agent: 'parity-verifier', status: 'completed', taskId: inv.workItemId,
           parity: 'pass', issues: [],
         };
-        result.outputParsed = true;
+        result.extensions.outputParsed = true;
       }
     }
     return result;
@@ -290,10 +290,19 @@ export async function setupFlowTestWithTasks(
     agent: 'migration-planner',
     exitCode: 0,
     success: true,
-    outputFiles: [join(env.progressDir, 'artifacts', 'planning', 'tasks-merged.json')],
+    workItemId: '',
+    timedOut: false,
     duration: 0,
-    outputParsed: true,
-    structuredOutput: { tasks, sccs: [], compilationUnits: [] },
+    stdout: '',
+    stderr: '',
+    tokenUsage: null,
+    outputPath: join(env.progressDir, 'artifacts', 'planning', 'tasks-merged.json'),
+    outputExists: true,
+    extensions: {
+      outputFiles: [join(env.progressDir, 'artifacts', 'planning', 'tasks-merged.json')],
+      outputParsed: true,
+      structuredOutput: { tasks, sccs: [], compilationUnits: [] },
+    },
   };
 
   // Write empty kb.db so phases that check it find it

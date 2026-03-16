@@ -71,7 +71,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
   describe('Budget Management', () => {
     it('should succeed but accumulate tokens that can trigger budget gates', async () => {
       const launcherFn = createMockLauncher(() => ({
-        tokenUsage: { prompt: 400, completion: 200, total: 600 },
+        tokenUsage: { input: 400, output: 200 },
       }));
       env = await setupFlowTestWithTasks(launcherFn, DEFAULT_PLANNING_TASKS, {
         options: { tokenBudget: 1000 },
@@ -195,7 +195,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
   describe('Terminal Exhaustion', () => {
     it('should throw when task retries are exhausted', async () => {
       const launcherFn = createMockLauncher((inv) => {
-        if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
+        if (inv.agent === 'code-migrator' && inv.workItemId === 'task-001') {
           return { exitCode: 1, success: false, error: 'Migration failed' };
         }
         if (inv.agent === 'parity-failure-resolver') {
@@ -246,7 +246,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       const capturedInvocations: AgentInvocation[] = [];
       const launcherFn = createMockLauncher((inv) => {
         capturedInvocations.push({ ...inv });
-        if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
+        if (inv.agent === 'code-migrator' && inv.workItemId === 'task-001') {
           callCount++;
           if (callCount === 1) {
             return {
@@ -264,7 +264,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       await executeIterativeMigration(env.flowCtx);
 
       const migratorRetries = capturedInvocations.filter(
-        i => i.agent === 'code-migrator' && i.taskId === 'task-001',
+        i => i.agent === 'code-migrator' && i.workItemId === 'task-001',
       );
       expect(migratorRetries.length).toBeGreaterThanOrEqual(2);
       expect(migratorRetries[1]?.modelOverride).toBe('gpt-4.1-mini');
@@ -293,7 +293,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       await executeIterativeMigration(env.flowCtx);
 
       const task001Migrators = env.mockLauncher.invocations.filter(
-        i => i.agent === 'code-migrator' && i.taskId === 'task-001',
+        i => i.agent === 'code-migrator' && i.workItemId === 'task-001',
       );
       expect(task001Migrators.length).toBeGreaterThan(0);
       expect(task001Migrators[0]!.modelOverride).toBe('claude-opus-4.6');
@@ -367,7 +367,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
 
     it('should record token usage', async () => {
       const launcherFn = createMockLauncher(() => ({
-        tokenUsage: { prompt: 1000, completion: 500, total: 1500 },
+        tokenUsage: { input: 1000, output: 500 },
       }));
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
 
@@ -435,7 +435,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       // The migrate, commit, and parity substeps were checkpointed as complete,
       // so no code-migrator invocations should occur for task-001.
       const task001MigratorInvocations = env.mockLauncher.invocations.filter(
-        inv => inv.phase === 5 && inv.taskId === 'task-001' && inv.agent === 'code-migrator',
+        inv => inv.phase === 5 && inv.workItemId === 'task-001' && inv.agent === 'code-migrator',
       );
       expect(task001MigratorInvocations.length).toBe(0);
     });

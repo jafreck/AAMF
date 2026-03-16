@@ -11,9 +11,10 @@ import type { AgentInvocation } from '../../src/agents/types.js';
 function makeInvocation(overrides?: Partial<AgentInvocation>): AgentInvocation {
   return {
     agent: 'code-migrator',
-    contextFile: '/tmp/context.json',
-    progressDir: '/tmp/progress',
-    taskId: 'task-001',
+    contextPath: '/tmp/context.json',
+    outputPath: '/tmp/output',
+    phase: 5,
+    workItemId: 'task-001',
     ...overrides,
   };
 }
@@ -28,73 +29,64 @@ describe('createMockLauncher', () => {
     expect(result.success).toBe(true);
     expect(result.exitCode).toBe(0);
     expect(result.agent).toBe('code-migrator');
-    expect(result.taskId).toBe('task-001');
+    expect(result.workItemId).toBe('task-001');
   });
 
   it('should include outputParsed: false by default', async () => {
     const launcher = createMockLauncher();
     const result = await launcher(makeInvocation());
-    expect(result.outputParsed).toBe(false);
-  });
-
-  it('should include outputFiles as empty array by default', async () => {
-    const launcher = createMockLauncher();
-    const result = await launcher(makeInvocation());
-    expect(result.outputFiles).toEqual([]);
+    expect(result.extensions.outputParsed).toBe(false);
   });
 
   it('should include tokenUsage by default', async () => {
     const launcher = createMockLauncher();
     const result = await launcher(makeInvocation());
     expect(result.tokenUsage).toBeDefined();
-    expect(result.tokenUsage?.total).toBeGreaterThan(0);
+    expect(result.tokenUsage!.input + result.tokenUsage!.output).toBeGreaterThan(0);
   });
 
   it('should apply per-agent object overrides', async () => {
     const launcher = createMockLauncher({
-      'code-migrator': { outputParsed: true, structuredOutput: { key: 'val' } },
+      'code-migrator': { extensions: { outputParsed: true, structuredOutput: { key: 'val' } } },
     });
     const result = await launcher(makeInvocation({ agent: 'code-migrator' }));
-    expect(result.outputParsed).toBe(true);
-    expect(result.structuredOutput).toEqual({ key: 'val' });
+    expect(result.extensions.outputParsed).toBe(true);
+    expect(result.extensions.structuredOutput).toEqual({ key: 'val' });
   });
 
   it('should not apply overrides for non-matching agents', async () => {
     const launcher = createMockLauncher({
-      'parity-verifier': { outputParsed: true },
+      'parity-verifier': { extensions: { outputParsed: true } },
     });
     const result = await launcher(makeInvocation({ agent: 'code-migrator' }));
-    expect(result.outputParsed).toBe(false);
+    expect(result.extensions.outputParsed).toBe(false);
   });
 
   it('should apply function overrides', async () => {
     const launcher = createMockLauncher((inv) => ({
-      outputParsed: true,
-      structuredOutput: { agent: inv.agent },
+      extensions: { outputParsed: true, structuredOutput: { agent: inv.agent } },
     }));
     const result = await launcher(makeInvocation({ agent: 'test-writer' }));
-    expect(result.outputParsed).toBe(true);
-    expect(result.structuredOutput?.['agent']).toBe('test-writer');
+    expect(result.extensions.outputParsed).toBe(true);
+    expect(result.extensions.structuredOutput?.['agent']).toBe('test-writer');
   });
 
   it('should support setting outputParsed: true via function override', async () => {
     const launcher = createMockLauncher(() => ({
-      outputParsed: true,
-      structuredOutput: { status: 'done' },
+      extensions: { outputParsed: true, structuredOutput: { status: 'done' } },
     }));
     const result = await launcher(makeInvocation());
-    expect(result.outputParsed).toBe(true);
-    expect(result.structuredOutput).toEqual({ status: 'done' });
+    expect(result.extensions.outputParsed).toBe(true);
+    expect(result.extensions.structuredOutput).toEqual({ status: 'done' });
   });
 
   it('should support setting parseError via function override', async () => {
     const launcher = createMockLauncher(() => ({
-      outputParsed: false,
-      parseError: 'missing aamf-json block',
+      extensions: { outputParsed: false, parseError: 'missing aamf-json block' },
     }));
     const result = await launcher(makeInvocation());
-    expect(result.outputParsed).toBe(false);
-    expect(result.parseError).toBe('missing aamf-json block');
+    expect(result.extensions.outputParsed).toBe(false);
+    expect(result.extensions.parseError).toBe('missing aamf-json block');
   });
 });
 
@@ -125,7 +117,7 @@ describe('createFailingLauncher', () => {
   it('should preserve outputParsed: false for failed agents', async () => {
     const launcher = createFailingLauncher(['code-migrator']);
     const result = await launcher(makeInvocation({ agent: 'code-migrator' }));
-    expect(result.outputParsed).toBe(false);
+    expect(result.extensions.outputParsed).toBe(false);
   });
 });
 
@@ -151,10 +143,10 @@ describe('MockAgentLauncher', () => {
   });
 
   it('should return the result from the underlying function', async () => {
-    const fn = createMockLauncher(() => ({ outputParsed: true }));
+    const fn = createMockLauncher(() => ({ extensions: { outputParsed: true } }));
     const mock = new MockAgentLauncher(fn);
     const result = await mock.launchAgent(makeInvocation());
-    expect(result.outputParsed).toBe(true);
+    expect(result.extensions.outputParsed).toBe(true);
   });
 
   it('getResolvedPath should return undefined', () => {

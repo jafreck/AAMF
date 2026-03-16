@@ -235,13 +235,13 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       // task-001's migrate substep was checkpointed as complete,
       // so no code-migrator invocations should occur for task-001.
       const task001Invocations = env.mockLauncher.invocations.filter(
-        i => i.agent === 'code-migrator' && i.taskId === 'task-001',
+        i => i.agent === 'code-migrator' && i.workItemId === 'task-001',
       );
       expect(task001Invocations).toHaveLength(0);
 
       // task-002 should have been processed
       const task002Invocations = env.mockLauncher.invocations.filter(
-        i => i.agent === 'code-migrator' && i.taskId === 'task-002',
+        i => i.agent === 'code-migrator' && i.workItemId === 'task-002',
       );
       expect(task002Invocations.length).toBeGreaterThan(0);
     } finally {
@@ -398,7 +398,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
   it('should halt when continueOnBlocked is false and tasks are blocked', async () => {
     // Make code-migrator fail for task-001 so it becomes blocked
     const launcherFn = createMockLauncher((inv) => {
-      if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
+      if (inv.agent === 'code-migrator' && inv.workItemId === 'task-001') {
         return { exitCode: 1, success: false, error: 'Migration failed' };
       }
       if (inv.agent === 'parity-failure-resolver') {
@@ -437,7 +437,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       { ...makeTask('task-002', ['task-001']), dependencies: ['task-001'] },
     ];
     const launcherFn = createMockLauncher((inv) => {
-      if (inv.agent === 'code-migrator' && inv.taskId === 'task-001') {
+      if (inv.agent === 'code-migrator' && inv.workItemId === 'task-001') {
         return { exitCode: 1, success: false, error: 'always fails' };
       }
       if (inv.agent === 'parity-failure-resolver') {
@@ -467,7 +467,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     env = await setupFlowTestWithTasks(launcherFn, tasks);
 
     // Inject SCCs into structured output
-    env.ctx.phase1TaskGraphResult!.structuredOutput!['sccs'] = [['task-a', 'task-b']];
+    env.ctx.phase1TaskGraphResult!.extensions.structuredOutput!['sccs'] = [['task-a', 'task-b']];
 
     const result = await executeIterativeMigration(env.flowCtx);
     expect(result.success).toBe(true);
