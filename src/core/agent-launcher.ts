@@ -193,13 +193,13 @@ function adaptLogger(logger: Logger): BackendLoggerLike {
 function toFrameworkInvocation(inv: AgentInvocation): FrameworkInvocation {
   return {
     agent: inv.agent,
-    workItemId: inv.workItemId,
+    issueNumber: 0,
     phase: inv.phase,
     contextPath: inv.contextPath,
     outputPath: inv.outputPath,
     timeout: inv.timeout,
     modelOverride: inv.modelOverride,
-  };
+  } as FrameworkInvocation;
 }
 
 /** Map a framework AgentResult back to an AAMF AgentResult, preserving post-processing hooks. */
