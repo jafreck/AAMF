@@ -252,7 +252,7 @@ export async function setupFlowTest(
     parityResults: new Map(),
     routedTaskIds: new Set(),
     escalationCostUsd: 0,
-    phase5Snapshot: undefined,
+    phase4Snapshot: undefined,
     deferGitCommits: false,
   };
 
@@ -273,7 +273,7 @@ export async function setupFlowTest(
 }
 
 /**
- * Convenience: set up a flow test env with tasks pre-loaded for Phase 5+.
+ * Convenience: set up a flow test env with tasks pre-loaded for Phase 4+.
  */
 export async function setupFlowTestWithTasks(
   launcherFn: (inv: AgentInvocation) => Promise<AgentResult>,

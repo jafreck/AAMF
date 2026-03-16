@@ -1,5 +1,5 @@
 /**
- * Phase 9 — Completion
+ * Phase 8 — Completion
  */
 
 import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
@@ -13,5 +13,5 @@ export async function finalizeAndReport(
   const start = Date.now();
   await ctx.progress.appendEvent('Migration pipeline complete — finalizing');
   ctx.logger.info('All phases complete');
-  return { phase: 9, name: 'Completion', success: true, outputPath: ctx.paths.root, duration: Date.now() - start };
+  return { phase: 8, name: 'Completion', success: true, outputPath: ctx.paths.root, duration: Date.now() - start };
 }

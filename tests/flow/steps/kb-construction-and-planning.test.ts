@@ -1,6 +1,6 @@
 /**
- * Phase 3 — Knowledge Base Construction (step-level tests)
- * Phase 4 — Migration Strategy (step-level tests)
+ * Phase 2 — Knowledge Base Construction (step-level tests)
+ * Phase 3 — Migration Strategy (step-level tests)
  *
  * Tests the individual step functions that replaced the orchestrator's
  * executePhase3() and executePhase4() methods.
@@ -23,7 +23,7 @@ afterEach(async () => {
   if (env) await env.cleanup();
 });
 
-// ─── Phase 3 — Knowledge Base Construction ──────────────────────────────────
+// ─── Phase 2 — Knowledge Base Construction ──────────────────────────────────
 
 describe('launchKnowledgeBuilder', () => {
   it('should return success when knowledge-builder agent succeeds', async () => {
@@ -32,7 +32,7 @@ describe('launchKnowledgeBuilder', () => {
 
     const result = await launchKnowledgeBuilder(env.flowCtx);
 
-    expect(result.phase).toBe(3);
+    expect(result.phase).toBe(2);
     expect(result.name).toBe('Knowledge Base Construction');
     expect(result.success).toBe(true);
   });
@@ -41,21 +41,21 @@ describe('launchKnowledgeBuilder', () => {
     const launcherFn = createFailingLauncher(['knowledge-builder']);
     env = await setupFlowTest(launcherFn);
 
-    await expect(launchKnowledgeBuilder(env.flowCtx)).rejects.toThrow(/Phase 3.*failed/);
+    await expect(launchKnowledgeBuilder(env.flowCtx)).rejects.toThrow(/Phase 2.*failed/);
   });
 
-  it('should skip when phase 3 is already completed (checkpoint resume)', async () => {
+  it('should skip when phase 2 is already completed (checkpoint resume)', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    // Mark phase 3 as complete in checkpoint
+    // Mark phase 2 as complete in checkpoint
     const state = env.checkpoint.getState();
-    state.completedPhases.push(3);
+    state.completedPhases.push(2);
     await env.checkpoint.save(state);
 
     const result = await launchKnowledgeBuilder(env.flowCtx);
 
-    expect(result.phase).toBe(3);
+    expect(result.phase).toBe(2);
     expect(result.success).toBe(true);
     // Agent should not have been invoked (skipped on resume)
     expect(env.mockLauncher.invocations).toHaveLength(0);
@@ -74,7 +74,7 @@ describe('launchKnowledgeBuilder', () => {
   });
 });
 
-// ─── Phase 4 — Migration Strategy ───────────────────────────────────────────
+// ─── Phase 3 — Migration Strategy ───────────────────────────────────────────
 
 describe('launchMigrationPlanner', () => {
   it('should return success when migration-planner agent succeeds', async () => {
@@ -83,7 +83,7 @@ describe('launchMigrationPlanner', () => {
 
     const result = await launchMigrationPlanner(env.flowCtx);
 
-    expect(result.phase).toBe(4);
+    expect(result.phase).toBe(3);
     expect(result.name).toBe('Migration Strategy');
     expect(result.success).toBe(true);
   });
@@ -92,7 +92,7 @@ describe('launchMigrationPlanner', () => {
     const launcherFn = createFailingLauncher(['migration-planner']);
     env = await setupFlowTest(launcherFn);
 
-    await expect(launchMigrationPlanner(env.flowCtx)).rejects.toThrow(/Phase 4.*failed/);
+    await expect(launchMigrationPlanner(env.flowCtx)).rejects.toThrow(/Phase 3.*failed/);
   });
 
   it('should skip phase 4a when already completed in checkpoint', async () => {

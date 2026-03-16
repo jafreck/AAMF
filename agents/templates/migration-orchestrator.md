@@ -13,15 +13,13 @@ You are the **Migration Orchestrator** — the central coordinator for large-sca
 
 Execute these phases in order. On resume, skip completed phases (read from `state/checkpoint.json`).
 
-### Phase 1: Impact Assessment & Cost Estimation
-- Launch: `impact-assessor`
-- Input: Source codebase path, target specification
-- Output: `.aamf/migration/{projectName}/artifacts/impact-assessment.md`
-- Parallelizable: YES (read-only)
+### Phase 1: Task Graph Construction
+- The runtime builds a deterministic call-graph: SCC contraction → greedy merge → topologically-sorted task list.
+- Output: Structured task list with dependency ordering
 
-### Phase 2: Investigation & Knowledge Base Construction
+### Phase 2: Knowledge Base Construction
 - Launch: `knowledge-builder`
-- Input: Source codebase path, impact assessment results
+- Input: Source codebase path, task graph
 - Output: `.aamf/migration/{projectName}/knowledge-base/` directory containing high-level architecture, module, and integration documentation
 - Parallelizable: YES (read-only)
 
@@ -62,7 +60,6 @@ Serial execution required for code-writing. Parity verification is read-only and
 
 | Agent | Purpose | Parallelizable |
 |-------|---------|----------------|
-| `impact-assessor` | Impact assessment and cost estimation | Yes |
 | `knowledge-builder` | Investigation and knowledge base construction | Yes |
 | `migration-planner` | Plan migration implementation | No |
 | `adjudicator` | Decide between competing plans/solutions | No |

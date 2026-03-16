@@ -1,5 +1,5 @@
 /**
- * Phase 7 — E2E Testing & Documentation
+ * Phase 6 — E2E Testing & Documentation
  *
  * Split into three exported functions for the flow DSL:
  * - launchE2eTestCrafter: step() — creates e2e-test-plan.md
@@ -18,7 +18,7 @@ import { fileExists } from '../../util/fs.js';
 import {
   buildInvocation, launchAgentWithEvents, recordTokens,
   commitForAgent, isGitAutomationEnabled,
-  getPhase7Cursor, savePhase7Cursor,
+  getPhase6Cursor, savePhase6Cursor,
   assertPhaseSuccess,
 } from './shared.js';
 
@@ -28,28 +28,28 @@ export async function launchE2eTestCrafter(
   flowCtx: FlowExecutionContext<MigrationFlowContext>,
 ): Promise<AgentResult> {
   const ctx = flowCtx.context;
-  const phase7Cursor = getPhase7Cursor(ctx);
-  const completedAgents = new Set(phase7Cursor.completedAgents);
+  const phase6Cursor = getPhase6Cursor(ctx);
+  const completedAgents = new Set(phase6Cursor.completedAgents);
 
   if (completedAgents.has('e2e-test-crafter')) {
     return { agent: 'e2e-test-crafter', workItemId: '', exitCode: 0, success: true, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, extensions: {} };
   }
 
   const e2eCtx = await ctx.contextBuilder.buildContext('e2e-test-crafter', 6, undefined, { planOnly: true });
-  const crafterResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'e2e-test-crafter', e2eCtx, 7));
-  recordTokens(ctx, crafterResult, 7);
+  const crafterResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'e2e-test-crafter', e2eCtx, 6));
+    recordTokens(ctx, crafterResult, 6);
 
   if (crafterResult.success) {
-    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'e2e-test-crafter', 7);
+    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'e2e-test-crafter', 6);
     completedAgents.add('e2e-test-crafter');
-    await savePhase7Cursor(ctx, {
+    await savePhase6Cursor(ctx, {
       completedAgents: Array.from(completedAgents),
-      completedSuites: Array.from(getPhase7Cursor(ctx).completedSuites),
+      completedSuites: Array.from(getPhase6Cursor(ctx).completedSuites),
       lastSuccessfulStep: 'completed-e2e-test-crafter',
     });
   } else {
     assertPhaseSuccess({
-      phase: 7, name: 'E2E Testing & Documentation', success: false,
+      phase: 6, name: 'E2E Testing & Documentation', success: false,
       duration: 0, error: crafterResult.error ?? 'e2e-test-crafter failed',
     });
   }
@@ -63,9 +63,9 @@ export async function launchE2eSuiteWriters(
   flowCtx: FlowExecutionContext<MigrationFlowContext>,
 ): Promise<unknown> {
   const ctx = flowCtx.context;
-  const phase7Cursor = getPhase7Cursor(ctx);
-  const completedAgents = new Set(phase7Cursor.completedAgents);
-  const completedSuites = new Set(phase7Cursor.completedSuites);
+  const phase6Cursor = getPhase6Cursor(ctx);
+  const completedAgents = new Set(phase6Cursor.completedAgents);
+  const completedSuites = new Set(phase6Cursor.completedSuites);
   const results: AgentResult[] = [];
 
   const planPath = join(ctx.config.target.outputPath, 'e2e', 'e2e-test-plan.md');
@@ -103,7 +103,7 @@ export async function launchE2eSuiteWriters(
   if (!allSuccess) {
     const errors = results.filter(r => !r.success).map(r => r.error);
     assertPhaseSuccess({
-      phase: 7, name: 'E2E Testing & Documentation', success: false,
+      phase: 6, name: 'E2E Testing & Documentation', success: false,
       duration: 0, error: errors.join('; '),
     });
   }
@@ -117,28 +117,28 @@ export async function launchDocWriter(
   flowCtx: FlowExecutionContext<MigrationFlowContext>,
 ): Promise<AgentResult> {
   const ctx = flowCtx.context;
-  const phase7Cursor = getPhase7Cursor(ctx);
-  const completedAgents = new Set(phase7Cursor.completedAgents);
+  const phase6Cursor = getPhase6Cursor(ctx);
+  const completedAgents = new Set(phase6Cursor.completedAgents);
 
   if (completedAgents.has('documentation-writer')) {
     return { agent: 'documentation-writer', workItemId: '', exitCode: 0, success: true, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, extensions: {} };
   }
 
-  const docCtx = await ctx.contextBuilder.buildContext('documentation-writer', 7);
-  const docResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'documentation-writer', docCtx, 7));
-  recordTokens(ctx, docResult, 7);
+  const docCtx = await ctx.contextBuilder.buildContext('documentation-writer', 6);
+  const docResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'documentation-writer', docCtx, 6));
+  recordTokens(ctx, docResult, 6);
 
   if (docResult.success) {
-    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'documentation-writer', 7);
+    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'documentation-writer', 6);
     completedAgents.add('documentation-writer');
-    await savePhase7Cursor(ctx, {
+    await savePhase6Cursor(ctx, {
       completedAgents: Array.from(completedAgents),
-      completedSuites: Array.from(getPhase7Cursor(ctx).completedSuites),
+      completedSuites: Array.from(getPhase6Cursor(ctx).completedSuites),
       lastSuccessfulStep: 'completed-documentation-writer',
     });
   } else {
     assertPhaseSuccess({
-      phase: 7, name: 'E2E Testing & Documentation', success: false,
+      phase: 6, name: 'E2E Testing & Documentation', success: false,
       duration: 0, error: docResult.error ?? 'documentation-writer failed',
     });
   }
@@ -158,14 +158,14 @@ async function executeSuiteWithRetry(
   const suiteCtx = await ctx.contextBuilder.buildContext('test-writer', 6, suite.id, { e2eSuiteBrief: suite });
   const retryExec = new RetryExecutor(inv => launchAgentWithEvents(ctx, inv), ctx.logger);
   const suiteResult = await retryExec.executeWithRetry(
-    buildInvocation(ctx, 'test-writer', suiteCtx, 7, suite.id),
+    buildInvocation(ctx, 'test-writer', suiteCtx, 6, suite.id),
     { maxAttempts: ctx.config.options.maxRetriesPerTask },
   );
-  recordTokens(ctx, suiteResult, 7);
+  recordTokens(ctx, suiteResult, 6);
   if (suiteResult.success) {
-    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'test-writer', 7, suite.id, suite.name);
+    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'test-writer', 6, suite.id, suite.name);
     completedSuites.add(suite.id);
-    await savePhase7Cursor(ctx, {
+    await savePhase6Cursor(ctx, {
       completedAgents: Array.from(completedAgents),
       completedSuites: Array.from(completedSuites),
       lastSuccessfulStep: `completed-suite-${suite.id}`,
@@ -194,7 +194,7 @@ async function executeParallelSuiteFanOut(
   const invocations = [];
   for (const suite of budgetFiltered) {
     const suiteCtx = await ctx.contextBuilder.buildContext('test-writer', 6, suite.id, { e2eSuiteBrief: suite });
-    invocations.push(buildInvocation(ctx, 'test-writer', suiteCtx, 7, suite.id));
+    invocations.push(buildInvocation(ctx, 'test-writer', suiteCtx, 6, suite.id));
   }
   const retryExec = new RetryExecutor(inv => launchAgentWithEvents(ctx, inv), ctx.logger);
   const parallel = new ParallelExecutor(
@@ -208,10 +208,10 @@ async function executeParallelSuiteFanOut(
     const suite = budgetFiltered[i]!;
     const result = parallelResults[i]!;
     results.push(result);
-    recordTokens(ctx, result, 7);
+    recordTokens(ctx, result, 6);
     if (result.success) completedSuites.add(suite.id);
   }
-  await savePhase7Cursor(ctx, {
+  await savePhase6Cursor(ctx, {
     completedAgents: Array.from(completedAgents),
     completedSuites: Array.from(completedSuites),
     lastSuccessfulStep: completedSuites.size === allSuites.length

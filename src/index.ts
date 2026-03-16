@@ -15,7 +15,7 @@ program
   .requiredOption('-c, --config <path>', 'Path to migration.config.json')
   .option('--resume', 'Resume from last checkpoint')
   .option('--dry-run', 'Validate config and produce plan only')
-  .option('--phase <number>', 'Run up to and including this phase (0-9)', parseInt)
+  .option('--phase <number>', 'Run up to and including this phase (0-8)', parseInt)
   .option('--log-level <level>', 'Log level (debug|info|warn|error)', 'info')
   .action(async (opts) => {
     try {

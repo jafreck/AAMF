@@ -21,15 +21,15 @@ import {
   commitForTask,
   commitForWave,
   ensureGitRepositoryReady,
-  getPhase5TaskState,
-  hasPhase5Substep,
-  markPhase5Substep,
+  getPhase4TaskState,
+  hasPhase4Substep,
+  markPhase4Substep,
+  getPhase5Cursor,
+  savePhase5Cursor,
   getPhase6Cursor,
   savePhase6Cursor,
   getPhase7Cursor,
   savePhase7Cursor,
-  getPhase8Cursor,
-  savePhase8Cursor,
   launchAgentWithEvents,
   recordTokens,
   checkBudget,
@@ -145,11 +145,11 @@ describe('runCommand', () => {
     }
   });
 
-  it('should track command counters in phase5Snapshot', async () => {
+  it('should track command counters in phase4Snapshot', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    env.ctx.phase5Snapshot = {
+    env.ctx.phase4Snapshot = {
       executionMode: 'per-task', phase4DurationMs: 0,
       completedTaskCount: 0, waveCount: 0,
       waveValidationRuns: 0, waveConvergenceIterations: 0,
@@ -167,16 +167,16 @@ describe('runCommand', () => {
 
     try {
       await runCommand(env.ctx, 'build', 'npm run build', 'task-001');
-      expect(env.ctx.phase5Snapshot.buildCommandRuns).toBe(1);
+      expect(env.ctx.phase4Snapshot.buildCommandRuns).toBe(1);
 
       await runCommand(env.ctx, 'test', 'npm test', 'task-001');
-      expect(env.ctx.phase5Snapshot.testCommandRuns).toBe(1);
+      expect(env.ctx.phase4Snapshot.testCommandRuns).toBe(1);
 
       await runCommand(env.ctx, 'format', 'prettier', 'task-001');
-      expect(env.ctx.phase5Snapshot.formatCommandRuns).toBe(1);
+      expect(env.ctx.phase4Snapshot.formatCommandRuns).toBe(1);
 
       await runCommand(env.ctx, 'lint', 'eslint', 'task-001');
-      expect(env.ctx.phase5Snapshot.lintCommandRuns).toBe(1);
+      expect(env.ctx.phase4Snapshot.lintCommandRuns).toBe(1);
     } finally {
       spawnSpy.mockRestore();
     }
@@ -411,7 +411,7 @@ describe('launchAgentWithEvents', () => {
       agent: 'code-migrator',
       contextPath: '/tmp/ctx.json',
       outputPath: '',
-      phase: 5,
+      phase: 4,
       workItemId: 'task-001',
       timeout: 300_000,
     });
@@ -434,7 +434,7 @@ describe('launchAgentWithEvents', () => {
       agent: 'code-migrator',
       contextPath: '/tmp/ctx.json',
       outputPath: '',
-      phase: 5,
+      phase: 4,
       workItemId: '',
       timeout: 300_000,
     });
@@ -443,14 +443,14 @@ describe('launchAgentWithEvents', () => {
   });
 });
 
-// ─── Phase 5 Checkpoint Cursors ──────────────────────────────────────────────
+// ─── Phase 4 Checkpoint Cursors ──────────────────────────────────────────────
 
-describe('Phase 5 checkpoint cursors', () => {
+describe('Phase 4 checkpoint cursors', () => {
   it('should initialize empty substeps for new task', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const state = getPhase5TaskState(env.ctx, 'task-001');
+    const state = getPhase4TaskState(env.ctx, 'task-001');
     expect(state.completedSubsteps).toEqual([]);
   });
 
@@ -458,43 +458,66 @@ describe('Phase 5 checkpoint cursors', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    expect(hasPhase5Substep(env.ctx, 'task-001', 'migrator')).toBe(false);
-    await markPhase5Substep(env.ctx, 'task-001', 'migrator');
-    expect(hasPhase5Substep(env.ctx, 'task-001', 'migrator')).toBe(true);
+    expect(hasPhase4Substep(env.ctx, 'task-001', 'migrator')).toBe(false);
+    await markPhase4Substep(env.ctx, 'task-001', 'migrator');
+    expect(hasPhase4Substep(env.ctx, 'task-001', 'migrator')).toBe(true);
   });
 
   it('should not duplicate substeps on repeated markings', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    await markPhase5Substep(env.ctx, 'task-001', 'migrator');
-    await markPhase5Substep(env.ctx, 'task-001', 'migrator');
-    const state = getPhase5TaskState(env.ctx, 'task-001');
+    await markPhase4Substep(env.ctx, 'task-001', 'migrator');
+    await markPhase4Substep(env.ctx, 'task-001', 'migrator');
+    const state = getPhase4TaskState(env.ctx, 'task-001');
     expect(state.completedSubsteps.filter(s => s === 'migrator')).toHaveLength(1);
   });
 });
 
-// ─── Phase 6/7/8 Cursor Helpers ──────────────────────────────────────────────
+// ─── Phase 5/6/7 Cursor Helpers ──────────────────────────────────────────────
 
 describe('Phase cursor helpers', () => {
+  it('should initialize Phase 5 cursor with defaults', async () => {
+    const launcherFn = createMockLauncher();
+    env = await setupFlowTest(launcherFn);
+
+    const cursor = getPhase5Cursor(env.ctx);
+    expect(cursor.iteration).toBe(0);
+    expect(cursor.fixIndex).toBe(0);
+  });
+
+  it('should save and retrieve Phase 5 cursor', async () => {
+    const launcherFn = createMockLauncher();
+    env = await setupFlowTest(launcherFn);
+
+    await savePhase5Cursor(env.ctx, { iteration: 2, fixIndex: 3, lastSuccessfulStep: 'fix-applied' });
+    const cursor = getPhase5Cursor(env.ctx);
+    expect(cursor.iteration).toBe(2);
+    expect(cursor.fixIndex).toBe(3);
+    expect(cursor.lastSuccessfulStep).toBe('fix-applied');
+  });
+
   it('should initialize Phase 6 cursor with defaults', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
     const cursor = getPhase6Cursor(env.ctx);
-    expect(cursor.iteration).toBe(0);
-    expect(cursor.fixIndex).toBe(0);
+    expect(cursor.completedAgents).toEqual([]);
+    expect(cursor.completedSuites).toEqual([]);
   });
 
   it('should save and retrieve Phase 6 cursor', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    await savePhase6Cursor(env.ctx, { iteration: 2, fixIndex: 3, lastSuccessfulStep: 'fix-applied' });
+    await savePhase6Cursor(env.ctx, {
+      completedAgents: ['e2e-test-crafter'],
+      completedSuites: ['suite-001'],
+      lastSuccessfulStep: 'completed-suite-suite-001',
+    });
     const cursor = getPhase6Cursor(env.ctx);
-    expect(cursor.iteration).toBe(2);
-    expect(cursor.fixIndex).toBe(3);
-    expect(cursor.lastSuccessfulStep).toBe('fix-applied');
+    expect(cursor.completedAgents).toContain('e2e-test-crafter');
+    expect(cursor.completedSuites).toContain('suite-001');
   });
 
   it('should initialize Phase 7 cursor with defaults', async () => {
@@ -502,8 +525,8 @@ describe('Phase cursor helpers', () => {
     env = await setupFlowTest(launcherFn);
 
     const cursor = getPhase7Cursor(env.ctx);
-    expect(cursor.completedAgents).toEqual([]);
-    expect(cursor.completedSuites).toEqual([]);
+    expect(cursor.iteration).toBe(0);
+    expect(cursor.issueIndex).toBe(0);
   });
 
   it('should save and retrieve Phase 7 cursor', async () => {
@@ -511,34 +534,11 @@ describe('Phase cursor helpers', () => {
     env = await setupFlowTest(launcherFn);
 
     await savePhase7Cursor(env.ctx, {
-      completedAgents: ['e2e-test-crafter'],
-      completedSuites: ['suite-001'],
-      lastSuccessfulStep: 'completed-suite-suite-001',
-    });
-    const cursor = getPhase7Cursor(env.ctx);
-    expect(cursor.completedAgents).toContain('e2e-test-crafter');
-    expect(cursor.completedSuites).toContain('suite-001');
-  });
-
-  it('should initialize Phase 8 cursor with defaults', async () => {
-    const launcherFn = createMockLauncher();
-    env = await setupFlowTest(launcherFn);
-
-    const cursor = getPhase8Cursor(env.ctx);
-    expect(cursor.iteration).toBe(0);
-    expect(cursor.issueIndex).toBe(0);
-  });
-
-  it('should save and retrieve Phase 8 cursor', async () => {
-    const launcherFn = createMockLauncher();
-    env = await setupFlowTest(launcherFn);
-
-    await savePhase8Cursor(env.ctx, {
       iteration: 1, issueIndex: 2,
       currentFile: 'src/main.ts',
       lastSuccessfulStep: 'refactor-started',
     });
-    const cursor = getPhase8Cursor(env.ctx);
+    const cursor = getPhase7Cursor(env.ctx);
     expect(cursor.iteration).toBe(1);
     expect(cursor.issueIndex).toBe(2);
     expect(cursor.currentFile).toBe('src/main.ts');

@@ -16,24 +16,24 @@ export interface Phase4TaskSubstepState {
   lastSuccessfulStep?: string;
 }
 
-export interface Phase5Cursor {
+export interface Phase4Cursor {
   tasks: Record<string, Phase4TaskSubstepState>;
 }
 
-export interface Phase6Cursor {
+export interface Phase5Cursor {
   iteration: number;
   fixIndex: number;
   lastSuccessfulStep?: string;
   hadUnresolvedFixes?: boolean;
 }
 
-export interface Phase7Cursor {
+export interface Phase6Cursor {
   completedAgents: string[];
   completedSuites?: string[];
   lastSuccessfulStep?: string;
 }
 
-export interface Phase8Cursor {
+export interface Phase7Cursor {
   iteration: number;
   issueIndex: number;
   currentFile?: string;
@@ -41,10 +41,10 @@ export interface Phase8Cursor {
 }
 
 export interface PhaseCursorMap {
+  '4'?: Phase4Cursor;
   '5'?: Phase5Cursor;
   '6'?: Phase6Cursor;
   '7'?: Phase7Cursor;
-  '8'?: Phase8Cursor;
 }
 
 export interface CheckpointState {
@@ -71,12 +71,12 @@ export interface CheckpointState {
   phase3aComplete?: boolean;
   /** True once the target-repo scaffold has been generated from compilation units. */
   scaffoldComplete?: boolean;
-  completedPhase3Groups?: string[];
+  completedPhase2Groups?: string[];
   /** Number of JSONL metric records written; used to skip on resume. */
   metricsCount: number;
   /** Source fingerprint from last successful Phase 0 build; used to skip re-indexing on resume. */
   phase0Fingerprint?: string;
-  /** Terminal Phase 5 exhaustion metadata, when execution stopped fail-fast. */
+  /** Terminal Phase 4 exhaustion metadata, when execution stopped fail-fast. */
   terminalExhaustion?: TerminalExhaustionState;
   /** Persisted waiver records for adjudicated false-positive findings. */
   adjudicationWaivers?: AdjudicationWaiverRecord[];
@@ -86,8 +86,8 @@ export interface CheckpointState {
   phaseCursors?: PhaseCursorMap;
   /** Top-level flow checkpoint snapshot (managed by AamfFlowCheckpointAdapter). */
   __flowCheckpoint?: unknown;
-  /** Phase 5 nested flow checkpoint snapshot (managed by Phase5CheckpointAdapter). */
-  __phase5FlowCheckpoint?: unknown;
+  /** Phase 4 nested flow checkpoint snapshot (managed by Phase4CheckpointAdapter). */
+  __phase4FlowCheckpoint?: unknown;
 }
 
 export interface CheckpointFailedTask {
@@ -234,12 +234,12 @@ export class CheckpointManager {
     // Remove from blocked if it was there
     state.blockedTasks = state.blockedTasks.filter(id => id !== taskId);
     state.phaseCursors ??= {};
-    state.phaseCursors['5'] ??= { tasks: {} };
-    state.phaseCursors['5'].tasks[taskId] ??= { completedSubsteps: [] };
-    if (!state.phaseCursors['5'].tasks[taskId].completedSubsteps.includes('completed')) {
-      state.phaseCursors['5'].tasks[taskId].completedSubsteps.push('completed');
+    state.phaseCursors['4'] ??= { tasks: {} };
+    state.phaseCursors['4'].tasks[taskId] ??= { completedSubsteps: [] };
+    if (!state.phaseCursors['4'].tasks[taskId].completedSubsteps.includes('completed')) {
+      state.phaseCursors['4'].tasks[taskId].completedSubsteps.push('completed');
     }
-    state.phaseCursors['5'].tasks[taskId].lastSuccessfulStep = 'completed';
+    state.phaseCursors['4'].tasks[taskId].lastSuccessfulStep = 'completed';
     await this.save(state);
   }
 
@@ -305,7 +305,7 @@ export class CheckpointManager {
     await this.save(state);
   }
 
-  /** Persist terminal exhaustion metadata for fail-fast Phase 5 exits. */
+  /** Persist terminal exhaustion metadata for fail-fast Phase 4 exits. */
   async setTerminalExhaustion(terminalExhaustion: TerminalExhaustionState): Promise<void> {
     const state = this.getState();
     state.terminalExhaustion = terminalExhaustion;
@@ -313,13 +313,13 @@ export class CheckpointManager {
   }
 
   /**
-   * Mark Phase 4 migration strategy (migration-planner) as complete.
+   * Mark Phase 3 migration strategy (migration-planner) as complete.
    * Subsequent resumes will skip re-running the migration-planner.
    */
   async completePhase3a(): Promise<void> {
     const state = this.getState();
     state.phase3aComplete = true;
-    state.completedPhase3Groups ??= [];
+    state.completedPhase2Groups ??= [];
     await this.save(state);
   }
 
@@ -336,9 +336,9 @@ export class CheckpointManager {
   /** Record that a specific module group finished successfully. On resume, completed groups are skipped. */
   async completePhase3Group(groupId: string): Promise<void> {
     const state = this.getState();
-    state.completedPhase3Groups ??= [];
-    if (!state.completedPhase3Groups.includes(groupId)) {
-      state.completedPhase3Groups.push(groupId);
+    state.completedPhase2Groups ??= [];
+    if (!state.completedPhase2Groups.includes(groupId)) {
+      state.completedPhase2Groups.push(groupId);
     }
     await this.save(state);
   }
@@ -383,7 +383,7 @@ export class CheckpointManager {
       completedTaskDurationsMs: [],
       phase3aComplete: false,
       scaffoldComplete: false,
-      completedPhase3Groups: [],
+      completedPhase2Groups: [],
       metricsCount: 0,
       terminalExhaustion: undefined,
       adjudicationWaivers: [],
@@ -397,20 +397,20 @@ export class CheckpointManager {
     state.completedTaskDurationsMs ??= [];
     state.phase3aComplete ??= false;
     state.scaffoldComplete ??= false;
-    state.completedPhase3Groups ??= [];
+    state.completedPhase2Groups ??= [];
     state.metricsCount ??= 0;
     state.phase0Fingerprint ??= undefined;
     state.terminalExhaustion ??= undefined;
     state.adjudicationWaivers ??= [];
     state.adjudicationEvents ??= [];
     state.phaseCursors ??= {};
-    state.phaseCursors['5'] ??= { tasks: {} };
-    state.phaseCursors['6'] ??= { iteration: 0, fixIndex: 0 };
-    state.phaseCursors['7'] ??= { completedAgents: [] };
-    state.phaseCursors['8'] ??= { iteration: 0, issueIndex: 0 };
-    state.phaseCursors['5'].tasks ??= {};
-    state.phaseCursors['7'].completedAgents ??= [];
-    state.phaseCursors['7'].completedSuites ??= [];
+    state.phaseCursors['4'] ??= { tasks: {} };
+    state.phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };
+    state.phaseCursors['6'] ??= { completedAgents: [] };
+    state.phaseCursors['7'] ??= { iteration: 0, issueIndex: 0 };
+    state.phaseCursors['4'].tasks ??= {};
+    state.phaseCursors['6'].completedAgents ??= [];
+    state.phaseCursors['6'].completedSuites ??= [];
   }
 
   private async resolveCheckpointReadPath(): Promise<string | undefined> {

@@ -392,9 +392,9 @@ describe('MigrationRuntime', () => {
     it('handles MigrationError from flow runner and records failed phase', async () => {
       const { FlowRunner } = await import('@cadre-dev/framework/flow');
       const { MigrationError } = await import('../../src/flow/steps/shared.js');
-      const failedPhaseResult = { phase: 3, name: 'KB Construction', success: false, duration: 100, error: 'KB build failed' };
+      const failedPhaseResult = { phase: 2, name: 'KB Construction', success: false, duration: 100, error: 'KB build failed' };
       const flowRunnerRunSpy = vi.spyOn(FlowRunner.prototype, 'run').mockRejectedValue(
-        new MigrationError(3, 'KB Construction', failedPhaseResult),
+        new MigrationError(2, 'KB Construction', failedPhaseResult),
       );
 
       const runtime = new MigrationRuntime() as any;
@@ -459,11 +459,11 @@ describe('MigrationRuntime', () => {
 
       expect(result.success).toBe(false);
       expect(result.phases.length).toBe(1);
-      expect(result.phases[0]!.phase).toBe(3);
+      expect(result.phases[0]!.phase).toBe(2);
       expect(result.phases[0]!.success).toBe(false);
       // Should have recorded the failed phase event
       expect(runtime.logger.event).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'phase-failed', phase: 3 }),
+        expect.objectContaining({ type: 'phase-failed', phase: 2 }),
       );
 
       flowRunnerRunSpy.mockRestore();
@@ -575,13 +575,13 @@ describe('MigrationRuntime', () => {
       const runtime = new MigrationRuntime() as any;
       const state = {
         projectName: 'demo',
-        currentPhase: 5,
+        currentPhase: 4,
         currentTask: 'task-x',
-        completedPhases: [1, 2, 3, 4],
+        completedPhases: [1, 2, 3],
         completedTasks: ['a', 'b'],
         failedTasks: ['f1'],
         blockedTasks: ['b1'],
-        phaseOutputs: { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {}, 7: {} } as Record<number, unknown>,
+        phaseOutputs: { 0: {}, 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} } as Record<number, unknown>,
         tokenUsage: { total: 100, byPhase: {}, byAgent: {} },
       };
       runtime.config = { projectName: 'demo' };
@@ -591,15 +591,15 @@ describe('MigrationRuntime', () => {
       };
       runtime.logger = { info: vi.fn() };
 
-      await runtime.reset(4);
+      await runtime.reset(3);
 
-      expect(state.completedPhases).toEqual([1, 2, 3]);
-      expect(state.currentPhase).toBe(4);
+      expect(state.completedPhases).toEqual([1, 2]);
+      expect(state.currentPhase).toBe(3);
       expect(state.currentTask).toBeNull();
-      expect(state.phaseOutputs[1]).toBeDefined();
-      expect(state.phaseOutputs[3]).toBeDefined();
-      expect(state.phaseOutputs[4]).toBeUndefined();
-      expect(state.phaseOutputs[7]).toBeUndefined();
+      expect(state.phaseOutputs[0]).toBeDefined();
+      expect(state.phaseOutputs[2]).toBeDefined();
+      expect(state.phaseOutputs[3]).toBeUndefined();
+      expect(state.phaseOutputs[6]).toBeUndefined();
       expect(runtime.checkpoint.save).toHaveBeenCalledWith(state);
     });
 

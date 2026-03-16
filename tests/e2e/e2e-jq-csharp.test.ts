@@ -269,8 +269,8 @@ describe.skipIf(!runE2E)('E2E jq C → C# (.NET 9) Migration', () => {
     expect(phase!.name).toBe('E2E Testing & Documentation');
   });
 
-  it('Phase 7 (Completion) should succeed', () => {
-    const phase = result.phases.find(p => p.phase === 7);
+  it('Phase 8 (Completion) should succeed', () => {
+    const phase = result.phases.find(p => p.phase === 8);
     expect(phase).toBeDefined();
     expect(phase!.success).toBe(true);
     expect(phase!.name).toBe('Completion');

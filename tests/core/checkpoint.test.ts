@@ -350,14 +350,14 @@ describe('CheckpointManager', () => {
 
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');
-    expect(loaded.phaseCursors?.['5']?.tasks).toEqual({});
-    expect(loaded.phaseCursors?.['6']?.iteration).toBe(0);
-    expect(loaded.phaseCursors?.['7']?.completedAgents).toEqual([]);
-    expect(loaded.phaseCursors?.['7']?.completedSuites).toEqual([]);
-    expect(loaded.phaseCursors?.['8']?.issueIndex).toBe(0);
+    expect(loaded.phaseCursors?.['4']?.tasks).toEqual({});
+    expect(loaded.phaseCursors?.['5']?.iteration).toBe(0);
+    expect(loaded.phaseCursors?.['6']?.completedAgents).toEqual([]);
+    expect(loaded.phaseCursors?.['6']?.completedSuites).toEqual([]);
+    expect(loaded.phaseCursors?.['7']?.issueIndex).toBe(0);
   });
 
-  it('should default completedSuites to [] when loading legacy Phase6Cursor without it (backward compat)', async () => {
+  it('should default completedSuites to [] when loading legacy Phase4Cursor without it (backward compat)', async () => {
     const { writeJson } = await import('../../src/util/fs.js');
     const oldState = {
       projectName: 'old-project',
@@ -377,7 +377,7 @@ describe('CheckpointManager', () => {
       completedTaskDurationsMs: [],
       metricsCount: 0,
       phaseCursors: {
-        '7': { completedAgents: ['e2e-test-crafter'] },
+        '6': { completedAgents: ['e2e-test-crafter'] },
       },
     };
     await ensureDir(join(tempDir, 'state'));
@@ -385,8 +385,8 @@ describe('CheckpointManager', () => {
 
     const manager3 = new CheckpointManager(tempDir, logger);
     const loaded = await manager3.load('old-project');
-    expect(loaded.phaseCursors?.['7']?.completedAgents).toEqual(['e2e-test-crafter']);
-    expect(loaded.phaseCursors?.['7']?.completedSuites).toEqual([]);
+    expect(loaded.phaseCursors?.['6']?.completedAgents).toEqual(['e2e-test-crafter']);
+    expect(loaded.phaseCursors?.['6']?.completedSuites).toEqual([]);
   });
 
   it('should ignore existing checkpoint state on fresh load', async () => {

@@ -26,7 +26,7 @@ Typical use cases include porting a 100k+ line Python monolith to TypeScript, a 
 
 ## How It Works
 
-AAMF treats the migration as a pipeline of **up to 9 phases** (7 standard + 2 optional), each driven by purpose-built agents defined as `.agent.md` prompt files. The runtime never performs reasoning itself — it is pure execution machinery that launches agents, feeds them minimal context, collects their output, and decides what to run next.
+AAMF treats the migration as a pipeline of **9 phases** (0–8), each driven by purpose-built agents defined as `.agent.md` prompt files. The runtime never performs reasoning itself — it is pure execution machinery that launches agents, feeds them minimal context, collects their output, and decides what to run next.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -69,17 +69,17 @@ AAMF treats the migration as a pipeline of **up to 9 phases** (7 standard + 2 op
 
 | Phase | Name | Agents | Optional | Critical |
 |-------|------|--------|----------|----------|
-| 0 | **KB Indexing** | *(runtime logic — Lore)* | Yes | Yes |
-| 1 | **Impact Assessment** | `impact-assessor` | No | Yes |
+| 0 | **KB Indexing** | *(runtime logic — Lore)* | No | Yes |
+| 1 | **Task Graph Construction** | *(runtime logic — Lore)* | No | Yes |
 | 2 | **Knowledge Base Construction** | `knowledge-builder` | No | Yes |
-| 3 | **Migration Planning** | `migration-planner`, `task-decomposer`, `adjudicator` | No | Yes |
-| 4 | **Iterative Migration** | `code-migrator`, `parity-verifier`, `test-writer`, `failure-adjudicator` | No | Yes |
-| 5 | **Final Parity Verification** | `final-parity-checker` | No | No |
-| 6 | **E2E Testing & Documentation** | `e2e-test-crafter`, `documentation-writer` | No | No |
-| 8 | **Idiomatic Refactor** | `idiomatic-reviewer`, `idiomatic-refactorer` | Yes | No |
-| 7 | **Completion** | *(none — summary only)* | No | No |
+| 3 | **Migration Planning** | `migration-planner`, `adjudicator` | No | Yes |
+| 4 | **Iterative Migration** | `code-migrator`, `parity-verifier`, `test-writer`, `parity-failure-resolver` | No | Yes |
+| 5 | **Final Parity Verification** | `final-parity-checker` | No | Yes |
+| 6 | **E2E Testing & Documentation** | `e2e-test-crafter`, `documentation-writer` | No | Yes |
+| 7 | **Idiomatic Refactor** | `idiomatic-reviewer`, `idiomatic-refactorer` | Yes | Yes |
+| 8 | **Completion** | *(none — summary only)* | No | Yes |
 
-> Phase 0 requires `options.kbIndex.enabled` (or `AAMF_USE_KB_INDEX=1`). Phase 8 requires `options.idiomaticRefactor.enabled`. Execution order is 0→1→2→3→4→5→6→8→7. Critical phases abort the migration on failure. Non-critical phases log issues but allow the pipeline to continue.
+> Phase 7 requires `options.idiomaticRefactor.enabled`. Execution order is 0→1→2→3→4→5→6→7→8. All phases are critical — failure in any phase halts the flow.
 
 ---
 
@@ -156,15 +156,13 @@ AAMF defines 16 specialized agent roles. Each corresponds to a `.agent.md` file 
 |-------|-------|---------|
 | `migration-orchestrator` | — | Top-level coordination logic (mirrored by the runtime) |
 | `migration-runner` | — | Entry point agent |
-| `impact-assessor` | 1 | Analyzes source codebase scope, complexity, and risk |
 | `knowledge-builder` | 2 | Documents all modules, dependencies, and patterns |
 | `migration-planner` | 3 | Creates the task-level migration plan with dependency ordering |
-| `task-decomposer` | 3 | Decomposes module groups into granular migration tasks |
 | `adjudicator` | 3 | Decides between competing migration strategies |
 | `code-migrator` | 4 | Translates source code to the target language/framework |
 | `parity-verifier` | 4 | Checks behavioral equivalence between source and migrated code |
 | `test-writer` | 4 | Generates unit tests for migrated code |
-| `failure-adjudicator` | 4 | Decides whether exhausted retries are fixed, false positives, real gaps, or inconclusive |
+| `parity-failure-resolver` | 4 | Decides whether exhausted retries are fixed, false positives, real gaps, or inconclusive |
 | `final-parity-checker` | 5 | Full-codebase parity sweep with loop-back fix capability |
 | `e2e-test-crafter` | 6 | Creates end-to-end integration tests |
 | `documentation-writer` | 6 | Produces migration documentation and guides |
@@ -175,7 +173,7 @@ AAMF defines 16 specialized agent roles. Each corresponds to a `.agent.md` file 
 
 ## Execution Details by Phase
 
-### Phase 0 — KB Indexing (Optional)
+### Phase 0 — KB Indexing
 
 When `options.kbIndex.enabled` is set (or `AAMF_USE_KB_INDEX=1`), the runtime uses `@jafreck/lore` to build a SQLite knowledge-base index from the source codebase. This phase:
 
@@ -186,9 +184,9 @@ When `options.kbIndex.enabled` is set (or `AAMF_USE_KB_INDEX=1`), the runtime us
 
 The MCP server runs for the lifetime of the migration and is shut down in a `finally` block.
 
-### Phase 1 — Impact Assessment
+### Phase 1 — Task Graph Construction
 
-A single `impact-assessor` invocation scans the source tree and produces `impact-assessment.md`: scope, file count, complexity ratings, risk areas, and estimated effort.
+The runtime uses `@jafreck/lore` to build a deterministic call-graph: SCC contraction → greedy merge → topologically-sorted task list.
 
 ### Phase 2 — Knowledge Base Construction
 
@@ -248,18 +246,16 @@ The `final-parity-checker` performs a codebase-wide parity sweep. If issues are 
 
 ### Phase 6 — E2E Testing & Documentation
 
-`e2e-test-crafter` and `documentation-writer` run **in parallel** (serialized when git automation is enabled). Neither is critical; failures are logged but do not abort the migration.
+`e2e-test-crafter` and `documentation-writer` run **in parallel** (serialized when git automation is enabled).
 
-### Phase 8 — Idiomatic Refactor (Optional)
+### Phase 7 — Idiomatic Refactor (Optional)
 
-When `options.idiomaticRefactor.enabled` is set, Phase 8 runs up to `maxIterations` (default: 2) review-and-refactor cycles:
+When `options.idiomaticRefactor.enabled` is set, Phase 7 runs up to `maxIterations` (default: 2) review-and-refactor cycles:
 
 1. `idiomatic-reviewer` scans the migrated codebase for non-idiomatic patterns.
 2. For each flagged issue, `idiomatic-refactorer` applies targeted fixes with git commits.
 
-Phase 8 executes before Phase 7 (Completion).
-
-### Phase 7 — Completion
+### Phase 8 — Completion
 
 The runtime writes a final summary to the progress file and returns a `MigrationResult` with per-phase outcomes, token usage, and lists of failed/blocked tasks.
 
@@ -271,13 +267,13 @@ The runtime writes a final summary to the progress file and returns a `Migration
 
 All state is persisted to `.aamf/migration/{projectName}/state/checkpoint.json` after every phase completion and task completion. The checkpoint records:
 
-- Current phase and per-phase cursors for deterministic resume (Phases 4, 5, 6, 8)
+- Current phase and per-phase cursors for deterministic resume (Phases 4, 5, 6, 7)
 - Completed phases and tasks (with per-task wall-clock durations)
 - Failed/blocked tasks with error details
 - Phase output file paths
 - Cumulative token usage (by phase and by agent)
 - Phase 0 source fingerprint (skip KB rebuild if unchanged)
-- Phase 3 decomposer progress (per-module-group completion)
+- Phase 2 knowledge-builder progress (per-module-group completion)
 - Adjudication waivers and auditable event history
 - Terminal exhaustion metadata for fail-fast policy
 - Metrics record count for JSONL resume alignment
@@ -384,9 +380,9 @@ All migration state is organized under `.aamf/migration/{projectName}/`:
 │   │   └── competing-strategies.md  # (if adjudication needed)
 │   ├── parity/
 │   │   ├── final-parity-report.md   # Phase 5 output
-│   │   └── idiomatic-review-report.md  # Phase 8 output
+│   │   └── idiomatic-review-report.md  # Phase 7 output
 │   ├── adjudication/                # Failure adjudication records
-│   └── impact-assessment.md         # Phase 1 output
+│   └── impact-assessment.md         # Phase 2 output
 ├── reports/
 │   ├── progress.md                  # Human-readable status dashboard
 │   └── observability/

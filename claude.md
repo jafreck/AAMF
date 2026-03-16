@@ -55,16 +55,16 @@ migration.config.json → MigrationRuntime
 | Phase | Name | Agents | Critical |
 |-------|------|--------|----------|
 | 0 | KB Indexing | *(runtime — Lore)* | Yes |
-| 1 | Impact Assessment | `impact-assessor` | Yes |
+| 1 | Task Graph Construction | *(runtime — Lore)* | Yes |
 | 2 | Knowledge Base Construction | `knowledge-builder` | Yes |
-| 3 | Migration Planning | `migration-planner`, `task-decomposer`, `adjudicator` | Yes |
-| 4 | Iterative Migration | `code-migrator`, `parity-verifier`, `test-writer`, `failure-adjudicator` | Yes |
-| 5 | Final Parity Verification | `final-parity-checker` | No |
-| 6 | E2E Testing & Documentation | `e2e-test-crafter`, `documentation-writer` | No |
-| 8 | Idiomatic Refactor (optional) | `idiomatic-reviewer`, `idiomatic-refactorer` | No |
-| 7 | Completion | *(summary only)* | No |
+| 3 | Migration Planning | `migration-planner`, `adjudicator` | Yes |
+| 4 | Iterative Migration | `code-migrator`, `parity-verifier`, `test-writer`, `parity-failure-resolver` | Yes |
+| 5 | Final Parity Verification | `final-parity-checker` | Yes |
+| 6 | E2E Testing & Documentation | `e2e-test-crafter`, `documentation-writer` | Yes |
+| 7 | Idiomatic Refactor (optional) | `idiomatic-reviewer`, `idiomatic-refactorer` | Yes |
+| 8 | Completion | *(summary only)* | Yes |
 
-Execution order: 0→1→2→3→4→5→6→8→7. Critical phases abort on failure. Non-critical phases log issues and continue.
+Execution order: 0→1→2→3→4→5→6→7→8. All phases are critical — failure in any phase halts the flow.
 
 ## Agent Runtimes
 

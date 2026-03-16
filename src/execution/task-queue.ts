@@ -15,7 +15,7 @@ export interface PipelinedTaskResult<T> {
 }
 
 /**
- * Dependency-aware task queue for Phase 5 execution.
+ * Dependency-aware task queue for Phase 4 execution.
  *
  * Tracks task completion and blocked status, and determines which tasks
  * are ready based on dependency satisfaction. Supports checkpoint resume

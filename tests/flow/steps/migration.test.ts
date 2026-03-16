@@ -1,5 +1,5 @@
 /**
- * Phase 5 — Iterative Migration (step-level tests)
+ * Phase 4 — Iterative Migration (step-level tests)
  *
  * Tests the executeIterativeMigration() step function which is the heart
  * of the migration pipeline, covering per-task mode, budget projection,
@@ -36,7 +36,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
 
       const result = await executeIterativeMigration(env.flowCtx);
 
-      expect(result.phase).toBe(5);
+      expect(result.phase).toBe(4);
       expect(result.success).toBe(true);
       const codeMigratorInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'code-migrator');
       expect(codeMigratorInvocations.length).toBeGreaterThanOrEqual(2);
@@ -48,7 +48,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
 
       const result = await executeIterativeMigration(env.flowCtx);
 
-      expect(result.phase).toBe(5);
+      expect(result.phase).toBe(4);
       expect(result.success).toBe(true);
     });
 
@@ -60,7 +60,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       await executeIterativeMigration(env.flowCtx);
 
       const projectionLog = infoSpy.mock.calls.find(
-        (c) => typeof c[0] === 'string' && c[0].includes('Phase 5:'),
+        (c) => typeof c[0] === 'string' && c[0].includes('Phase 4:'),
       );
       expect(projectionLog).toBeDefined();
     });
@@ -414,15 +414,15 @@ describe('executeIterativeMigration (Phase 5)', () => {
       // Pre-populate the Phase 5 nested flow checkpoint with completed execution IDs.
       // The framework skips nodes whose execution ID is already in completedExecutionIds.
       const state = env.checkpoint.getState();
-      state.__phase5FlowCheckpoint = {
-        flowId: 'phase-5-per-task',
+      state.__phase4FlowCheckpoint = {
+        flowId: 'phase-4-per-task',
         status: 'completed',
         startedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         completedExecutionIds: [
-          'phase-5-per-task/task-001/migrate',
-          'phase-5-per-task/task-001/commit',
-          'phase-5-per-task/task-001/parity',
+          'phase-4-per-task/task-001/migrate',
+          'phase-4-per-task/task-001/commit',
+          'phase-4-per-task/task-001/parity',
         ],
         outputs: {},
         executionOutputs: {},

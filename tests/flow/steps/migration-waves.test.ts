@@ -1,5 +1,5 @@
 /**
- * Phase 5 — Iterative Migration: Wave-Barrier Mode (step-level tests)
+ * Phase 4 — Iterative Migration: Wave-Barrier Mode (step-level tests)
  *
  * Tests the wave-barrier execution path in executeIterativeMigration(),
  * covering: basic wave execution, convergence retry, terminal exhaustion
@@ -48,7 +48,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     try {
       const result = await executeIterativeMigration(env.flowCtx);
 
-      expect(result.phase).toBe(5);
+      expect(result.phase).toBe(4);
       expect(result.success).toBe(true);
       // All tasks should be processed
       const codeMigratorInvs = env.mockLauncher.invocations.filter(i => i.agent === 'code-migrator');
@@ -208,16 +208,16 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       },
     });
 
-    // Pre-populate the Phase 5 nested flow checkpoint with task-001 completed.
+    // Pre-populate the Phase 4 nested flow checkpoint with task-001 completed.
     // The framework skips nodes whose execution ID is already completed.
     const state = env.checkpoint.getState();
-    state.__phase5FlowCheckpoint = {
-      flowId: 'phase-5-wave-barrier',
+    state.__phase4FlowCheckpoint = {
+      flowId: 'phase-4-wave-barrier',
       status: 'completed',
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       completedExecutionIds: [
-        'phase-5-wave-barrier/wave-0-tasks/task-001/task-001/migrate',
+        'phase-4-wave-barrier/wave-0-tasks/task-001/task-001/migrate',
       ],
       outputs: {},
       executionOutputs: {},

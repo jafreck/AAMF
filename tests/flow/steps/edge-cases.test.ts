@@ -46,7 +46,7 @@ describe('flow/index.ts barrel exports', () => {
   });
 });
 
-// ─── Phase 6 failure paths ──────────────────────────────────────────────────
+// ─── Phase 5 failure paths ──────────────────────────────────────────────────
 
 import { runFinalParityIteration } from '../../../src/flow/steps/final-parity.js';
 import {
@@ -71,7 +71,7 @@ describe('runFinalParityIteration — failure paths', () => {
     const launcherFn = createFailingLauncher(['final-parity-checker']);
     env = await setupFlowTestWithTasks(launcherFn);
 
-    await expect(runFinalParityIteration(env.flowCtx)).rejects.toThrow(/Phase 6.*failed/);
+    await expect(runFinalParityIteration(env.flowCtx)).rejects.toThrow(/Phase 5.*failed/);
   });
 
   it('should throw MigrationError when structured output has no valid fixes array', async () => {
@@ -88,7 +88,7 @@ describe('runFinalParityIteration — failure paths', () => {
     });
     env = await setupFlowTestWithTasks(launcherFn);
 
-    await expect(runFinalParityIteration(env.flowCtx)).rejects.toThrow(/Phase 6.*failed/);
+    await expect(runFinalParityIteration(env.flowCtx)).rejects.toThrow(/Phase 5.*failed/);
   });
 
   it('should throw MigrationError when outputParsed is false and fixes missing', async () => {
@@ -103,11 +103,11 @@ describe('runFinalParityIteration — failure paths', () => {
     });
     env = await setupFlowTestWithTasks(launcherFn);
 
-    await expect(runFinalParityIteration(env.flowCtx)).rejects.toThrow(/Phase 6.*failed/);
+    await expect(runFinalParityIteration(env.flowCtx)).rejects.toThrow(/Phase 5.*failed/);
   });
 });
 
-// ─── Phase 7 — Finalization: suite retry & budget ────────────────────────────
+// ─── Phase 6 — Finalization: suite retry & budget ────────────────────────────
 
 import { launchE2eSuiteWriters, launchE2eTestCrafter, launchDocWriter } from '../../../src/flow/steps/finalization.js';
 
@@ -145,7 +145,7 @@ describe('launchE2eSuiteWriters — budget and retry', () => {
       { id: 'suite-001', name: 'Auth E2E' },
     ]);
 
-    await expect(launchE2eSuiteWriters(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
+    await expect(launchE2eSuiteWriters(env.flowCtx)).rejects.toThrow(/Phase 6.*failed/);
   });
 
   it('should report suites: 0 when plan contains empty suites', async () => {
@@ -178,7 +178,7 @@ describe('launchE2eSuiteWriters — budget and retry', () => {
     // Mark suite as completed
     const state = env.checkpoint.getState();
     state.phaseCursors ??= {};
-    state.phaseCursors['7'] = {
+    state.phaseCursors['6'] = {
       completedAgents: [],
       completedSuites: ['suite-001'],
       lastSuccessfulStep: 'completed-suite-suite-001',
@@ -196,7 +196,7 @@ describe('launchE2eTestCrafter — failure path', () => {
     const launcherFn = createFailingLauncher(['e2e-test-crafter']);
     env = await setupFlowTest(launcherFn);
 
-    await expect(launchE2eTestCrafter(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
+    await expect(launchE2eTestCrafter(env.flowCtx)).rejects.toThrow(/Phase 6.*failed/);
   });
 });
 
@@ -205,7 +205,7 @@ describe('launchDocWriter — failure path', () => {
     const launcherFn = createFailingLauncher(['documentation-writer']);
     env = await setupFlowTest(launcherFn);
 
-    await expect(launchDocWriter(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
+    await expect(launchDocWriter(env.flowCtx)).rejects.toThrow(/Phase 6.*failed/);
   });
 });
 
@@ -352,7 +352,7 @@ describe('launchMigrationPlanner — extended', () => {
   });
 });
 
-// ─── Phase 8 — Idiomatic Refactor: failure + format/lint ─────────────────────
+// ─── Phase 7 — Idiomatic Refactor: failure + format/lint ─────────────────────
 
 import { runIdiomaticReviewIteration, noIdiomaticIssues } from '../../../src/flow/steps/idiomatic-refactor.js';
 
@@ -361,7 +361,7 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
     const launcherFn = createFailingLauncher(['idiomatic-reviewer']);
     env = await setupFlowTest(launcherFn);
 
-    await expect(runIdiomaticReviewIteration(env.flowCtx)).rejects.toThrow(/Phase 8.*failed/);
+    await expect(runIdiomaticReviewIteration(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
   });
 
   it('should throw when structured output has no issues array', async () => {
@@ -391,7 +391,7 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
     });
     env = await setupFlowTest(launcherFn);
 
-    await expect(runIdiomaticReviewIteration(env.flowCtx)).rejects.toThrow(/Phase 8.*failed/);
+    await expect(runIdiomaticReviewIteration(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
   });
 
   it('should throw when idiomatic-refactorer fails', async () => {
@@ -410,7 +410,7 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
     });
     env = await setupFlowTest(launcherFn);
 
-    await expect(runIdiomaticReviewIteration(env.flowCtx)).rejects.toThrow(/Phase 8.*failed/);
+    await expect(runIdiomaticReviewIteration(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
   });
 
   it('should run format and lint commands when configured', async () => {
