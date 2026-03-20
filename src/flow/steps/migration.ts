@@ -8,7 +8,8 @@
 import { join } from 'node:path';
 import {
   defineFlow, step, loop, parallel, conditional,
-  FlowRunner, type FlowDefinition, type FlowNode, type FlowRunResult,
+  type FlowDefinition, type FlowNode,
+  type FlowRunnerOptions,
 } from '@cadre-dev/framework/flow';
 import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
 import type { MigrationFlowContext, WaveValidationResult } from '../context.js';
@@ -30,7 +31,6 @@ import {
   runCommand, runCommandWithRecovery,
   buildRemediationContext, taskScopePayload,
   recordRetryTarget, raiseTerminalExhaustion,
-  TerminalExhaustionError,
   getConfiguredRuntimeModel, getQualityGateMode,
   isGitAutomationEnabled, getFailureRecoveryModel, isTransientModelFailure,
   selectModelForInvocation, applyRoutingCaps, getDefaultRoutingModel,
@@ -579,44 +579,119 @@ function computeTopologicalWaves(tasks: MigrationTask[]): MigrationTask[][] {
   return waves;
 }
 
-// ─── Main Entry Point ────────────────────────────────────────────────
+// ─── Subflow Builder ─────────────────────────────────────────────────
+// Called by the parent flow's subflow thunk to construct the Phase 4
+// child flow dynamically, based on discovered tasks and execution mode.
 
-export async function executeIterativeMigration(
-  flowCtx: FlowExecutionContext<MigrationFlowContext>,
+/**
+ * Resolve migration tasks from the task-graph output, context, or filesystem.
+ */
+async function discoverTasks(
+  ctx: MigrationFlowContext,
   input?: TaskGraphOutput,
-): Promise<PhaseResult> {
-  const ctx = flowCtx.context;
-  const start = Date.now();
+): Promise<MigrationTask[] | null> {
+  if (input?.tasks && Array.isArray(input.tasks)) return input.tasks;
+  if (ctx.phase1TaskGraphResult?.extensions.outputParsed && Array.isArray(ctx.phase1TaskGraphResult.extensions.structuredOutput?.['tasks'])) {
+    return ctx.phase1TaskGraphResult.extensions.structuredOutput['tasks'] as MigrationTask[];
+  }
   const planPath = ctx.paths.migrationPlanFile;
+  if (!(await fileExists(planPath))) {
+    const mergedPlanPath = join(ctx.paths.artifactsPlanningDir, 'tasks-merged.json');
+    if (await fileExists(mergedPlanPath)) {
+      ctx.logger.warn('Task graph step output unavailable — falling back to tasks-merged.json');
+      return readJson<MigrationTask[]>(mergedPlanPath);
+    }
+    return null; // No plan found
+  }
+  ctx.logger.warn('Task graph step output unavailable — falling back to parseMigrationPlan');
+  return parseMigrationPlan(planPath);
+}
 
-  // 1. Task discovery: prefer DataRef input, fall back to context, then filesystem
-  let tasks: MigrationTask[];
-  if (input?.tasks && Array.isArray(input.tasks)) {
-    tasks = input.tasks;
-  } else if (ctx.phase1TaskGraphResult?.extensions.outputParsed && Array.isArray(ctx.phase1TaskGraphResult.extensions.structuredOutput?.['tasks'])) {
-    tasks = ctx.phase1TaskGraphResult.extensions.structuredOutput['tasks'] as MigrationTask[];
-  } else {
-    if (!(await fileExists(planPath))) {
-      const mergedPlanPath = join(ctx.paths.artifactsPlanningDir, 'tasks-merged.json');
-      if (await fileExists(mergedPlanPath)) {
-        ctx.logger.warn('Task graph step output unavailable — falling back to tasks-merged.json');
-        tasks = await readJson<MigrationTask[]>(mergedPlanPath);
-      } else {
-        const failResultNoPlan: PhaseResult = {
-          phase: 4, name: 'Iterative Migration', success: false, duration: Date.now() - start,
-          error: 'migration-plan.md and tasks-merged.json not found — Phase 1 may not have completed',
-        };
-        assertPhaseSuccess(failResultNoPlan);
-        return failResultNoPlan;
+/**
+ * Sort tasks topologically with SCC-aware dependency filtering.
+ */
+async function sortTasksSccAware(
+  ctx: MigrationFlowContext,
+  tasks: MigrationTask[],
+  input?: TaskGraphOutput,
+): Promise<MigrationTask[]> {
+  let sccs: string[][] = input?.sccs ??
+    (ctx.phase1TaskGraphResult?.extensions.structuredOutput?.['sccs'] as string[][] | undefined) ?? [];
+  if (sccs.length === 0) {
+    const sccsFile = join(ctx.paths.artifactsPlanningDir, 'sccs.json');
+    if (await fileExists(sccsFile)) {
+      try {
+        sccs = await readJson<string[][]>(sccsFile);
+        ctx.logger.info(`Recovered ${sccs.length} SCC(s) from ${sccsFile}`);
+      } catch (err) {
+        ctx.logger.warn(`Failed to parse sccs.json: ${err instanceof Error ? err.message : String(err)}`);
       }
-    } else {
-      ctx.logger.warn('Task graph step output unavailable — falling back to parseMigrationPlan');
-      tasks = await parseMigrationPlan(planPath);
     }
   }
-  if (tasks.length === 0) {
+  if (sccs.length === 0) return TaskQueue.topologicalSort(tasks);
+  const sccMembership = new Map<string, string[]>();
+  for (const scc of sccs) for (const id of scc) sccMembership.set(id, scc);
+  const tasksForSort = tasks.map(t => {
+    const myScc = sccMembership.get(t.id);
+    if (!myScc) return t;
+    const sccSet = new Set(myScc);
+    return { ...t, dependencies: t.dependencies.filter(d => !sccSet.has(d)) };
+  });
+  const sorted = TaskQueue.topologicalSort(tasksForSort);
+  const origMap = new Map(tasks.map(t => [t.id, t]));
+  return sorted.map(t => origMap.get(t.id) ?? t);
+}
+
+/**
+ * Compute Phase 4 concurrency from config and execution mode.
+ */
+export function computePhase4Concurrency(ctx: MigrationFlowContext): number {
+  const executionMode = ctx.config.options.executionMode ?? 'per-task';
+  return isGitAutomationEnabled(ctx) && executionMode !== 'wave-barrier'
+    ? 1 : ctx.config.options.maxParallelAgents;
+}
+
+/**
+ * Compute Phase 4 runner options from context.
+ * Used to dynamically populate the subflow's runnerOptions ref before execution.
+ */
+export function computePhase4RunnerOptions(ctx: MigrationFlowContext): FlowRunnerOptions<MigrationFlowContext> {
+  return {
+    checkpoint: new Phase4CheckpointAdapter(ctx.checkpoint),
+    concurrency: computePhase4Concurrency(ctx),
+  };
+}
+
+/**
+ * Build the Phase 4 child flow definition.
+ *
+ * Called by the parent flow's `subflow` thunk. Discovers tasks, sorts them
+ * topologically, projects costs, and returns the appropriate nested flow
+ * (per-task or wave-barrier).
+ *
+ * Returns `null` when no tasks are found (the parent flow treats this as a
+ * successful no-op via the empty flow).
+ */
+export async function buildPhase4Subflow(
+  parentCtx: FlowExecutionContext<MigrationFlowContext>,
+  taskGraphInput?: TaskGraphOutput,
+): Promise<FlowDefinition<MigrationFlowContext>> {
+  const ctx = parentCtx.context;
+  const start = Date.now();
+
+  // 1. Task discovery
+  const tasks = await discoverTasks(ctx, taskGraphInput);
+  if (tasks === null) {
+    const failResult: PhaseResult = {
+      phase: 4, name: 'Iterative Migration', success: false, duration: Date.now() - start,
+      error: 'migration-plan.md and tasks-merged.json not found — Phase 1 may not have completed',
+    };
+    assertPhaseSuccess(failResult);
+  }
+  if (!tasks || tasks.length === 0) {
     ctx.logger.warn('No tasks found in migration plan');
-    return { phase: 4, name: 'Iterative Migration', success: true, outputPath: ctx.config.target.outputPath, duration: Date.now() - start };
+    // Return an empty flow — the subflow completes immediately as a no-op.
+    return defineFlow('phase-4-empty', []);
   }
 
   // 1b. Validate maxLinesPerTask
@@ -655,45 +730,13 @@ export async function executeIterativeMigration(
   }
 
   // 2. Topological sort — SCC-aware
-  let sccs: string[][] = input?.sccs ?? 
-    (ctx.phase1TaskGraphResult?.extensions.structuredOutput?.['sccs'] as string[][] | undefined) ?? [];
-  if (sccs.length === 0) {
-    const sccsFile = join(ctx.paths.artifactsPlanningDir, 'sccs.json');
-    if (await fileExists(sccsFile)) {
-      try {
-        sccs = await readJson<string[][]>(sccsFile);
-        ctx.logger.info(`Recovered ${sccs.length} SCC(s) from ${sccsFile}`);
-      } catch (err) {
-        ctx.logger.warn(`Failed to parse sccs.json: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-  }
-  const sccMembership = new Map<string, string[]>();
-  for (const scc of sccs) for (const id of scc) sccMembership.set(id, scc);
+  const sortedTasks = await sortTasksSccAware(ctx, tasks, taskGraphInput);
 
-  let sortedTasks: MigrationTask[];
-  if (sccs.length > 0) {
-    const tasksForSort = tasks.map(t => {
-      const myScc = sccMembership.get(t.id);
-      if (!myScc) return t;
-      const sccSet = new Set(myScc);
-      return { ...t, dependencies: t.dependencies.filter(d => !sccSet.has(d)) };
-    });
-    sortedTasks = TaskQueue.topologicalSort(tasksForSort);
-    const origMap = new Map(tasks.map(t => [t.id, t]));
-    sortedTasks = sortedTasks.map(t => origMap.get(t.id) ?? t);
-  } else {
-    sortedTasks = TaskQueue.topologicalSort(tasks);
-  }
-
-  // 3. Build and execute nested Phase 4 flow
+  // 3. Build the nested Phase 4 flow
   const retryExec = new RetryExecutor(
     (inv) => launchAgentWithEvents(ctx, inv), ctx.logger,
   );
   const executionMode = ctx.config.options.executionMode ?? 'per-task';
-  const phase4Concurrency =
-    isGitAutomationEnabled(ctx) && executionMode !== 'wave-barrier'
-      ? 1 : ctx.config.options.maxParallelAgents;
 
   ctx.phase4Snapshot = {
     executionMode, phase4DurationMs: 0, completedTaskCount: 0,
@@ -709,76 +752,9 @@ export async function executeIterativeMigration(
     ctx.deferGitCommits = true;
   }
 
-  const phase4Flow = executionMode === 'wave-barrier'
+  return executionMode === 'wave-barrier'
     ? buildWaveBarrierFlow(ctx, sortedTasks, retryExec)
     : buildPerTaskFlow(ctx, sortedTasks, retryExec);
-
-  const phase4Checkpoint = new Phase4CheckpointAdapter(ctx.checkpoint);
-  const runner = new FlowRunner<MigrationFlowContext>();
-
-  let flowSuccess = false;
-  let flowError: string | undefined;
-  let flowResult: FlowRunResult<MigrationFlowContext> | undefined;
-  try {
-    flowResult = await runner.run(phase4Flow, ctx, {
-      checkpoint: phase4Checkpoint,
-      concurrency: phase4Concurrency,
-    });
-    flowSuccess = flowResult.status === 'completed';
-    if (flowResult.error) flowError = flowResult.error.message;
-  } catch (error) {
-    // The framework wraps step errors in FlowExecutionError with original as cause
-    const rootCause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
-    if (rootCause instanceof TerminalExhaustionError) {
-      flowError = rootCause.message;
-    } else {
-      flowError = error instanceof Error ? error.message : String(error);
-    }
-    ctx.logger.error(`Phase 4 nested flow failed: ${flowError}`);
-    flowSuccess = false;
-  } finally {
-    if (executionMode === 'wave-barrier') {
-      ctx.deferGitCommits = false;
-    }
-  }
-
-  // Count actually completed tasks from the nested flow result
-  let completedTaskCount = 0;
-  for (const task of sortedTasks) {
-    // A task is complete if its /complete (per-task) or /migrate (wave) substep ran
-    const completeId = executionMode === 'wave-barrier'
-      ? `${task.id}/migrate`
-      : `${task.id}/complete`;
-    const isCompleted = flowResult?.completedExecutionIds?.some(
-      (id: string) => id.includes(completeId),
-    );
-    if (isCompleted) completedTaskCount++;
-  }
-
-  // Run wave-end quality gates (for non-wave-barrier modes with non-enforce policy)
-  let waveEndGateError: string | undefined;
-  const gateMode = getQualityGateMode(ctx);
-  if (flowSuccess && gateMode !== 'enforce') {
-    waveEndGateError = await runWaveEndQualityGates(ctx, sortedTasks);
-  }
-
-  if (ctx.phase4Snapshot) {
-    ctx.phase4Snapshot.phase4DurationMs = Date.now() - start;
-    ctx.phase4Snapshot.completedTaskCount = completedTaskCount;
-    ctx.metricsCollector.setPhase4Snapshot(ctx.phase4Snapshot);
-    ctx.phase4Snapshot = undefined;
-  }
-
-  const phase4Result: PhaseResult = {
-    phase: 4, name: 'Iterative Migration',
-    success: flowSuccess && !waveEndGateError,
-    outputPath: ctx.config.target.outputPath, duration: Date.now() - start,
-    error: !flowSuccess
-      ? flowError ?? 'Phase 4 nested flow did not complete successfully'
-      : waveEndGateError ?? undefined,
-  };
-  assertPhaseSuccess(phase4Result);
-  return phase4Result;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
