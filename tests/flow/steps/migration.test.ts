@@ -1,14 +1,17 @@
 /**
  * Phase 4 — Iterative Migration (step-level tests)
  *
- * Tests the executeIterativeMigration() step function which is the heart
- * of the migration pipeline, covering per-task mode, budget projection,
+ * Tests buildPhase4Subflow() + FlowRunner which is the heart of the
+ * migration pipeline, covering per-task mode, budget projection,
  * parity verification, model routing, and terminal exhaustion behavior.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
-import { executeIterativeMigration } from '../../../src/flow/steps/migration.js';
+import { buildPhase4Subflow, computePhase4Concurrency } from '../../../src/flow/steps/migration.js';
+import { FlowRunner } from '@cadre-dev/framework/flow';
+import { Phase4CheckpointAdapter } from '../../../src/flow/checkpoint-adapter.js';
+import type { MigrationFlowContext } from '../../../src/flow/context.js';
 import {
   setupFlowTestWithTasks,
   createMockLauncher,
@@ -26,18 +29,31 @@ afterEach(async () => {
   if (env) await env.cleanup();
 });
 
+/**
+ * Build and run the Phase 4 subflow, returning the FlowRunResult.
+ */
+async function runPhase4(e: FlowTestEnv) {
+  const flow = await buildPhase4Subflow(e.flowCtx);
+  if (flow.nodes.length === 0) return { status: 'completed' as const, empty: true };
+
+  const runner = new FlowRunner<MigrationFlowContext>();
+  return runner.run(flow, e.ctx, {
+    checkpoint: new Phase4CheckpointAdapter(e.checkpoint),
+    concurrency: computePhase4Concurrency(e.ctx),
+  });
+}
+
 // ─── Basic Execution ────────────────────────────────────────────────────────
 
-describe('executeIterativeMigration (Phase 5)', () => {
+describe('buildPhase4Subflow (Phase 4)', () => {
   describe('Basic Execution', () => {
     it('should process all tasks from phase1TaskGraphResult', async () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn);
 
-      const result = await executeIterativeMigration(env.flowCtx);
+      const result = await runPhase4(env);
 
-      expect(result.phase).toBe(4);
-      expect(result.success).toBe(true);
+      expect(result.status).toBe('completed');
       const codeMigratorInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'code-migrator');
       expect(codeMigratorInvocations.length).toBeGreaterThanOrEqual(2);
     });
@@ -46,10 +62,9 @@ describe('executeIterativeMigration (Phase 5)', () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, []);
 
-      const result = await executeIterativeMigration(env.flowCtx);
+      const result = await runPhase4(env);
 
-      expect(result.phase).toBe(4);
-      expect(result.success).toBe(true);
+      expect(result.status).toBe('completed');
     });
 
     it('should log cost projection with retry overhead', async () => {
@@ -57,7 +72,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       env = await setupFlowTestWithTasks(launcherFn);
       const infoSpy = vi.spyOn(env.logger, 'info');
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const projectionLog = infoSpy.mock.calls.find(
         (c) => typeof c[0] === 'string' && c[0].includes('Phase 4:'),
@@ -77,8 +92,8 @@ describe('executeIterativeMigration (Phase 5)', () => {
         options: { tokenBudget: 1000 },
       });
 
-      // Phase 5 itself completes — the budget gate runs after via the flow DSL
-      const result = await executeIterativeMigration(env.flowCtx);
+      // Phase 4 itself completes — the budget gate runs after via the flow DSL
+      const result = await runPhase4(env);
 
       // Tokens should have been recorded
       expect(env.ctx.tokenTracker.getTotal()).toBeGreaterThan(0);
@@ -92,7 +107,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const parityInvocations = env.mockLauncher.invocations.filter(
         i => i.agent === 'parity-verifier' && i.phase === 5,
@@ -122,7 +137,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
 
       // Will throw because parity failures are terminal after retries
       try {
-        await executeIterativeMigration(env.flowCtx);
+        await runPhase4(env);
       } catch { /* expected */ }
 
       const recoveryInvocations = env.mockLauncher.invocations.filter(
@@ -149,9 +164,9 @@ describe('executeIterativeMigration (Phase 5)', () => {
       );
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
 
-      const result = await executeIterativeMigration(env.flowCtx);
+      const result = await runPhase4(env);
 
-      expect(result.success).toBe(true);
+      expect(result.status).toBe('completed');
       const recoveryForParity = env.mockLauncher.invocations.filter(
         i => i.agent === 'parity-failure-resolver' && i.phase === 5,
       );
@@ -176,9 +191,9 @@ describe('executeIterativeMigration (Phase 5)', () => {
       );
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
 
-      const result = await executeIterativeMigration(env.flowCtx);
+      const result = await runPhase4(env);
 
-      expect(result.success).toBe(true);
+      expect(result.status).toBe('completed');
       const migrators = env.mockLauncher.invocations.filter(
         i => i.agent === 'code-migrator' && i.phase === 5,
       );
@@ -207,7 +222,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
         options: { maxRetriesPerTask: 2 },
       });
 
-      await expect(executeIterativeMigration(env.flowCtx)).rejects.toThrow();
+      await expect(runPhase4(env)).rejects.toThrow();
     });
 
     it('should throw on command recovery exhaustion', async () => {
@@ -229,7 +244,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       });
 
       try {
-        await executeIterativeMigration(env.flowCtx);
+        await runPhase4(env);
       } catch {
         // Expected — command recovery exhaustion
       } finally {
@@ -261,7 +276,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
         agentBackend: { runtime: 'copilot', failureRecoveryModel: 'gpt-4.1-mini' },
       });
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const migratorRetries = capturedInvocations.filter(
         i => i.agent === 'code-migrator' && i.workItemId === 'task-001',
@@ -290,7 +305,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
         },
       });
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const task001Migrators = env.mockLauncher.invocations.filter(
         i => i.agent === 'code-migrator' && i.workItemId === 'task-001',
@@ -316,7 +331,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
         },
       });
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const migratorInvocations = env.mockLauncher.invocations.filter(
         i => i.agent === 'code-migrator',
@@ -339,7 +354,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
         },
       });
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const migratorInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'code-migrator');
       for (const inv of migratorInvocations) {
@@ -357,7 +372,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       const events: Array<Record<string, unknown>> = [];
       vi.spyOn(env.logger, 'event').mockImplementation((ev) => { events.push(ev as any); });
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const launched = events.filter(e => e.type === 'agent-launched');
       const completed = events.filter(e => e.type === 'agent-completed');
@@ -371,7 +386,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       }));
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       expect(env.ctx.tokenTracker.getTotal()).toBeGreaterThan(0);
     });
@@ -380,7 +395,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const { fileExists } = await import('../../../src/util/fs.js');
       const exists = await fileExists(env.ctx.paths.metricsInvocationsFile);
@@ -392,7 +407,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       env = await setupFlowTestWithTasks(launcherFn, DEFAULT_PLANNING_TASKS);
       const infoSpy = vi.spyOn(env.logger, 'info');
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       // With the nested FlowRunner, per-task completion is handled by the
       // flow's task-complete step node. Progress logging may differ from
@@ -411,7 +426,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
 
-      // Pre-populate the Phase 5 nested flow checkpoint with completed execution IDs.
+      // Pre-populate the Phase 4 nested flow checkpoint with completed execution IDs.
       // The framework skips nodes whose execution ID is already in completedExecutionIds.
       const state = env.checkpoint.getState();
       state.__phase4FlowCheckpoint = {
@@ -429,9 +444,9 @@ describe('executeIterativeMigration (Phase 5)', () => {
       };
       await env.checkpoint.save(state);
 
-      const result = await executeIterativeMigration(env.flowCtx);
+      const result = await runPhase4(env);
 
-      expect(result.success).toBe(true);
+      expect(result.status).toBe('completed');
       // The migrate, commit, and parity substeps were checkpointed as complete,
       // so no code-migrator invocations should occur for task-001.
       const task001MigratorInvocations = env.mockLauncher.invocations.filter(
@@ -444,7 +459,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
   // ─── phaseTimeouts ────────────────────────────────────────────────────
 
   describe('phaseTimeouts', () => {
-    it('should use phaseTimeouts[5] as timeout for Phase 5 agents', async () => {
+    it('should use phaseTimeouts[5] as timeout for Phase 4 agents', async () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK], {
         agentBackend: {
@@ -454,7 +469,7 @@ describe('executeIterativeMigration (Phase 5)', () => {
         },
       });
 
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const codeMigratorInv = env.mockLauncher.invocations.find(i => i.agent === 'code-migrator');
       expect(codeMigratorInv).toBeDefined();

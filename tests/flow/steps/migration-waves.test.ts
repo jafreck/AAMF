@@ -1,14 +1,17 @@
 /**
  * Phase 4 — Iterative Migration: Wave-Barrier Mode (step-level tests)
  *
- * Tests the wave-barrier execution path in executeIterativeMigration(),
+ * Tests the wave-barrier execution path in buildPhase4Subflow(),
  * covering: basic wave execution, convergence retry, terminal exhaustion
  * on convergence failure, and completed-task invariant.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { writeFile, mkdir } from 'node:fs/promises';
-import { executeIterativeMigration } from '../../../src/flow/steps/migration.js';
+import { buildPhase4Subflow, computePhase4Concurrency } from '../../../src/flow/steps/migration.js';
+import { FlowRunner } from '@cadre-dev/framework/flow';
+import { Phase4CheckpointAdapter } from '../../../src/flow/checkpoint-adapter.js';
+import type { MigrationFlowContext } from '../../../src/flow/context.js';
 import {
   setupFlowTestWithTasks,
   createMockLauncher,
@@ -26,9 +29,23 @@ afterEach(async () => {
   if (env) await env.cleanup();
 });
 
+/**
+ * Build and run the Phase 4 subflow, returning the FlowRunResult.
+ */
+async function runPhase4(e: FlowTestEnv) {
+  const flow = await buildPhase4Subflow(e.flowCtx);
+  if (flow.nodes.length === 0) return { status: 'completed' as const, empty: true };
+
+  const runner = new FlowRunner<MigrationFlowContext>();
+  return runner.run(flow, e.ctx, {
+    checkpoint: new Phase4CheckpointAdapter(e.checkpoint),
+    concurrency: computePhase4Concurrency(e.ctx),
+  });
+}
+
 // ─── Wave-Barrier Basic Execution ───────────────────────────────────────────
 
-describe('executeIterativeMigration — wave-barrier mode', () => {
+describe('buildPhase4Subflow — wave-barrier mode', () => {
   it('should complete all tasks in wave-barrier mode', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTestWithTasks(launcherFn, DEFAULT_PLANNING_TASKS, {
@@ -46,10 +63,9 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     try {
-      const result = await executeIterativeMigration(env.flowCtx);
+      const result = await runPhase4(env);
 
-      expect(result.phase).toBe(4);
-      expect(result.success).toBe(true);
+      expect(result.status).toBe('completed');
       // All tasks should be processed
       const codeMigratorInvs = env.mockLauncher.invocations.filter(i => i.agent === 'code-migrator');
       expect(codeMigratorInvs.length).toBeGreaterThanOrEqual(2);
@@ -77,7 +93,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     try {
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
 
       const waveEvents = events.filter(e =>
         typeof e.type === 'string' && e.type.startsWith('wave-'),
@@ -115,7 +131,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     try {
-      await executeIterativeMigration(env.flowCtx);
+      await runPhase4(env);
       // At least some invocations should have seen deferGitCommits = true
       expect(deferStates.some(d => d === true)).toBe(true);
     } finally {
@@ -156,8 +172,8 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     try {
       // With the nested flow's convergence loop, the build failure triggers
       // recovery via parity-failure-resolver, then the loop retries validation.
-      const result = await executeIterativeMigration(env.flowCtx);
-      expect(result.success).toBe(true);
+      const result = await runPhase4(env);
+      expect(result.status).toBe('completed');
     } finally {
       spawnSpy.mockRestore();
     }
@@ -190,7 +206,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     try {
       // The nested flow catches the TerminalExhaustionError and converts it
       // into a failed PhaseResult which assertPhaseSuccess then throws as MigrationError.
-      await expect(executeIterativeMigration(env.flowCtx)).rejects.toThrow();
+      await expect(runPhase4(env)).rejects.toThrow();
     } finally {
       spawnSpy.mockRestore();
     }
@@ -230,7 +246,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     try {
-      const result = await executeIterativeMigration(env.flowCtx);
+      const result = await runPhase4(env);
 
       // task-001's migrate substep was checkpointed as complete,
       // so no code-migrator invocations should occur for task-001.
@@ -271,8 +287,8 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     try {
-      const result = await executeIterativeMigration(env.flowCtx);
-      expect(result.success).toBe(true);
+      const result = await runPhase4(env);
+      expect(result.status).toBe('completed');
       // Build and test commands should have been invoked
       expect(spawnSpy).toHaveBeenCalled();
     } finally {
@@ -299,8 +315,8 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     try {
-      const result = await executeIterativeMigration(env.flowCtx);
-      expect(result.success).toBe(true);
+      const result = await runPhase4(env);
+      expect(result.status).toBe('completed');
     } finally {
       spawnSpy.mockRestore();
     }
@@ -318,7 +334,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     env.ctx.phase1TaskGraphResult = undefined;
 
     // Neither planPath nor tasks-merged.json exist → error
-    await expect(executeIterativeMigration(env.flowCtx)).rejects.toThrow(/not found/i);
+    await expect(runPhase4(env)).rejects.toThrow(/not found/i);
   });
 
   it('should fallback to tasks-merged.json when structured output unavailable', async () => {
@@ -328,8 +344,8 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     // Clear structured output but keep the tasks-merged.json file (written by setupFlowTestWithTasks)
     env.ctx.phase1TaskGraphResult = undefined;
 
-    const result = await executeIterativeMigration(env.flowCtx);
-    expect(result.success).toBe(true);
+    const result = await runPhase4(env);
+    expect(result.status).toBe('completed');
   });
 
   // ─── Wave-end quality gates (deferred-strict) ──────────────────────
@@ -357,8 +373,8 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     try {
-      const result = await executeIterativeMigration(env.flowCtx);
-      expect(result.success).toBe(true);
+      const result = await runPhase4(env);
+      expect(result.status).toBe('completed');
     } finally {
       spawnSpy.mockRestore();
     }
@@ -387,7 +403,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     try {
       // The build failure in enforce mode causes the nested flow to fail,
       // which assertPhaseSuccess converts to a MigrationError throw.
-      await expect(executeIterativeMigration(env.flowCtx)).rejects.toThrow();
+      await expect(runPhase4(env)).rejects.toThrow();
     } finally {
       spawnSpy.mockRestore();
     }
@@ -422,7 +438,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     try {
-      await expect(executeIterativeMigration(env.flowCtx)).rejects.toThrow();
+      await expect(runPhase4(env)).rejects.toThrow();
     } finally {
       spawnSpy.mockRestore();
     }
@@ -453,7 +469,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
       },
     });
 
-    await expect(executeIterativeMigration(env.flowCtx)).rejects.toThrow();
+    await expect(runPhase4(env)).rejects.toThrow();
   });
 
   // ─── SCC Recovery ─────────────────────────────────────────────────
@@ -469,8 +485,8 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     // Inject SCCs into structured output
     env.ctx.phase1TaskGraphResult!.extensions.structuredOutput!['sccs'] = [['task-a', 'task-b']];
 
-    const result = await executeIterativeMigration(env.flowCtx);
-    expect(result.success).toBe(true);
+    const result = await runPhase4(env);
+    expect(result.status).toBe('completed');
   });
 
   // ─── Token budget warning ─────────────────────────────────────────
@@ -482,7 +498,7 @@ describe('executeIterativeMigration — wave-barrier mode', () => {
     });
 
     const warnSpy = vi.spyOn(env.logger, 'warn');
-    await executeIterativeMigration(env.flowCtx);
+    await runPhase4(env);
 
     const budgetWarnings = warnSpy.mock.calls.filter(
       c => typeof c[0] === 'string' && c[0].includes('exceeds budget'),

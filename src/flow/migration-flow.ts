@@ -14,13 +14,13 @@ import {
   conditional,
   loop,
   parallel,
-  fromStep,
+  subflow,
   type FlowDefinition,
   type FlowNode,
+  type FlowRunnerOptions,
 } from '@cadre-dev/framework/flow';
 
 import type { MigrationFlowContext } from './context.js';
-import type { PhaseResult } from '../agents/types.js';
 import type { TaskGraphOutput } from './steps/task-graph.js';
 import { checkBudget } from './steps/shared.js';
 
@@ -29,7 +29,7 @@ import { buildKbIndex } from './steps/kb-indexing.js';
 import { buildTaskGraphStep } from './steps/task-graph.js';
 import { launchKnowledgeBuilder } from './steps/kb-construction.js';
 import { launchMigrationPlanner } from './steps/planning.js';
-import { executeIterativeMigration } from './steps/migration.js';
+import { buildPhase4Subflow, computePhase4RunnerOptions } from './steps/migration.js';
 import {
   runFinalParityIteration,
   noFixesNeeded,
@@ -51,6 +51,16 @@ import { finalizeAndReport } from './steps/completion.js';
 function budgetOk(ctx: { context: MigrationFlowContext }): boolean {
   return checkBudget(ctx.context);
 }
+
+/**
+ * Shared mutable ref for Phase 4 subflow runner options.
+ *
+ * Because `runnerOptions` on a subflow node is structurally static,
+ * but the checkpoint adapter and concurrency must be derived from runtime
+ * context, we use a shared object that the `flow` thunk populates before
+ * the runner reads it (the thunk always runs first per the runner contract).
+ */
+const _phase4RunnerOpts: FlowRunnerOptions<MigrationFlowContext> = {};
 
 /**
  * The AAMF migration pipeline expressed as a declarative flow.
@@ -109,12 +119,18 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
     }),
 
     // ── Phase 4 — Iterative Migration + budget gate ──
-    step<MigrationFlowContext>({
+    subflow<MigrationFlowContext, MigrationFlowContext>({
       id: 'iterative-migration',
       dependsOn: ['budget-check-3'],
-      input: fromStep('task-graph-construction'),
-      run: (ctx, input) => executeIterativeMigration(ctx, input as TaskGraphOutput | undefined),
-    }),
+      flow: async (ctx) => {
+        // Populate runner options dynamically before the runner reads them
+        Object.assign(_phase4RunnerOpts, computePhase4RunnerOptions(ctx.context));
+        const taskGraphInput = ctx.getStepOutput<TaskGraphOutput>('task-graph-construction');
+        return buildPhase4Subflow(ctx, taskGraphInput);
+      },
+      contextMap: (ctx) => ctx.context,
+      runnerOptions: _phase4RunnerOpts,
+    }) as unknown as FlowNode<MigrationFlowContext>,
     gate<MigrationFlowContext>({
       id: 'budget-check-4',
       dependsOn: ['iterative-migration'],
