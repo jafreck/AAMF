@@ -205,4 +205,85 @@ describe('SymbolMapper', () => {
 
     expect(result.mapped).toBe(1);
   });
+
+  it('prefix stripping: ZSTD_free matches free in target', async () => {
+    await buildTargetIndex({
+      'mem.rs': 'pub fn free(ptr: usize) {}\n',
+    });
+
+    const logger = createSilentLogger(tempDir);
+    const mapper = new SymbolMapper(dbPath, logger);
+
+    const result = await mapper.updateMappingsForTask('task-prefix', [
+      { name: 'ZSTD_free', kind: 'macro', file: '/src/zstd_deps.h', startLine: 67, endLine: 68 },
+    ], [join(rootDir, 'mem.rs')]);
+
+    expect(result.mapped).toBe(1);
+  });
+
+  it('prefix stripping with snake_case: FSE_ReadNCount matches read_ncount', async () => {
+    await buildTargetIndex({
+      'fse.rs': 'pub fn read_n_count(data: &[u8]) -> u32 { 0 }\n',
+    });
+
+    const logger = createSilentLogger(tempDir);
+    const mapper = new SymbolMapper(dbPath, logger);
+
+    const result = await mapper.updateMappingsForTask('task-prefix-snake', [
+      { name: 'FSE_ReadNCount', kind: 'function', file: '/src/fse.h', startLine: 1, endLine: 5 },
+    ], [join(rootDir, 'fse.rs')]);
+
+    expect(result.mapped).toBe(1);
+  });
+
+  it('PascalCase source matches snake_case target', async () => {
+    await buildTargetIndex({
+      'ctx.rs': 'pub fn create_compression_context() -> u32 { 0 }\n',
+    });
+
+    const logger = createSilentLogger(tempDir);
+    const mapper = new SymbolMapper(dbPath, logger);
+
+    const result = await mapper.updateMappingsForTask('task-pascal', [
+      { name: 'CreateCompressionContext', kind: 'function', file: '/src/api.c', startLine: 1, endLine: 5 },
+    ], [join(rootDir, 'ctx.rs')]);
+
+    expect(result.mapped).toBe(1);
+  });
+
+  it('returns unmapped status for symbols with no target match', async () => {
+    await buildTargetIndex({
+      'main.rs': 'pub fn unrelated() {}\n',
+    });
+
+    const logger = createSilentLogger(tempDir);
+    const mapper = new SymbolMapper(dbPath, logger);
+
+    const result = await mapper.updateMappingsForTask('task-nomatch', [
+      { name: 'COMPLETELY_UNIQUE_SYMBOL_XYZ', kind: 'macro', file: '/src/x.h', startLine: 1, endLine: 2 },
+    ], [join(rootDir, 'main.rs')]);
+
+    expect(result.mapped).toBe(0);
+    expect(result.unmapped).toBe(1);
+
+    const rows = await mapper.lookupByTask('task-nomatch');
+    expect(rows[0].status).toBe('pending');
+    expect(rows[0].target_symbol_name).toBeNull();
+  });
+
+  it('snake_case match outside target files falls back correctly', async () => {
+    await buildTargetIndex({
+      'other.rs': 'pub fn huf_compress_bound() -> usize { 0 }\n',
+    });
+
+    const logger = createSilentLogger(tempDir);
+    const mapper = new SymbolMapper(dbPath, logger);
+
+    // Target file set does NOT include other.rs — but match should still work via fallback
+    const result = await mapper.updateMappingsForTask('task-fallback', [
+      { name: 'HUF_compressBound', kind: 'function', file: '/src/huf.h', startLine: 25, endLine: 25 },
+    ], [join(rootDir, 'NOT_PRESENT.rs')]);
+
+    expect(result.mapped).toBe(1);
+  });
 });

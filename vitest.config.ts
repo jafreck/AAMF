@@ -15,6 +15,9 @@ export default defineConfig({
         // and require a real KB database to test. Covered by e2e tests.
         'src/flow/steps/kb-indexing.ts',
         'src/flow/steps/task-graph.ts',
+        'src/flow/index.ts',
+        // agent-launcher delegates to @cadre-dev/framework; tested via e2e.
+        'src/core/agent-launcher.ts',
       ],
       // Thresholds apply globally (not per-file)
       // Raised after comprehensive step-level unit tests for flow DSL:
