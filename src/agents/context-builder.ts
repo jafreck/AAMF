@@ -3,6 +3,7 @@ import { AgentName, AgentContext } from './types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { writeJson, ensureDir } from '../util/fs.js';
 import type { RuntimePaths } from '../core/runtime-paths.js';
+import type { SymbolMapper, SymbolMappingRow } from '../core/symbol-mapper.js';
 
 /** Options for building an agent context file. */
 export interface ContextBuildOptions {
@@ -23,6 +24,8 @@ export interface ContextBuildOptions {
  */
 export class ContextBuilder {
   private readonly paths: RuntimePaths;
+  /** Optional symbol mapper for enriching agent contexts with dependency mappings. */
+  symbolMapper?: SymbolMapper;
 
   constructor(private config: MigrationConfig, private progressDir: string, paths: RuntimePaths) {
     this.paths = paths;
@@ -43,6 +46,15 @@ export class ContextBuilder {
     payload?: Record<string, unknown>,
   ): Promise<{ contextPath: string; outputPath: string }> {
     const context = this.createContext(agent, phase, taskId, payload);
+
+    // Enrich code-migrator and parity-failure-resolver with dependency mappings.
+    if (this.symbolMapper && (agent === 'code-migrator' || agent === 'parity-failure-resolver')) {
+      const depMappings = await this.getDependencyMappings(payload);
+      if (depMappings.length > 0 && context.payload) {
+        (context.payload as Record<string, unknown>).dependencyMappings = depMappings;
+      }
+    }
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${agent}-${taskId ?? 'main'}-${timestamp}.json`;
     const contextDir = join(this.progressDir, 'artifacts', 'contexts');
@@ -100,6 +112,43 @@ export class ContextBuilder {
       return payload!.taskScope as Record<string, unknown>;
     }
     return undefined;
+  }
+
+  /**
+   * Look up how dependency tasks mapped their source symbols to target symbols.
+   * Returns a compact array suitable for inclusion in agent payloads.
+   */
+  private async getDependencyMappings(payload?: Record<string, unknown>): Promise<Array<{
+    sourceSymbol: string; sourceFile: string;
+    targetSymbol: string | null; targetFile: string | null;
+    taskId: string; status: string;
+  }>> {
+    if (!this.symbolMapper) return [];
+
+    // Extract dependency task IDs from payload.taskScope.dependencies or payload.dependencies.
+    const taskScope = payload?.taskScope as Record<string, unknown> | undefined;
+    const deps: string[] = [];
+    const rawDeps = payload?.dependencyTaskIds ?? taskScope?.dependencyTaskIds;
+    if (Array.isArray(rawDeps)) {
+      for (const d of rawDeps) {
+        if (typeof d === 'string') deps.push(d);
+      }
+    }
+    if (deps.length === 0) return [];
+
+    try {
+      const rows = await this.symbolMapper.lookupDependencyMappings(deps);
+      return rows.map(r => ({
+        sourceSymbol: r.source_symbol_name,
+        sourceFile: r.source_file,
+        targetSymbol: r.target_symbol_name,
+        targetFile: r.target_file,
+        taskId: r.task_id,
+        status: r.status,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   /** Assemble an {@link AgentContext} object for the given agent and phase. */

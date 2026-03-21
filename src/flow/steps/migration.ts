@@ -144,6 +144,30 @@ async function runCommitSubstep(
   await commitForAgent(ctx, 'code-migrator', 5, task.id, task.name);
 }
 
+async function runTargetIndexSubstep(
+  ctx: MigrationFlowContext, task: MigrationTask,
+): Promise<void> {
+  if (!ctx.targetIndexer) return;
+  try {
+    await ctx.targetIndexer.updateForFiles(task.targetFiles);
+  } catch (err) {
+    ctx.logger.warn(`Target index update failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function runSymbolMappingSubstep(
+  ctx: MigrationFlowContext, task: MigrationTask,
+): Promise<void> {
+  if (!ctx.symbolMapper || !task.symbols?.length) return;
+  try {
+    await ctx.symbolMapper.updateMappingsForTask(
+      task.id, task.symbols, task.targetFiles, 'migrated',
+    );
+  } catch (err) {
+    ctx.logger.warn(`Symbol mapping failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 async function runParitySubstep(
   ctx: MigrationFlowContext, task: MigrationTask,
 ): Promise<void> {
@@ -234,6 +258,12 @@ async function runParityGateSubstep(
     }
   } else if (!parityPassed) {
     ctx.logger.warn(`Parity check failed for ${task.id}, deferring enforcement (qualityPolicy=${ctx.config.options.qualityPolicy})`);
+  }
+
+  // Update symbol mapping status based on parity outcome.
+  if (ctx.symbolMapper) {
+    const status = parityPassed ? 'migrated' : 'parity-failed';
+    try { await ctx.symbolMapper.updateTaskStatus(task.id, status); } catch { /* best-effort */ }
   }
 }
 
@@ -349,11 +379,28 @@ function buildPerTaskFlow(
     }));
     substepIds.push(commitId);
 
+    // Target index update + symbol mapping (after commit, before parity)
+    const targetIndexId = `${task.id}/target-index`;
+    nodes.push(step<MigrationFlowContext>({
+      id: targetIndexId,
+      dependsOn: [commitId],
+      run: (c) => runTargetIndexSubstep(c.context, task),
+    }));
+    substepIds.push(targetIndexId);
+
+    const symbolMapId = `${task.id}/symbol-map`;
+    nodes.push(step<MigrationFlowContext>({
+      id: symbolMapId,
+      dependsOn: [targetIndexId],
+      run: (c) => runSymbolMappingSubstep(c.context, task),
+    }));
+    substepIds.push(symbolMapId);
+
     // Parity + test writer
     const parityId = `${task.id}/parity`;
     nodes.push(step<MigrationFlowContext>({
       id: parityId,
-      dependsOn: [commitId],
+      dependsOn: [symbolMapId],
       run: (c) => runParitySubstep(c.context, task),
     }));
     substepIds.push(parityId);

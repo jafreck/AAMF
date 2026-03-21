@@ -174,6 +174,10 @@ export function buildInvocation(
     ? ctx.kbServer.mcpConfig : undefined;
   const kbDbPath = (KB_AWARE_AGENTS.includes(agent) && ctx.kbServer)
     ? ctx.paths.kbDbFile : undefined;
+  const targetMcpConfig = (KB_AWARE_AGENTS.includes(agent) && ctx.targetKbServer)
+    ? ctx.targetKbServer.mcpConfig : undefined;
+  const targetKbDbPath = (KB_AWARE_AGENTS.includes(agent) && ctx.targetKbServer)
+    ? ctx.paths.kbTargetDbFile : undefined;
 
   const failureRecoveryOverride = agent === 'parity-failure-resolver'
     ? getFailureRecoveryModel(ctx) : undefined;
@@ -223,6 +227,8 @@ export function buildInvocation(
       ...(routingTier ? { routingTier, routingReason } : {}),
       ...(mcpConfig ? { mcpConfig } : {}),
       ...(kbDbPath ? { kbDbPath } : {}),
+      ...(targetMcpConfig ? { targetMcpConfig } : {}),
+      ...(targetKbDbPath ? { targetKbDbPath } : {}),
     },
   };
 }
@@ -750,6 +756,7 @@ export function taskScopePayload(task: MigrationTask): Record<string, unknown> {
       ...(task.symbols ? { symbols: task.symbols } : {}),
       ...(task.knowledgeBaseRef ? { knowledgeBaseRef: task.knowledgeBaseRef } : {}),
     },
+    ...(task.dependencies.length > 0 ? { dependencyTaskIds: task.dependencies } : {}),
   };
 }
 

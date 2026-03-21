@@ -19,6 +19,8 @@ import { generateAgentDefinitions } from '../agents/generator.js';
 import { ContextBuilder } from '../agents/context-builder.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
+import { TargetIndexer } from './target-indexer.js';
+import { SymbolMapper } from './symbol-mapper.js';
 import { FlowRunner, type FlowRunnerOptions } from '@cadre-dev/framework/flow';
 import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToPhase } from '../flow/index.js';
 import { MigrationError } from '../flow/steps/shared.js';
@@ -219,6 +221,16 @@ export class MigrationRuntime {
     const buildLimiter = pLimit(bc === 0 ? this.config.options.maxParallelAgents : bc);
     const gitLimiter = pLimit(1);
 
+    // Target codebase indexer + symbol mapper
+    const targetIndexer = new TargetIndexer(this.paths.kbTargetDbFile, this.config.target.outputPath, this.logger);
+    const symbolMapper = new SymbolMapper(this.paths.kbTargetDbFile, this.logger);
+    contextBuilder.symbolMapper = symbolMapper;
+
+    // If the target DB already exists (resume), mark the indexer as built.
+    if (await fileExists(this.paths.kbTargetDbFile)) {
+      targetIndexer.markBuilt();
+    }
+
     const flowContext: MigrationFlowContext = {
       config: this.config,
       projectRoot: this.projectRoot,
@@ -236,6 +248,8 @@ export class MigrationRuntime {
       contextBuilder,
       buildLimiter,
       gitLimiter,
+      targetIndexer,
+      symbolMapper,
       peakConcurrency: 0,
       parityResults: new Map(),
       routedTaskIds: new Set(),
@@ -243,6 +257,13 @@ export class MigrationRuntime {
       deferGitCommits: false,
     };
     this.flowContext = flowContext;
+
+    // Lazy-start the target KB server after the first target index build.
+    targetIndexer.setOnFirstBuild(async () => {
+      if (!flowContext.targetKbServer) {
+        await this.startTargetKbServer(flowContext);
+      }
+    });
 
     this.logger.event({ type: 'migration-started', projectName: this.config.projectName });
     await this.progress.appendEvent('Migration started');
@@ -255,6 +276,10 @@ export class MigrationRuntime {
     const resumePoint = this.checkpoint.getResumePoint();
     if (resumePoint.phase > 0 && (await fileExists(this.paths.kbDbFile))) {
       await this.startKbServer(flowContext);
+    }
+    // Start target KB server on resume if the target DB exists
+    if (resumePoint.phase > 0 && (await fileExists(this.paths.kbTargetDbFile))) {
+      await this.startTargetKbServer(flowContext);
     }
 
     const startTime = Date.now();
@@ -290,6 +315,10 @@ export class MigrationRuntime {
           // Start KB server after Phase 0
           if (phaseResult.phase === 0 && phaseResult.success && !flowContext.kbServer) {
             await this.startKbServer(flowContext);
+            // Also start target KB server if the target index exists already (e.g. resume)
+            if (!flowContext.targetKbServer && (await fileExists(this.paths.kbTargetDbFile))) {
+              await this.startTargetKbServer(flowContext);
+            }
           }
 
           await this.checkpoint.completePhase(phaseResult.phase, phaseResult.outputPath ?? '');
@@ -321,6 +350,10 @@ export class MigrationRuntime {
       if (flowContext.kbServer) {
         try { await flowContext.kbServer.stop(); this.logger.info('KB server stopped'); } catch { /* ignore */ }
         flowContext.kbServer = undefined;
+      }
+      if (flowContext.targetKbServer) {
+        try { await flowContext.targetKbServer.stop(); this.logger.info('Target KB server stopped'); } catch { /* ignore */ }
+        flowContext.targetKbServer = undefined;
       }
       if (flowContext.embedder) {
         try { await flowContext.embedder.dispose(); } catch { /* ignore */ }
@@ -570,6 +603,10 @@ export class MigrationRuntime {
             await withTimeout(this.flowContext.kbServer.stop(), 3_000);
             this.flowContext.kbServer = undefined;
           }
+          if (this.flowContext.targetKbServer) {
+            await withTimeout(this.flowContext.targetKbServer.stop(), 3_000);
+            this.flowContext.targetKbServer = undefined;
+          }
           if (this.flowContext.embedder) {
             try { await withTimeout(this.flowContext.embedder.dispose(), 3_000); } catch { /* ignore */ }
             this.flowContext.embedder = undefined;
@@ -627,6 +664,31 @@ export class MigrationRuntime {
     } catch (err) {
       this.logger.warn(`KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
       flowContext.kbServer = undefined;
+    }
+  }
+
+  /**
+   * Start the target KB MCP server for the migrated codebase index.
+   * Uses a read-only handle to `kb-target.db`.
+   */
+  private async startTargetKbServer(flowContext: MigrationFlowContext): Promise<void> {
+    try {
+      const { KbServerProcess } = await import('./kb-server-process.js');
+      const lore = await import('@jafreck/lore');
+      const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
+      flowContext.targetKbServer = new KbServerProcess(this.paths.kbTargetDbFile, undefined, (obs) => {
+        this.logger.debug(
+          `target_lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
+        );
+      }, {
+        level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
+        logFile: this.paths.loreLogFile,
+      });
+      await flowContext.targetKbServer.start();
+      this.logger.info('Target KB server started');
+    } catch (err) {
+      this.logger.warn(`Target KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
+      flowContext.targetKbServer = undefined;
     }
   }
 }
