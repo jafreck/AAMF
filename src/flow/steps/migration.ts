@@ -148,24 +148,30 @@ async function runTargetIndexSubstep(
   ctx: MigrationFlowContext, task: MigrationTask,
 ): Promise<void> {
   if (!ctx.targetIndexer) return;
-  try {
-    await ctx.targetIndexer.updateForFiles(task.targetFiles);
-  } catch (err) {
-    ctx.logger.warn(`Target index update failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  // Serialize all target DB writes through gitLimiter (pLimit(1))
+  // to prevent SQLITE_BUSY under concurrent task execution.
+  await ctx.gitLimiter(async () => {
+    try {
+      await ctx.targetIndexer!.updateForFiles(task.targetFiles);
+    } catch (err) {
+      ctx.logger.warn(`Target index update failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 }
 
 async function runSymbolMappingSubstep(
   ctx: MigrationFlowContext, task: MigrationTask,
 ): Promise<void> {
   if (!ctx.symbolMapper || !task.symbols?.length) return;
-  try {
-    await ctx.symbolMapper.updateMappingsForTask(
-      task.id, task.symbols, task.targetFiles, 'migrated',
-    );
-  } catch (err) {
-    ctx.logger.warn(`Symbol mapping failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  await ctx.gitLimiter(async () => {
+    try {
+      await ctx.symbolMapper!.updateMappingsForTask(
+        task.id, task.symbols!, task.targetFiles, 'migrated',
+      );
+    } catch (err) {
+      ctx.logger.warn(`Symbol mapping failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 }
 
 async function runParitySubstep(
@@ -263,7 +269,9 @@ async function runParityGateSubstep(
   // Update symbol mapping status based on parity outcome.
   if (ctx.symbolMapper) {
     const status = parityPassed ? 'migrated' : 'parity-failed';
-    try { await ctx.symbolMapper.updateTaskStatus(task.id, status); } catch { /* best-effort */ }
+    await ctx.gitLimiter(async () => {
+      try { await ctx.symbolMapper!.updateTaskStatus(task.id, status); } catch { /* best-effort */ }
+    });
   }
 }
 

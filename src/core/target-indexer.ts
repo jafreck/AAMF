@@ -17,6 +17,7 @@ export class TargetIndexer {
   private readonly rootDir: string;
   private readonly logger: Logger;
   private built = false;
+  private building = false;
   private onFirstBuild?: () => Promise<void>;
 
   constructor(dbPath: string, rootDir: string, logger: Logger) {
@@ -49,10 +50,14 @@ export class TargetIndexer {
     const lore = await import('@jafreck/lore');
 
     if (!this.built) {
+      // Guard against concurrent first-build races.
+      if (this.building) return;
+      this.building = true;
       // First update — do a full build to establish the schema.
       const builder = new lore.IndexBuilder(this.dbPath, { rootDir: this.rootDir });
       await builder.build();
       this.built = true;
+      this.building = false;
       this.logger.info(`Target index initial build (triggered by ${changedFiles.length} file(s))`);
       if (this.onFirstBuild) {
         await this.onFirstBuild();
