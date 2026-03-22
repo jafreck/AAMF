@@ -190,7 +190,16 @@ function adaptLogger(logger: Logger): BackendLoggerLike {
 }
 
 /** Map an AAMF AgentInvocation to the framework's AgentInvocation. */
-function toFrameworkInvocation(inv: AgentInvocation): FrameworkInvocation {
+export function toFrameworkInvocation(inv: AgentInvocation): FrameworkInvocation {
+  // Build mcpServers map from AAMF extension fields.
+  let mcpServers: Record<string, { url: string }> | undefined;
+  if (inv.extensions?.mcpConfig) {
+    mcpServers = { 'aamf-kb': { url: inv.extensions.mcpConfig.url } };
+  }
+  if (inv.extensions?.targetMcpConfig) {
+    mcpServers = { ...mcpServers, 'aamf-kb-target': { url: inv.extensions.targetMcpConfig.url } };
+  }
+
   return {
     agent: inv.agent,
     workItemId: inv.workItemId ?? '',
@@ -199,6 +208,7 @@ function toFrameworkInvocation(inv: AgentInvocation): FrameworkInvocation {
     outputPath: inv.outputPath,
     timeout: inv.timeout,
     modelOverride: inv.modelOverride,
+    ...(mcpServers ? { mcpServers } : {}),
   } as FrameworkInvocation;
 }
 
