@@ -698,10 +698,10 @@ export class MigrationRuntime {
         );
       }, {
         level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
-        logFile: this.paths.loreLogFile,
+        logFile: this.paths.loreTargetLogFile,
       });
       await flowContext.targetKbServer.start();
-      this.logger.info('Target KB server started');
+      this.logger.info(`Target KB server started (lore log: ${this.paths.loreTargetLogFile})`);
     } catch (err) {
       this.logger.warn(`Target KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
       flowContext.targetKbServer = undefined;

@@ -24,6 +24,7 @@ Resolve the failing task quickly and safely by:
 1. **Diagnose**
         - Read the parity issues provided in `context.agentPayload.remediationContext.parityIssues` — a JSON array of `{ severity, description, details, sourceLocation, targetLocation? }` objects. Use your file-read tools to inspect the cited source and target locations.
         - Read the referenced source/target files and relevant context artifacts.
+        - Query the target KB (`aamf-kb-target`) with `lore_search` to check how dependency symbols were ported by prior tasks — mismatched imports, renamed types, or missing re-exports from earlier tasks are common root causes.
         - Identify the most likely root cause in one concise sentence.
         - Do NOT write any markdown report file. All output goes into the `aamf-json` block.
 2. **Evaluate Strategies**
