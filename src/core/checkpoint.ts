@@ -435,11 +435,16 @@ export class CheckpointManager {
     if (state.__flowCheckpoint && typeof state.__flowCheckpoint === 'object') {
       const fc = state.__flowCheckpoint as FlowCheckpointSnapshot<unknown>;
       if (Array.isArray(fc.completedExecutionIds)) {
-        fc.completedExecutionIds = fc.completedExecutionIds.filter(id => {
-          const phase = nodeIdToPhase(id);
+        fc.completedExecutionIds = fc.completedExecutionIds.filter((id: string) => {
+          // Execution IDs are namespaced: "<flowId>/<nodeId>".
+          // Strip the prefix to get the bare node ID for phase lookup.
+          const slashIdx = id.indexOf('/');
+          const bareId = slashIdx >= 0 ? id.slice(slashIdx + 1) : id;
+          const phase = nodeIdToPhase(bareId);
           // Keep nodes that belong to phases before fromPhase.
-          // Also keep unknown nodes (phase === -1) to be safe.
-          return phase < fromPhase && phase !== -1;
+          // Keep unknown nodes (phase === -1) to be safe — they may be
+          // internal framework nodes not mapped to any phase.
+          return phase === -1 || phase < fromPhase;
         });
       }
     }
