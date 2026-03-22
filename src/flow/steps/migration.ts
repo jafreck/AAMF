@@ -462,6 +462,7 @@ function buildWaveBarrierFlow(
   const waves = computeTopologicalWaves(tasks);
   const nodes: FlowNode<MigrationFlowContext>[] = [];
   const maxConvergence = ctx.config.options.waveControl?.maxConvergenceIterations ?? 3;
+  const gateMode = getQualityGateMode(ctx);
 
   for (let w = 0; w < waves.length; w++) {
     const waveTasks = waves[w]!;
@@ -482,16 +483,44 @@ function buildWaveBarrierFlow(
     }));
 
     // Wave task execution (parallel branches)
+    // Each branch runs: migrate → commit → target-index → parity → parity-gate → minor-repass
+    // Build/test gates run at the wave barrier, but parity is per-task.
     nodes.push(parallel<MigrationFlowContext>({
       id: `wave-${w}-tasks`,
       dependsOn: [`wave-${w}-start`],
-      branches: Object.fromEntries(waveTasksCopy.map(task => [
-        task.id,
-        [step<MigrationFlowContext>({
-          id: `${task.id}/migrate`,
-          run: (c) => runMigrateSubstep(c.context, task, retryExec),
-        })],
-      ])),
+      branches: Object.fromEntries(waveTasksCopy.map(task => {
+        const branchSteps: FlowNode<MigrationFlowContext>[] = [
+          step<MigrationFlowContext>({
+            id: `${task.id}/migrate`,
+            run: (c) => runMigrateSubstep(c.context, task, retryExec),
+          }),
+          step<MigrationFlowContext>({
+            id: `${task.id}/commit`,
+            run: (c) => runCommitSubstep(c.context, task),
+          }),
+          step<MigrationFlowContext>({
+            id: `${task.id}/target-index`,
+            run: (c) => runTargetIndexSubstep(c.context, task),
+          }),
+          step<MigrationFlowContext>({
+            id: `${task.id}/parity`,
+            run: (c) => runParitySubstep(c.context, task),
+          }),
+        ];
+        if (gateMode !== 'skip') {
+          branchSteps.push(
+            step<MigrationFlowContext>({
+              id: `${task.id}/parity-gate`,
+              run: (c) => runParityGateSubstep(c.context, task),
+            }),
+            step<MigrationFlowContext>({
+              id: `${task.id}/minor-repass`,
+              run: (c) => runMinorRepassSubstep(c.context, task),
+            }),
+          );
+        }
+        return [task.id, branchSteps];
+      })),
     }));
 
     // Barrier entry marker
@@ -524,7 +553,16 @@ function buildWaveBarrierFlow(
           },
           then: [step<MigrationFlowContext>({
             id: `wave-${w}-fix`,
-            run: async (c) => recoverWaveValidationFailure(c.context, w, waveTasksCopy),
+            run: async (c) => {
+              const validation = c.getStepOutput<WaveValidationResult>(`wave-${w}-validate`);
+              if (!validation) {
+                throw new Error(
+                  `Wave ${w} recovery triggered but no validation result found for step wave-${w}-validate. ` +
+                  `This is a runtime bug — the convergence loop conditional should only fire after validation completes.`,
+                );
+              }
+              return recoverWaveValidationFailure(c.context, w, waveTasksCopy, validation);
+            },
           })],
         }),
       ],
@@ -821,13 +859,18 @@ function buildWaveRecoveryTask(wave: number, waveCandidates: MigrationTask[]): M
 async function recoverWaveValidationFailure(
   ctx: MigrationFlowContext, wave: number,
   waveCandidates: MigrationTask[],
-  validation?: WaveValidationResult,
+  validation: WaveValidationResult,
 ): Promise<boolean> {
-  if (validation?.success) return true;
-  const failedLabel = validation?.failedLabel;
-  const failedCommand = validation?.failedCommand;
-  const failure = validation?.failure;
-  if (!failedLabel || !failedCommand || !failure || failure.success) return false;
+  if (validation.success) return true;
+  const { failedLabel, failedCommand, failure } = validation;
+  if (!failedLabel || !failedCommand || !failure) {
+    throw new Error(
+      `Wave ${wave} validation failed but returned incomplete result ` +
+      `(failedLabel=${failedLabel}, failedCommand=${failedCommand}, failure=${!!failure}). ` +
+      `This is a runtime bug — WaveValidationResult must include failure details when success=false.`,
+    );
+  }
+  if (failure.success) return true;
   const waveTask = buildWaveRecoveryTask(wave, waveCandidates);
   const artifactPaths = Array.from(new Set(waveCandidates.flatMap(t => [...t.sourceFiles, ...t.targetFiles])));
   return runCommandWithRecovery(ctx, failedLabel, failedCommand, waveTask, undefined, {

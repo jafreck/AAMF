@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { atomicWrite, ensureDir, fileExists, readJson, writeJson } from '../util/fs.js';
 import { Logger } from '../logging/logger.js';
+import type { FlowCheckpointSnapshot } from '@cadre-dev/framework/flow';
 import type { TerminalReasonCode } from '../agents/types.js';
 
 export interface TerminalExhaustionState {
@@ -347,6 +348,104 @@ export class CheckpointManager {
   getResumePoint(): { phase: number; taskId: string | null } {
     const state = this.getState();
     return { phase: state.currentPhase, taskId: state.currentTask };
+  }
+
+  /**
+   * Reset all checkpoint state from `fromPhase` onward, preserving earlier phases.
+   * Used by `--from-phase N` to restart from a fixed phase boundary.
+   *
+   * @param fromPhase  The phase number to restart from (0-8).
+   * @param nodeIdToPhase  Maps flow node IDs to phase numbers (returns -1 for unknown).
+   *
+   * Requires that all phases 0..fromPhase-1 are already completed (or fromPhase === 0).
+   * Throws if the prerequisite phases are missing.
+   */
+  async resetFromPhase(fromPhase: number, nodeIdToPhase: (id: string) => number): Promise<void> {
+    const state = this.getState();
+
+    // Validate prerequisites: all phases before fromPhase must be completed
+    if (fromPhase > 0) {
+      const missing: number[] = [];
+      for (let p = 0; p < fromPhase; p++) {
+        if (!state.completedPhases.includes(p)) {
+          missing.push(p);
+        }
+      }
+      if (missing.length > 0) {
+        throw new Error(
+          `Cannot --from-phase ${fromPhase}: prerequisite phase(s) ${missing.join(', ')} ` +
+          `not completed. Completed phases: [${state.completedPhases.sort((a, b) => a - b).join(', ')}]`,
+        );
+      }
+    }
+
+    // 1. completedPhases — keep only < fromPhase
+    state.completedPhases = state.completedPhases.filter(p => p < fromPhase);
+
+    // 2. currentPhase — set to fromPhase
+    state.currentPhase = fromPhase;
+
+    // 3. currentTask — clear
+    state.currentTask = null;
+
+    // 4. phaseOutputs — remove keys >= fromPhase
+    for (const key of Object.keys(state.phaseOutputs)) {
+      if (Number(key) >= fromPhase) {
+        delete state.phaseOutputs[Number(key)];
+      }
+    }
+
+    // 5. Phase-specific state
+    if (fromPhase <= 0) {
+      state.phase0Fingerprint = undefined;
+    }
+    if (fromPhase <= 2) {
+      state.completedPhase2Groups = [];
+    }
+    if (fromPhase <= 3) {
+      state.phase3aComplete = false;
+      state.scaffoldComplete = false;
+    }
+    if (fromPhase <= 4) {
+      state.completedTasks = [];
+      state.failedTasks = [];
+      state.blockedTasks = [];
+      state.completedTaskDurationsMs = [];
+      state.terminalExhaustion = undefined;
+      state.adjudicationWaivers = [];
+      state.adjudicationEvents = [];
+      state.phaseCursors ??= {};
+      state.phaseCursors['4'] = { tasks: {} };
+      state.__phase4FlowCheckpoint = undefined;
+    }
+    if (fromPhase <= 5) {
+      state.phaseCursors ??= {};
+      state.phaseCursors['5'] = { iteration: 0, fixIndex: 0 };
+    }
+    if (fromPhase <= 6) {
+      state.phaseCursors ??= {};
+      state.phaseCursors['6'] = { completedAgents: [], completedSuites: [] };
+    }
+    if (fromPhase <= 7) {
+      state.phaseCursors ??= {};
+      state.phaseCursors['7'] = { iteration: 0, issueIndex: 0 };
+    }
+
+    // 6. Flow checkpoint — remove completedExecutionIds for phases >= fromPhase
+    if (state.__flowCheckpoint && typeof state.__flowCheckpoint === 'object') {
+      const fc = state.__flowCheckpoint as FlowCheckpointSnapshot<unknown>;
+      if (Array.isArray(fc.completedExecutionIds)) {
+        fc.completedExecutionIds = fc.completedExecutionIds.filter(id => {
+          const phase = nodeIdToPhase(id);
+          // Keep nodes that belong to phases before fromPhase.
+          // Also keep unknown nodes (phase === -1) to be safe.
+          return phase < fromPhase && phase !== -1;
+        });
+      }
+    }
+
+    this.logger.info(`Reset checkpoint from phase ${fromPhase} onward — preserving phases [${state.completedPhases.join(', ')}]`);
+    await this.save(state);
   }
 
   /** Add token usage */
