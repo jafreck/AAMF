@@ -756,7 +756,6 @@ export function taskScopePayload(task: MigrationTask): Record<string, unknown> {
       ...(task.symbols ? { symbols: task.symbols } : {}),
       ...(task.knowledgeBaseRef ? { knowledgeBaseRef: task.knowledgeBaseRef } : {}),
     },
-    ...(task.dependencies.length > 0 ? { dependencyTaskIds: task.dependencies } : {}),
   };
 }
 

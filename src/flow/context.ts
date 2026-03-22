@@ -32,7 +32,6 @@ import type {
 import type { EmbeddingProvider } from '@jafreck/lore';
 import type { KbServerProcess } from '../core/kb-server-process.js';
 import type { TargetIndexer } from '../core/target-indexer.js';
-import type { SymbolMapper } from '../core/symbol-mapper.js';
 import type { TaskQueue } from '../execution/task-queue.js';
 
 /** Parity result data extracted from parity-verifier aamf-json output. */
@@ -114,8 +113,6 @@ export interface MigrationFlowContext {
   targetKbServer?: KbServerProcess;
   /** Target codebase indexer - builds/updates kb-target.db */
   targetIndexer?: TargetIndexer;
-  /** Source↔Target symbol mapper */
-  symbolMapper?: SymbolMapper;
   /** Embedding provider - created during Phase 0 */
   embedder?: EmbeddingProvider;
   /** Task graph result from Phase 1 for Phase 4 consumption */

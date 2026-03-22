@@ -159,21 +159,6 @@ async function runTargetIndexSubstep(
   });
 }
 
-async function runSymbolMappingSubstep(
-  ctx: MigrationFlowContext, task: MigrationTask,
-): Promise<void> {
-  if (!ctx.symbolMapper || !task.symbols?.length) return;
-  await ctx.gitLimiter(async () => {
-    try {
-      await ctx.symbolMapper!.updateMappingsForTask(
-        task.id, task.symbols!, task.targetFiles, 'migrated',
-      );
-    } catch (err) {
-      ctx.logger.warn(`Symbol mapping failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  });
-}
-
 async function runParitySubstep(
   ctx: MigrationFlowContext, task: MigrationTask,
 ): Promise<void> {
@@ -266,13 +251,6 @@ async function runParityGateSubstep(
     ctx.logger.warn(`Parity check failed for ${task.id}, deferring enforcement (qualityPolicy=${ctx.config.options.qualityPolicy})`);
   }
 
-  // Update symbol mapping status based on parity outcome.
-  if (ctx.symbolMapper) {
-    const status = parityPassed ? 'migrated' : 'parity-failed';
-    await ctx.gitLimiter(async () => {
-      try { await ctx.symbolMapper!.updateTaskStatus(task.id, status); } catch { /* best-effort */ }
-    });
-  }
 }
 
 async function runMinorRepassSubstep(
@@ -387,7 +365,7 @@ function buildPerTaskFlow(
     }));
     substepIds.push(commitId);
 
-    // Target index update + symbol mapping (after commit, before parity)
+    // Target index update (after commit, before parity)
     const targetIndexId = `${task.id}/target-index`;
     nodes.push(step<MigrationFlowContext>({
       id: targetIndexId,
@@ -396,19 +374,11 @@ function buildPerTaskFlow(
     }));
     substepIds.push(targetIndexId);
 
-    const symbolMapId = `${task.id}/symbol-map`;
-    nodes.push(step<MigrationFlowContext>({
-      id: symbolMapId,
-      dependsOn: [targetIndexId],
-      run: (c) => runSymbolMappingSubstep(c.context, task),
-    }));
-    substepIds.push(symbolMapId);
-
     // Parity + test writer
     const parityId = `${task.id}/parity`;
     nodes.push(step<MigrationFlowContext>({
       id: parityId,
-      dependsOn: [symbolMapId],
+      dependsOn: [targetIndexId],
       run: (c) => runParitySubstep(c.context, task),
     }));
     substepIds.push(parityId);

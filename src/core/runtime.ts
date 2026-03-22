@@ -20,7 +20,6 @@ import { ContextBuilder } from '../agents/context-builder.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
 import { TargetIndexer } from './target-indexer.js';
-import { SymbolMapper } from './symbol-mapper.js';
 import { FlowRunner, type FlowRunnerOptions } from '@cadre-dev/framework/flow';
 import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToPhase } from '../flow/index.js';
 import { MigrationError } from '../flow/steps/shared.js';
@@ -221,10 +220,8 @@ export class MigrationRuntime {
     const buildLimiter = pLimit(bc === 0 ? this.config.options.maxParallelAgents : bc);
     const gitLimiter = pLimit(1);
 
-    // Target codebase indexer + symbol mapper
+    // Target codebase indexer
     const targetIndexer = new TargetIndexer(this.paths.kbTargetDbFile, this.config.target.outputPath, this.logger);
-    const symbolMapper = new SymbolMapper(this.paths.kbTargetDbFile, this.logger);
-    contextBuilder.symbolMapper = symbolMapper;
 
     // If the target DB already exists (resume), mark the indexer as built.
     if (await fileExists(this.paths.kbTargetDbFile)) {
@@ -249,7 +246,6 @@ export class MigrationRuntime {
       buildLimiter,
       gitLimiter,
       targetIndexer,
-      symbolMapper,
       peakConcurrency: 0,
       parityResults: new Map(),
       routedTaskIds: new Set(),
