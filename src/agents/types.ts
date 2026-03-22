@@ -59,6 +59,10 @@ export interface AgentInvocationExtensions {
   mcpConfig?: McpServerConfig;
   /** Path to the KB SQLite database; injected as KB_DB_PATH env var into the agent subprocess. */
   kbDbPath?: string;
+  /** MCP server config for the target KB server (migrated codebase index). */
+  targetMcpConfig?: McpServerConfig;
+  /** Path to the target KB SQLite database. */
+  targetKbDbPath?: string;
   /** Routing tier assigned by the model routing policy (undefined when routing is inactive). */
   routingTier?: ModelTier;
   /** Human-readable reason for the routing decision. */

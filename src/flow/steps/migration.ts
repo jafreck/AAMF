@@ -144,6 +144,21 @@ async function runCommitSubstep(
   await commitForAgent(ctx, 'code-migrator', 5, task.id, task.name);
 }
 
+async function runTargetIndexSubstep(
+  ctx: MigrationFlowContext, task: MigrationTask,
+): Promise<void> {
+  if (!ctx.targetIndexer) return;
+  // Serialize all target DB writes through gitLimiter (pLimit(1))
+  // to prevent SQLITE_BUSY under concurrent task execution.
+  await ctx.gitLimiter(async () => {
+    try {
+      await ctx.targetIndexer!.updateForFiles(task.targetFiles);
+    } catch (err) {
+      ctx.logger.warn(`Target index update failed for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+}
+
 async function runParitySubstep(
   ctx: MigrationFlowContext, task: MigrationTask,
 ): Promise<void> {
@@ -235,6 +250,7 @@ async function runParityGateSubstep(
   } else if (!parityPassed) {
     ctx.logger.warn(`Parity check failed for ${task.id}, deferring enforcement (qualityPolicy=${ctx.config.options.qualityPolicy})`);
   }
+
 }
 
 async function runMinorRepassSubstep(
@@ -349,11 +365,20 @@ function buildPerTaskFlow(
     }));
     substepIds.push(commitId);
 
+    // Target index update (after commit, before parity)
+    const targetIndexId = `${task.id}/target-index`;
+    nodes.push(step<MigrationFlowContext>({
+      id: targetIndexId,
+      dependsOn: [commitId],
+      run: (c) => runTargetIndexSubstep(c.context, task),
+    }));
+    substepIds.push(targetIndexId);
+
     // Parity + test writer
     const parityId = `${task.id}/parity`;
     nodes.push(step<MigrationFlowContext>({
       id: parityId,
-      dependsOn: [commitId],
+      dependsOn: [targetIndexId],
       run: (c) => runParitySubstep(c.context, task),
     }));
     substepIds.push(parityId);
