@@ -30,7 +30,8 @@ export interface RuntimeOptions {
   configPath: string;
   resume?: boolean;
   dryRun?: boolean;
-  phase?: number;   // run up to and including this phase
+  phase?: number;      // run up to and including this phase
+  fromPhase?: number;  // restart from this phase, preserving earlier phases
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
 }
 
@@ -86,6 +87,7 @@ export class MigrationRuntime {
   private paths!: ReturnType<typeof buildRuntimePaths>;
   private projectRoot!: string;
   private phase?: number;
+  private fromPhase?: number;
   private runId!: string;
   /** Mutable flow context — populated during run(), used by shutdown handler. */
   private flowContext?: MigrationFlowContext;
@@ -125,6 +127,14 @@ export class MigrationRuntime {
       resume: options.resume,
     });
     this.phase = options.phase;
+    this.fromPhase = options.fromPhase;
+
+    // Validate --from-phase / --phase compatibility
+    if (this.fromPhase !== undefined && this.phase !== undefined && this.fromPhase > this.phase) {
+      throw new Error(
+        `--from-phase ${this.fromPhase} must be <= --phase ${this.phase}`,
+      );
+    }
 
     // Fail fast if source tree or configured entry points are missing.
     await validateSourceAvailability(this.config);
@@ -176,11 +186,21 @@ export class MigrationRuntime {
   }
 
   async run(): Promise<MigrationResult> {
-    // Load or create checkpoint. resume=false always forces a fresh start.
-    await this.checkpoint.load(this.config.projectName, { fresh: !this.config.options.resume });
+    // Load or create checkpoint.
+    //   --from-phase implies resume for earlier phases (load existing checkpoint).
+    //   resume=false (without --from-phase) forces a fresh start.
+    const impliedResume = this.fromPhase !== undefined;
+    await this.checkpoint.load(this.config.projectName, {
+      fresh: !this.config.options.resume && !impliedResume,
+    });
+
+    // Apply --from-phase reset before anything else
+    if (this.fromPhase !== undefined) {
+      await this.checkpoint.resetFromPhase(this.fromPhase, nodeIdToPhase);
+    }
 
     // Initialize progress
-    if (!this.config.options.resume) {
+    if (!this.config.options.resume && !impliedResume) {
       await this.progress.initialize(this.config);
     } else {
       // Reconstruct progress state from checkpoint on resume

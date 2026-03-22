@@ -579,4 +579,211 @@ describe('CheckpointManager', () => {
     expect(loaded.adjudicationWaivers).toEqual([]);
     expect(loaded.adjudicationEvents).toEqual([]);
   });
+
+  // ─── resetFromPhase ─────────────────────────────────────────────
+
+  /** Stub nodeIdToPhase mapper for tests */
+  const testNodeIdToPhase = (id: string): number => {
+    const map: Record<string, number> = {
+      'kb-index': 0,
+      'task-graph-construction': 1,
+      'kb-construction': 2,
+      'budget-check-2': 2,
+      'migration-planning': 3,
+      'budget-check-3': 3,
+      'iterative-migration': 4,
+      'budget-check-4': 4,
+      'final-parity-loop': 5,
+      'final-parity-iteration': 5,
+      'e2e-test-plan': 6,
+      'finalization': 6,
+      'e2e-suite-writers': 6,
+      'documentation-writer': 6,
+      'idiomatic-refactor-gate': 7,
+      'idiomatic-loop': 7,
+      'idiomatic-iteration': 7,
+      'completion': 8,
+    };
+    return map[id] ?? -1;
+  };
+
+  it('resetFromPhase should clear phases >= N and preserve earlier', async () => {
+    const state = await manager.load('test-project');
+    // Simulate phases 0-5 completed
+    for (let p = 0; p <= 5; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+    await manager.completeTask('task-001', 1000);
+    await manager.completeTask('task-002', 2000);
+    state.phase3aComplete = true;
+    state.scaffoldComplete = true;
+    await manager.save(state);
+
+    await manager.resetFromPhase(4, testNodeIdToPhase);
+
+    const reset = manager.getState();
+    expect(reset.currentPhase).toBe(4);
+    expect(reset.completedPhases).toEqual([0, 1, 2, 3]);
+    expect(reset.currentTask).toBeNull();
+    expect(reset.completedTasks).toEqual([]);
+    expect(reset.failedTasks).toEqual([]);
+    expect(reset.blockedTasks).toEqual([]);
+    expect(reset.completedTaskDurationsMs).toEqual([]);
+    // Phase 3 state preserved since fromPhase=4
+    expect(reset.phase3aComplete).toBe(true);
+    expect(reset.scaffoldComplete).toBe(true);
+    // Phase outputs for 4+ cleared
+    expect(reset.phaseOutputs[3]).toBe('/out/3');
+    expect(reset.phaseOutputs[4]).toBeUndefined();
+    expect(reset.phaseOutputs[5]).toBeUndefined();
+  });
+
+  it('resetFromPhase(0) should clear everything like a fresh start', async () => {
+    const state = await manager.load('test-project');
+    for (let p = 0; p <= 3; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+    state.phase0Fingerprint = 'abc123';
+    state.phase3aComplete = true;
+    await manager.save(state);
+
+    await manager.resetFromPhase(0, testNodeIdToPhase);
+
+    const reset = manager.getState();
+    expect(reset.currentPhase).toBe(0);
+    expect(reset.completedPhases).toEqual([]);
+    expect(reset.phase0Fingerprint).toBeUndefined();
+    expect(reset.phase3aComplete).toBe(false);
+    expect(reset.scaffoldComplete).toBe(false);
+  });
+
+  it('resetFromPhase should throw if prerequisite phases are missing', async () => {
+    await manager.load('test-project');
+    await manager.completePhase(0, '/out/0');
+    // Phase 1 not completed — trying to start from phase 3 should fail
+
+    await expect(manager.resetFromPhase(3, testNodeIdToPhase)).rejects.toThrow(
+      /Cannot --from-phase 3.*prerequisite phase\(s\) 1, 2/,
+    );
+  });
+
+  it('resetFromPhase should filter flow checkpoint completedExecutionIds', async () => {
+    const state = await manager.load('test-project');
+    for (let p = 0; p <= 5; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+    // Simulate a flow checkpoint with completed execution IDs
+    state.__flowCheckpoint = {
+      flowId: 'aamf-migration',
+      status: 'completed',
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedExecutionIds: [
+        'kb-index',              // phase 0
+        'task-graph-construction', // phase 1
+        'kb-construction',       // phase 2
+        'budget-check-2',        // phase 2
+        'migration-planning',    // phase 3
+        'budget-check-3',        // phase 3
+        'iterative-migration',   // phase 4
+        'budget-check-4',        // phase 4
+        'final-parity-loop',     // phase 5
+      ],
+      outputs: {},
+      executionOutputs: {},
+    };
+    await manager.save(state);
+
+    await manager.resetFromPhase(4, testNodeIdToPhase);
+
+    const reset = manager.getState();
+    const fc = reset.__flowCheckpoint as { completedExecutionIds: string[] };
+    // Should keep phases 0-3 execution IDs, remove 4+
+    expect(fc.completedExecutionIds).toEqual([
+      'kb-index',
+      'task-graph-construction',
+      'kb-construction',
+      'budget-check-2',
+      'migration-planning',
+      'budget-check-3',
+    ]);
+  });
+
+  it('resetFromPhase should clear phase4FlowCheckpoint when resetting from phase <= 4', async () => {
+    const state = await manager.load('test-project');
+    for (let p = 0; p <= 4; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+    state.__phase4FlowCheckpoint = { flowId: 'phase4', status: 'completed' };
+    await manager.save(state);
+
+    await manager.resetFromPhase(4, testNodeIdToPhase);
+
+    const reset = manager.getState();
+    expect(reset.__phase4FlowCheckpoint).toBeUndefined();
+  });
+
+  it('resetFromPhase should clear phase-specific cursors', async () => {
+    const state = await manager.load('test-project');
+    for (let p = 0; p <= 6; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+    state.phaseCursors = {
+      '4': { tasks: { 'task-1': { completedSubsteps: ['migrate', 'verify'] } } },
+      '5': { iteration: 2, fixIndex: 3 },
+      '6': { completedAgents: ['e2e-test-crafter'], completedSuites: ['suite-a'] },
+      '7': { iteration: 1, issueIndex: 5 },
+    };
+    await manager.save(state);
+
+    await manager.resetFromPhase(5, testNodeIdToPhase);
+
+    const reset = manager.getState();
+    // Phase 4 cursor preserved (fromPhase=5 > 4)
+    expect(reset.phaseCursors?.['4']?.tasks['task-1']).toBeDefined();
+    // Phase 5+ cursors reset
+    expect(reset.phaseCursors?.['5']).toEqual({ iteration: 0, fixIndex: 0 });
+    expect(reset.phaseCursors?.['6']).toEqual({ completedAgents: [], completedSuites: [] });
+    expect(reset.phaseCursors?.['7']).toEqual({ iteration: 0, issueIndex: 0 });
+  });
+
+  it('resetFromPhase should persist the reset to disk', async () => {
+    await manager.load('test-project');
+    for (let p = 0; p <= 3; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+
+    await manager.resetFromPhase(2, testNodeIdToPhase);
+
+    // Reload from disk
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reloaded = await manager2.load('test-project');
+    expect(reloaded.currentPhase).toBe(2);
+    expect(reloaded.completedPhases).toContain(0);
+    expect(reloaded.completedPhases).toContain(1);
+    expect(reloaded.completedPhases).not.toContain(2);
+    expect(reloaded.completedPhases).not.toContain(3);
+  });
+
+  it('resetFromPhase should clear adjudication state when resetting from phase <= 4', async () => {
+    const state = await manager.load('test-project');
+    for (let p = 0; p <= 4; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+    await manager.recordAdjudicationWaiver({
+      issueFingerprint: 'fp-1',
+      decision: 'false_positive',
+    });
+    await manager.appendAdjudicationEvent({
+      decision: 'false_positive',
+      issueFingerprint: 'fp-1',
+    });
+
+    await manager.resetFromPhase(4, testNodeIdToPhase);
+
+    const reset = manager.getState();
+    expect(reset.adjudicationWaivers).toEqual([]);
+    expect(reset.adjudicationEvents).toEqual([]);
+    expect(reset.terminalExhaustion).toBeUndefined();
+  });
 });
