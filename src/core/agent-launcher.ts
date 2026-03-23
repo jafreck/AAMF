@@ -192,12 +192,14 @@ function adaptLogger(logger: Logger): BackendLoggerLike {
 /** Map an AAMF AgentInvocation to the framework's AgentInvocation. */
 export function toFrameworkInvocation(inv: AgentInvocation): FrameworkInvocation {
   // Build mcpServers map from AAMF extension fields.
-  let mcpServers: Record<string, { url: string }> | undefined;
+  // The framework passes these through directly to the CLI, so include
+  // `type: 'http'` as required by the Copilot CLI's --additional-mcp-config.
+  let mcpServers: Record<string, Record<string, unknown>> | undefined;
   if (inv.extensions?.mcpConfig) {
-    mcpServers = { 'aamf-kb': { url: inv.extensions.mcpConfig.url } };
+    mcpServers = { 'aamf-kb': { type: 'http', url: inv.extensions.mcpConfig.url } };
   }
   if (inv.extensions?.targetMcpConfig) {
-    mcpServers = { ...mcpServers, 'aamf-kb-target': { url: inv.extensions.targetMcpConfig.url } };
+    mcpServers = { ...mcpServers, 'aamf-kb-target': { type: 'http', url: inv.extensions.targetMcpConfig.url } };
   }
 
   return {
