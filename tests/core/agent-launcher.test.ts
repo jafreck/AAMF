@@ -89,7 +89,7 @@ describe('toFrameworkInvocation', () => {
     });
     const fw = toFrameworkInvocation(inv);
     expect((fw as any).mcpServers).toEqual({
-      'aamf-kb': { url: 'http://localhost:3000/mcp' },
+      'aamf-kb': { type: 'http', url: 'http://localhost:3000/mcp' },
     });
   });
 
@@ -99,7 +99,7 @@ describe('toFrameworkInvocation', () => {
     });
     const fw = toFrameworkInvocation(inv);
     expect((fw as any).mcpServers).toEqual({
-      'aamf-kb-target': { url: 'http://localhost:3001/mcp' },
+      'aamf-kb-target': { type: 'http', url: 'http://localhost:3001/mcp' },
     });
   });
 
@@ -112,8 +112,8 @@ describe('toFrameworkInvocation', () => {
     });
     const fw = toFrameworkInvocation(inv);
     expect((fw as any).mcpServers).toEqual({
-      'aamf-kb': { url: 'http://localhost:3000/mcp' },
-      'aamf-kb-target': { url: 'http://localhost:3001/mcp' },
+      'aamf-kb': { type: 'http', url: 'http://localhost:3000/mcp' },
+      'aamf-kb-target': { type: 'http', url: 'http://localhost:3001/mcp' },
     });
   });
 
