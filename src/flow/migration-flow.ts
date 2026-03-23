@@ -237,7 +237,7 @@ export function nodeIdToPhase(nodeId: string): number {
  * Ordered list of phase boundary node IDs for `--phase` filtering.
  * Each entry is the last top-level node ID belonging to that phase.
  */
-const PHASE_BOUNDARY_NODE_IDS: readonly string[] = [
+export const PHASE_BOUNDARY_NODE_IDS: readonly string[] = [
   'kb-index',                // Phase 0
   'task-graph-construction', // Phase 1
   'budget-check-2',         // Phase 2

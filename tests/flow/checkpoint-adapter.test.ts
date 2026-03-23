@@ -15,6 +15,7 @@ import {
   migrationFlow,
   buildFlowUpToPhase,
   nodeIdToPhase,
+  PHASE_BOUNDARY_NODE_IDS,
 } from '../../src/flow/index.js';
 
 let tempDir: string;
@@ -60,6 +61,100 @@ describe('AamfFlowCheckpointAdapter', () => {
     expect(loaded!.flowId).toBe('aamf-migration');
     expect(loaded!.completedExecutionIds).toEqual(['kb-index', 'task-graph-construction']);
   });
+
+  it('should sync completedPhases from flow execution IDs on save', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'aamf-ckpt-'));
+    await mkdir(tempDir, { recursive: true });
+    const logger = new Logger({ logDir: join(tempDir, 'logs'), level: 'error', console: false });
+    const cm = new CheckpointManager(tempDir, logger);
+    await cm.load('test');
+    const adapter = new AamfFlowCheckpointAdapter(cm);
+
+    // Save a snapshot where phases 0-2 boundary nodes are completed
+    const snapshot = {
+      flowId: 'aamf-migration',
+      status: 'running' as const,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedExecutionIds: [
+        'aamf-migration/kb-index',              // phase 0 boundary
+        'aamf-migration/task-graph-construction', // phase 1 boundary
+        'aamf-migration/kb-construction',        // phase 2 (not boundary)
+        'aamf-migration/budget-check-2',         // phase 2 boundary
+      ],
+      outputs: {},
+      executionOutputs: {},
+    };
+    await adapter.save(snapshot as any);
+
+    const state = cm.getState();
+    expect(state.completedPhases).toEqual([0, 1, 2]);
+    expect(state.currentPhase).toBe(3);
+  });
+
+  it('should not mark a phase complete if its boundary node is missing', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'aamf-ckpt-'));
+    await mkdir(tempDir, { recursive: true });
+    const logger = new Logger({ logDir: join(tempDir, 'logs'), level: 'error', console: false });
+    const cm = new CheckpointManager(tempDir, logger);
+    await cm.load('test');
+    const adapter = new AamfFlowCheckpointAdapter(cm);
+
+    // Phase 2 has kb-construction done but NOT budget-check-2 (boundary)
+    const snapshot = {
+      flowId: 'aamf-migration',
+      status: 'running' as const,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedExecutionIds: [
+        'aamf-migration/kb-index',
+        'aamf-migration/task-graph-construction',
+        'aamf-migration/kb-construction',
+        // budget-check-2 NOT completed yet
+      ],
+      outputs: {},
+      executionOutputs: {},
+    };
+    await adapter.save(snapshot as any);
+
+    const state = cm.getState();
+    // Phase 2 should NOT be in completedPhases since its boundary node is missing
+    expect(state.completedPhases).toEqual([0, 1]);
+    expect(state.currentPhase).toBe(2);
+  });
+
+  it('should accumulate completedPhases across multiple saves', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'aamf-ckpt-'));
+    await mkdir(tempDir, { recursive: true });
+    const logger = new Logger({ logDir: join(tempDir, 'logs'), level: 'error', console: false });
+    const cm = new CheckpointManager(tempDir, logger);
+    await cm.load('test');
+    const adapter = new AamfFlowCheckpointAdapter(cm);
+
+    // First save: phase 0 complete
+    await adapter.save({
+      flowId: 'aamf-migration',
+      status: 'running' as const,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedExecutionIds: ['aamf-migration/kb-index'],
+      outputs: {},
+      executionOutputs: {},
+    } as any);
+    expect(cm.getState().completedPhases).toEqual([0]);
+
+    // Second save: phases 0-1 complete
+    await adapter.save({
+      flowId: 'aamf-migration',
+      status: 'running' as const,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedExecutionIds: ['aamf-migration/kb-index', 'aamf-migration/task-graph-construction'],
+      outputs: {},
+      executionOutputs: {},
+    } as any);
+    expect(cm.getState().completedPhases).toEqual([0, 1]);
+  });
 });
 
 describe('flow/index re-exports', () => {
@@ -91,5 +186,11 @@ describe('flow/index re-exports', () => {
   it('should export nodeIdToPhase', () => {
     expect(nodeIdToPhase).toBeDefined();
     expect(nodeIdToPhase('kb-index')).toBe(0);
+  });
+
+  it('should export PHASE_BOUNDARY_NODE_IDS', () => {
+    expect(PHASE_BOUNDARY_NODE_IDS).toBeDefined();
+    expect(PHASE_BOUNDARY_NODE_IDS[0]).toBe('kb-index');
+    expect(PHASE_BOUNDARY_NODE_IDS).toHaveLength(9);
   });
 });

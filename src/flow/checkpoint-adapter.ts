@@ -6,6 +6,7 @@
 import type { FlowCheckpointAdapter, FlowCheckpointSnapshot } from '@cadre-dev/framework/flow';
 import type { CheckpointManager } from '../core/checkpoint.js';
 import type { MigrationFlowContext } from './context.js';
+import { PHASE_BOUNDARY_NODE_IDS } from './migration-flow.js';
 
 /**
  * Wraps AAMF's existing {@link CheckpointManager} to satisfy the framework's
@@ -42,6 +43,11 @@ export class AamfFlowCheckpointAdapter implements FlowCheckpointAdapter<Migratio
       // The context is reconstructed from the runtime on resume.
     };
     state.__flowCheckpoint = serialisable;
+
+    // Sync completedPhases from flow execution IDs so that --from-phase
+    // prerequisite checks work even if the run fails mid-pipeline.
+    syncCompletedPhases(state, snapshot.completedExecutionIds, snapshot.flowId);
+
     await this.checkpoint.save(state);
   }
 }
@@ -79,5 +85,47 @@ export class Phase4CheckpointAdapter implements FlowCheckpointAdapter<MigrationF
     };
     state.__phase4FlowCheckpoint = serialisable;
     await this.checkpoint.save(state);
+  }
+}
+
+
+// ─── completedPhases sync ───────────────────────────────────────────
+
+/**
+ * Derive completed phases from the flow's completedExecutionIds and merge
+ * them into checkpoint state. A phase is complete when its boundary node
+ * (the last node belonging to that phase) appears in the completed set.
+ *
+ * This ensures `--from-phase N` prerequisite checks pass even when the
+ * pipeline fails in a later phase, since completedPhases is updated
+ * incrementally on every checkpoint save rather than only at end-of-run.
+ */
+function syncCompletedPhases(
+  state: import('../core/checkpoint.js').CheckpointState,
+  completedExecutionIds: string[],
+  flowId: string,
+): void {
+  // Execution IDs are namespaced: "<flowId>/<nodeId>"
+  const prefix = flowId + '/';
+  const completedNodes = new Set(
+    completedExecutionIds
+      .filter(id => id.startsWith(prefix))
+      .map(id => id.slice(prefix.length)),
+  );
+
+  for (let phase = 0; phase < PHASE_BOUNDARY_NODE_IDS.length; phase++) {
+    const boundaryNode = PHASE_BOUNDARY_NODE_IDS[phase]!;
+    if (completedNodes.has(boundaryNode) && !state.completedPhases.includes(phase)) {
+      state.completedPhases.push(phase);
+    }
+  }
+
+  // Keep sorted for deterministic output
+  state.completedPhases.sort((a, b) => a - b);
+
+  // Advance currentPhase to at least max(completedPhases) + 1
+  if (state.completedPhases.length > 0) {
+    const maxCompleted = state.completedPhases[state.completedPhases.length - 1]!;
+    state.currentPhase = Math.max(state.currentPhase, maxCompleted + 1);
   }
 }
