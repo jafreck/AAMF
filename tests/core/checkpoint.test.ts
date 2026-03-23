@@ -672,22 +672,22 @@ describe('CheckpointManager', () => {
     for (let p = 0; p <= 5; p++) {
       await manager.completePhase(p, `/out/${p}`);
     }
-    // Simulate a flow checkpoint with completed execution IDs
+    // Simulate a flow checkpoint with namespaced completed execution IDs
     state.__flowCheckpoint = {
       flowId: 'aamf-migration',
       status: 'completed',
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       completedExecutionIds: [
-        'kb-index',              // phase 0
-        'task-graph-construction', // phase 1
-        'kb-construction',       // phase 2
-        'budget-check-2',        // phase 2
-        'migration-planning',    // phase 3
-        'budget-check-3',        // phase 3
-        'iterative-migration',   // phase 4
-        'budget-check-4',        // phase 4
-        'final-parity-loop',     // phase 5
+        'aamf-migration/kb-index',              // phase 0
+        'aamf-migration/task-graph-construction', // phase 1
+        'aamf-migration/kb-construction',       // phase 2
+        'aamf-migration/budget-check-2',        // phase 2
+        'aamf-migration/migration-planning',    // phase 3
+        'aamf-migration/budget-check-3',        // phase 3
+        'aamf-migration/iterative-migration',   // phase 4
+        'aamf-migration/budget-check-4',        // phase 4
+        'aamf-migration/final-parity-loop',     // phase 5
       ],
       outputs: {},
       executionOutputs: {},
@@ -700,12 +700,12 @@ describe('CheckpointManager', () => {
     const fc = reset.__flowCheckpoint as { completedExecutionIds: string[] };
     // Should keep phases 0-3 execution IDs, remove 4+
     expect(fc.completedExecutionIds).toEqual([
-      'kb-index',
-      'task-graph-construction',
-      'kb-construction',
-      'budget-check-2',
-      'migration-planning',
-      'budget-check-3',
+      'aamf-migration/kb-index',
+      'aamf-migration/task-graph-construction',
+      'aamf-migration/kb-construction',
+      'aamf-migration/budget-check-2',
+      'aamf-migration/migration-planning',
+      'aamf-migration/budget-check-3',
     ]);
   });
 
