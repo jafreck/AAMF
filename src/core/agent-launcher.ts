@@ -168,6 +168,8 @@ export function buildBackendRuntimeConfig(config: MigrationConfig): BackendRunti
       copilot: {
         cliCommand: backendName === 'copilot' ? config.agentBackend.cliCommand : undefined,
         agentDir: config.agentBackend.agentDir,
+        allowAllPaths: true,
+        allowAllTools: true,
       },
       claude: {
         cliCommand: backendName === 'claude' ? config.agentBackend.cliCommand : undefined,
