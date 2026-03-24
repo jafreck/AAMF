@@ -241,7 +241,7 @@ export interface AgentContext {
  * calibrate task complexity against the available recovery budget.
  */
 export interface ExecutionStrategy {
-  /** Phase 4 execution mode: `'per-task'` (serial) or `'wave-barrier'` (concurrent waves). */
+  /** Phase 4 execution mode: `'per-task'` (task-local validation) or `'wave-barrier'` (concurrent waves). */
   executionMode: 'per-task' | 'wave-barrier';
 
   /** Maximum number of agent subprocesses running in parallel. */
@@ -269,7 +269,7 @@ export interface ExecutionStrategy {
   lintCommand?: string;
 
   /**
-   * Whether wave members must have non-overlapping target files/directories.
+   * Whether concurrently runnable tasks must have non-overlapping target files.
    * Always `true` — exposed so the planner can reason about the constraint.
    */
   requiresNonOverlappingTargets: true;

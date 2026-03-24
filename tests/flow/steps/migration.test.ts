@@ -18,6 +18,7 @@ import {
   createFailingLauncher,
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
+  makeTask,
   withParityOutput,
 } from '../../helpers/flow-mocks.js';
 import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
@@ -78,6 +79,38 @@ describe('buildPhase4Subflow (Phase 4)', () => {
         (c) => typeof c[0] === 'string' && c[0].includes('Phase 4:'),
       );
       expect(projectionLog).toBeDefined();
+    });
+
+    it('should add a complete-step dependency between overlapping per-task tasks', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', targetFiles: ['src/shared.ts'] },
+        { ...makeTask('task-002'), targetFiles: ['src/shared.ts'] },
+      ];
+      env = await setupFlowTestWithTasks(createMockLauncher(), tasks, {
+        options: { maxParallelAgents: 2, qualityPolicy: 'balanced' },
+      });
+
+      const flow = await buildPhase4Subflow(env.flowCtx);
+      const task002Migrate = flow.nodes.find(node => node.id === 'task-002/migrate');
+
+      expect(task002Migrate).toBeDefined();
+      expect((task002Migrate as { dependsOn?: string[] }).dependsOn).toContain('task-001/complete');
+    });
+
+    it('should not add overlap dependencies for distinct per-task targets', async () => {
+      const tasks: MigrationTask[] = [
+        { ...SINGLE_AUTH_TASK, id: 'task-001', targetFiles: ['src/one.ts'] },
+        { ...makeTask('task-002'), targetFiles: ['src/two.ts'] },
+      ];
+      env = await setupFlowTestWithTasks(createMockLauncher(), tasks, {
+        options: { maxParallelAgents: 2, qualityPolicy: 'balanced' },
+      });
+
+      const flow = await buildPhase4Subflow(env.flowCtx);
+      const task002Migrate = flow.nodes.find(node => node.id === 'task-002/migrate');
+
+      expect(task002Migrate).toBeDefined();
+      expect((task002Migrate as { dependsOn?: string[] }).dependsOn ?? []).not.toContain('task-001/complete');
     });
   });
 
