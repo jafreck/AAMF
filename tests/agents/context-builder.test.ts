@@ -27,6 +27,7 @@ describe('ContextBuilder', () => {
     return {
       root,
       stateDir,
+      runLockFile: join(stateDir, 'run.lock.json'),
       checkpointFile: join(stateDir, 'checkpoint.json'),
       checkpointBackupFile: join(stateDir, 'checkpoint.backup.json'),
       runManifestFile: join(stateDir, 'run-manifest.json'),
@@ -36,6 +37,8 @@ describe('ContextBuilder', () => {
       logsCommandsDir,
       logsCommandBuildDir: join(logsCommandsDir, 'build'),
       logsCommandTestDir: join(logsCommandsDir, 'test'),
+      logsCommandFormatDir: join(logsCommandsDir, 'format'),
+      logsCommandLintDir: join(logsCommandsDir, 'lint'),
       artifactsDir,
       artifactsContextsDir: join(artifactsDir, 'contexts'),
       artifactsResultsDir: join(artifactsDir, 'results'),
@@ -49,12 +52,15 @@ describe('ContextBuilder', () => {
       metricsInvocationsFile: join(metricsDir, 'invocations.jsonl'),
       metricsSummaryFile: join(metricsDir, 'summary.json'),
       kbDbFile: join(root, 'kb.db'),
+      kbTargetDbFile: join(root, 'kb-target.db'),
       knowledgeBaseDir: join(root, 'knowledge-base'),
       dependencySummaryFile: join(artifactsPlanningDir, 'dependency-summary.json'),
       migrationPlanFile: join(artifactsPlanningDir, 'migration-plan.md'),
       competingStrategiesFile: join(artifactsPlanningDir, 'competing-strategies.md'),
       finalParityReportFile: join(artifactsParityDir, 'final-parity-report.md'),
       idiomaticReviewReportFile: join(artifactsParityDir, 'idiomatic-review-report.md'),
+      loreLogFile: join(logsRuntimeDir, 'lore.log'),
+      loreTargetLogFile: join(logsRuntimeDir, 'lore-target.log'),
     };
   }
 

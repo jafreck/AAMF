@@ -15,6 +15,7 @@ import { fileExists } from '../util/fs.js';
 import { formatDuration } from '../util/format.js';
 import { killAllActiveProcesses } from '../util/process.js';
 import { buildRuntimePaths } from './runtime-paths.js';
+import { MigrationRunLock } from './run-lock.js';
 import { generateAgentDefinitions } from '../agents/generator.js';
 import { ContextBuilder } from '../agents/context-builder.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
@@ -92,6 +93,7 @@ export class MigrationRuntime {
   /** Mutable flow context — populated during run(), used by shutdown handler. */
   private flowContext?: MigrationFlowContext;
   private abortController?: AbortController;
+  private runLock?: MigrationRunLock;
 
   private getActiveRuntimeSettings(): {
     agentDir: string;
@@ -186,6 +188,9 @@ export class MigrationRuntime {
   }
 
   async run(): Promise<MigrationResult> {
+    await this.acquireRunLock();
+
+    try {
     // Load or create checkpoint.
     //   --from-phase implies resume for earlier phases (load existing checkpoint).
     //   resume=false (without --from-phase) forces a fresh start.
@@ -420,6 +425,9 @@ export class MigrationRuntime {
     await this.logger.flush();
     this.printSummary(migrationResult);
     return migrationResult;
+    } finally {
+      await this.releaseRunLock();
+    }
   }
 
   async getStatus(): Promise<string> {
@@ -463,6 +471,40 @@ export class MigrationRuntime {
       this.logger.info('Reset all migration state');
     }
     await this.checkpoint.save(state);
+  }
+
+  private async acquireRunLock(): Promise<void> {
+    this.runLock = new MigrationRunLock(
+      this.paths.runLockFile,
+      this.logger,
+      this.config.projectName,
+      this.runId,
+    );
+    await this.runLock.acquire();
+  }
+
+  private async releaseRunLock(): Promise<void> {
+    if (!this.runLock) return;
+
+    const lock = this.runLock;
+    this.runLock = undefined;
+    try {
+      await lock.release();
+    } catch (err) {
+      this.logger.warn(`Failed to release migration run lock: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private releaseRunLockSync(): void {
+    if (!this.runLock) return;
+
+    const lock = this.runLock;
+    this.runLock = undefined;
+    try {
+      lock.releaseSync();
+    } catch {
+      // Best-effort
+    }
   }
 
   private printSummary(result: MigrationResult): void {
@@ -650,12 +692,16 @@ export class MigrationRuntime {
       } catch {
         // Best-effort save
       }
+      await this.releaseRunLock();
       clearTimeout(shutdownTimeout);
       process.exit(signal === 'SIGINT' ? 130 : 143);
     };
     
     process.on('SIGINT', () => void handler('SIGINT'));
     process.on('SIGTERM', () => void handler('SIGTERM'));
+    process.on('exit', () => {
+      this.releaseRunLockSync();
+    });
   }
 
   /**
