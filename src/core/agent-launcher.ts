@@ -170,6 +170,7 @@ export function buildBackendRuntimeConfig(config: MigrationConfig): BackendRunti
         agentDir: config.agentBackend.agentDir,
         allowAllPaths: true,
         allowAllTools: true,
+        effort: config.agentBackend.effort,
       },
       claude: {
         cliCommand: backendName === 'claude' ? config.agentBackend.cliCommand : undefined,

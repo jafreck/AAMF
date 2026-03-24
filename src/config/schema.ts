@@ -261,6 +261,12 @@ export const MigrationConfigSchema = z.object({
     model: z.string().optional(),
     /** Model to use for failure-recovery retries. */
     failureRecoveryModel: z.string().optional(),
+    /**
+     * Reasoning effort level for the Copilot CLI (`--effort` flag).
+     * Controls how much reasoning the model applies to each request.
+     * Only applies when `runtime` is `'copilot'`.
+     */
+    effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
     /** Directory containing agent definition files. Defaults to `'.github/agents'` (copilot) or `'.claude/agents'` (claude-code). */
     agentDir: z.string().optional(),
     /** Default timeout per agent invocation in milliseconds. */
