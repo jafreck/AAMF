@@ -16,6 +16,7 @@ import type { MigrationFlowContext, WaveValidationResult } from '../context.js';
 import type { PhaseResult, MigrationTask } from '../../agents/types.js';
 import type { TaskGraphOutput } from './task-graph.js';
 import { toAgentRemediationContext } from '../../agents/types.js';
+import type { PriorRecoveryAttempt } from '../../agents/types.js';
 import { parseMigrationPlan } from '../../agents/plan-parser.js';
 import { ParallelExecutor } from '../../execution/parallel-executor.js';
 import { TaskQueue } from '../../execution/task-queue.js';
@@ -268,7 +269,7 @@ async function runParityGateSubstep(
   let parityPassed = checkParityResult(ctx, task.id);
 
   if (!parityPassed && gateMode === 'enforce') {
-    const priorAttempts: Array<{ attempt: number; issueCount: number; unresolvedIssues: string[] }> = [];
+    const priorAttempts: PriorRecoveryAttempt[] = [];
     for (let attempt = 1; attempt <= maxParityRetries; attempt++) {
       const issueSummary = getParityIssueSummary(ctx, task.id);
       const enrichedSummary = issueSummary
@@ -314,7 +315,7 @@ async function runParityGateSubstep(
       if (parityPassed) { ctx.logger.info(`Parity recovered for ${task.id} on attempt ${attempt}`); break; }
       const storedResult = ctx.parityResults.get(task.id);
       const unresolvedIssues = (storedResult?.issues ?? []).filter(i => i.severity !== 'minor').map(i => i.description);
-      priorAttempts.push({ attempt, issueCount: storedResult?.issues?.length ?? 0, unresolvedIssues });
+      priorAttempts.push({ attempt, issueCount: storedResult?.issues?.length ?? 0, unresolvedIssues, fullIssues: storedResult?.issues });
     }
     if (!parityPassed) {
       if (hasNonMinorParityIssues(ctx, task.id)) {

@@ -107,6 +107,7 @@ export const ParityVerifierSchema = AamfOutputBase.extend({
     details: z.string(),
     sourceLocation: z.string(),
     targetLocation: z.string().optional(),
+    suggestedFix: z.string().optional(),
   })).default([]),
 });
 export const TestWriterSchema = AamfOutputBase;
@@ -271,6 +272,7 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
               details:        { type: 'string', minLength: 1 },
               sourceLocation: { type: 'string', minLength: 1 },
               targetLocation: { type: 'string', minLength: 1 },
+              suggestedFix:   { type: 'string', minLength: 1 },
             },
           },
         },
