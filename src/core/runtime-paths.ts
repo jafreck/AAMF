@@ -3,6 +3,7 @@ import { join } from 'node:path';
 export interface RuntimePaths {
   root: string;
   stateDir: string;
+  runLockFile: string;
   checkpointFile: string;
   checkpointBackupFile: string;
   runManifestFile: string;
@@ -53,6 +54,7 @@ export function buildRuntimePaths(projectRoot: string, projectName: string): Run
   return {
     root,
     stateDir,
+    runLockFile: join(stateDir, 'run.lock.json'),
     checkpointFile: join(stateDir, 'checkpoint.json'),
     checkpointBackupFile: join(stateDir, 'checkpoint.backup.json'),
     runManifestFile: join(stateDir, 'run-manifest.json'),

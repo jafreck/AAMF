@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { MigrationRuntime, validateSourceAvailability } from '../../src/core/runtime.js';
 import type { MigrationResult } from '../../src/agents/types.js';
 import { Logger } from '../../src/logging/logger.js';
@@ -21,6 +21,10 @@ function makeResult(overrides: Partial<MigrationResult> = {}): MigrationResult {
     blockedTasks: [],
     ...overrides,
   };
+}
+
+function makeRunLockPath(label: string): string {
+  return join(tmpdir(), `aamf-${label}-${Math.random().toString(36).slice(2)}.lock.json`);
 }
 
 describe('MigrationRuntime', () => {
@@ -215,6 +219,9 @@ describe('MigrationRuntime', () => {
         projectName: 'test-project',
         options: { resume: false, dryRun: true },
       };
+      runtime.paths = {
+        runLockFile: makeRunLockPath('dry-run-fresh'),
+      };
       runtime.checkpoint = {
         load: vi.fn().mockResolvedValue(undefined),
       };
@@ -253,6 +260,9 @@ describe('MigrationRuntime', () => {
         projectName: 'test-project',
         options: { resume: true, dryRun: true },
       };
+      runtime.paths = {
+        runLockFile: makeRunLockPath('dry-run-resume'),
+      };
       runtime.checkpoint = {
         load: vi.fn().mockResolvedValue(state),
         getState: vi.fn().mockReturnValue(state),
@@ -269,6 +279,88 @@ describe('MigrationRuntime', () => {
       expect(runtime.checkpoint.load).toHaveBeenCalledWith('test-project', { fresh: false });
       expect(runtime.progress.initialize).not.toHaveBeenCalled();
       expect(runtime.progress.reconstructFromCheckpoint).toHaveBeenCalledWith(state);
+    });
+
+    it('rejects when another runtime already holds the run lock', async () => {
+      const lockRoot = await mkdtemp(join(tmpdir(), 'aamf-runtime-lock-'));
+      const lockPath = join(lockRoot, 'state', 'run.lock.json');
+      await mkdir(join(lockRoot, 'state'), { recursive: true });
+      await writeFile(
+        lockPath,
+        JSON.stringify({
+          version: 1,
+          projectName: 'test-project',
+          runId: 'other-run',
+          pid: process.pid,
+          hostname: hostname(),
+          acquiredAt: new Date().toISOString(),
+        }, null, 2) + '\n',
+        'utf-8',
+      );
+
+      const runtime = new MigrationRuntime() as any;
+      runtime.config = {
+        projectName: 'test-project',
+        options: { resume: false, dryRun: true },
+      };
+      runtime.runId = 'test-run-id';
+      runtime.paths = { runLockFile: lockPath };
+      runtime.checkpoint = {
+        load: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.progress = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        reconstructFromCheckpoint: vi.fn(),
+        appendEvent: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.logger = { info: vi.fn(), warn: vi.fn() };
+
+      await expect(runtime.run()).rejects.toThrow('already locked by another active runtime');
+
+      await rm(lockRoot, { recursive: true, force: true });
+    });
+
+    it('removes a stale run lock before continuing', async () => {
+      const lockRoot = await mkdtemp(join(tmpdir(), 'aamf-runtime-lock-'));
+      const lockPath = join(lockRoot, 'state', 'run.lock.json');
+      await mkdir(join(lockRoot, 'state'), { recursive: true });
+      await writeFile(
+        lockPath,
+        JSON.stringify({
+          version: 1,
+          projectName: 'test-project',
+          runId: 'stale-run',
+          pid: 999999,
+          hostname: hostname(),
+          acquiredAt: new Date().toISOString(),
+        }, null, 2) + '\n',
+        'utf-8',
+      );
+
+      const runtime = new MigrationRuntime() as any;
+      runtime.config = {
+        projectName: 'test-project',
+        options: { resume: false, dryRun: true },
+      };
+      runtime.runId = 'test-run-id';
+      runtime.paths = { runLockFile: lockPath };
+      runtime.checkpoint = {
+        load: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.progress = {
+        initialize: vi.fn().mockResolvedValue(undefined),
+        reconstructFromCheckpoint: vi.fn(),
+        appendEvent: vi.fn().mockResolvedValue(undefined),
+      };
+      runtime.logger = { info: vi.fn(), warn: vi.fn() };
+
+      const result = await runtime.run();
+
+      expect(result.success).toBe(true);
+      expect(runtime.logger.warn).toHaveBeenCalledWith(expect.stringContaining('Removing stale migration run lock'));
+      await expect(stat(lockPath)).rejects.toThrow();
+
+      await rm(lockRoot, { recursive: true, force: true });
     });
 
     it('runs flow runner on non-dry run, flushes logger, and returns result', async () => {
@@ -354,6 +446,7 @@ describe('MigrationRuntime', () => {
       runtime.paths = {
         root: '/tmp/.aamf/test-project',
         stateDir: '/tmp/.aamf/test-project/state',
+        runLockFile: makeRunLockPath('non-dry-run-success'),
         artifactsDir: '/tmp/.aamf/test-project/artifacts',
         artifactsPlanningDir: '/tmp/.aamf/test-project/artifacts/planning',
         artifactsContextsDir: '/tmp/.aamf/test-project/artifacts/contexts',
@@ -448,6 +541,7 @@ describe('MigrationRuntime', () => {
       runtime.runId = 'test-run-id';
       runtime.paths = {
         root: '/tmp/.aamf/test-project',
+        runLockFile: makeRunLockPath('migration-error'),
         kbDbFile: '/tmp/.aamf/test-project/kb.db',
         metricsDir: '/tmp/.aamf/test-project/metrics',
         reportsObservabilityDir: '/tmp/.aamf/test-project/reports/observability',
@@ -527,6 +621,7 @@ describe('MigrationRuntime', () => {
       runtime.runId = 'test-run-id';
       runtime.paths = {
         root: '/tmp/.aamf/test-project',
+        runLockFile: makeRunLockPath('stale-filter'),
         kbDbFile: '/tmp/.aamf/test-project/kb.db',
         metricsDir: '/tmp/.aamf/test-project/metrics',
         reportsObservabilityDir: '/tmp/.aamf/test-project/reports/observability',
