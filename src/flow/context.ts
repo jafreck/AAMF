@@ -42,6 +42,7 @@ export interface ParityResultData {
     details: string;
     sourceLocation: string;
     targetLocation?: string;
+    suggestedFix?: string;
   }>;
 }
 

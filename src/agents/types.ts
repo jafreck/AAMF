@@ -314,6 +314,7 @@ export interface AgentRemediationContext {
     details: string;
     sourceLocation: string;
     targetLocation?: string;
+    suggestedFix?: string;
   }>;
   /** Outcomes of prior recovery attempts, enabling the agent to avoid repeating failed strategies. */
   priorAttempts?: PriorRecoveryAttempt[];
@@ -350,6 +351,15 @@ export interface PriorRecoveryAttempt {
   issueCount: number;
   /** Descriptions of non-minor issues that remained unresolved. */
   unresolvedIssues: string[];
+  /** Full parity issues from this attempt, enabling the resolver to avoid regressions. */
+  fullIssues?: Array<{
+    severity: string;
+    description: string;
+    details: string;
+    sourceLocation: string;
+    targetLocation?: string;
+    suggestedFix?: string;
+  }>;
 }
 
 // ─── Terminal Exhaustion Contracts ────────────────────────────────────────────

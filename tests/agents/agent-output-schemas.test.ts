@@ -63,6 +63,38 @@ describe('Per-agent output schemas', () => {
         ParityVerifierSchema.parse({ status: VALID_STATUS, parity: 'pass' }),
       ).not.toThrow();
     });
+
+    it('accepts issues with suggestedFix', () => {
+      const result = ParityVerifierSchema.parse({
+        status: VALID_STATUS,
+        parity: 'partial',
+        issues: [{
+          severity: 'major',
+          description: 'stat_t uses wrong type',
+          details: 'Source uses libc::stat, target uses std::fs::Metadata',
+          sourceLocation: 'programs/util.h:111-190',
+          targetLocation: 'programs/util.rs:21-48',
+          suggestedFix: 'Change stat_t alias from std::fs::Metadata to libc::stat',
+        }],
+      });
+      expect(result.issues[0]!.suggestedFix).toBe(
+        'Change stat_t alias from std::fs::Metadata to libc::stat',
+      );
+    });
+
+    it('accepts issues without suggestedFix', () => {
+      const result = ParityVerifierSchema.parse({
+        status: VALID_STATUS,
+        parity: 'partial',
+        issues: [{
+          severity: 'minor',
+          description: 'sleep boundary difference',
+          details: 'Source has timespec overflow, target handles it correctly',
+          sourceLocation: 'programs/util.h:55-58',
+        }],
+      });
+      expect(result.issues[0]!.suggestedFix).toBeUndefined();
+    });
   });
 
   describe('TestWriterSchema', () => {

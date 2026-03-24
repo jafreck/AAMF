@@ -22,7 +22,9 @@ Resolve the failing task quickly and safely by:
 ## Required Process
 
 1. **Diagnose**
-        - Read the parity issues provided in `context.agentPayload.remediationContext.parityIssues` — a JSON array of `{ severity, description, details, sourceLocation, targetLocation? }` objects. Use your file-read tools to inspect the cited source and target locations.
+        - Read the parity issues provided in `context.agentPayload.remediationContext.parityIssues` — a JSON array of `{ severity, description, details, sourceLocation, targetLocation?, suggestedFix? }` objects. Use your file-read tools to inspect the cited source and target locations.
+        - When `suggestedFix` is present on an issue, treat it as an informed hint from the parity-verifier (which has already read both source and target). Prefer applying suggested fixes directly unless you identify a concrete reason they are wrong.
+        - **Check `context.agentPayload.remediationContext.priorAttempts`** — if present, this is an array of prior recovery rounds with `{ attempt, issueCount, unresolvedIssues, fullIssues? }`. Study the `fullIssues` from each prior attempt to understand which issues were already fixed and which are new. Avoid re-introducing issues that were resolved in earlier rounds — this is the most common cause of fix oscillation.
         - Read the referenced source/target files and relevant context artifacts.
         - Query the target KB (`aamf-kb-target`) with `lore_search` to check how dependency symbols were ported by prior tasks — mismatched imports, renamed types, or missing re-exports from earlier tasks are common root causes.
         - Identify the most likely root cause in one concise sentence.

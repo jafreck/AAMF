@@ -78,6 +78,7 @@ For each issue in the `issues` array:
 - `details`: 1-3 sentences explaining what the source does vs. what the target does (or fails to do). Be concise — do not exceed 3 sentences.
 - `sourceLocation` (required): the source file path and line range where the correct behavior is defined (e.g., `legacy/zstd_v04.c:342-358`). Use just the file path if the issue spans the entire file.
 - `targetLocation` (optional): the target file path and line range where the gap exists (e.g., `src/v04/decoder.rs:210-215`). Omit entirely if the target code/file was not produced at all.
+- `suggestedFix` (optional but strongly encouraged): a concise, actionable description of how to fix the gap. Since you've already read both source and target code side-by-side, capture that insight here. Examples: "Change `stat_t` alias from `std::fs::Metadata` to `libc::stat`", "Add `#[macro_export]` and `pub use` for `UTIL_STATIC`". Keep to 1-2 sentences.
 
 ## Context Window Management
 
@@ -95,7 +96,7 @@ For each issue in the `issues` array:
 ## Constraints
 
 - This is a **read-only** agent. Do not modify any code files.
-- Report facts, not opinions. If behavior differs, describe exactly how, don't suggest fixes.
+- Report facts, not opinions. If behavior differs, describe exactly how. When you can see how to fix the gap, include it in `suggestedFix` — but do not apply it.
 - Be thorough but proportional — a one-line utility function needs less analysis than a 200-line business logic method.
 - When in doubt about behavioral equivalence, flag it as ⚠️ rather than assuming ✅.
 
