@@ -41,6 +41,8 @@ describe('buildBackendRuntimeConfig', () => {
     const rtConfig = buildBackendRuntimeConfig(config);
     expect(rtConfig.agent.copilot?.cliCommand).toBe('/usr/local/bin/copilot');
     expect(rtConfig.agent.copilot?.agentDir).toBe('.github/agents');
+    expect(rtConfig.agent.copilot?.allowAllPaths).toBe(true);
+    expect(rtConfig.agent.copilot?.allowAllTools).toBe(true);
   });
 
   it('should include claude cliCommand for claude backend', () => {
