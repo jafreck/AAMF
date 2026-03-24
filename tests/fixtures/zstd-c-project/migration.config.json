@@ -84,6 +84,7 @@
     "cliCommand": "copilot",
     "model": "gpt-5.4",
     "failureRecoveryModel": "gpt-5.4",
+    "effort": "xhigh",
     "agentDir": "../../../../.github/agents",
     "timeout": 3600000,
     "phaseTimeouts": { "0": 600000 }
