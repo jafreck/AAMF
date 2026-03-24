@@ -139,6 +139,49 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
     }
   });
 
+  it('should split overlapping wave tasks into sequential non-overlapping batches', async () => {
+    const tasks = [
+      { ...SINGLE_AUTH_TASK, id: 'task-001', targetFiles: ['src/shared.ts'] },
+      { ...makeTask('task-002'), targetFiles: ['src/shared.ts'] },
+    ];
+    const baseLauncher = createMockLauncher();
+    let current = 0;
+    let maxConcurrent = 0;
+    const launcherFn = async (inv: AgentInvocation): Promise<AgentResult> => {
+      const result = await baseLauncher(inv);
+      if (inv.agent === 'code-migrator') {
+        current++;
+        maxConcurrent = Math.max(maxConcurrent, current);
+        await new Promise(resolve => setTimeout(resolve, 20));
+        current--;
+      }
+      return result;
+    };
+
+    env = await setupFlowTestWithTasks(launcherFn, tasks, {
+      options: {
+        executionMode: 'wave-barrier',
+        waveControl: { maxConvergenceIterations: 1 },
+        maxParallelAgents: 2,
+        qualityPolicy: 'balanced',
+      },
+    });
+
+    const spawnMod = await import('../../../src/util/process.js');
+    const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+    });
+
+    try {
+      const result = await runPhase4(env);
+
+      expect(result.status).toBe('completed');
+      expect(maxConcurrent).toBe(1);
+    } finally {
+      spawnSpy.mockRestore();
+    }
+  });
+
   // ─── Wave Convergence Retry ─────────────────────────────────────────
 
   it('should retry wave validation when build fails then succeeds', async () => {

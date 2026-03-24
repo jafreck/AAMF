@@ -45,7 +45,6 @@ import {
   makeTask,
 } from '../../helpers/flow-mocks.js';
 import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
-import { TaskQueue } from '../../../src/execution/task-queue.js';
 
 let env: FlowTestEnv;
 
@@ -196,10 +195,9 @@ describe('runCommandWithRecovery', () => {
     });
 
     const task = makeTask('task-001');
-    const queue = new TaskQueue([task]);
 
     try {
-      const result = await runCommandWithRecovery(env.ctx, 'build', 'npm run build', task, queue);
+      const result = await runCommandWithRecovery(env.ctx, 'build', 'npm run build', task);
       expect(result).toBe(true);
     } finally {
       spawnSpy.mockRestore();
@@ -223,10 +221,9 @@ describe('runCommandWithRecovery', () => {
     });
 
     const task = makeTask('task-001');
-    const queue = new TaskQueue([task]);
 
     try {
-      const result = await runCommandWithRecovery(env.ctx, 'build', 'npm run build', task, queue);
+      const result = await runCommandWithRecovery(env.ctx, 'build', 'npm run build', task);
       expect(result).toBe(true);
       expect(callCount).toBeGreaterThan(1);
     } finally {
@@ -251,10 +248,9 @@ describe('runCommandWithRecovery', () => {
     });
 
     const task = makeTask('task-001');
-    const queue = new TaskQueue([task]);
 
     try {
-      const result = await runCommandWithRecovery(env.ctx, 'build', 'npm run build', task, queue);
+      const result = await runCommandWithRecovery(env.ctx, 'build', 'npm run build', task);
       // Should eventually succeed or throw on exhaustion
       const resolverInvs = env.mockLauncher.invocations.filter(
         i => i.agent === 'parity-failure-resolver',
@@ -277,11 +273,10 @@ describe('runCommandWithRecovery', () => {
     });
 
     const task = makeTask('task-001');
-    const queue = new TaskQueue([task]);
 
     try {
       await expect(
-        runCommandWithRecovery(env.ctx, 'build', 'npm run build', task, queue),
+        runCommandWithRecovery(env.ctx, 'build', 'npm run build', task),
       ).rejects.toThrow(TerminalExhaustionError);
     } finally {
       spawnSpy.mockRestore();
@@ -300,10 +295,9 @@ describe('runCommandWithRecovery', () => {
     });
 
     const task = makeTask('task-001');
-    const queue = new TaskQueue([task]);
 
     try {
-      const result = await runCommandWithRecovery(env.ctx, 'build', 'npm run build', task, queue, {
+      const result = await runCommandWithRecovery(env.ctx, 'build', 'npm run build', task, {
         suppressTerminalOnExhaustion: true,
       });
       expect(result).toBe(false);

@@ -39,6 +39,84 @@ import {
   assertPhaseSuccess,
 } from './shared.js';
 
+function buildWaveTaskBranch(
+  task: MigrationTask,
+  retryExec: RetryExecutor,
+  gateMode: ReturnType<typeof getQualityGateMode>,
+): FlowNode<MigrationFlowContext>[] {
+  const branchSteps: FlowNode<MigrationFlowContext>[] = [
+    step<MigrationFlowContext>({
+      id: `${task.id}/migrate`,
+      run: (c) => runMigrateSubstep(c.context, task, retryExec),
+    }),
+    step<MigrationFlowContext>({
+      id: `${task.id}/commit`,
+      run: (c) => runCommitSubstep(c.context, task),
+    }),
+    step<MigrationFlowContext>({
+      id: `${task.id}/target-index`,
+      run: (c) => runTargetIndexSubstep(c.context, task),
+    }),
+    step<MigrationFlowContext>({
+      id: `${task.id}/parity`,
+      run: (c) => runParitySubstep(c.context, task),
+    }),
+  ];
+  if (gateMode !== 'skip') {
+    branchSteps.push(
+      step<MigrationFlowContext>({
+        id: `${task.id}/parity-gate`,
+        run: (c) => runParityGateSubstep(c.context, task),
+      }),
+      step<MigrationFlowContext>({
+        id: `${task.id}/minor-repass`,
+        run: (c) => runMinorRepassSubstep(c.context, task),
+      }),
+    );
+  }
+  return branchSteps;
+}
+
+function computeTargetOverlapPredecessors(tasks: MigrationTask[]): Map<string, string[]> {
+  const predecessors = new Map<string, Set<string>>();
+  const lastWriterByTarget = new Map<string, string>();
+
+  for (const task of tasks) {
+    for (const targetFile of new Set(task.targetFiles)) {
+      const previousTaskId = lastWriterByTarget.get(targetFile);
+      if (previousTaskId && previousTaskId !== task.id) {
+        const deps = predecessors.get(task.id) ?? new Set<string>();
+        deps.add(previousTaskId);
+        predecessors.set(task.id, deps);
+      }
+      lastWriterByTarget.set(targetFile, task.id);
+    }
+  }
+
+  return new Map(
+    [...predecessors.entries()].map(([taskId, deps]) => [taskId, [...deps]]),
+  );
+}
+
+function splitWaveIntoNonOverlappingBatches(tasks: MigrationTask[]): MigrationTask[][] {
+  const pending = [...tasks];
+  const batches: MigrationTask[][] = [];
+
+  while (pending.length > 0) {
+    const batch = TaskQueue.selectNonOverlappingBatch(pending, pending.length);
+    if (batch.length === 0) {
+      throw new Error('Failed to build a non-overlapping task batch for wave execution');
+    }
+    batches.push(batch);
+    const batchIds = new Set(batch.map(task => task.id));
+    for (let i = pending.length - 1; i >= 0; i--) {
+      if (batchIds.has(pending[i]!.id)) pending.splice(i, 1);
+    }
+  }
+
+  return batches;
+}
+
 // ─── Substep Functions ───────────────────────────────────────────────
 // Each function executes one logical substep within a per-task migration.
 // The framework's checkpoint skip replaces the manual hasPhase4Substep guards.
@@ -340,18 +418,28 @@ function buildPerTaskFlow(
 ): FlowDefinition<MigrationFlowContext> {
   const taskSet = new Set(tasks.map(t => t.id));
   const gateMode = getQualityGateMode(ctx);
+  const overlapPredecessors = computeTargetOverlapPredecessors(tasks);
+  const overlapDependencyCount = [...overlapPredecessors.values()].reduce((sum, deps) => sum + deps.length, 0);
 
   const nodes: FlowNode<MigrationFlowContext>[] = [];
 
+  if (overlapDependencyCount > 0) {
+    ctx.logger.info(
+      `Per-task mode: added ${overlapDependencyCount} target-overlap ordering edge(s) across ` +
+      `${overlapPredecessors.size} task(s)`,
+    );
+  }
+
   for (const task of tasks) {
-    const deps = task.dependencies.filter(d => taskSet.has(d));
+    const deps = new Set(task.dependencies.filter(d => taskSet.has(d)));
+    for (const overlapDep of overlapPredecessors.get(task.id) ?? []) deps.add(overlapDep);
     const substepIds: string[] = [];
 
     // Migrate
     const migrateId = `${task.id}/migrate`;
     nodes.push(step<MigrationFlowContext>({
       id: migrateId,
-      dependsOn: deps.length > 0 ? deps.map(d => `${d}/complete`) : undefined,
+      dependsOn: deps.size > 0 ? [...deps].map(d => `${d}/complete`) : undefined,
       run: (c) => runMigrateSubstep(c.context, task, retryExec),
     }));
     substepIds.push(migrateId);
@@ -471,12 +559,18 @@ function buildWaveBarrierFlow(
     // Wave start marker — emit lifecycle event
     const waveTasksCopy = waveTasks;
     const waveTaskIds = waveTasksCopy.map(t => t.id);
+    const waveBatches = splitWaveIntoNonOverlappingBatches(waveTasksCopy);
     nodes.push(step<MigrationFlowContext>({
       id: `wave-${w}-start`,
       dependsOn: prevDep,
       run: async (c) => {
         if (c.context.phase4Snapshot) c.context.phase4Snapshot.waveCount++;
         c.context.logger.info(`Wave ${w}: migrating ${waveTasksCopy.length} task(s)`);
+        if (waveBatches.length > 1) {
+          c.context.logger.info(
+            `Wave ${w}: split into ${waveBatches.length} non-overlapping batch(es) to avoid shared target-file edits`,
+          );
+        }
         c.context.logger.event({ type: 'wave-started', wave: w, taskIds: waveTaskIds });
         await c.context.progress.appendWaveLifecycle({ wave: w, milestone: 'started' });
       },
@@ -485,43 +579,36 @@ function buildWaveBarrierFlow(
     // Wave task execution (parallel branches)
     // Each branch runs: migrate → commit → target-index → parity → parity-gate → minor-repass
     // Build/test gates run at the wave barrier, but parity is per-task.
-    nodes.push(parallel<MigrationFlowContext>({
-      id: `wave-${w}-tasks`,
-      dependsOn: [`wave-${w}-start`],
-      branches: Object.fromEntries(waveTasksCopy.map(task => {
-        const branchSteps: FlowNode<MigrationFlowContext>[] = [
-          step<MigrationFlowContext>({
-            id: `${task.id}/migrate`,
-            run: (c) => runMigrateSubstep(c.context, task, retryExec),
-          }),
-          step<MigrationFlowContext>({
-            id: `${task.id}/commit`,
-            run: (c) => runCommitSubstep(c.context, task),
-          }),
-          step<MigrationFlowContext>({
-            id: `${task.id}/target-index`,
-            run: (c) => runTargetIndexSubstep(c.context, task),
-          }),
-          step<MigrationFlowContext>({
-            id: `${task.id}/parity`,
-            run: (c) => runParitySubstep(c.context, task),
-          }),
-        ];
-        if (gateMode !== 'skip') {
-          branchSteps.push(
-            step<MigrationFlowContext>({
-              id: `${task.id}/parity-gate`,
-              run: (c) => runParityGateSubstep(c.context, task),
-            }),
-            step<MigrationFlowContext>({
-              id: `${task.id}/minor-repass`,
-              run: (c) => runMinorRepassSubstep(c.context, task),
-            }),
-          );
-        }
-        return [task.id, branchSteps];
-      })),
-    }));
+    if (waveBatches.length === 1) {
+      nodes.push(parallel<MigrationFlowContext>({
+        id: `wave-${w}-tasks`,
+        dependsOn: [`wave-${w}-start`],
+        branches: Object.fromEntries(waveTasksCopy.map(task => [
+          task.id,
+          buildWaveTaskBranch(task, retryExec, gateMode),
+        ])),
+      }));
+    } else {
+      let batchDependency = `wave-${w}-start`;
+      for (let batchIndex = 0; batchIndex < waveBatches.length; batchIndex++) {
+        const batch = waveBatches[batchIndex]!;
+        const batchId = `wave-${w}-tasks-batch-${batchIndex}`;
+        nodes.push(parallel<MigrationFlowContext>({
+          id: batchId,
+          dependsOn: [batchDependency],
+          branches: Object.fromEntries(batch.map(task => [
+            task.id,
+            buildWaveTaskBranch(task, retryExec, gateMode),
+          ])),
+        }));
+        batchDependency = batchId;
+      }
+      nodes.push(step<MigrationFlowContext>({
+        id: `wave-${w}-tasks`,
+        dependsOn: [batchDependency],
+        run: async () => undefined,
+      }));
+    }
 
     // Barrier entry marker
     nodes.push(step<MigrationFlowContext>({
@@ -873,7 +960,7 @@ async function recoverWaveValidationFailure(
   if (failure.success) return true;
   const waveTask = buildWaveRecoveryTask(wave, waveCandidates);
   const artifactPaths = Array.from(new Set(waveCandidates.flatMap(t => [...t.sourceFiles, ...t.targetFiles])));
-  return runCommandWithRecovery(ctx, failedLabel, failedCommand, waveTask, undefined, {
+  return runCommandWithRecovery(ctx, failedLabel, failedCommand, waveTask, {
     initialFailure: failure, wave, retryScope: 'wave', artifactPaths,
     suppressTerminalOnExhaustion: true,
     failureSummary: failure.error ?? `Wave ${wave} ${failedLabel} failed`,

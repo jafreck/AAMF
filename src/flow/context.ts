@@ -32,7 +32,6 @@ import type {
 import type { EmbeddingProvider } from '@jafreck/lore';
 import type { KbServerProcess } from '../core/kb-server-process.js';
 import type { TargetIndexer } from '../core/target-indexer.js';
-import type { TaskQueue } from '../execution/task-queue.js';
 
 /** Parity result data extracted from parity-verifier aamf-json output. */
 export interface ParityResultData {

@@ -36,7 +36,6 @@ import type {
   TerminalExhaustionDetails,
 } from '../context.js';
 import { formatDuration } from '../../util/format.js';
-import { TaskQueue } from '../../execution/task-queue.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -612,7 +611,6 @@ export async function runCommandWithRecovery(
   label: string,
   command: string,
   task: MigrationTask,
-  queue?: TaskQueue,
   options?: {
     initialFailure?: CommandExecutionResult;
     wave?: number;

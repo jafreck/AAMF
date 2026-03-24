@@ -15,11 +15,12 @@ export interface PipelinedTaskResult<T> {
 }
 
 /**
- * Dependency-aware task queue for Phase 4 execution.
+ * Phase 4 graph-ordering and overlap-batching helpers.
  *
- * Tracks task completion and blocked status, and determines which tasks
- * are ready based on dependency satisfaction. Supports checkpoint resume
- * and topological sorting with cycle detection.
+ * The live Phase 4 runner is built declaratively in flow/steps/migration.ts
+ * using Cadre flow nodes. This module provides the reusable task-graph
+ * primitives that runner needs: dependency ordering, ready-queue state for
+ * imperative helpers/tests, and target-file overlap batching utilities.
  */
 export class TaskQueue {
   private tasks: Map<string, MigrationTask> = new Map();
