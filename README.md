@@ -47,30 +47,25 @@ Cadre is the orchestration framework that coordinates migration execution. In AA
 - enforcing concurrency and execution boundaries while AAMF provides the migration-specific step implementations.
 
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                           AAMF Runtime                              │
-│                                                                      │
-│  migration.config.json ──► MigrationRuntime                          │
-│                               │                                      │
-│                     FlowRunner (@cadre-dev/framework)                │
-│                               │                                      │
-│            ┌──────────────────┼──────────────────┐                   │
-│            ▼                  ▼                  ▼                   │
-│     ContextBuilder      AgentLauncher      TaskGraphBuilder          │
-│     (writes JSON)      (spawns CLI)      (Lore SCC + merge)         │
-│            │                  │                                      │
-│            ▼                  ▼                                      │
-│       context.json      Agent CLI processes                          │
-│                               │                                      │
-│            ┌──────────────────┼──────────────────┐                   │
-│            ▼                  ▼                  ▼                   │
-│      ResultParser       TokenTracker      MetricsCollector           │
-│            │                  │                  │                   │
-│            ▼                  ▼                  ▼                   │
-│       Checkpoint       CostEstimator      ReportGenerator            │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+     config[migration.config.json] --> runtime[MigrationRuntime]
+     runtime --> runner[FlowRunner<br/>@cadre-dev/framework]
+
+     runner --> contextBuilder[ContextBuilder<br/>writes JSON context]
+     runner --> agentLauncher[AgentLauncher<br/>spawns agent CLIs]
+     runner --> taskGraph[TaskGraphBuilder<br/>Lore SCC + greedy merge]
+
+     contextBuilder --> contextFile[context.json]
+     agentLauncher --> agentCli[Agent CLI processes]
+
+     agentCli --> resultParser[ResultParser]
+     agentCli --> tokenTracker[TokenTracker]
+     agentCli --> metrics[MetricsCollector]
+
+     resultParser --> checkpoint[Checkpoint]
+     tokenTracker --> costEstimator[CostEstimator]
+     metrics --> reportGenerator[ReportGenerator]
 ```
 
 ### Cadre-Orchestrated Runtime
@@ -371,44 +366,49 @@ A unified structured log at `logs/runtime/migration.log` captures all runtime ev
 
 All migration state is organized under `.aamf/migration/{projectName}/`:
 
-```
-.aamf/migration/{projectName}/
-├── state/
-│   ├── checkpoint.json              # Full pipeline state
-│   ├── checkpoint.backup.json       # Previous checkpoint
-│   └── run-manifest.json            # Run metadata
-├── logs/
-│   ├── runtime/
-│   │   └── migration.log            # Unified structured log
-│   ├── agents/{agent}/{taskId}/     # Per-agent invocation logs
-│   │   └── *.live.log               # Live-streamed stdout/stderr
-│   └── commands/
-│       ├── build/                   # Build command output
-│       └── test/                    # Test command output
-├── artifacts/
-│   ├── contexts/                    # Context JSON files per invocation
-│   ├── results/                     # Agent result files
-│   ├── planning/
-│   │   ├── migration-plan.md        # Phase 3 plan
-│   │   ├── groups.json              # Module groups
-│   │   ├── strategy.md              # Selected strategy
-│   │   ├── tasks-merged.json        # Decomposed task list
-│   │   └── competing-strategies.md  # (if adjudication needed)
-│   ├── parity/
-│   │   ├── final-parity-report.md   # Phase 5 output
-│   │   └── idiomatic-review-report.md  # Phase 7 output
-│   ├── adjudication/                # Failure adjudication records
-│   └── impact-assessment.md         # Phase 2 output
-├── reports/
-│   ├── progress.md                  # Human-readable status dashboard
-│   └── observability/
-│       ├── index.md                 # Observability report with Gantt chart
-│       └── metrics.json             # Machine-readable metrics
-├── metrics/
-│   ├── invocations.jsonl            # Per-invocation JSONL log
-│   └── summary.json                 # Aggregate metrics snapshot
-├── knowledge-base/                  # Phase 2 outputs
-└── kb.db                            # SQLite knowledge-base index (Phase 0)
+```mermaid
+flowchart TD
+     root[.aamf/migration/{projectName}] --> state[state/]
+     root --> logs[logs/]
+     root --> artifacts[artifacts/]
+     root --> reports[reports/]
+     root --> metrics[metrics/]
+     root --> kbDir[knowledge-base/]
+     root --> kbdb[kb.db<br/>SQLite knowledge-base index]
+
+     state --> checkpoint[checkpoint.json<br/>full pipeline state]
+     state --> checkpointBackup[checkpoint.backup.json<br/>previous checkpoint]
+     state --> manifest[run-manifest.json<br/>run metadata]
+
+     logs --> runtimeLogs[runtime/]
+     logs --> agentLogs[agents/{agent}/{taskId}/]
+     logs --> commandLogs[commands/]
+     runtimeLogs --> migrationLog[migration.log<br/>unified structured log]
+     agentLogs --> liveLogs[*.live.log<br/>streamed stdout and stderr]
+     commandLogs --> buildLogs[build/]
+     commandLogs --> testLogs[test/]
+
+     artifacts --> contexts[contexts/<br/>context JSON per invocation]
+     artifacts --> results[results/<br/>agent result files]
+     artifacts --> planning[planning/]
+     artifacts --> parity[parity/]
+     artifacts --> adjudication[adjudication/<br/>failure records]
+     artifacts --> impact[impact-assessment.md<br/>Phase 2 output]
+     planning --> migrationPlan[migration-plan.md]
+     planning --> groups[groups.json]
+     planning --> strategy[strategy.md]
+     planning --> mergedTasks[tasks-merged.json]
+     planning --> competing[competing-strategies.md]
+     parity --> finalParity[final-parity-report.md]
+     parity --> idiomaticReview[idiomatic-review-report.md]
+
+     reports --> progress[progress.md<br/>human-readable status]
+     reports --> observability[observability/]
+     observability --> observabilityIndex[index.md<br/>report with Gantt chart]
+     observability --> observabilityMetrics[metrics.json<br/>machine-readable metrics]
+
+     metrics --> invocations[invocations.jsonl<br/>per-invocation log]
+     metrics --> summary[summary.json<br/>aggregate snapshot]
 ```
 
 The `reports/progress.md` file is updated in real-time with a phase table, task-level progress, token usage, wave lifecycle data, and a timestamped event log.
