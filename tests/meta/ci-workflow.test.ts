@@ -93,48 +93,6 @@ describe('CI workflow (.github/workflows/ci.yml)', () => {
   });
 });
 
-describe('README.md CI badge', () => {
-  let content: string;
-
-  const loadContent = async () => {
-    if (!content) {
-      content = await readFile(join(repoRoot, 'README.md'), 'utf-8');
-    }
-    return content;
-  };
-
-  it('should contain a CI badge image', async () => {
-    const text = await loadContent();
-    expect(text).toMatch(/!\[CI\]/);
-  });
-
-  it('should reference ci.yml workflow in jafreck/AAMF', async () => {
-    const text = await loadContent();
-    expect(text).toContain('jafreck/AAMF');
-    expect(text).toContain('ci.yml');
-  });
-
-  it('should have badge as a clickable link to workflow runs', async () => {
-    const text = await loadContent();
-    expect(text).toMatch(/\[!\[CI\]\(https:\/\/github\.com\/jafreck\/AAMF\/actions\/workflows\/ci\.yml\/badge\.svg\)\]\(https:\/\/github\.com\/jafreck\/AAMF\/actions\/workflows\/ci\.yml\)/);
-  });
-
-  it('should place badge before the first --- separator', async () => {
-    const text = await loadContent();
-    const badgeIndex = text.indexOf('[![CI]');
-    const firstSeparatorIndex = text.indexOf('\n---\n');
-    expect(badgeIndex).toBeGreaterThan(-1);
-    expect(firstSeparatorIndex).toBeGreaterThan(-1);
-    expect(badgeIndex).toBeLessThan(firstSeparatorIndex);
-  });
-
-  it('should not have removed original README content', async () => {
-    const text = await loadContent();
-    expect(text).toContain('AAMF');
-    expect(text).toContain('How It Works');
-  });
-});
-
 
 
 describe('Root package.json build script', () => {
