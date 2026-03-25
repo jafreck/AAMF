@@ -49,23 +49,23 @@ Cadre is the orchestration framework that coordinates migration execution. In AA
 
 ```mermaid
 flowchart TD
-     config[migration.config.json] --> runtime[MigrationRuntime]
-     runtime --> runner[FlowRunner<br/>@cadre-dev/framework]
+     config["migration.config.json"] --> runtime["MigrationRuntime"]
+     runtime --> runner["FlowRunner - @cadre-dev/framework"]
 
-     runner --> contextBuilder[ContextBuilder<br/>writes JSON context]
-     runner --> agentLauncher[AgentLauncher<br/>spawns agent CLIs]
-     runner --> taskGraph[TaskGraphBuilder<br/>Lore SCC + greedy merge]
+     runner --> contextBuilder["ContextBuilder - writes JSON context"]
+     runner --> agentLauncher["AgentLauncher - spawns agent CLIs"]
+     runner --> taskGraph["TaskGraphBuilder - Lore SCC + greedy merge"]
 
-     contextBuilder --> contextFile[context.json]
-     agentLauncher --> agentCli[Agent CLI processes]
+     contextBuilder --> contextFile["context.json"]
+     agentLauncher --> agentCli["Agent CLI processes"]
 
-     agentCli --> resultParser[ResultParser]
-     agentCli --> tokenTracker[TokenTracker]
-     agentCli --> metrics[MetricsCollector]
+     agentCli --> resultParser["ResultParser"]
+     agentCli --> tokenTracker["TokenTracker"]
+     agentCli --> metrics["MetricsCollector"]
 
-     resultParser --> checkpoint[Checkpoint]
-     tokenTracker --> costEstimator[CostEstimator]
-     metrics --> reportGenerator[ReportGenerator]
+     resultParser --> checkpoint["Checkpoint"]
+     tokenTracker --> costEstimator["CostEstimator"]
+     metrics --> reportGenerator["ReportGenerator"]
 ```
 
 ### Cadre-Orchestrated Runtime
@@ -79,6 +79,32 @@ That flow uses Cadre primitives to model the migration lifecycle:
 - `parallel` for concurrent finalization work such as E2E and documentation;
 - `loop` for final-parity and idiomatic-refactor convergence; and
 - `subflow` for Phase 4, where per-task and wave-barrier execution are built dynamically from the migration plan.
+
+### From Lore Graph To Executable Tasks
+
+The core planning trick in AAMF is that migration work is derived from Lore's indexed symbol graph before any code-writing agent starts modifying the target.
+
+Phase 0 uses `@jafreck/lore` to index the source tree into a SQLite knowledge base containing files, symbols, resolved call edges, and type-reference edges. Phase 1 then turns that indexed graph into a deterministic task graph:
+
+1. load symbol and dependency edges from Lore;
+2. contract strongly connected components so mutually dependent symbols stay in the same migration unit;
+3. greedily merge neighboring clusters by edge weight, but stop whenever a merge would exceed `maxLinesPerTask`;
+4. split oversized cyclic regions into stubs plus sequential implementation chunks when needed; and
+5. emit `MigrationTask[]` plus explicit dependency edges, SCC metadata, and compilation-unit annotations.
+
+That gives AAMF bounded tasks with intentionally limited scope. Each task is small enough to fit inside an agent context budget, but large enough to preserve the dependency structure needed for a coherent migration.
+
+Determinism matters here. Because the graph is derived from Lore rather than ad hoc planner output, the same indexed codebase produces the same dependency-ordered task inventory, which makes retries, resume, and partial reruns predictable.
+
+### Progressive Ordering And Buildable Checkpoints
+
+Task derivation is only half the problem. The runtime also has to order execution so the target repository can keep moving through states that are actually buildable.
+
+In `per-task` mode, AAMF topologically sorts the Lore-derived task graph, then adds extra ordering edges whenever two tasks would write the same target file. Each task runs through a controlled sequence such as migrate, commit, target re-index, parity verification, and optional format/build/test gates before it is marked complete. That prevents later tasks from racing ahead of prerequisite work or trampling the same output files.
+
+In `wave-barrier` mode, AAMF groups the topological frontier into waves. Tasks inside a wave can run in parallel when they do not overlap on target files, but the runtime inserts a barrier between waves. At that barrier it runs shared validation, including build and test commands, and if validation fails it executes targeted recovery loops until the wave converges or hits the configured limit. Only after the wave passes does AAMF release the next wave.
+
+The practical effect is that AAMF does not just generate tasks in dependency order. It generates tasks in a form that can be executed progressively, with explicit ordering and validation points that preserve usable repository states throughout the migration.
 
 ### The Pipeline Phases
 
@@ -197,7 +223,7 @@ The MCP server runs for the lifetime of the migration and is shut down in a `fin
 
 ### Phase 1: Task Graph Construction
 
-The runtime uses `@jafreck/lore` to build a deterministic call-graph: SCC contraction → greedy merge → topologically-sorted task list.
+The runtime uses `@jafreck/lore` to build a deterministic task graph from the indexed symbol graph: SCC contraction, weighted greedy merge under `maxLinesPerTask`, SCC-aware re-splitting for oversized cycles, and finally a dependency-ordered `MigrationTask[]` with persisted `tasks-merged.json`, `sccs.json`, and compilation-unit metadata.
 
 ### Phase 2: Knowledge Base Construction
 
@@ -218,11 +244,13 @@ This is the core phase. The runtime supports two scheduler behaviors:
 - **`per-task` (default):** migrate a batch of non-overlapping tasks, then run validation for each.
 - **`wave-barrier`:** run migration waves, then validate at a barrier with optional fix-wave convergence loops.
 
+Both modes start from the same Lore-derived task graph, but they differ in where they place the "must still build here" checkpoints.
+
 In both modes, the runtime:
 
 1. Parses the task list and projects estimated token cost against the budget
-2. Topologically sorts tasks by dependency
-3. Uses a dependency-aware `TaskQueue` to select only ready tasks
+2. Topologically sorts tasks by dependency, with SCC-aware filtering when cycles were split during graph construction
+3. Uses a dependency-aware `TaskQueue` to select only ready tasks and adds target-overlap ordering where multiple tasks would otherwise write the same output file
 4. Executes migration work:
     - Spawns `code-migrator` with retry (up to `maxRetriesPerTask` attempts)
     - On exhaustion, escalates to `failure-adjudicator` for decision-driven adjudication
@@ -233,7 +261,8 @@ In both modes, the runtime:
       - `inconclusive`: keeps strict retry/block behavior
 5. Classifies infrastructure errors (file-lock, OOM, disk-full, network, timeout, permission) separately from agent failures, retrying infra errors independently (up to `maxInfraRetries`)
 6. In `wave-barrier`, enforces a quiescent barrier before validation:
-    - Runs build/test once per wave
+     - Computes topological waves from the task graph and splits each wave into non-overlapping target-file batches
+     - Runs build/test once per wave
     - If validation fails, runs targeted fix waves and retries until convergence or `waveControl.maxConvergenceIterations`
 7. Tasks that fail all retries/adjudication or exceed convergence policy are marked **blocked** (with `continueOnBlocked`/`maxBlockedTasks` policy enforcement)
 8. Optionally commits migrated code per-task or per-wave via the git automation subsystem
@@ -368,47 +397,47 @@ All migration state is organized under `.aamf/migration/{projectName}/`:
 
 ```mermaid
 flowchart TD
-     root[.aamf/migration/{projectName}] --> state[state/]
-     root --> logs[logs/]
-     root --> artifacts[artifacts/]
-     root --> reports[reports/]
-     root --> metrics[metrics/]
-     root --> kbDir[knowledge-base/]
-     root --> kbdb[kb.db<br/>SQLite knowledge-base index]
+     root[".aamf/migration/projectName"] --> state["state/"]
+     root --> logs["logs/"]
+     root --> artifacts["artifacts/"]
+     root --> reports["reports/"]
+     root --> metrics["metrics/"]
+     root --> kbDir["knowledge-base/"]
+     root --> kbdb["kb.db - SQLite knowledge-base index"]
 
-     state --> checkpoint[checkpoint.json<br/>full pipeline state]
-     state --> checkpointBackup[checkpoint.backup.json<br/>previous checkpoint]
-     state --> manifest[run-manifest.json<br/>run metadata]
+     state --> checkpoint["checkpoint.json - full pipeline state"]
+     state --> checkpointBackup["checkpoint.backup.json - previous checkpoint"]
+     state --> manifest["run-manifest.json - run metadata"]
 
-     logs --> runtimeLogs[runtime/]
-     logs --> agentLogs[agents/{agent}/{taskId}/]
-     logs --> commandLogs[commands/]
-     runtimeLogs --> migrationLog[migration.log<br/>unified structured log]
-     agentLogs --> liveLogs[*.live.log<br/>streamed stdout and stderr]
-     commandLogs --> buildLogs[build/]
-     commandLogs --> testLogs[test/]
+     logs --> runtimeLogs["runtime/"]
+     logs --> agentLogs["agents/agent/taskId/"]
+     logs --> commandLogs["commands/"]
+     runtimeLogs --> migrationLog["migration.log - unified structured log"]
+     agentLogs --> liveLogs["*.live.log - streamed stdout and stderr"]
+     commandLogs --> buildLogs["build/"]
+     commandLogs --> testLogs["test/"]
 
-     artifacts --> contexts[contexts/<br/>context JSON per invocation]
-     artifacts --> results[results/<br/>agent result files]
-     artifacts --> planning[planning/]
-     artifacts --> parity[parity/]
-     artifacts --> adjudication[adjudication/<br/>failure records]
-     artifacts --> impact[impact-assessment.md<br/>Phase 2 output]
-     planning --> migrationPlan[migration-plan.md]
-     planning --> groups[groups.json]
-     planning --> strategy[strategy.md]
-     planning --> mergedTasks[tasks-merged.json]
-     planning --> competing[competing-strategies.md]
-     parity --> finalParity[final-parity-report.md]
-     parity --> idiomaticReview[idiomatic-review-report.md]
+     artifacts --> contexts["contexts/ - context JSON per invocation"]
+     artifacts --> results["results/ - agent result files"]
+     artifacts --> planning["planning/"]
+     artifacts --> parity["parity/"]
+     artifacts --> adjudication["adjudication/ - failure records"]
+     artifacts --> impact["impact-assessment.md - Phase 2 output"]
+     planning --> migrationPlan["migration-plan.md"]
+     planning --> groups["groups.json"]
+     planning --> strategy["strategy.md"]
+     planning --> mergedTasks["tasks-merged.json"]
+     planning --> competing["competing-strategies.md"]
+     parity --> finalParity["final-parity-report.md"]
+     parity --> idiomaticReview["idiomatic-review-report.md"]
 
-     reports --> progress[progress.md<br/>human-readable status]
-     reports --> observability[observability/]
-     observability --> observabilityIndex[index.md<br/>report with Gantt chart]
-     observability --> observabilityMetrics[metrics.json<br/>machine-readable metrics]
+     reports --> progress["progress.md - human-readable status"]
+     reports --> observability["observability/"]
+     observability --> observabilityIndex["index.md - report with Gantt chart"]
+     observability --> observabilityMetrics["metrics.json - machine-readable metrics"]
 
-     metrics --> invocations[invocations.jsonl<br/>per-invocation log]
-     metrics --> summary[summary.json<br/>aggregate snapshot]
+     metrics --> invocations["invocations.jsonl - per-invocation log"]
+     metrics --> summary["summary.json - aggregate snapshot"]
 ```
 
 The `reports/progress.md` file is updated in real-time with a phase table, task-level progress, token usage, wave lifecycle data, and a timestamped event log.
