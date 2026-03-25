@@ -10,7 +10,7 @@
      <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
-AAMF is a legacy code base deleter: translate any code base of any size into any other language. It uses `@cadre-dev/framework` as the orchestration layer that coordinates the migration flow while AAMF supplies the migration-specific machinery: code indexing, task-graph construction, agent launching, checkpointing, budgeting, observability, and failure adjudication.
+AAMF is a legacy code base deleter: translate any code base of any size into any other language. A fleet of purpose built AI agents iterative migrate based on a deterministically cItut uses `@cadre-dev/framework` as the orchestration layer that coordinates the migration flow while AAMF supplies the migration-specific machinery: code indexing, task-graph construction, agent launching, checkpointing, budgeting, observability, and failure adjudication.
 
 
 Typical use cases include porting a 100k+ line Python monolith to TypeScript, a COBOL system to Go, or a C library to Rust.
@@ -51,12 +51,77 @@ Cadre is the orchestration framework that coordinates migration execution. In AA
 flowchart LR
      classDef phase fill:#E8F1FF,stroke:#2C5BFF,stroke-width:2px,color:#0F172A;
      classDef optional fill:#F5F3FF,stroke:#7C3AED,stroke-width:2px,color:#4C1D95;
+     classDef task fill:#E8FFF4,stroke:#059669,stroke-width:1.5px,color:#064E3B;
+     classDef gate fill:#FFF4D6,stroke:#D97706,stroke-width:2px,color:#7C2D12;
+     classDef done fill:#EEFCE7,stroke:#65A30D,stroke-width:2px,color:#365314;
 
      phase0["Phase 0<br/>Lore indexing"]:::phase --> phase1["Phase 1<br/>Task graph derivation"]:::phase
      phase1 --> phase2["Phase 2<br/>Knowledge base"]:::phase
      phase2 --> phase3["Phase 3<br/>Planning + adjudication"]:::phase
-     phase3 --> phase4["Phase 4<br/>Iterative migration<br/>ordered tasks or waves"]:::phase
-     phase4 --> phase5["Phase 5<br/>Final parity"]:::phase
+     phase3 --> p4entry
+
+     subgraph phase4Cluster["Phase 4"]
+          direction TB
+          p4entry["Iterative migration<br/>DAG-ordered tasks"]:::phase
+
+          subgraph wave0["Wave 0"]
+               direction LR
+               t0["task-0<br/>Core types"]:::task
+               t1["task-1<br/>Tokenizer"]:::task
+               t2["task-2<br/>AST reader"]:::task
+          end
+
+          g0{"Deterministic gate<br/>build + parity"}:::gate
+
+          subgraph wave1["Wave 1"]
+               direction LR
+               t3["task-3<br/>Parser API"]:::task
+               t4["task-4<br/>Schema mapper"]:::task
+               t5["task-5<br/>Planner"]:::task
+          end
+
+          g1{"Deterministic gate<br/>build + test"}:::gate
+
+          subgraph wave2["Wave 2"]
+               direction LR
+               t6["task-6<br/>Command surface"]:::task
+               t7["task-7<br/>State persistence"]:::task
+               t8["task-8<br/>Integration fixes"]:::task
+          end
+
+          p4done["Validated checkpoint"]:::done
+
+          p4entry --> t0
+          p4entry --> t1
+          p4entry --> t2
+
+          t0 -.-> t3
+          t1 -.-> t3
+          t1 -.-> t4
+          t2 -.-> t5
+          t3 -.-> t6
+          t4 -.-> t7
+          t5 -.-> t7
+          t5 -.-> t8
+
+          t0 --> g0
+          t1 --> g0
+          t2 --> g0
+          g0 --> t3
+          g0 --> t4
+          g0 --> t5
+          t3 --> g1
+          t4 --> g1
+          t5 --> g1
+          g1 --> t6
+          g1 --> t7
+          g1 --> t8
+          t6 --> p4done
+          t7 --> p4done
+          t8 --> p4done
+     end
+
+     p4done --> phase5["Phase 5<br/>Final parity"]:::phase
      phase5 --> phase6["Phase 6<br/>E2E + documentation"]:::phase
      phase6 --> phase7["Phase 7<br/>Idiomatic refactor<br/>optional"]:::optional
      phase7 --> phase8["Phase 8<br/>Completion + reports"]:::phase
