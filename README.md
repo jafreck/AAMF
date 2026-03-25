@@ -1,20 +1,17 @@
-# AAMF — Autonomous Agent Migration Framework
+<h1 align="center">AAMF</h1>
 
-[![CI](https://github.com/jafreck/AAMF/actions/workflows/ci.yml/badge.svg)](https://github.com/jafreck/AAMF/actions/workflows/ci.yml)
+<p align="center"><strong>Autonomous Agent Migration Framework</strong></p>
 
-AAMF is a TypeScript runtime that orchestrates AI agents to migrate extremely large legacy codebases from one technology stack to another. It manages the full lifecycle — analysis, planning, code translation, verification, and documentation — by spawning out-of-process agent invocations (Copilot CLI or Claude Code) and coordinating them through a multi-phase pipeline with checkpointing, budgeting, observability, and failure adjudication.
+<p align="center">
+     <a href="https://github.com/jafreck/AAMF/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jafreck/AAMF/actions/workflows/ci.yml/badge.svg"></a>
+     <img alt="Node.js 22+" src="https://img.shields.io/badge/node-22%2B-5FA04E?logo=node.js&logoColor=white">
+     <img alt="TypeScript 5.9" src="https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white">
+     <a href="docs/configuration.md#coverage"><img alt="Coverage thresholds" src="https://img.shields.io/badge/coverage-L%2FB%2FF%2FS%2086%2F70%2F88%2F85-0A7F5A"></a>
+     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+</p>
 
-Typical use cases include porting a 100k+ line Python monolith to TypeScript, a COBOL system to Go, or a C library to Rust.
+AAMF is a TypeScript runtime that orchestrates AI agents to migrate extremely large legacy codebases from one technology stack to another. It manages the full lifecycle of the migration: analysis, planning, code translation, parity-verification and idiomatic refactoring, by coordinating agents through a multi-phase pipeline with checkpointing, budgeting, observability, and failure adjudication.
 
-## Repository Layout
-
-- `src/` — migration orchestration runtime, agent execution, checkpointing, observability, KB MCP server.
-- `tests/` — unit, integration, and end-to-end tests mirroring the `src/` layout.
-- `agents/` — Markdown prompt templates for each agent role.
-- `docs/` — configuration reference and additional documentation.
-- `@jafreck/lore` (npm package) — extracted knowledge-base indexing library (source walking, tree-sitter parsing, SQLite index, embeddings, MCP server) consumed by the runtime as `@jafreck/lore`.
-
----
 
 ## Projects Ported Using AAMF
 
@@ -26,7 +23,7 @@ Typical use cases include porting a 100k+ line Python monolith to TypeScript, a 
 
 ## How It Works
 
-AAMF treats the migration as a pipeline of **9 phases** (0–8), each driven by purpose-built agents defined as `.agent.md` prompt files. The runtime never performs reasoning itself — it is pure execution machinery that launches agents, feeds them minimal context, collects their output, and decides what to run next.
+AAMF treats the migration as a pipeline of **9 phases** (0–8), each driven by purpose-built agents defined as `.agent.md` prompt files. The runtime never performs reasoning itself. It is pure execution machinery that launches agents, feeds them minimal context, collects their output, and decides what to run next.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -69,25 +66,21 @@ AAMF treats the migration as a pipeline of **9 phases** (0–8), each driven by 
 
 | Phase | Name | Agents | Optional | Critical |
 |-------|------|--------|----------|----------|
-| 0 | **KB Indexing** | *(runtime logic — Lore)* | No | Yes |
-| 1 | **Task Graph Construction** | *(runtime logic — Lore)* | No | Yes |
+| 0 | **KB Indexing** | *(runtime logic - Lore)* | No | Yes |
+| 1 | **Task Graph Construction** | *(runtime logic - Lore)* | No | Yes |
 | 2 | **Knowledge Base Construction** | `knowledge-builder` | No | Yes |
 | 3 | **Migration Planning** | `migration-planner`, `adjudicator` | No | Yes |
 | 4 | **Iterative Migration** | `code-migrator`, `parity-verifier`, `test-writer`, `parity-failure-resolver` | No | Yes |
 | 5 | **Final Parity Verification** | `final-parity-checker` | No | Yes |
 | 6 | **E2E Testing & Documentation** | `e2e-test-crafter`, `documentation-writer` | No | Yes |
 | 7 | **Idiomatic Refactor** | `idiomatic-reviewer`, `idiomatic-refactorer` | Yes | Yes |
-| 8 | **Completion** | *(none — summary only)* | No | Yes |
+| 8 | **Completion** | *(none - summary only)* | No | Yes |
 
-> Phase 7 requires `options.idiomaticRefactor.enabled`. Execution order is 0→1→2→3→4→5→6→7→8. All phases are critical — failure in any phase halts the flow.
+> Phase 7 requires `options.idiomaticRefactor.enabled`. Execution order is 0→1→2→3→4→5→6→7→8. All phases are critical; failure in any phase halts the flow.
 
 ---
 
-## Runtime ↔ Agent Interaction Model
-
-Every agent runs **out-of-process**. The runtime never calls an LLM directly during the pipeline — it delegates all reasoning to agent invocations.
-
-### Dual Runtime Support
+### Agent Support
 
 AAMF supports two agent runtimes, selected by `agentRuntime` in the config:
 
@@ -137,7 +130,7 @@ Both runtimes follow the same lifecycle. The `AgentLauncher` delegates to either
 Context saturation is the primary constraint when migrating large codebases. AAMF minimizes context usage through several mechanisms:
 
 - **File paths, not contents.** Context files contain paths to source files, not their full text. Agents read only what they need.
-- **Per-agent scoping.** Each agent type receives a tailored context with only the inputs relevant to its task — the impact assessor sees the source tree, the code migrator sees one task's files plus its knowledge-base entry.
+- **Per-agent scoping.** Each agent type receives a tailored context with only the inputs relevant to its task. The impact assessor sees the source tree, and the code migrator sees one task's files plus its knowledge-base entry.
 - **Single-purpose agents.** Each of the 16 agent types has a narrow responsibility, keeping its system prompt focused and its working set small.
 
 ### Knowledge Base Access via MCP
@@ -154,8 +147,8 @@ AAMF defines 16 specialized agent roles. Each corresponds to a `.agent.md` file 
 
 | Agent | Phase | Purpose |
 |-------|-------|---------|
-| `migration-orchestrator` | — | Top-level coordination logic (mirrored by the runtime) |
-| `migration-runner` | — | Entry point agent |
+| `migration-orchestrator` | n/a | Top-level coordination logic (mirrored by the runtime) |
+| `migration-runner` | n/a | Entry point agent |
 | `knowledge-builder` | 2 | Documents all modules, dependencies, and patterns |
 | `migration-planner` | 3 | Creates the task-level migration plan with dependency ordering |
 | `adjudicator` | 3 | Decides between competing migration strategies |
@@ -173,7 +166,7 @@ AAMF defines 16 specialized agent roles. Each corresponds to a `.agent.md` file 
 
 ## Execution Details by Phase
 
-### Phase 0 — KB Indexing
+### Phase 0: KB Indexing
 
 When `options.kbIndex.enabled` is set (or `AAMF_USE_KB_INDEX=1`), the runtime uses `@jafreck/lore` to build a SQLite knowledge-base index from the source codebase. This phase:
 
@@ -184,15 +177,15 @@ When `options.kbIndex.enabled` is set (or `AAMF_USE_KB_INDEX=1`), the runtime us
 
 The MCP server runs for the lifetime of the migration and is shut down in a `finally` block.
 
-### Phase 1 — Task Graph Construction
+### Phase 1: Task Graph Construction
 
 The runtime uses `@jafreck/lore` to build a deterministic call-graph: SCC contraction → greedy merge → topologically-sorted task list.
 
-### Phase 2 — Knowledge Base Construction
+### Phase 2: Knowledge Base Construction
 
 The `knowledge-builder` agent documents all modules, producing a structured knowledge base under `.aamf/migration/{project}/knowledge-base/`.
 
-### Phase 3 — Migration Planning
+### Phase 3: Migration Planning
 
 Phase 3 is a multi-step flow:
 
@@ -200,7 +193,7 @@ Phase 3 is a multi-step flow:
 2. **Adjudication:** If the planner writes `competing-strategies.md`, the runtime spawns `adjudicator` to select the best strategy.
 3. **Step 3b:** `task-decomposer` is launched in parallel per module group (via `ParallelExecutor` + `RetryExecutor`). Outputs are validated against a Zod schema and merged into `artifacts/planning/tasks-merged.json`.
 
-### Phase 4 — Iterative Migration
+### Phase 4: Iterative Migration
 
 This is the core phase. The runtime supports two scheduler behaviors:
 
@@ -240,22 +233,22 @@ When `models.routing.enabled` is set, Phase 4 automatically escalates tasks to h
 
 Escalation cost is tracked and capped by `models.routing.maxEscalationCostUsd`.
 
-### Phase 5 — Final Parity Verification
+### Phase 5: Final Parity Verification
 
-The `final-parity-checker` performs a codebase-wide parity sweep. If issues are found, the runtime spawns `code-migrator` to fix each issue — up to 2 loopback iterations before proceeding. Resumable via per-phase cursor.
+The `final-parity-checker` performs a codebase-wide parity sweep. If issues are found, the runtime spawns `code-migrator` to fix each issue, with up to 2 loopback iterations before proceeding. Resumable via per-phase cursor.
 
-### Phase 6 — E2E Testing & Documentation
+### Phase 6: E2E Testing & Documentation
 
 `e2e-test-crafter` and `documentation-writer` run **in parallel** (serialized when git automation is enabled).
 
-### Phase 7 — Idiomatic Refactor (Optional)
+### Phase 7: Idiomatic Refactor (Optional)
 
 When `options.idiomaticRefactor.enabled` is set, Phase 7 runs up to `maxIterations` (default: 2) review-and-refactor cycles:
 
 1. `idiomatic-reviewer` scans the migrated codebase for non-idiomatic patterns.
 2. For each flagged issue, `idiomatic-refactorer` applies targeted fixes with git commits.
 
-### Phase 8 — Completion
+### Phase 8: Completion
 
 The runtime writes a final summary to the progress file and returns a `MigrationResult` with per-phase outcomes, token usage, and lists of failed/blocked tasks.
 
@@ -305,7 +298,7 @@ On `SIGINT` or `SIGTERM`, the runtime saves the current checkpoint and writes an
 
 ## Token Budget Management
 
-An optional `tokenBudget` cap can be set in the config. The `TokenTracker` records usage after every agent invocation — including cached input tokens and premium requests — and checks thresholds:
+An optional `tokenBudget` cap can be set in the config. The `TokenTracker` records usage after every agent invocation, including cached input tokens and premium requests, and checks thresholds:
 
 | Threshold | Action |
 |-----------|--------|
@@ -330,8 +323,8 @@ Cached tokens are billed at 50% of the input rate.
 Every agent invocation is recorded as an `InvocationMetric` with 22 fields including agent type, phase, timing, token counts, cost, routing tier, cached tokens, and premium requests.
 
 Metrics are persisted two ways:
-- **`metrics/invocations.jsonl`** — append-only JSONL log (one record per invocation, survives resume)
-- **`metrics/summary.json`** — full aggregate snapshot with per-agent/per-phase breakdowns
+- **`metrics/invocations.jsonl`**: append-only JSONL log (one record per invocation, survives resume)
+- **`metrics/summary.json`**: full aggregate snapshot with per-agent/per-phase breakdowns
 
 ### Observability Report
 
@@ -347,7 +340,7 @@ A machine-readable `reports/observability/metrics.json` is written alongside.
 
 ### Runtime Log
 
-A unified structured log at `logs/runtime/migration.log` captures all runtime events — phase transitions, task completions, errors, timing, and agent output lines.
+A unified structured log at `logs/runtime/migration.log` captures all runtime events: phase transitions, task completions, errors, timing, and agent output lines.
 
 ---
 
@@ -437,8 +430,8 @@ In `wave-barrier` mode, commits are created per-wave rather than per-task.
 
 ### Prerequisites
 
-- **Node.js 20+**
-- An agent CLI installation — either Copilot CLI (`copilot --agent`) or Claude Code (`claude --agent`)
+- **Node.js 22+**
+- An agent CLI installation, either Copilot CLI (`copilot --agent`) or Claude Code (`claude --agent`)
 - Agent definition files (`.agent.md`) in the configured agent directory
 
 ### Installation
@@ -489,4 +482,4 @@ npx aamf kb-server --db ./kb.db
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE) for details.
