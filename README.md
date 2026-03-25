@@ -46,7 +46,6 @@ Cadre is the orchestration framework that coordinates migration execution. In AA
 - driving resumable execution through checkpoint adapters that persist flow state into AAMF's checkpoint format; and
 - enforcing concurrency and execution boundaries while AAMF provides the migration-specific step implementations.
 
-That separation is deliberate: Cadre handles workflow coordination, while AAMF handles migration semantics.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
