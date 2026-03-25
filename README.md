@@ -82,7 +82,7 @@ That flow uses Cadre primitives to model the migration lifecycle:
 
 ### From Lore Graph To Executable Tasks
 
-The core planning trick in AAMF is that migration work is derived from Lore's indexed symbol graph before any code-writing agent starts modifying the target.
+The core planning strategy in AAMF is that migration work is derived from Lore's indexed symbol graph before any code-writing agent starts modifying the target.
 
 Phase 0 uses `@jafreck/lore` to index the source tree into a SQLite knowledge base containing files, symbols, resolved call edges, and type-reference edges. Phase 1 then turns that indexed graph into a deterministic task graph:
 
