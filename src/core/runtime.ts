@@ -104,7 +104,7 @@ export class MigrationRuntime {
     if (this.config.agentBackend.runtime === 'claude-code') {
       return {
         agentDir: this.config.agentBackend.agentDir,
-        model: this.config.agentBackend.model,
+        model: this.config.models?.default ?? this.config.agentBackend.model,
         agentFileSuffix: '.md',
         validateSchemaContract: false,
       };
@@ -112,7 +112,7 @@ export class MigrationRuntime {
 
     return {
       agentDir: this.config.agentBackend.agentDir,
-      model: this.config.agentBackend.model,
+      model: this.config.models?.default ?? this.config.agentBackend.model,
       agentFileSuffix: '.agent.md',
       validateSchemaContract: true,
     };

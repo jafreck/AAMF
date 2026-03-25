@@ -25,7 +25,6 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 ```json
 {
   "projectName": "my-migration",
-  "agentRuntime": "copilot",
   "source": {
     "path": "../legacy-app",
     "language": "python",
@@ -64,14 +63,6 @@ Create a `migration.config.json` file in your project root. Below is a full refe
         "pythonBin": "python3"
       }
     },
-    "modelRouting": {
-      "enabled": true,
-      "heavyModel": "claude-opus-4.6",
-      "criticalModel": "claude-opus-4.6",
-      "heavyThreshold": 40,
-      "criticalThreshold": 70,
-      "escalateOnRetryAttempt": 2
-    },
     "git": {
       "enabled": true,
       "autoInit": true,
@@ -82,10 +73,21 @@ Create a `migration.config.json` file in your project root. Below is a full refe
       "maxIterations": 2
     }
   },
-  "copilot": {
+  "models": {
+    "default": "claude-sonnet-4.6",
+    "failureRecovery": "claude-opus-4.6",
+    "routing": {
+      "enabled": true,
+      "heavy": "claude-opus-4.6",
+      "critical": "claude-opus-4.6",
+      "heavyThreshold": 40,
+      "criticalThreshold": 70,
+      "escalateOnRetryAttempt": 2
+    }
+  },
+  "agentBackend": {
+    "runtime": "copilot",
     "cliCommand": "copilot",
-    "model": "claude-sonnet-4.6",
-    "failureRecoveryModel": "claude-opus-4.6",
     "agentDir": ".github/agents",
     "timeout": 300000
   }
@@ -99,7 +101,8 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `projectName` | `string` | *required* | Unique identifier for this migration (kebab-case). Used for checkpoint and log directories. |
-| `agentRuntime` | `'copilot' \| 'claude-code'` | `'copilot'` | Which agent CLI to use for invocations. |
+| `models.default` | `string` | — | Baseline model used for all invocations unless a routing or failure-recovery override applies. |
+| `models.failureRecovery` | `string` | — | Model used for transient-retry recovery and `parity-failure-resolver`. |
 
 #### Source
 
@@ -153,21 +156,20 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | `options.kbIndex.embeddings.model` | `string` | `'Qwen/Qwen3-Embedding-0.6B'` | Sentence-transformers model for embeddings. |
 | `options.kbIndex.embeddings.pythonBin` | `string` | `'python3'` | Path to Python binary. |
 
-#### Model Routing
+#### Model Policy
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `options.modelRouting.enabled` | `boolean` | `false` | Enable automatic model tier escalation. |
-| `options.modelRouting.defaultModel` | `string` | — | Override default model for routing (falls back to `copilot.model`). |
-| `options.modelRouting.heavyModel` | `string` | — | Model for heavy-tier tasks. |
-| `options.modelRouting.criticalModel` | `string` | — | Model for critical-tier tasks. |
-| `options.modelRouting.heavyThreshold` | `integer (0–100)` | `40` | Complexity score threshold for heavy tier. |
-| `options.modelRouting.criticalThreshold` | `integer (0–100)` | `70` | Complexity score threshold for critical tier. |
-| `options.modelRouting.criticalAgents` | `string[]` | — | Agent names that always use the critical model. |
-| `options.modelRouting.criticalTaskPatterns` | `string[]` | — | Task ID patterns that always use the critical model. |
-| `options.modelRouting.maxCriticalTasks` | `integer (≥0)` | `0` | Max tasks routed to critical tier. 0 = unlimited. |
-| `options.modelRouting.maxEscalationCostUsd` | `number (≥0)` | `0` | Cost cap for escalated invocations. 0 = unlimited. |
-| `options.modelRouting.escalateOnRetryAttempt` | `integer (≥1)` | `2` | Retry attempt number that triggers escalation. |
+| `models.routing.enabled` | `boolean` | `false` | Enable automatic model tier escalation. |
+| `models.routing.heavy` | `string` | — | Model for heavy-tier tasks. |
+| `models.routing.critical` | `string` | — | Model for critical-tier tasks. |
+| `models.routing.heavyThreshold` | `integer (0–100)` | `40` | Complexity score threshold for heavy tier. |
+| `models.routing.criticalThreshold` | `integer (0–100)` | `70` | Complexity score threshold for critical tier. |
+| `models.routing.criticalAgents` | `string[]` | — | Agent names that always use the critical model. |
+| `models.routing.criticalTaskPatterns` | `string[]` | — | Task ID patterns that always use the critical model. |
+| `models.routing.maxEscalatedTasks` | `integer (≥0)` | `0` | Max tasks routed above the baseline model. 0 = unlimited. |
+| `models.routing.maxEscalationCostUsd` | `number (≥0)` | `0` | Cost cap for escalated invocations. 0 = unlimited. |
+| `models.routing.escalateOnRetryAttempt` | `integer (≥1)` | `2` | Retry attempt number that triggers escalation. |
 
 #### Git Automation
 
@@ -188,30 +190,16 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | `options.idiomaticRefactor.enabled` | `boolean` | `false` | Enable the optional idiomatic refactor phase. |
 | `options.idiomaticRefactor.maxIterations` | `integer` | `2` | Max review-and-refactor cycles. |
 
-#### Copilot
+#### Agent Backend
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `copilot.cliCommand` | `string` | `'copilot'` | Path or name of the Copilot CLI binary. |
-| `copilot.model` | `string` | — | Model to use via `--model` flag (e.g. `claude-sonnet-4.6`). |
-| `copilot.failureRecoveryModel` | `string` | — | Model to use for `failure-adjudicator` invocations. |
-| `copilot.agentDir` | `string` | `'.github/agents'` | Directory containing `.agent.md` prompt files. |
-| `copilot.timeout` | `integer` | `300000` | Per-agent invocation timeout in ms (5 minutes). |
-| `copilot.costOverrides` | `Record<string, { input, output }>` | — | Per-model pricing overrides (USD per 1M tokens). |
-| `copilot.phaseTimeouts` | `Record<number, integer>` | — | Per-phase timeout overrides in ms, keyed by phase number. |
-
-#### Claude Code
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `claudeCode.cliCommand` | `string` | `'claude'` | Path or name of the Claude Code binary. |
-| `claudeCode.model` | `string` | — | Model to use. |
-| `claudeCode.failureRecoveryModel` | `string` | — | Model for failure adjudication. |
-| `claudeCode.agentDir` | `string` | `'.claude/agents'` | Directory containing `.agent.md` prompt files. |
-| `claudeCode.timeout` | `integer` | `300000` | Per-agent invocation timeout in ms. |
-| `claudeCode.contextWindowTokens` | `integer` | — | Context window token limit. |
-| `claudeCode.costOverrides` | `Record<string, { input, output }>` | — | Per-model pricing overrides (USD per 1M tokens). |
-| `claudeCode.phaseTimeouts` | `Record<number, integer>` | — | Per-phase timeout overrides in ms. |
+| `agentBackend.runtime` | `'copilot' \| 'claude-code'` | `'copilot'` | Which agent CLI to use for invocations. |
+| `agentBackend.cliCommand` | `string` | `'copilot'` or `'claude'` | Path or name of the selected CLI binary. |
+| `agentBackend.agentDir` | `string` | `'.github/agents'` or `'.claude/agents'` | Directory containing agent prompt files for the selected runtime. |
+| `agentBackend.timeout` | `integer` | `300000` | Per-agent invocation timeout in ms (5 minutes). |
+| `agentBackend.phaseTimeouts` | `Record<number, integer>` | — | Per-phase timeout overrides in ms, keyed by phase number. |
+| `agentBackend.effort` | `'low' \| 'medium' \| 'high' \| 'xhigh'` | — | Copilot reasoning effort level. |
 
 #### Environment
 

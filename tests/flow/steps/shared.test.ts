@@ -38,10 +38,10 @@ function mockContext(overrides: Record<string, unknown> = {}): MigrationFlowCont
       projectName: 'test-project',
       source: { path: '/src', language: 'python' },
       target: { language: 'typescript', outputPath: '/out', framework: 'node' },
-      agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000 },
+      models: { default: 'claude-sonnet-4', routing: { enabled: false } },
+      agentBackend: { runtime: 'copilot', timeout: 300_000 },
       options: {
         git: { enabled: false },
-        modelRouting: { enabled: false },
         qualityPolicy: 'strict',
         ...(overrides.options ?? {}),
       },
@@ -90,6 +90,14 @@ function mockContext(overrides: Record<string, unknown> = {}): MigrationFlowCont
       ...(overrides.agentBackend as Record<string, unknown>),
     };
     delete overrides.agentBackend;
+  }
+
+  if (overrides.models) {
+    (defaults.config as Record<string, unknown>).models = {
+      ...((defaults.config as Record<string, unknown>).models as Record<string, unknown>),
+      ...(overrides.models as Record<string, unknown>),
+    };
+    delete overrides.models;
   }
 
   return { ...defaults, ...overrides } as unknown as MigrationFlowContext;
@@ -222,7 +230,7 @@ describe('getConfiguredRuntimeModel', () => {
   });
 
   it('should fallback to claude-sonnet-4 when no model configured', () => {
-    const ctx = mockContext({ agentBackend: { runtime: 'copilot', model: undefined, timeout: 300_000 } });
+    const ctx = mockContext({ models: { default: undefined }, agentBackend: { runtime: 'copilot', timeout: 300_000 } });
     expect(getConfiguredRuntimeModel(ctx)).toBe('claude-sonnet-4');
   });
 });
@@ -241,7 +249,7 @@ describe('getPhaseTimeout', () => {
   });
 
   it('should return phase-specific timeout when configured', () => {
-    const ctx = mockContext({ agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000, phaseTimeouts: { 5: 600_000 } } });
+    const ctx = mockContext({ agentBackend: { runtime: 'copilot', timeout: 300_000, phaseTimeouts: { 5: 600_000 } } });
     expect(getPhaseTimeout(ctx, 5)).toBe(600_000);
     expect(getPhaseTimeout(ctx, 3)).toBe(300_000);
   });
@@ -288,18 +296,18 @@ describe('getFailureRecoveryModel', () => {
   });
 
   it('should return the configured model', () => {
-    const ctx = mockContext({ agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000, failureRecoveryModel: 'claude-opus-4' } });
+    const ctx = mockContext({ models: { default: 'claude-sonnet-4', failureRecovery: 'claude-opus-4' } });
     expect(getFailureRecoveryModel(ctx)).toBe('claude-opus-4');
   });
 });
 
 describe('getDefaultRoutingModel', () => {
-  it('should use routing defaultModel when routing is configured', () => {
-    const ctx = mockContext({ options: { modelRouting: { enabled: true, defaultModel: 'gpt-4o' } } });
+  it('should use models.default when routing is configured', () => {
+    const ctx = mockContext({ models: { default: 'gpt-4o', routing: { enabled: true } } });
     expect(getDefaultRoutingModel(ctx)).toBe('gpt-4o');
   });
 
-  it('should fall back to agentBackend model', () => {
+  it('should fall back to models.default', () => {
     const ctx = mockContext();
     expect(getDefaultRoutingModel(ctx)).toBe('claude-sonnet-4');
   });
@@ -317,12 +325,12 @@ describe('selectModelForInvocation', () => {
 
   it('should score based on task complexity', () => {
     const routing = {
-      enabled: true, defaultModel: 'base', criticalModel: 'critical',
-      heavyModel: 'heavy', criticalThreshold: 60, heavyThreshold: 30,
+      enabled: true, critical: 'critical',
+      heavy: 'heavy', criticalThreshold: 60, heavyThreshold: 30,
       criticalTaskPatterns: [], criticalAgents: [],
-      maxCriticalTasks: 10, maxEscalationCostUsd: 100,
+      maxEscalatedTasks: 10, maxEscalationCostUsd: 100,
     };
-    const ctx = mockContext({ options: { modelRouting: routing } });
+    const ctx = mockContext({ models: { default: 'base', routing } });
     const simple = mockTask({ complexity: 'simple', sourceFiles: ['a.py'], targetFiles: ['a.ts'], dependencies: [] });
     const complex = mockTask({ complexity: 'complex', sourceFiles: Array(10).fill('a.py'), targetFiles: Array(10).fill('a.ts'), dependencies: Array(10).fill('dep') });
 
@@ -334,12 +342,12 @@ describe('selectModelForInvocation', () => {
 
   it('should route to critical for task matching criticalTaskPatterns', () => {
     const routing = {
-      enabled: true, defaultModel: 'base', criticalModel: 'opus',
-      heavyModel: 'heavy', criticalThreshold: 60, heavyThreshold: 30,
+      enabled: true, critical: 'opus',
+      heavy: 'heavy', criticalThreshold: 60, heavyThreshold: 30,
       criticalTaskPatterns: ['task-auth-*'], criticalAgents: [],
-      maxCriticalTasks: 10, maxEscalationCostUsd: 100,
+      maxEscalatedTasks: 10, maxEscalationCostUsd: 100,
     };
-    const ctx = mockContext({ options: { modelRouting: routing } });
+    const ctx = mockContext({ models: { default: 'base', routing } });
     const task = mockTask({ id: 'task-auth-001' });
     const result = selectModelForInvocation(ctx, task, 'code-migrator');
     expect(result.tier).toBe('critical');
@@ -348,12 +356,12 @@ describe('selectModelForInvocation', () => {
 
   it('should route to critical for agents in criticalAgents list', () => {
     const routing = {
-      enabled: true, defaultModel: 'base', criticalModel: 'opus',
-      heavyModel: 'heavy', criticalThreshold: 60, heavyThreshold: 30,
+      enabled: true, critical: 'opus',
+      heavy: 'heavy', criticalThreshold: 60, heavyThreshold: 30,
       criticalTaskPatterns: [], criticalAgents: ['adjudicator'],
-      maxCriticalTasks: 10, maxEscalationCostUsd: 100,
+      maxEscalatedTasks: 10, maxEscalationCostUsd: 100,
     };
-    const ctx = mockContext({ options: { modelRouting: routing } });
+    const ctx = mockContext({ models: { default: 'base', routing } });
     const result = selectModelForInvocation(ctx, undefined, 'adjudicator');
     expect(result.tier).toBe('critical');
     expect(result.reason).toBe('critical-agent');
@@ -367,14 +375,14 @@ describe('applyRoutingCaps', () => {
     expect(applyRoutingCaps(ctx, decision)).toBe(decision);
   });
 
-  it('should cap when maxCriticalTasks is exceeded', () => {
+  it('should cap when maxEscalatedTasks is exceeded', () => {
     const routing = {
-      enabled: true, defaultModel: 'base', criticalModel: 'opus',
-      heavyModel: 'heavy', criticalThreshold: 60, heavyThreshold: 30,
+      enabled: true, critical: 'opus',
+      heavy: 'heavy', criticalThreshold: 60, heavyThreshold: 30,
       criticalTaskPatterns: [], criticalAgents: [],
-      maxCriticalTasks: 1, maxEscalationCostUsd: 100,
+      maxEscalatedTasks: 1, maxEscalationCostUsd: 100,
     };
-    const ctx = mockContext({ options: { modelRouting: routing } });
+    const ctx = mockContext({ models: { default: 'base', routing } });
     // Already have one routed task
     ctx.routedTaskIds.add('task-existing');
     const decision = { tier: 'critical' as const, selectedModel: 'opus', reason: 'score-critical', score: 70, escalated: false };
@@ -592,13 +600,13 @@ describe('buildInvocation', () => {
   });
 
   it('should use phase-specific timeout', () => {
-    const ctx = mockContext({ agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000, phaseTimeouts: { 5: 600_000 } } });
+    const ctx = mockContext({ agentBackend: { runtime: 'copilot', timeout: 300_000, phaseTimeouts: { 5: 600_000 } } });
     const inv = buildInvocation(ctx, 'code-migrator', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 5);
     expect(inv.timeout).toBe(600_000);
   });
 
   it('should apply failureRecoveryModel for parity-failure-resolver', () => {
-    const ctx = mockContext({ agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000, failureRecoveryModel: 'gpt-4o-fallback' } });
+    const ctx = mockContext({ models: { default: 'claude-sonnet-4', failureRecovery: 'gpt-4o-fallback' } });
     const inv = buildInvocation(ctx, 'parity-failure-resolver', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 5);
     expect(inv.modelOverride).toBe('gpt-4o-fallback');
   });

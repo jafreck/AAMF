@@ -96,6 +96,9 @@ export function createMockConfig(overrides?: any): MigrationConfig {
       outputPath: '/tmp/target',
       ...(overrides?.target ?? {}),
     },
+    models: {
+      ...(overrides?.models ?? {}),
+    },
     options: {
       maxParallelAgents: 3,
       maxRetriesPerTask: 3,

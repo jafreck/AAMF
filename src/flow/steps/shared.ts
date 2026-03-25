@@ -110,7 +110,7 @@ export function assertPhaseSuccess(result: import('../../agents/types.js').Phase
 // ─── Helper Functions ──────────────────────────────────────────────────
 
 export function getConfiguredRuntimeModel(ctx: MigrationFlowContext): string {
-  return ctx.config.agentBackend.model ?? 'claude-sonnet-4';
+  return ctx.config.models?.default ?? ctx.config.agentBackend.model ?? 'claude-sonnet-4';
 }
 
 export function getRuntimeTimeout(ctx: MigrationFlowContext): number {
@@ -134,12 +134,40 @@ export function isGitAutomationEnabled(ctx: MigrationFlowContext): boolean {
 }
 
 export function getFailureRecoveryModel(ctx: MigrationFlowContext): string | undefined {
-  return ctx.config.agentBackend.failureRecoveryModel;
+  return ctx.config.models?.failureRecovery ?? ctx.config.agentBackend.failureRecoveryModel;
 }
 
 export function getDefaultRoutingModel(ctx: MigrationFlowContext): string {
-  const routing = ctx.config.options.modelRouting;
-  return routing?.defaultModel ?? (ctx.config.agentBackend.model ?? 'unknown');
+  return ctx.config.models?.default
+    ?? ctx.config.options.modelRouting?.defaultModel
+    ?? ctx.config.agentBackend.model
+    ?? 'unknown';
+}
+
+function getRoutingConfig(ctx: MigrationFlowContext) {
+  return ctx.config.models?.routing ?? ctx.config.options.modelRouting;
+}
+
+type RoutingConfig = NonNullable<ReturnType<typeof getRoutingConfig>>;
+type LegacyRoutingConfig = NonNullable<MigrationFlowContext['config']['options']['modelRouting']>;
+
+function isLegacyRoutingConfig(routing: RoutingConfig): routing is LegacyRoutingConfig {
+  return 'heavyModel' in routing || 'criticalModel' in routing || 'maxCriticalTasks' in routing;
+}
+
+function getRoutingHeavyModel(routing: ReturnType<typeof getRoutingConfig>): string | undefined {
+  if (!routing) return undefined;
+  return isLegacyRoutingConfig(routing) ? routing.heavyModel : routing.heavy;
+}
+
+function getRoutingCriticalModel(routing: ReturnType<typeof getRoutingConfig>): string | undefined {
+  if (!routing) return undefined;
+  return isLegacyRoutingConfig(routing) ? routing.criticalModel : routing.critical;
+}
+
+function getRoutingMaxEscalatedTasks(routing: ReturnType<typeof getRoutingConfig>): number {
+  if (!routing) return 0;
+  return isLegacyRoutingConfig(routing) ? routing.maxCriticalTasks : routing.maxEscalatedTasks;
 }
 
 export function isTransientModelFailure(errorText: string): boolean {
@@ -185,7 +213,8 @@ export function buildInvocation(
   let routingTier: ModelTier | undefined;
   let routingReason: string | undefined;
 
-  if (!failureRecoveryOverride && ctx.config.options.modelRouting?.enabled) {
+  const routing = getRoutingConfig(ctx);
+  if (!failureRecoveryOverride && routing?.enabled) {
     const decision = applyRoutingCaps(
       ctx, selectModelForInvocation(ctx, task, agent), taskId,
     );
@@ -245,8 +274,8 @@ export function selectModelForInvocation(
   task: MigrationTask | undefined,
   agent: AgentName,
 ): RoutingDecision {
-  const routing = ctx.config.options.modelRouting;
-  const defaultModel = routing?.defaultModel ?? (ctx.config.agentBackend.model ?? 'unknown');
+  const routing = getRoutingConfig(ctx);
+  const defaultModel = getDefaultRoutingModel(ctx);
 
   if (!routing?.enabled) {
     return { tier: 'normal', selectedModel: defaultModel, reason: 'routing-disabled', score: 0, escalated: false };
@@ -269,18 +298,18 @@ export function selectModelForInvocation(
   if (task && routing.criticalTaskPatterns?.length) {
     for (const pattern of routing.criticalTaskPatterns) {
       if (globToRegex(pattern).test(task.id)) {
-        return { tier: 'critical', selectedModel: routing.criticalModel ?? defaultModel, reason: 'critical-task-pattern', score, escalated: false };
+        return { tier: 'critical', selectedModel: getRoutingCriticalModel(routing) ?? defaultModel, reason: 'critical-task-pattern', score, escalated: false };
       }
     }
   }
   if (routing.criticalAgents?.length && routing.criticalAgents.includes(agent)) {
-    return { tier: 'critical', selectedModel: routing.criticalModel ?? defaultModel, reason: 'critical-agent', score, escalated: false };
+    return { tier: 'critical', selectedModel: getRoutingCriticalModel(routing) ?? defaultModel, reason: 'critical-agent', score, escalated: false };
   }
   if (score >= routing.criticalThreshold) {
-    return { tier: 'critical', selectedModel: routing.criticalModel ?? defaultModel, reason: 'score-critical', score, escalated: false };
+    return { tier: 'critical', selectedModel: getRoutingCriticalModel(routing) ?? defaultModel, reason: 'score-critical', score, escalated: false };
   }
   if (score >= routing.heavyThreshold) {
-    return { tier: 'heavy', selectedModel: routing.heavyModel ?? defaultModel, reason: 'score-heavy', score, escalated: false };
+    return { tier: 'heavy', selectedModel: getRoutingHeavyModel(routing) ?? defaultModel, reason: 'score-heavy', score, escalated: false };
   }
   return { tier: 'normal', selectedModel: defaultModel, reason: 'score-normal', score, escalated: false };
 }
@@ -291,13 +320,14 @@ export function applyRoutingCaps(
   taskId?: string,
 ): RoutingDecision {
   if (decision.tier === 'normal') return decision;
-  const routing = ctx.config.options.modelRouting;
+  const routing = getRoutingConfig(ctx);
   if (!routing?.enabled) return decision;
   const defaultModel = getDefaultRoutingModel(ctx);
 
   const isNewRoutedTask = Boolean(taskId && !ctx.routedTaskIds.has(taskId));
   const routedTaskCountAfterDecision = ctx.routedTaskIds.size + (isNewRoutedTask ? 1 : 0);
-  if (routing.maxCriticalTasks > 0 && routedTaskCountAfterDecision > routing.maxCriticalTasks) {
+  const maxEscalatedTasks = getRoutingMaxEscalatedTasks(routing);
+  if (maxEscalatedTasks > 0 && routedTaskCountAfterDecision > maxEscalatedTasks) {
     return { ...decision, tier: 'normal', selectedModel: defaultModel, reason: `${decision.reason}:capped-max-tasks` };
   }
   if (routing.maxEscalationCostUsd > 0) {
@@ -344,7 +374,7 @@ export async function launchAgentWithEvents(
   }
 
   const endTime = new Date().toISOString();
-  const configModel = ctx.config.agentBackend.model ?? 'unknown';
+  const configModel = getConfiguredRuntimeModel(ctx);
   const model = invocation.modelOverride ?? configModel;
   const tokensInput = result.tokenUsage?.input ?? 0;
   const tokensOutput = result.tokenUsage?.output ?? 0;
@@ -355,9 +385,10 @@ export async function launchAgentWithEvents(
 
   const routingTier = invocation.extensions?.routingTier;
   const routingReason = invocation.extensions?.routingReason;
-  const routingDecision = ctx.config.options.modelRouting?.enabled && routingTier
+  const routing = getRoutingConfig(ctx);
+  const routingDecision = routing?.enabled && routingTier
     ? (() => {
-        const defaultModel = ctx.config.options.modelRouting!.defaultModel ?? configModel;
+        const defaultModel = getDefaultRoutingModel(ctx);
         const projectedCost = ctx.costEstimator.projectCost(model, AVG_TOKENS_PER_TASK).total;
         const baseCost = ctx.costEstimator.projectCost(defaultModel, AVG_TOKENS_PER_TASK).total;
         return { incrementalCost: Math.max(0, projectedCost - baseCost) };

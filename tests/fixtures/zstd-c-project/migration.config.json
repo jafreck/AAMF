@@ -79,11 +79,13 @@
       }
     }
   },
+  "models": {
+    "default": "gpt-5.4",
+    "failureRecovery": "gpt-5.4"
+  },
   "agentBackend": {
     "runtime": "copilot",
     "cliCommand": "copilot",
-    "model": "gpt-5.4",
-    "failureRecoveryModel": "gpt-5.4",
     "effort": "xhigh",
     "agentDir": "../../../../.github/agents",
     "timeout": 3600000,

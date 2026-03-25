@@ -40,6 +40,21 @@ import {
   assertPhaseSuccess,
 } from './shared.js';
 
+type RoutingConfig = NonNullable<MigrationFlowContext['config']['models']['routing']>
+  | NonNullable<MigrationFlowContext['config']['options']['modelRouting']>;
+
+function isLegacyRoutingConfig(routing: RoutingConfig): routing is NonNullable<MigrationFlowContext['config']['options']['modelRouting']> {
+  return 'heavyModel' in routing || 'criticalModel' in routing || 'maxCriticalTasks' in routing;
+}
+
+function getRoutingHeavyModel(routing: RoutingConfig): string | undefined {
+  return isLegacyRoutingConfig(routing) ? routing.heavyModel : routing.heavy;
+}
+
+function getRoutingCriticalModel(routing: RoutingConfig): string | undefined {
+  return isLegacyRoutingConfig(routing) ? routing.criticalModel : routing.critical;
+}
+
 function buildWaveTaskBranch(
   task: MigrationTask,
   retryExec: RetryExecutor,
@@ -133,7 +148,8 @@ async function runMigrateSubstep(
   });
   const migratorInv = buildInvocation(ctx, 'code-migrator', migratorCtx, 5, task.id, task);
   const fallbackModel = getFailureRecoveryModel(ctx);
-  const initialRoutingDecision = ctx.config.options.modelRouting?.enabled
+  const routing = ctx.config.models?.routing ?? ctx.config.options.modelRouting;
+  const initialRoutingDecision = routing?.enabled
     ? selectModelForInvocation(ctx, task, 'code-migrator') : undefined;
 
   const migratorResult = await retryExec.executeWithRetry(migratorInv, {
@@ -149,13 +165,15 @@ async function runMigrateSubstep(
         migratorInv.modelOverride = fallbackModel;
         ctx.logger.warn(`Switching ${task.id} code-migrator to fallback model: ${fallbackModel}`);
       } else if (initialRoutingDecision) {
-        const routing = ctx.config.options.modelRouting!;
+        const routing = ctx.config.models?.routing ?? ctx.config.options.modelRouting;
+        if (!routing) return;
         const escalateAt = routing.escalateOnRetryAttempt ?? 2;
         if (attempt >= escalateAt) {
           const targetTier = initialRoutingDecision.tier === 'normal'
             ? 'heavy' as const : initialRoutingDecision.tier === 'heavy' ? 'critical' as const : 'critical' as const;
           const escalatedModel = targetTier === 'critical'
-            ? (routing.criticalModel ?? routing.heavyModel) : routing.heavyModel;
+            ? (getRoutingCriticalModel(routing) ?? getRoutingHeavyModel(routing))
+            : getRoutingHeavyModel(routing);
           if (escalatedModel) {
             const retryDecision = applyRoutingCaps(ctx, {
               ...initialRoutingDecision, tier: targetTier, selectedModel: escalatedModel,

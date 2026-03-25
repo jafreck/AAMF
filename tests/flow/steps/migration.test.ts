@@ -306,7 +306,8 @@ describe('buildPhase4Subflow (Phase 4)', () => {
         return {};
       });
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK], {
-        agentBackend: { runtime: 'copilot', failureRecoveryModel: 'gpt-4.1-mini' },
+        models: { failureRecovery: 'gpt-4.1-mini' },
+        agentBackend: { runtime: 'copilot' },
       });
 
       await runPhase4(env);
@@ -325,12 +326,12 @@ describe('buildPhase4Subflow (Phase 4)', () => {
     it('should route a task matching criticalTaskPatterns to criticalModel', async () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, DEFAULT_PLANNING_TASKS, {
-        options: {
-          modelRouting: {
+        models: {
+          default: 'gpt-5-mini',
+          routing: {
             enabled: true,
-            defaultModel: 'gpt-5-mini',
-            heavyModel: 'gpt-4.1',
-            criticalModel: 'claude-opus-4.6',
+            heavy: 'gpt-4.1',
+            critical: 'claude-opus-4.6',
             heavyThreshold: 40,
             criticalThreshold: 70,
             criticalTaskPatterns: ['task-001'],
@@ -350,16 +351,16 @@ describe('buildPhase4Subflow (Phase 4)', () => {
     it('should downgrade to normal when maxCriticalTasks is reached', async () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, DEFAULT_PLANNING_TASKS, {
-        options: {
-          modelRouting: {
+        models: {
+          default: 'gpt-5-mini',
+          routing: {
             enabled: true,
-            defaultModel: 'gpt-5-mini',
-            heavyModel: 'gpt-4.1',
-            criticalModel: 'claude-opus-4.6',
+            heavy: 'gpt-4.1',
+            critical: 'claude-opus-4.6',
             heavyThreshold: 40,
             criticalThreshold: 70,
             criticalTaskPatterns: ['task-*'],
-            maxCriticalTasks: 1,
+            maxEscalatedTasks: 1,
           },
         },
       });
@@ -378,10 +379,10 @@ describe('buildPhase4Subflow (Phase 4)', () => {
     it('should not set modelOverride when routing is disabled', async () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, DEFAULT_PLANNING_TASKS, {
-        options: {
-          modelRouting: {
+        models: {
+          default: 'gpt-5-mini',
+          routing: {
             enabled: false,
-            defaultModel: 'gpt-5-mini',
             criticalTaskPatterns: ['task-*'],
           },
         },

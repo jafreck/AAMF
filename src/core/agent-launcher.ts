@@ -13,6 +13,7 @@ import { AgentInvocation, AgentName, AgentResult } from '../agents/types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { ensureDir, atomicWrite, fileExists } from '../util/fs.js';
 import { parseAamfOutput, MISSING_BLOCK_ERROR } from '../agents/agent-output-schemas.js';
+import { parseTokenUsage } from '../agents/token-usage-parser.js';
 import { getOutputSchema } from '../agents/registry.js';
 import { Logger } from '../logging/logger.js';
 import { TokenTracker } from '../budget/token-tracker.js';
@@ -32,10 +33,77 @@ interface CopilotEvent {
 /** Summary extracted from the copilot `result` event. */
 interface CopilotResultSummary {
   exitCode: number;
+  tokenUsage?: { input: number; output: number; cachedInput?: number };
   premiumRequests?: number;
   totalApiDurationMs?: number;
   sessionDurationMs?: number;
   codeChanges?: { linesAdded: number; linesRemoved: number; filesModified: string[] };
+}
+
+function readNumericField(record: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number') {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function extractCopilotTokenUsage(usage: Record<string, unknown> | undefined): CopilotResultSummary['tokenUsage'] {
+  if (!usage) return undefined;
+
+  const input = readNumericField(usage, ['input', 'inputTokens', 'input_tokens', 'promptTokens', 'prompt_tokens', 'tokensIn', 'tokens_in']);
+  const output = readNumericField(usage, ['output', 'outputTokens', 'output_tokens', 'completionTokens', 'completion_tokens', 'tokensOut', 'tokens_out']);
+  const cachedInput = readNumericField(usage, ['cachedInput', 'cachedInputTokens', 'cached_input_tokens', 'cache_read_input_tokens', 'tokensCached', 'tokens_cached']);
+
+  if (input == null || output == null) {
+    return undefined;
+  }
+
+  return {
+    input,
+    output,
+    ...(cachedInput != null ? { cachedInput } : {}),
+  };
+}
+
+function hasMeaningfulTokenUsage(tokenUsage: AgentResult['tokenUsage']): boolean {
+  if (!tokenUsage) return false;
+  return tokenUsage.input > 0 || tokenUsage.output > 0 || (tokenUsage.cachedInput ?? 0) > 0;
+}
+
+function normalizeStructuredTokenUsage(raw: unknown): AgentResult['tokenUsage'] {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const tokenUsage = raw as Record<string, unknown>;
+  const input = typeof tokenUsage.input === 'number'
+    ? tokenUsage.input
+    : typeof tokenUsage.prompt === 'number'
+      ? tokenUsage.prompt
+      : undefined;
+  const output = typeof tokenUsage.output === 'number'
+    ? tokenUsage.output
+    : typeof tokenUsage.completion === 'number'
+      ? tokenUsage.completion
+      : undefined;
+  const cachedInput = typeof tokenUsage.cachedInput === 'number' ? tokenUsage.cachedInput : undefined;
+
+  if (input == null || output == null) {
+    return null;
+  }
+
+  return {
+    input,
+    output,
+    ...(cachedInput != null ? { cachedInput } : {}),
+  };
+}
+
+function getTokenUsageRuntime(runtime: MigrationConfig['agentBackend']['runtime']): 'claude-code' | 'copilot-cli' | undefined {
+  if (runtime === 'claude-code') return 'claude-code';
+  if (runtime === 'copilot') return 'copilot-cli';
+  return undefined;
 }
 
 /**
@@ -83,15 +151,34 @@ function parseCopilotJsonl(stdout: string): {
           break;
         }
         case 'result': {
-          const data = event as { exitCode?: number; usage?: Record<string, unknown> };
-          const usage = data.usage as {
+          const eventData = (event.data && typeof event.data === 'object')
+            ? event.data as Record<string, unknown>
+            : undefined;
+          const usage = (eventData?.usage && typeof eventData.usage === 'object'
+            ? eventData.usage
+            : ('usage' in event && typeof event.usage === 'object' ? event.usage : undefined)) as {
+            input?: number;
+            inputTokens?: number;
+            input_tokens?: number;
+            output?: number;
+            outputTokens?: number;
+            output_tokens?: number;
+            cachedInput?: number;
+            cachedInputTokens?: number;
+            cached_input_tokens?: number;
+            cache_read_input_tokens?: number;
+            tokensCached?: number;
+            tokens_cached?: number;
             premiumRequests?: number;
             totalApiDurationMs?: number;
             sessionDurationMs?: number;
             codeChanges?: { linesAdded: number; linesRemoved: number; filesModified: string[] };
           } | undefined;
           resultSummary = {
-            exitCode: data.exitCode ?? -1,
+            exitCode: typeof eventData?.exitCode === 'number'
+              ? eventData.exitCode
+              : (typeof event.exitCode === 'number' ? event.exitCode : -1),
+            tokenUsage: extractCopilotTokenUsage(usage),
             premiumRequests: usage?.premiumRequests,
             totalApiDurationMs: usage?.totalApiDurationMs,
             sessionDurationMs: usage?.sessionDurationMs,
@@ -163,7 +250,7 @@ export function buildBackendRuntimeConfig(config: MigrationConfig): BackendRunti
   return {
     agent: {
       backend: backendName,
-      model: config.agentBackend.model,
+      model: config.models?.default ?? config.agentBackend.model,
       timeout: config.agentBackend.timeout,
       copilot: {
         cliCommand: backendName === 'copilot' ? config.agentBackend.cliCommand : undefined,
@@ -228,7 +315,11 @@ function toAamfResult(
     if (typeof fwResult.tokenUsage === 'number') {
       tokenUsage = { input: fwResult.tokenUsage, output: 0 };
     } else {
-      tokenUsage = { input: fwResult.tokenUsage.input, output: fwResult.tokenUsage.output };
+      tokenUsage = {
+        input: fwResult.tokenUsage.input,
+        output: fwResult.tokenUsage.output,
+        ...(fwResult.tokenUsage.cachedInput != null ? { cachedInput: fwResult.tokenUsage.cachedInput } : {}),
+      };
     }
   }
 
@@ -256,18 +347,19 @@ function toAamfResult(
 function finaliseResult(
   agentResult: AgentResult,
   stdout: string,
+  stderr: string,
+  runtime: MigrationConfig['agentBackend']['runtime'],
   logger: Logger,
 ): AgentResult {
   const schema = getOutputSchema(agentResult.agent);
   const parseResult = parseAamfOutput(stdout, schema);
   if (parseResult.parsed) {
-    const parsedData = parseResult.data as Record<string, unknown> & {
-      tokenUsage?: { input: number; output: number; cachedInput?: number };
-    };
+    const parsedData = parseResult.data as Record<string, unknown>;
     agentResult.extensions.structuredOutput = parsedData;
     agentResult.extensions.outputParsed = true;
-    if (parsedData.tokenUsage) {
-      agentResult.tokenUsage = parsedData.tokenUsage;
+    const normalizedTokenUsage = normalizeStructuredTokenUsage(parsedData.tokenUsage);
+    if (normalizedTokenUsage) {
+      agentResult.tokenUsage = normalizedTokenUsage;
     }
   } else if (parseResult.error === MISSING_BLOCK_ERROR) {
     logger.warn(`Agent ${agentResult.agent} did not emit an aamf-json block`);
@@ -279,7 +371,20 @@ function finaliseResult(
     agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
   }
 
-  if (!agentResult.tokenUsage) {
+  if (!hasMeaningfulTokenUsage(agentResult.tokenUsage)) {
+    const parsedTokenUsage = parseTokenUsage(`${stdout}\n${stderr}`, getTokenUsageRuntime(runtime));
+    if (parsedTokenUsage) {
+      agentResult.tokenUsage = {
+        input: parsedTokenUsage.input,
+        output: parsedTokenUsage.output,
+        ...(parsedTokenUsage.cachedInput != null ? { cachedInput: parsedTokenUsage.cachedInput } : {}),
+      };
+      if (parsedTokenUsage.premiumRequests != null) {
+        agentResult.extensions.premiumRequests = parsedTokenUsage.premiumRequests;
+      }
+      return agentResult;
+    }
+
     const estimatedTotal = TokenTracker.estimateTokens(stdout);
     logger.warn(
       `Token usage unavailable for ${agentResult.agent}; falling back to prompt-length estimate`,
@@ -394,6 +499,9 @@ export class AgentLauncher {
         resultSummary: parsed.resultSummary,
         errorCount: parsed.errorEvents.length,
       };
+      if (!hasMeaningfulTokenUsage(agentResult.tokenUsage) && parsed.resultSummary?.tokenUsage) {
+        agentResult.tokenUsage = parsed.resultSummary.tokenUsage;
+      }
       // Extract premiumRequests from copilot result summary
       if (parsed.resultSummary?.premiumRequests != null) {
         agentResult.extensions.premiumRequests = parsed.resultSummary.premiumRequests;
@@ -401,6 +509,6 @@ export class AgentLauncher {
     }
 
     // Parse aamf-json structured output and fill in token usage fallback
-    return finaliseResult(agentResult, stdoutForParsing, invLogger);
+    return finaliseResult(agentResult, stdoutForParsing, fwResult.stderr, this.config.agentBackend.runtime, invLogger);
   }
 }
