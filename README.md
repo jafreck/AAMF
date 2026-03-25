@@ -50,92 +50,16 @@ Cadre is the orchestration framework that coordinates migration execution. In AA
 ```mermaid
 flowchart LR
      classDef phase fill:#E8F1FF,stroke:#2C5BFF,stroke-width:2px,color:#0F172A;
-     classDef gate fill:#FFF4D6,stroke:#D97706,stroke-width:2px,color:#7C2D12;
-     classDef task fill:#E8FFF4,stroke:#059669,stroke-width:1.5px,color:#064E3B;
-     classDef barrier fill:#FDE7EF,stroke:#DB2777,stroke-width:2px,color:#831843;
-     classDef meta fill:#F4F4F5,stroke:#71717A,stroke-width:1.5px,color:#27272A;
-     classDef outcome fill:#EEFCE7,stroke:#65A30D,stroke-width:2px,color:#365314;
+     classDef optional fill:#F5F3FF,stroke:#7C3AED,stroke-width:2px,color:#4C1D95;
 
-     config["migration.config.json"]:::meta --> runtime["MigrationRuntime"]:::phase
-     runtime --> runner["Cadre FlowRunner"]:::phase
-     runner --> phase0["Phase 0<br/>Lore KB indexing"]:::phase
-     phase0 --> phase1["Phase 1<br/>Deterministic task graph<br/>SCC contraction -> greedy merge -> bounded tasks"]:::phase
-     phase1 --> phase2["Phase 2<br/>Knowledge Builder"]:::phase
-     phase2 --> gate2{"Budget gate"}:::gate
-     gate2 --> phase3["Phase 3<br/>Planning + adjudication"]:::phase
-     phase3 --> gate3{"Budget gate"}:::gate
-     gate3 --> phase4Entry["Phase 4<br/>Iterative migration"]:::phase
-
-     subgraph phase4Graph["Illustrative Phase 4 run"]
-          direction TB
-          phase4Mode["Wave-barrier mode<br/>Topological waves + non-overlapping target-file batches"]:::meta
-
-          subgraph wave0["Wave 0"]
-               direction LR
-               t00["task-0-0<br/>Core types"]:::task
-               t01["task-1-0<br/>Tokenizer"]:::task
-               t02["task-65-0<br/>AST reader"]:::task
-          end
-
-          b0["Wave 0 barrier<br/>build + test + recovery loop"]:::barrier
-
-          subgraph wave1["Wave 1"]
-               direction LR
-               t10["task-104-0<br/>Parser API"]:::task
-               t11["task-208-0<br/>Schema mapper"]:::task
-               t12["task-233-0<br/>Migration planner"]:::task
-          end
-
-          b1["Wave 1 barrier<br/>build + test + recovery loop"]:::barrier
-
-          subgraph wave2["Wave 2"]
-               direction LR
-               t20["task-377-0<br/>Command surface"]:::task
-               t21["task-464-0<br/>State persistence"]:::task
-               t22["task-522-0<br/>Integration tests"]:::task
-          end
-
-          buildable["Validated checkpoint:<br/>repository still builds before next wave"]:::outcome
-
-          phase4Mode --> t00
-          phase4Mode --> t01
-          phase4Mode --> t02
-
-          t00 -. dependency .-> t10
-          t01 -. dependency .-> t10
-          t01 -. dependency .-> t11
-          t02 -. dependency .-> t12
-          t10 -. dependency .-> t20
-          t11 -. dependency .-> t21
-          t12 -. dependency .-> t21
-          t10 -. dependency .-> t22
-          t12 -. dependency .-> t22
-
-          t00 --> b0
-          t01 --> b0
-          t02 --> b0
-          b0 --> t10
-          b0 --> t11
-          b0 --> t12
-          t10 --> b1
-          t11 --> b1
-          t12 --> b1
-          b1 --> t20
-          b1 --> t21
-          b1 --> t22
-          t20 --> buildable
-          t21 --> buildable
-          t22 --> buildable
-     end
-
-     phase4Entry --> phase4Mode
-     buildable --> gate4{"Budget gate"}:::gate
-     gate4 --> phase5["Phase 5<br/>Final parity loop"]:::phase
+     phase0["Phase 0<br/>Lore indexing"]:::phase --> phase1["Phase 1<br/>Task graph derivation"]:::phase
+     phase1 --> phase2["Phase 2<br/>Knowledge base"]:::phase
+     phase2 --> phase3["Phase 3<br/>Planning + adjudication"]:::phase
+     phase3 --> phase4["Phase 4<br/>Iterative migration<br/>ordered tasks or waves"]:::phase
+     phase4 --> phase5["Phase 5<br/>Final parity"]:::phase
      phase5 --> phase6["Phase 6<br/>E2E + documentation"]:::phase
-     phase6 --> idiomatic{"Idiomatic refactor enabled?"}:::gate
-     idiomatic -->|yes| phase7["Phase 7<br/>Idiomatic review/refactor loop"]:::phase
-     idiomatic -->|no| phase8["Phase 8<br/>Completion + reports"]:::phase
-     phase7 --> phase8
+     phase6 --> phase7["Phase 7<br/>Idiomatic refactor<br/>optional"]:::optional
+     phase7 --> phase8["Phase 8<br/>Completion + reports"]:::phase
 ```
 
 ### Cadre-Orchestrated Runtime
