@@ -41,10 +41,12 @@
       }
     }
   },
+  "models": {
+    "default": "claude-sonnet-4.6"
+  },
   "agentBackend": {
     "runtime": "copilot",
     "cliCommand": "copilot",
-    "model": "claude-sonnet-4.6",
     "agentDir": "../../../../.github/agents",
     "timeout": 1800000
   }

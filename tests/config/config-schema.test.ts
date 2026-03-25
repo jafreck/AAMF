@@ -30,6 +30,8 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.git?.commitByAgent).toBe(true);
     expect(result.options.git?.commitPerTask).toBe(true);
     expect(result.options.git?.allowEmptyTaskCommits).toBe(true);
+    expect(result.models.default).toBeUndefined();
+    expect(result.models.failureRecovery).toBeUndefined();
     expect(result.agentBackend.cliCommand).toBe('copilot');
     expect(result.agentBackend.timeout).toBe(300000);
     expect(result.agentBackend.failureRecoveryModel).toBeUndefined();
@@ -111,7 +113,8 @@ describe('MigrationConfigSchema', () => {
       source: { ...validConfig.source, entryPoints: ['main.py'], excludePatterns: ['venv'] },
       target: { ...validConfig.target, framework: 'express' },
       options: { maxParallelAgents: 5, tokenBudget: 1000000 },
-      agentBackend: { runtime: 'copilot', cliCommand: 'copilot', model: 'gpt-4o', agentDir: '.github/agents', timeout: 300000 },
+      models: { default: 'gpt-4o' },
+      agentBackend: { runtime: 'copilot', cliCommand: 'copilot', agentDir: '.github/agents', timeout: 300000 },
     };
     const result = MigrationConfigSchema.safeParse(full);
     expect(result.success).toBe(true);
@@ -137,15 +140,15 @@ describe('MigrationConfigSchema', () => {
   });
 
   describe('Additional Validation', () => {
-    it('should accept agentBackend.failureRecoveryModel override', () => {
+    it('should accept models.failureRecovery override', () => {
       const result = MigrationConfigSchema.parse({
         ...validConfig,
-        agentBackend: { failureRecoveryModel: 'gpt-4.1' },
+        models: { failureRecovery: 'gpt-4.1' },
       });
-      expect(result.agentBackend.failureRecoveryModel).toBe('gpt-4.1');
+      expect(result.models.failureRecovery).toBe('gpt-4.1');
     });
 
-    it('should accept agentBackend.failureRecoveryModel override for claude-code', () => {
+    it('should continue accepting agentBackend.failureRecoveryModel as a compatibility alias', () => {
       const result = MigrationConfigSchema.parse({
         ...validConfig,
         agentBackend: { runtime: 'claude-code', failureRecoveryModel: 'claude-sonnet-4.5' },
@@ -356,6 +359,7 @@ describe('MigrationConfigSchema', () => {
       expect(result.agentBackend.cliCommand).toBe('copilot');
       expect(result.agentBackend.agentDir).toBe('.github/agents');
       expect(result.agentBackend.timeout).toBe(300000);
+      expect(result.models.default).toBeUndefined();
       expect(result.agentBackend.model).toBeUndefined();
       expect(result.agentBackend.phaseTimeouts).toBeUndefined();
     });
@@ -374,16 +378,16 @@ describe('MigrationConfigSchema', () => {
     it('should accept explicit agentBackend config', () => {
       const result = MigrationConfigSchema.parse({
         ...validConfig,
+        models: { default: 'claude-sonnet-4-5' },
         agentBackend: {
           runtime: 'claude-code',
           cliCommand: 'claude',
-          model: 'claude-sonnet-4-5',
           agentDir: '.claude/agents',
           timeout: 600000,
           phaseTimeouts: { 4: 120000 },
         },
       });
-      expect(result.agentBackend.model).toBe('claude-sonnet-4-5');
+      expect(result.models.default).toBe('claude-sonnet-4-5');
       expect(result.agentBackend.timeout).toBe(600000);
     });
 
@@ -412,56 +416,65 @@ describe('MigrationConfigSchema', () => {
       expect(result.success).toBe(false);
     });
 
-    describe('modelRouting option', () => {
-      it('should leave modelRouting undefined when omitted', () => {
+    describe('models routing', () => {
+      it('should leave models.routing undefined when omitted', () => {
         const result = MigrationConfigSchema.parse(validConfig);
-        expect(result.options.modelRouting).toBeUndefined();
+        expect(result.models.routing).toBeUndefined();
       });
 
-      it('should default enabled to false when modelRouting is {}', () => {
+      it('should default enabled to false when models.routing is {}', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
-          options: { modelRouting: {} },
+          models: { routing: {} },
         });
-        expect(result.options.modelRouting?.enabled).toBe(false);
+        expect(result.models.routing?.enabled).toBe(false);
       });
 
       it('should default thresholds and caps correctly', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
-          options: { modelRouting: {} },
+          models: { routing: {} },
         });
-        const mr = result.options.modelRouting;
+        const mr = result.models.routing;
         expect(mr?.heavyThreshold).toBe(40);
         expect(mr?.criticalThreshold).toBe(70);
-        expect(mr?.maxCriticalTasks).toBe(0);
+        expect(mr?.maxEscalatedTasks).toBe(0);
         expect(mr?.maxEscalationCostUsd).toBe(0);
         expect(mr?.escalateOnRetryAttempt).toBe(2);
       });
 
-      it('should accept modelRouting with enabled: true and heavyModel', () => {
+      it('should accept models.routing with enabled: true and heavy', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          models: { routing: { enabled: true, heavy: 'claude-opus-4.5' } },
+        });
+        expect(result.models.routing?.enabled).toBe(true);
+        expect(result.models.routing?.heavy).toBe('claude-opus-4.5');
+      });
+
+      it('should accept criticalAgents as an array of strings', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          models: { routing: { criticalAgents: ['code-migrator', 'parity-verifier'] } },
+        });
+        expect(result.models.routing?.criticalAgents).toEqual(['code-migrator', 'parity-verifier']);
+      });
+
+      it('should accept criticalTaskPatterns as an array of strings', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          models: { routing: { criticalTaskPatterns: ['task-00*'] } },
+        });
+        expect(result.models.routing?.criticalTaskPatterns).toEqual(['task-00*']);
+      });
+
+      it('should continue accepting options.modelRouting as a compatibility alias', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
           options: { modelRouting: { enabled: true, heavyModel: 'claude-opus-4.5' } },
         });
         expect(result.options.modelRouting?.enabled).toBe(true);
         expect(result.options.modelRouting?.heavyModel).toBe('claude-opus-4.5');
-      });
-
-      it('should accept criticalAgents as an array of strings', () => {
-        const result = MigrationConfigSchema.parse({
-          ...validConfig,
-          options: { modelRouting: { criticalAgents: ['code-migrator', 'parity-verifier'] } },
-        });
-        expect(result.options.modelRouting?.criticalAgents).toEqual(['code-migrator', 'parity-verifier']);
-      });
-
-      it('should accept criticalTaskPatterns as an array of strings', () => {
-        const result = MigrationConfigSchema.parse({
-          ...validConfig,
-          options: { modelRouting: { criticalTaskPatterns: ['task-00*'] } },
-        });
-        expect(result.options.modelRouting?.criticalTaskPatterns).toEqual(['task-00*']);
       });
 
     });

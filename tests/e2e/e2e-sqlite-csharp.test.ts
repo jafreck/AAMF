@@ -77,6 +77,13 @@ async function ensureSqliteSource(): Promise<void> {
 async function writeMigrationConfig(): Promise<void> {
   const config = {
     projectName: 'sqlite-to-csharp-net9',
+    guidance: [
+      'Preserve externally observable behavior, but do not do a line-by-line transliteration of C into C#.',
+      'Prefer idiomatic .NET 9 and C# patterns over manual C-style memory and control-flow patterns when behavior can remain equivalent.',
+      'Use .NET standard library abstractions such as Stream, Span<T>, Memory<T>, string, collections, IDisposable, and SafeHandle where appropriate.',
+      'Avoid exposing pointer-oriented or macro-shaped designs in the target unless they are required for parity at the public boundary.',
+      'Choose C# naming, file layout, and project structure that are idiomatic for a .NET codebase rather than preserving C source layout mechanically.',
+    ],
     source: {
       path: sourceDir,
       language: 'c',
@@ -89,21 +96,42 @@ async function writeMigrationConfig(): Promise<void> {
       outputPath: outputDir,
       buildCommand: 'dotnet build',
       testCommand: 'dotnet test',
+      formatCommand: 'dotnet format',
+      lintCommand: 'dotnet format --verify-no-changes',
     },
     options: {
+      qualityPolicy: 'strict',
       maxParallelAgents: 3,
       maxRetriesPerTask: 2,
       maxLinesPerTask: 500,
+      executionMode: 'wave-barrier',
+      waveControl: {
+        maxConvergenceIterations: 3,
+      },
       tokenBudget: 500000,
       dryRun: false,
       resume: false,
+      idiomaticRefactor: {
+        enabled: true,
+        maxIterations: 3,
+      },
+    },
+    models: {
+      default: 'claude-sonnet-4.6',
+      routing: {
+        enabled: true,
+        heavy: 'claude-opus-4.6',
+        critical: 'claude-opus-4.6',
+        heavyThreshold: 30,
+        criticalThreshold: 55,
+      },
     },
     agentBackend: {
       runtime: 'copilot',
       cliCommand: 'copilot',
-      model: 'claude-sonnet-4.6',
-      agentDir: '../../../../.github/agents',
-      timeout: 300_000,
+      effort: 'high',
+      agentDir: '../../../.github/agents',
+      timeout: 1_800_000,
     },
   };
 

@@ -134,7 +134,8 @@ describe('MigrationRuntime', () => {
       // Inject a minimal config so formatDuration and CostEstimator work
       (runtime as any).config = {
         projectName: 'test-project',
-        agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4' },
+        models: { default: 'claude-sonnet-4' },
+        agentBackend: { runtime: 'copilot' },
       };
       consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     });
@@ -507,12 +508,13 @@ describe('MigrationRuntime', () => {
 
       runtime.config = {
         projectName: 'test-project',
+        models: { default: 'claude-sonnet-4' },
         options: {
           resume: false, dryRun: false,
           maxParallelAgents: 1, buildConcurrency: 1,
           git: { enabled: false },
         },
-        agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000 },
+        agentBackend: { runtime: 'copilot', timeout: 300_000 },
         source: { path: '/tmp/source', language: 'python' },
         target: { language: 'typescript', outputPath: '/tmp/target' },
         environment: {},
@@ -587,12 +589,13 @@ describe('MigrationRuntime', () => {
 
       runtime.config = {
         projectName: 'test-project',
+        models: { default: 'claude-sonnet-4' },
         options: {
           resume: false, dryRun: false,
           maxParallelAgents: 1, buildConcurrency: 1,
           git: { enabled: false },
         },
-        agentBackend: { runtime: 'copilot', model: 'claude-sonnet-4', timeout: 300_000 },
+        agentBackend: { runtime: 'copilot', timeout: 300_000 },
         source: { path: '/tmp/source', language: 'python' },
         target: { language: 'typescript', outputPath: '/tmp/target' },
         environment: {},

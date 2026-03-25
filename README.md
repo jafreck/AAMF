@@ -230,15 +230,15 @@ In both modes, the runtime:
 
 #### Model Routing
 
-When `options.modelRouting.enabled` is set, Phase 4 automatically escalates tasks to heavier models based on complexity score and retry behavior:
+When `models.routing.enabled` is set, Phase 4 automatically escalates tasks to heavier models based on complexity score and retry behavior:
 
 | Tier | Trigger | Model Config Key |
 |------|---------|------------------|
-| `normal` | Default | `copilot.model` (or `claudeCode.model`) |
-| `heavy` | Complexity score ≥ `heavyThreshold` | `modelRouting.heavyModel` |
-| `critical` | Complexity ≥ `criticalThreshold`, or agent in `criticalAgents`, or retry attempt ≥ `escalateOnRetryAttempt` | `modelRouting.criticalModel` |
+| `normal` | Default | `models.default` |
+| `heavy` | Complexity score ≥ `heavyThreshold` | `models.routing.heavy` |
+| `critical` | Complexity ≥ `criticalThreshold`, or agent in `criticalAgents`, or retry attempt ≥ `escalateOnRetryAttempt` | `models.routing.critical` |
 
-Escalation cost is tracked and capped by `modelRouting.maxEscalationCostUsd`.
+Escalation cost is tracked and capped by `models.routing.maxEscalationCostUsd`.
 
 ### Phase 5 — Final Parity Verification
 

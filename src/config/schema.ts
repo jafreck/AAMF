@@ -32,6 +32,45 @@ export const MigrationConfigSchema = z.object({
     formatCommand: z.string().optional(),
     lintCommand: z.string().optional(),
   }),
+  /**
+   * Model-selection policy shared across all runtimes.
+   *
+   * This is the single authoritative location for baseline model choice,
+   * difficulty-based escalation, and failure-recovery model overrides.
+   */
+  models: z.object({
+    /** Baseline model used for all invocations unless a policy override applies. */
+    default: z.string().optional(),
+    /** Model used for failure-recovery retries and parity-failure-resolver. */
+    failureRecovery: z.string().optional(),
+    /**
+     * Difficulty-based per-invocation routing policy.
+     * When enabled, the orchestrator may override `models.default` for
+     * heavy or critical tasks and agents.
+     */
+    routing: z.object({
+      /** Enable automatic model tier escalation. */
+      enabled: z.boolean().default(false),
+      /** Model used for heavy-tier tasks (score >= heavyThreshold). */
+      heavy: z.string().optional(),
+      /** Model used for critical-tier tasks (score >= criticalThreshold). */
+      critical: z.string().optional(),
+      /** Score threshold (0–100) at which a task is promoted to heavy tier. */
+      heavyThreshold: z.number().int().min(0).max(100).default(40),
+      /** Score threshold (0–100) at which a task is promoted to critical tier. */
+      criticalThreshold: z.number().int().min(0).max(100).default(70),
+      /** Agent names that always route to the critical model. */
+      criticalAgents: z.array(z.string()).optional(),
+      /** Task ID glob patterns (`*` and `?`) that always route to the critical model. */
+      criticalTaskPatterns: z.array(z.string()).optional(),
+      /** Max tasks escalated beyond the default model per run. 0 = unlimited. */
+      maxEscalatedTasks: z.number().int().min(0).default(0),
+      /** Max incremental cost (USD) for escalated invocations. 0 = unlimited. */
+      maxEscalationCostUsd: z.number().min(0).default(0),
+      /** Retry attempt number at which to escalate model tier. */
+      escalateOnRetryAttempt: z.number().int().min(1).default(2),
+    }).optional(),
+  }).default({}),
   options: z.object({
     maxParallelAgents: z.number().int().min(1).default(3),
     maxRetriesPerTask: z.number().int().min(1).max(5).default(3),
@@ -167,9 +206,8 @@ export const MigrationConfigSchema = z.object({
      */
     keepArtifacts: z.boolean().default(false),
     /**
-     * Model routing configuration for intelligent model selection.
-     * When enabled, the orchestrator selects models based on task complexity,
-     * file count, dependencies, and retry history.
+     * Deprecated compatibility alias for `models.routing`.
+     * Prefer the root-level `models` block for all model-selection policy.
      */
     modelRouting: z.object({
       /** Enable model routing. When false, all tasks use the default model. */
@@ -257,9 +295,9 @@ export const MigrationConfigSchema = z.object({
     runtime: z.enum(['copilot', 'claude-code']).default('copilot'),
     /** CLI command to invoke. Defaults to `'copilot'` or `'claude'` based on `runtime`. */
     cliCommand: z.string().optional(),
-    /** Model identifier to pass to the CLI. */
+    /** Deprecated compatibility alias for `models.default`. */
     model: z.string().optional(),
-    /** Model to use for failure-recovery retries. */
+    /** Deprecated compatibility alias for `models.failureRecovery`. */
     failureRecoveryModel: z.string().optional(),
     /**
      * Reasoning effort level for the Copilot CLI (`--effort` flag).
