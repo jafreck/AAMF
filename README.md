@@ -10,23 +10,7 @@
      <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
-AAMF is a legacy code base deleter: translate any code base of any size into any other language. A fleet of purpose built AI agents iterative migrate based on a deterministically cItut uses `@cadre-dev/framework` as the orchestration layer that coordinates the migration flow while AAMF supplies the migration-specific machinery: code indexing, task-graph construction, agent launching, checkpointing, budgeting, observability, and failure adjudication.
-
-
-Typical use cases include porting a 100k+ line Python monolith to TypeScript, a COBOL system to Go, or a C library to Rust.
-
-The runtime does not perform reasoning itself. Instead, it declares the migration as a deterministic multi-phase flow, and then launches a fleetpurpose-built agents out of process, feeds them tightly scoped context, collects structured output, and decides what runs next.
-## Repository Layout
-
-- `src/core/`: runtime bootstrapping, agent launching, checkpointing, scaffold generation, and process coordination.
-- `src/flow/`: the Cadre flow definition, checkpoint adapters, and phase step implementations.
-- `src/agents/`: agent registry, output schemas, prompt generation, and context construction.
-- `src/execution/`: dependency-aware task scheduling, retry handling, and parallel execution helpers.
-- `src/observability/` and `src/budget/`: token tracking, cost estimation, metrics, and reporting.
-- `tests/`: unit, integration, and end-to-end coverage mirroring the runtime structure.
-- `agents/templates/`: Markdown templates for each agent role.
-- `docs/`: configuration and supporting documentation.
-
+AAMF is a legacy code base deleter: translate any code base of any size into any other language. A fleet of purpose built AI agents iterative migrate based on a deterministically computed DAG of tasks that decompose a code base of any size down to a small enough slice of work for a single agent to perform and verify.
 
 ## Projects Ported Using AAMF
 
@@ -40,11 +24,8 @@ The runtime does not perform reasoning itself. Instead, it declares the migratio
 
 AAMF treats migration as a deterministic pipeline of **9 phases** (0-8). The flow itself is defined with Cadre's flow DSL, and each phase either runs deterministic runtime logic or launches purpose-built agents defined as `.agent.md` prompt files.
 
-Cadre is the orchestration framework that coordinates migration execution. In AAMF, it is responsible for:
+AAMF uses Lore for code intelligence to decompose the source code base and derive a dependency graph of tasks, ordered in a manner that enables progressive migration, determinsitic synchronization points (including builds, tests and lints mid-migration). For more information on AAMF's usage of Lore, see: [Lore](#from-lore-graph-to-executable-tasks). With the iterative task graph constructed, AAMF uses the [CADRE agent orchestration framework](#cadre-orchestrated-runtime) to coordinate a fleet of agents which progressively perform migration. Migrations of large code bases
 
-- expressing phase ordering, gates, loops, parallel branches, and nested subflows;
-- driving resumable execution through checkpoint adapters that persist flow state into AAMF's checkpoint format; and
-- enforcing concurrency and execution boundaries while AAMF provides the migration-specific step implementations.
 
 
 ```mermaid
@@ -129,6 +110,11 @@ flowchart LR
 
 ### Cadre-Orchestrated Runtime
 
+AAMF uses the CADRE framework to:
+- express phase ordering, gates, loops, parallel branches, and nested subflows;
+- drive resumable execution through checkpoint adapters that persist flow state into AAMF's checkpoint format; and
+- enforce concurrency and execution boundaries while AAMF provides the migration-specific step implementations.
+
 At runtime, `MigrationRuntime` constructs a `MigrationFlowContext`, wires AAMF's checkpoint manager into Cadre via `AamfFlowCheckpointAdapter`, and executes the top-level `migrationFlow` with `FlowRunner`.
 
 That flow uses Cadre primitives to model the migration lifecycle:
@@ -153,7 +139,7 @@ Phase 0 uses `@jafreck/lore` to index the source tree into a SQLite knowledge ba
 
 That gives AAMF bounded tasks with intentionally limited scope. Each task is small enough to fit inside an agent context budget, but large enough to preserve the dependency structure needed for a coherent migration.
 
-Determinism matters here. Because the graph is derived from Lore rather than ad hoc planner output, the same indexed codebase produces the same dependency-ordered task inventory, which makes retries, resume, and partial reruns predictable.
+Determinism matters here. Because the graph is derived from Lore rather than ad-hoc planner output, the same indexed codebase produces the same dependency-ordered task inventory, which makes retries, resume, and partial reruns predictable.
 
 ### Progressive Ordering And Buildable Checkpoints
 
