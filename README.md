@@ -24,9 +24,10 @@ AAMF is a legacy code base deleter: translate any code base of any size into any
 
 AAMF treats migration as a deterministic pipeline of **9 phases** (0-8). The flow itself is defined with Cadre's flow DSL, and each phase either runs deterministic runtime logic or launches purpose-built agents defined as `.agent.md` prompt files.
 
-AAMF uses Lore for code intelligence to decompose the source code base and derive a dependency graph of tasks, ordered in a manner that enables progressive migration, determinsitic synchronization points (including builds, tests and lints mid-migration). For more information on AAMF's usage of Lore, see: [Lore](#from-lore-graph-to-executable-tasks). With the iterative task graph constructed, AAMF uses the [CADRE agent orchestration framework](#cadre-orchestrated-runtime) to coordinate a fleet of agents which progressively perform migration. Migrations of large code bases
+AAMF uses [Lore](#from-lore-graph-to-executable-tasks) to index the source code base entirely ahead of migration, construct a full call graph, and derive a dependency graph of tasks that enables progressive migration, determinsitic synchronization points (including builds, tests and lints mid migration). With the iterative task graph constructed, AAMF uses the [CADRE agent orchestration framework](#cadre-orchestrated-runtime) to coordinate a fleet of agents which progressively perform migration, verify parity, fix errors to converge on correctness, and provide an auditable migraiton history with checkpointing so that migrations can be resumed in the event of failure.
 
 
+The following diagram visualizes AAMF's 9-stage pipeline and iterative migration:
 
 ```mermaid
 flowchart LR
