@@ -249,7 +249,7 @@ export interface ExecutionStrategy {
 
   /** Wave-barrier settings (only meaningful when `executionMode === 'wave-barrier'`). */
   waveControl: {
-    /** Maximum build/test convergence iterations per wave before giving up. */
+    /** Maximum build/test convergence iterations per wave before giving up. 0 = unlimited. */
     maxConvergenceIterations: number;
   };
 

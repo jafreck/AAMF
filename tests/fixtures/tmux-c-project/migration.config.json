@@ -1,0 +1,86 @@
+{
+  "projectName": "tmux-to-rust",
+  "guidance": [
+    "Preserve tmux 3.6a compatibility across every platform supported by the C implementation, including terminal behavior, command/config semantics, key bindings, formats, control mode, copy-mode, mouse behavior, and client/server/session/window/pane behavior; any deviation must be explicit and documented.",
+    "Deliver a full pure native Rust port. Do NOT use FFI, bindgen, or link against the tmux C implementation. Do not use rust crates of a tmux port.",
+    "Preserve event-loop ordering, command queue semantics, protocol and error behavior, and OS-facing behavior for PTYs, signals, termios/ioctl, jobs, and socket IPC; do not introduce concurrent mutation of core tmux state.",
+    "Prefer idiomatic Rust ownership, enums, Result-based error handling, and modular crate boundaries over direct transliterations of tmux globals, macros, linked lists, and manual memory management.",
+    "Retain performance-critical terminal parsing, UTF-8 and cell-width behavior, screen diffing, and layout logic; use unsafe Rust only when clearly justified and encapsulated, and require differential parity tests against tmux 3.6a."
+  ],
+  "source": {
+    "path": "./tmux-src/tmux-3.6a",
+    "language": "c",
+    "entryPoints": [
+      "tmux.c",
+      "server-client.c",
+      "cmd-queue.c",
+      "tty.c",
+      "window.c"
+    ],
+    "excludePatterns": [
+      ".git",
+      ".github",
+      "*.o",
+      "*.lo",
+      "*.la",
+      "*.a",
+      "*.so",
+      "*.dylib",
+      "*.pc",
+      "Makefile*",
+      "config.*",
+      "configure*",
+      "aclocal.m4",
+      "autom4te.cache/**",
+      "compile",
+      "depcomp",
+      "install-sh",
+      "missing",
+      "ltmain.sh",
+      "*.md",
+      "*.1",
+      "example_tmux.conf"
+    ]
+  },
+  "target": {
+    "language": "rust",
+    "framework": "stable",
+    "outputPath": "./tmp/tmux-rust-output",
+    "buildCommand": "cargo build",
+    "testCommand": "cargo test"
+  },
+  "options": {
+    "qualityPolicy": "strict",
+    "maxParallelAgents": 12,
+    "maxRetriesPerTask": 5,
+    "maxLinesPerTask": 2000,
+    "executionMode": "wave-barrier",
+    "waveControl": {
+      "maxConvergenceIterations": 0
+    },
+    "tokenBudget": 50000000,
+    "dryRun": false,
+    "resume": true,
+    "idiomaticRefactor": {
+      "enabled": true,
+      "maxIterations": 0
+    },
+    "kbIndex": {
+      "enabled": true,
+      "embeddings": {
+        "enabled": false
+      }
+    }
+  },
+  "models": {
+    "default": "gpt-5.4",
+    "failureRecovery": "gpt-5.4"
+  },
+  "agentBackend": {
+    "runtime": "copilot",
+    "cliCommand": "copilot",
+    "effort": "xhigh",
+    "agentDir": "../../../.github/agents",
+    "timeout": 3600000
+  }
+}

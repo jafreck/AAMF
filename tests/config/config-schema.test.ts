@@ -330,6 +330,14 @@ describe('MigrationConfigSchema', () => {
         expect(result.options.idiomaticRefactor?.enabled).toBe(true);
         expect(result.options.idiomaticRefactor?.maxIterations).toBe(3);
       });
+
+      it('should accept idiomaticRefactor.maxIterations of 0 (unlimited)', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { idiomaticRefactor: { enabled: true, maxIterations: 0 } },
+        });
+        expect(result.options.idiomaticRefactor?.maxIterations).toBe(0);
+      });
     });
 
     it('should default agentBackend.runtime to copilot', () => {
@@ -408,10 +416,18 @@ describe('MigrationConfigSchema', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should reject waveControl.maxConvergenceIterations less than 1', () => {
+    it('should accept waveControl.maxConvergenceIterations of 0 (unlimited)', () => {
       const result = MigrationConfigSchema.safeParse({
         ...validConfig,
         options: { waveControl: { maxConvergenceIterations: 0 } },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject waveControl.maxConvergenceIterations less than 0', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        options: { waveControl: { maxConvergenceIterations: -1 } },
       });
       expect(result.success).toBe(false);
     });

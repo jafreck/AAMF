@@ -139,7 +139,7 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | `options.buildConcurrency` | `integer (0–10)` | `1` | Max concurrent build/test commands. 0 = uses `maxParallelAgents`. |
 | `options.executionMode` | `'per-task' \| 'wave-barrier'` | `'per-task'` | Phase 4 scheduler mode. |
 | `options.waveControl.waveSize` | `integer (≥1)` | `3` | Max migration tasks per wave in `wave-barrier` mode. |
-| `options.waveControl.maxConvergenceIterations` | `integer (≥1)` | `3` | Max validation/fix iterations per wave before blocking. |
+| `options.waveControl.maxConvergenceIterations` | `integer (≥0)` | `3` | Max validation/fix iterations per wave before blocking. `0` = unlimited. |
 | `options.continueOnBlocked` | `boolean` | `true` | Continue migration when tasks are blocked. |
 | `options.maxBlockedTasks` | `integer (≥0)` | `0` | Max blocked tasks before halting. 0 = unlimited. |
 | `options.qualityPolicy` | `'strict' \| 'balanced' \| 'deferred-strict'` | `'strict'` | Quality gating policy for wave-end validation. |
@@ -188,7 +188,7 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `options.idiomaticRefactor.enabled` | `boolean` | `false` | Enable the optional idiomatic refactor phase. |
-| `options.idiomaticRefactor.maxIterations` | `integer` | `2` | Max review-and-refactor cycles. |
+| `options.idiomaticRefactor.maxIterations` | `integer (≥0)` | `2` | Max review-and-refactor cycles. `0` = unlimited. |
 
 #### Agent Backend
 
@@ -286,7 +286,7 @@ In `wave-barrier` mode, each cycle is:
 
 1. **Migration wave** — run up to `waveControl.waveSize` ready, non-overlapping migration tasks in parallel.
 2. **Validation wave** — after migration settles, run build/test at the barrier (no migration/validation overlap).
-3. **Fix wave (if needed)** — rerun targeted migration tasks for failed validation and repeat validation until convergence or `waveControl.maxConvergenceIterations` is reached.
+3. **Fix wave (if needed)** — rerun targeted migration tasks for failed validation and repeat validation until convergence or `waveControl.maxConvergenceIterations` is reached (`0` = unlimited).
 
 Blocked-task policy (`continueOnBlocked`, `maxBlockedTasks`) is enforced after each wave.
 

@@ -44,6 +44,7 @@ import {
   noIdiomaticIssues,
 } from './steps/idiomatic-refactor.js';
 import { finalizeAndReport } from './steps/completion.js';
+import { resolveLoopMaxIterations } from './iteration-policy.js';
 
 /**
  * Budget gate evaluator — returns true when budget is OK.
@@ -61,6 +62,25 @@ function budgetOk(ctx: { context: MigrationFlowContext }): boolean {
  * the runner reads it (the thunk always runs first per the runner contract).
  */
 const _phase4RunnerOpts: FlowRunnerOptions<MigrationFlowContext> = {};
+
+/**
+ * Shared mutable ref for the Phase 7 loop node.
+ *
+ * As with Phase 4 runner options, the loop bound must be derived from runtime
+ * config even though the flow node is declared statically.
+ */
+const _idiomaticLoopNode = loop<MigrationFlowContext>({
+  id: 'idiomatic-loop',
+  dependsOn: ['idiomatic-loop-configure'],
+  maxIterations: 2,
+  do: [
+    step<MigrationFlowContext>({
+      id: 'idiomatic-iteration',
+      run: runIdiomaticReviewIteration,
+    }),
+  ],
+  until: noIdiomaticIssues,
+});
 
 /**
  * The AAMF migration pipeline expressed as a declarative flow.
@@ -182,17 +202,19 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       dependsOn: ['finalization'],
       when: (ctx) => ctx.context.config.options.idiomaticRefactor?.enabled === true,
       then: [
-        loop<MigrationFlowContext>({
-          id: 'idiomatic-loop',
-          maxIterations: 3,
-          do: [
-            step<MigrationFlowContext>({
-              id: 'idiomatic-iteration',
-              run: runIdiomaticReviewIteration,
-            }),
-          ],
-          until: noIdiomaticIssues,
+        step<MigrationFlowContext>({
+          id: 'idiomatic-loop-configure',
+          run: async (ctx) => {
+            _idiomaticLoopNode.maxIterations = resolveLoopMaxIterations(
+              ctx.context.config.options.idiomaticRefactor?.maxIterations,
+              2,
+            );
+            return {
+              maxIterations: ctx.context.config.options.idiomaticRefactor?.maxIterations ?? 2,
+            };
+          },
         }),
+        _idiomaticLoopNode,
       ],
     }),
 
@@ -226,6 +248,7 @@ export function nodeIdToPhase(nodeId: string): number {
     'e2e-suite-writers': 6,
     'documentation-writer': 6,
     'idiomatic-refactor-gate': 7,
+    'idiomatic-loop-configure': 7,
     'idiomatic-loop': 7,
     'idiomatic-iteration': 7,
     'completion': 8,

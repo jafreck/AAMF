@@ -105,7 +105,8 @@ export const MigrationConfigSchema = z.object({
      * These values are ignored in `per-task` mode.
      */
     waveControl: z.object({
-      maxConvergenceIterations: z.number().int().min(1).default(3),
+      /** Maximum validation/fix iterations per wave. 0 = unlimited. */
+      maxConvergenceIterations: z.number().int().min(0).default(3),
     }).default({
       maxConvergenceIterations: 3,
     }),
@@ -138,7 +139,8 @@ export const MigrationConfigSchema = z.object({
      */
     idiomaticRefactor: z.object({
       enabled: z.boolean().default(false),
-      maxIterations: z.number().int().min(1).default(2),
+      /** Maximum review-and-refactor cycles. 0 = unlimited. */
+      maxIterations: z.number().int().min(0).default(2),
     }).optional(),
     /**
      * Options for KB indexing (Phase 0).
