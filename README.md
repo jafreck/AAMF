@@ -12,10 +12,10 @@
 
 AAMF is a TypeScript runtime for migrating extremely large legacy codebases between languages and frameworks. It uses `@cadre-dev/framework` as the orchestration layer that coordinates the migration flow while AAMF supplies the migration-specific machinery: code indexing, task-graph construction, agent launching, checkpointing, budgeting, observability, and failure adjudication.
 
-The runtime does not perform reasoning itself. Instead, it declares the migration as a deterministic multi-phase flow, launches purpose-built agents out of process, feeds them tightly scoped context, collects structured output, and decides what runs next.
 
 Typical use cases include porting a 100k+ line Python monolith to TypeScript, a COBOL system to Go, or a C library to Rust.
 
+The runtime does not perform reasoning itself. Instead, it declares the migration as a deterministic multi-phase flow, and then launches a fleetpurpose-built agents out of process, feeds them tightly scoped context, collects structured output, and decides what runs next.
 ## Repository Layout
 
 - `src/core/`: runtime bootstrapping, agent launching, checkpointing, scaffold generation, and process coordination.
@@ -50,22 +50,28 @@ Cadre is the orchestration framework that coordinates migration execution. In AA
 ```mermaid
 flowchart TD
      config["migration.config.json"] --> runtime["MigrationRuntime"]
-     runtime --> runner["FlowRunner - @cadre-dev/framework"]
+     runtime --> runner["Cadre FlowRunner"]
 
-     runner --> contextBuilder["ContextBuilder - writes JSON context"]
-     runner --> agentLauncher["AgentLauncher - spawns agent CLIs"]
-     runner --> taskGraph["TaskGraphBuilder - Lore SCC + greedy merge"]
+     runner --> phase0["Phase 0: KB Indexing\nLore builds kb.db"]
+     phase0 --> phase1["Phase 1: Task Graph Construction\nSCC contraction -> greedy merge -> bounded tasks"]
+     phase1 --> phase2["Phase 2: Knowledge Builder"]
+     phase2 --> gate2{"Budget gate"}
+     gate2 --> phase3["Phase 3: Migration Planning + Adjudication"]
+     phase3 --> gate3{"Budget gate"}
+     gate3 --> phase4["Phase 4: Iterative Migration"]
 
-     contextBuilder --> contextFile["context.json"]
-     agentLauncher --> agentCli["Agent CLI processes"]
+     phase4 --> mode{"Execution mode"}
+     mode --> perTask["Per-task ordering\nDependency sort + target-overlap edges\nTask-level buildable checkpoints"]
+     mode --> wave["Wave-barrier ordering\nTopological waves + non-overlapping batches\nBuild/test barrier and recovery loop"]
 
-     agentCli --> resultParser["ResultParser"]
-     agentCli --> tokenTracker["TokenTracker"]
-     agentCli --> metrics["MetricsCollector"]
-
-     resultParser --> checkpoint["Checkpoint"]
-     tokenTracker --> costEstimator["CostEstimator"]
-     metrics --> reportGenerator["ReportGenerator"]
+     perTask --> gate4{"Budget gate"}
+     wave --> gate4
+     gate4 --> phase5["Phase 5: Final Parity loop"]
+     phase5 --> phase6["Phase 6: E2E + Documentation\nParallel branches"]
+     phase6 --> idiomatic{"Idiomatic refactor enabled?"}
+     idiomatic -->|yes| phase7["Phase 7: Idiomatic review/refactor loop"]
+     idiomatic -->|no| phase8["Phase 8: Completion + reports"]
+     phase7 --> phase8
 ```
 
 ### Cadre-Orchestrated Runtime
