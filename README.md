@@ -10,7 +10,22 @@
      <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
-AAMF is a TypeScript runtime that orchestrates AI agents to migrate extremely large legacy codebases from one technology stack to another. It manages the full lifecycle of the migration: analysis, planning, code translation, parity-verification and idiomatic refactoring, by coordinating agents through a multi-phase pipeline with checkpointing, budgeting, observability, and failure adjudication.
+AAMF is a TypeScript runtime for migrating extremely large legacy codebases between languages and frameworks. It uses `@cadre-dev/framework` as the orchestration layer that coordinates the migration flow while AAMF supplies the migration-specific machinery: code indexing, task-graph construction, agent launching, checkpointing, budgeting, observability, and failure adjudication.
+
+The runtime does not perform reasoning itself. Instead, it declares the migration as a deterministic multi-phase flow, launches purpose-built agents out of process, feeds them tightly scoped context, collects structured output, and decides what runs next.
+
+Typical use cases include porting a 100k+ line Python monolith to TypeScript, a COBOL system to Go, or a C library to Rust.
+
+## Repository Layout
+
+- `src/core/`: runtime bootstrapping, agent launching, checkpointing, scaffold generation, and process coordination.
+- `src/flow/`: the Cadre flow definition, checkpoint adapters, and phase step implementations.
+- `src/agents/`: agent registry, output schemas, prompt generation, and context construction.
+- `src/execution/`: dependency-aware task scheduling, retry handling, and parallel execution helpers.
+- `src/observability/` and `src/budget/`: token tracking, cost estimation, metrics, and reporting.
+- `tests/`: unit, integration, and end-to-end coverage mirroring the runtime structure.
+- `agents/templates/`: Markdown templates for each agent role.
+- `docs/`: configuration and supporting documentation.
 
 
 ## Projects Ported Using AAMF
@@ -23,44 +38,53 @@ AAMF is a TypeScript runtime that orchestrates AI agents to migrate extremely la
 
 ## How It Works
 
-AAMF treats the migration as a pipeline of **9 phases** (0–8), each driven by purpose-built agents defined as `.agent.md` prompt files. The runtime never performs reasoning itself. It is pure execution machinery that launches agents, feeds them minimal context, collects their output, and decides what to run next.
+AAMF treats migration as a deterministic pipeline of **9 phases** (0-8). The flow itself is defined with Cadre's flow DSL, and each phase either runs deterministic runtime logic or launches purpose-built agents defined as `.agent.md` prompt files.
+
+Cadre is the orchestration framework that coordinates migration execution. In AAMF, it is responsible for:
+
+- expressing phase ordering, gates, loops, parallel branches, and nested subflows;
+- driving resumable execution through checkpoint adapters that persist flow state into AAMF's checkpoint format; and
+- enforcing concurrency and execution boundaries while AAMF provides the migration-specific step implementations.
+
+That separation is deliberate: Cadre handles workflow coordination, while AAMF handles migration semantics.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        AAMF Runtime                                 │
-│                                                                     │
-│  migration.config.json ──► MigrationRuntime                         │
-│                               │                                     │
-│                         Orchestrator                                │
-│                           │     │                                   │
-│            ┌──────────────┘     └──────────────┐                    │
-│            ▼                                   ▼                    │
-│     ContextBuilder                       AgentLauncher              │
-│     (writes JSON)                     (spawns processes)            │
-│            │                                   │                    │
-│            │         ┌───────────┐             │                    │
-│            └────────►│ context   │─────────────┘                    │
-│                      │  .json    │                                  │
-│                      └───────────┘                                  │
-│                            │                                        │
-│              ┌─────────────┼─────────────┐                          │
-│              ▼             ▼             ▼                          │
-│         Agent CLI     Agent CLI     Agent CLI                       │
-│         (agent A)     (agent B)     (agent C)                       │
-│              │             │             │                          │
-│              └─────────────┼─────────────┘                          │
-│                            ▼                                        │
-│                      ResultParser                                   │
-│                            │                                        │
-│              ┌─────────────┼─────────────┐                          │
-│              ▼             ▼             ▼                          │
-│         Checkpoint    ProgressWriter  TokenTracker                  │
-│              │                            │                         │
-│              ▼                            ▼                         │
-│         MetricsCollector          ReportGenerator                   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                           AAMF Runtime                              │
+│                                                                      │
+│  migration.config.json ──► MigrationRuntime                          │
+│                               │                                      │
+│                     FlowRunner (@cadre-dev/framework)                │
+│                               │                                      │
+│            ┌──────────────────┼──────────────────┐                   │
+│            ▼                  ▼                  ▼                   │
+│     ContextBuilder      AgentLauncher      TaskGraphBuilder          │
+│     (writes JSON)      (spawns CLI)      (Lore SCC + merge)         │
+│            │                  │                                      │
+│            ▼                  ▼                                      │
+│       context.json      Agent CLI processes                          │
+│                               │                                      │
+│            ┌──────────────────┼──────────────────┐                   │
+│            ▼                  ▼                  ▼                   │
+│      ResultParser       TokenTracker      MetricsCollector           │
+│            │                  │                  │                   │
+│            ▼                  ▼                  ▼                   │
+│       Checkpoint       CostEstimator      ReportGenerator            │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
+
+### Cadre-Orchestrated Runtime
+
+At runtime, `MigrationRuntime` constructs a `MigrationFlowContext`, wires AAMF's checkpoint manager into Cadre via `AamfFlowCheckpointAdapter`, and executes the top-level `migrationFlow` with `FlowRunner`.
+
+That flow uses Cadre primitives to model the migration lifecycle:
+
+- `step` for deterministic runtime work and agent launches;
+- `gate` for budget enforcement between phases;
+- `parallel` for concurrent finalization work such as E2E and documentation;
+- `loop` for final-parity and idiomatic-refactor convergence; and
+- `subflow` for Phase 4, where per-task and wave-barrier execution are built dynamically from the migration plan.
 
 ### The Pipeline Phases
 
@@ -80,7 +104,7 @@ AAMF treats the migration as a pipeline of **9 phases** (0–8), each driven by 
 
 ---
 
-### Agent Support
+### Agent Runtime Support
 
 AAMF supports two agent runtimes, selected by `agentRuntime` in the config:
 
@@ -89,7 +113,7 @@ AAMF supports two agent runtimes, selected by `agentRuntime` in the config:
 | **Copilot** (default) | `copilot --agent <name>` | `.github/agents/` | `--additional-mcp-config` |
 | **Claude Code** | `claude --agent <name>` | `.claude/agents/` | `--mcp-config` |
 
-Both runtimes follow the same lifecycle. The `AgentLauncher` delegates to either `CopilotRunner` or `ClaudeCodeRunner`.
+Both runtimes follow the same lifecycle. `AgentLauncher` delegates backend-specific process handling to the Cadre runtime layer while preserving AAMF-specific output parsing, token tracking, and artifact management.
 
 ### Invocation Lifecycle
 
