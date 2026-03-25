@@ -13,6 +13,7 @@ import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
 import type { MigrationFlowContext } from '../context.js';
 import type { PhaseResult } from '../../agents/types.js';
 import { assertPhaseSuccess } from './shared.js';
+import { startKbServer } from './kb-server-lifecycle.js';
 import { fileExists } from '../../util/fs.js';
 
 const loadLore = () => import('@jafreck/lore');
@@ -76,6 +77,7 @@ export async function buildKbIndex(
           const checkpointState = ctx.checkpoint.getState();
           checkpointState.phase0Fingerprint = currentFingerprint;
           await ctx.checkpoint.save(checkpointState);
+          await startKbServer(ctx);
           return { phase: 0, name: 'KB Indexing', success: true, outputPath: kbDbPath, duration: Date.now() - start };
         }
       } finally { db.close(); }
@@ -181,6 +183,7 @@ export async function buildKbIndex(
       const checkpointState = ctx.checkpoint.getState();
       checkpointState.phase0Fingerprint = currentFingerprint;
       await ctx.checkpoint.save(checkpointState);
+      await startKbServer(ctx);
       return { phase: 0, name: 'KB Indexing', success: true, outputPath: kbDbPath, duration: Date.now() - start };
     } catch (err) {
       lastErr = err;

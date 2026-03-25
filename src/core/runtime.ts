@@ -282,7 +282,8 @@ export class MigrationRuntime {
     // Lazy-start the target KB server after the first target index build.
     targetIndexer.setOnFirstBuild(async () => {
       if (!flowContext.targetKbServer) {
-        await this.startTargetKbServer(flowContext);
+        const { startTargetKbServer } = await import('../flow/steps/kb-server-lifecycle.js');
+        await startTargetKbServer(flowContext);
       }
     });
 
@@ -296,11 +297,8 @@ export class MigrationRuntime {
     // Start KB server for resume if Phase 0 already completed
     const resumePoint = this.checkpoint.getResumePoint();
     if (resumePoint.phase > 0 && (await fileExists(this.paths.kbDbFile))) {
-      await this.startKbServer(flowContext);
-    }
-    // Start target KB server on resume if the target DB exists
-    if (resumePoint.phase > 0 && (await fileExists(this.paths.kbTargetDbFile))) {
-      await this.startTargetKbServer(flowContext);
+      const { startKbServer } = await import('../flow/steps/kb-server-lifecycle.js');
+      await startKbServer(flowContext);
     }
 
     const startTime = Date.now();
@@ -332,15 +330,6 @@ export class MigrationRuntime {
         const phaseResult = output as PhaseResult | undefined;
         if (phaseResult && typeof phaseResult === 'object' && 'phase' in phaseResult) {
           phaseResults.push(phaseResult);
-
-          // Start KB server after Phase 0
-          if (phaseResult.phase === 0 && phaseResult.success && !flowContext.kbServer) {
-            await this.startKbServer(flowContext);
-            // Also start target KB server if the target index exists already (e.g. resume)
-            if (!flowContext.targetKbServer && (await fileExists(this.paths.kbTargetDbFile))) {
-              await this.startTargetKbServer(flowContext);
-            }
-          }
 
           await this.checkpoint.completePhase(phaseResult.phase, phaseResult.outputPath ?? '');
           await this.progress.updatePhase(phaseResult.phase, 'completed');
@@ -702,55 +691,5 @@ export class MigrationRuntime {
     process.on('exit', () => {
       this.releaseRunLockSync();
     });
-  }
-
-  /**
-   * Start the KB MCP server, attaching it to the given flow context.
-   * Used both on resume (before flow starts) and after Phase 0 completes.
-   */
-  private async startKbServer(flowContext: MigrationFlowContext): Promise<void> {
-    try {
-      const { KbServerProcess } = await import('./kb-server-process.js');
-      const lore = await import('@jafreck/lore');
-      const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
-      flowContext.kbServer = new KbServerProcess(this.paths.kbDbFile, flowContext.embedder, (obs) => {
-        this.logger.debug(
-          `lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
-        );
-      }, {
-        level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
-        logFile: this.paths.loreLogFile,
-      });
-      await flowContext.kbServer.start();
-      this.logger.info(`KB server started (lore log: ${this.paths.loreLogFile})`);
-    } catch (err) {
-      this.logger.warn(`KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
-      flowContext.kbServer = undefined;
-    }
-  }
-
-  /**
-   * Start the target KB MCP server for the migrated codebase index.
-   * Uses a read-only handle to `kb-target.db`.
-   */
-  private async startTargetKbServer(flowContext: MigrationFlowContext): Promise<void> {
-    try {
-      const { KbServerProcess } = await import('./kb-server-process.js');
-      const lore = await import('@jafreck/lore');
-      const loreLogLevel = this.config.options.kbIndex?.logLevel ?? 'debug';
-      flowContext.targetKbServer = new KbServerProcess(this.paths.kbTargetDbFile, undefined, (obs) => {
-        this.logger.debug(
-          `target_lore_search: query=${JSON.stringify(obs.query)} mode=${obs.requestedMode}→${obs.modeUsed} results=${obs.resultCount} topScore=${obs.topScore} latency=${obs.latencyMs}ms`,
-        );
-      }, {
-        level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
-        logFile: this.paths.loreTargetLogFile,
-      });
-      await flowContext.targetKbServer.start();
-      this.logger.info(`Target KB server started (lore log: ${this.paths.loreTargetLogFile})`);
-    } catch (err) {
-      this.logger.warn(`Target KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
-      flowContext.targetKbServer = undefined;
-    }
   }
 }
