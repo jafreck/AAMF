@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rm, readdir, readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
@@ -70,49 +70,6 @@ async function ensureLz4Source(): Promise<void> {
 }
 
 /**
- * Write a migration.config.json pointing at the downloaded lz4 lib/
- * directory, targeting Rust.
- */
-async function writeMigrationConfig(): Promise<void> {
-  const config = {
-    projectName: 'lz4-to-rust',
-    source: {
-      path: libDir,
-      language: 'c',
-      entryPoints: ['lz4.c'],
-      excludePatterns: [
-        '.git', '*.o', '*.lo', '*.la', '*.pc',
-        'Makefile*', '*.md',
-      ],
-    },
-    target: {
-      language: 'rust',
-      framework: 'stable',
-      outputPath: outputDir,
-      buildCommand: 'cargo build',
-      testCommand: 'cargo test',
-    },
-    options: {
-      maxParallelAgents: 3,
-      maxRetriesPerTask: 2,
-      maxLinesPerTask: 500,
-      tokenBudget: 500000,
-      dryRun: false,
-      resume: false,
-    },
-    agentBackend: {
-      runtime: 'copilot',
-      cliCommand: 'copilot',
-      model: 'claude-sonnet-4.6',
-      agentDir: '../../../../.github/agents',
-      timeout: 300_000,
-    },
-  };
-
-  await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
-}
-
-/**
  * End-to-end integration test: lz4 (C) → Rust.
  *
  * Downloads the official lz4 v1.10.0 release from GitHub and runs the
@@ -154,14 +111,11 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
     // 1. Download the real lz4 source (cached across runs)
     await ensureLz4Source();
 
-    // 2. Write a config pointing at the downloaded source
-    await writeMigrationConfig();
-
-    // 3. Clean up any previous migration artefacts
+    // 2. Clean up any previous migration artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
 
-    // 4. Run the full migration (all 7 phases)
+    // 3. Run the full migration using the checked-in fixture config
     const runtime = new MigrationRuntime();
     await runtime.initialize({
       configPath,
@@ -212,10 +166,8 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
   });
 
   it('should execute all 7 phases', () => {
-    expect(result.phases.length).toBe(7);
-    for (let i = 0; i < 7; i++) {
-      expect(result.phases[i]?.phase).toBe(i + 1);
-    }
+    const phaseIds = result.phases.map(phase => phase.phase).sort((left, right) => left - right);
+    expect(phaseIds).toEqual([0, 2, 3, 4, 5, 6, 8]);
   });
 
   it('should have non-zero total duration', () => {
@@ -234,6 +186,13 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
   });
 
   // ── Per-phase checks ────────────────────────────────────────────────────
+
+  it('Phase 0 (KB Indexing) should succeed', () => {
+    const phase = result.phases.find(p => p.phase === 0);
+    expect(phase).toBeDefined();
+    expect(phase!.success).toBe(true);
+    expect(phase!.name).toBe('KB Indexing');
+  });
 
   it('Phase 2 (Knowledge Base Construction) should succeed', () => {
     const phase = result.phases.find(p => p.phase === 2);
@@ -286,7 +245,7 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
     expect(checkpoint.projectName).toBe('lz4-to-rust');
     expect(checkpoint.completedPhases).toEqual(
-      expect.arrayContaining([1, 2, 3, 4, 5, 6, 7]),
+      expect.arrayContaining([0, 2, 3, 4, 5, 6, 8]),
     );
   });
 
@@ -452,40 +411,6 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration with KB Index', () => {
   beforeAll(async () => {
     // Reuse the already-downloaded lz4 source (ensureLz4Source from parent suite runs first)
     await ensureLz4Source();
-
-    // Write a config for the KB-indexed variant
-    const config = {
-      projectName: 'lz4-to-rust-kb',
-      source: {
-        path: libDir,
-        language: 'c',
-        entryPoints: ['lz4.c'],
-        excludePatterns: ['.git', '*.o', '*.lo', '*.la', '*.pc', 'Makefile*', '*.md'],
-      },
-      target: {
-        language: 'rust',
-        framework: 'stable',
-        outputPath: kbOutputDir,
-        buildCommand: 'cargo build',
-        testCommand: 'cargo test',
-      },
-      options: {
-        maxParallelAgents: 3,
-        maxRetriesPerTask: 2,
-        maxLinesPerTask: 500,
-        tokenBudget: 500000,
-        dryRun: false,
-        resume: false,
-      },
-      agentBackend: {
-        runtime: 'copilot',
-        cliCommand: 'copilot',
-        model: 'claude-sonnet-4.6',
-        agentDir: '../../../../.github/agents',
-        timeout: 300_000,
-      },
-    };
-    await writeFile(kbConfigPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
 
     // Clean up previous artefacts
     await rm(kbAamfRoot, { recursive: true, force: true });

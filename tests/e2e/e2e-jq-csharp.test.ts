@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rm, readdir, readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
@@ -71,52 +71,6 @@ async function ensureJqSource(): Promise<void> {
 }
 
 /**
- * Write a migration.config.json pointing at the downloaded jq source,
- * targeting C# on .NET 9.
- */
-async function writeMigrationConfig(): Promise<void> {
-  const config = {
-    projectName: 'jq-to-csharp-net9',
-    source: {
-      path: sourceDir,
-      language: 'c',
-      entryPoints: ['src/main.c'],
-      excludePatterns: [
-        '.git', '*.o', '*.lo', '*.la', '*.pc', '*.m4',
-        'Makefile*', 'config.*', 'configure*', 'libtool',
-        'stamp-*', 'aclocal*', 'autom4te*', 'compile',
-        'depcomp', 'install-sh', 'missing', 'ltmain.sh',
-        'test-driver', 'docs/**', 'tests/**', 'm4/**',
-      ],
-    },
-    target: {
-      language: 'csharp',
-      framework: 'net9.0',
-      outputPath: outputDir,
-      buildCommand: 'dotnet build',
-      testCommand: 'dotnet test',
-    },
-    options: {
-      maxParallelAgents: 3,
-      maxRetriesPerTask: 2,
-      maxLinesPerTask: 500,
-      tokenBudget: 500000,
-      dryRun: false,
-      resume: false,
-    },
-    agentBackend: {
-      runtime: 'copilot',
-      cliCommand: 'copilot',
-      model: 'claude-sonnet-4.6',
-      agentDir: '../../../../.github/agents',
-      timeout: 300_000,
-    },
-  };
-
-  await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
-}
-
-/**
  * End-to-end integration test: jq (C) → C# (.NET 9).
  *
  * Downloads the official jq release tarball (~20–30 K lines of C) from
@@ -148,14 +102,11 @@ describe.skipIf(!runE2E)('E2E jq C → C# (.NET 9) Migration', () => {
     // 1. Download the real jq source (cached across runs)
     await ensureJqSource();
 
-    // 2. Write a config pointing at the downloaded source
-    await writeMigrationConfig();
-
-    // 3. Clean up any previous migration artefacts
+    // 2. Clean up any previous migration artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
 
-    // 4. Run the full migration (all 7 phases)
+    // 3. Run the full migration using the checked-in fixture config
     const runtime = new MigrationRuntime();
     await runtime.initialize({
       configPath,
@@ -211,10 +162,8 @@ describe.skipIf(!runE2E)('E2E jq C → C# (.NET 9) Migration', () => {
   });
 
   it('should execute all 7 phases', () => {
-    expect(result.phases.length).toBe(7);
-    for (let i = 0; i < 7; i++) {
-      expect(result.phases[i]?.phase).toBe(i + 1);
-    }
+    const phaseIds = result.phases.map(phase => phase.phase).sort((left, right) => left - right);
+    expect(phaseIds).toEqual([0, 2, 3, 4, 5, 6, 8]);
   });
 
   it('should have non-zero total duration', () => {
@@ -233,6 +182,13 @@ describe.skipIf(!runE2E)('E2E jq C → C# (.NET 9) Migration', () => {
   });
 
   // ── Per-phase checks ────────────────────────────────────────────────────
+
+  it('Phase 0 (KB Indexing) should succeed', () => {
+    const phase = result.phases.find(p => p.phase === 0);
+    expect(phase).toBeDefined();
+    expect(phase!.success).toBe(true);
+    expect(phase!.name).toBe('KB Indexing');
+  });
 
   it('Phase 2 (Knowledge Base Construction) should succeed', () => {
     const phase = result.phases.find(p => p.phase === 2);
@@ -285,7 +241,7 @@ describe.skipIf(!runE2E)('E2E jq C → C# (.NET 9) Migration', () => {
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
     expect(checkpoint.projectName).toBe('jq-to-csharp-net9');
     expect(checkpoint.completedPhases).toEqual(
-      expect.arrayContaining([1, 2, 3, 4, 5, 6, 7]),
+      expect.arrayContaining([0, 2, 3, 4, 5, 6, 8]),
     );
   });
 

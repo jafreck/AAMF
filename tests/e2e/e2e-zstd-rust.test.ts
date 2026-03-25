@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rm, readdir, readFile, mkdir, stat, writeFile } from 'node:fs/promises';
+import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
@@ -29,8 +29,7 @@ const libDir       = join(sourceRoot, 'lib');               // core library C fi
 const configPath   = join(fixtureDir, 'migration.config.json');
 const aamfRoot     = join(fixtureDir, '.aamf');
 const progressDir  = join(aamfRoot, 'migration', 'zstd-to-rust');
-const tmpRoot      = join(fixtureDir, 'tmp');
-const outputDir    = join(tmpRoot, 'zstd-rust-output');
+const outputDir    = join(aamfRoot, 'zstd-rust-output');
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
@@ -77,60 +76,6 @@ async function ensureZstdSource(): Promise<void> {
 }
 
 /**
- * Write a migration.config.json pointing at the downloaded zstd lib/
- * directory, targeting Rust.
- */
-async function writeMigrationConfig(): Promise<void> {
-  const config = {
-    projectName: 'zstd-to-rust',
-    source: {
-      path: sourceRoot,
-      language: 'c',
-      entryPoints: ['lib/compress/zstd_compress.c', 'programs/zstdcli.c'],
-      excludePatterns: [
-        '.git', '*.o', '*.lo', '*.la', '*.pc',
-        'Makefile*', '*.md', 'legacy',
-      ],
-    },
-    target: {
-      language: 'rust',
-      framework: 'stable',
-      outputPath: outputDir,
-      buildCommand: 'cargo build',
-      testCommand: 'cargo test',
-    },
-    options: {
-      maxParallelAgents: 5,
-      maxRetriesPerTask: 3,
-      maxLinesPerTask: 750,
-      tokenBudget: 10_000_000,
-      executionMode: 'wave-barrier',
-      waveControl: {
-        maxConvergenceIterations: 3,
-      },
-      dryRun: false,
-      resume: true,
-      keepArtifacts: true,
-      kbIndex: {
-        enabled: true,
-        embeddings: {
-          enabled: true,
-        },
-      },
-    },
-    agentBackend: {
-      runtime: 'copilot',
-      cliCommand: 'copilot',
-      model: 'claude-sonnet-4.6',
-      agentDir: '../../../../.github/agents',
-      timeout: 3_600_000, // 1 hour/agent
-    },
-  };
-
-  await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
-}
-
-/**
  * End-to-end integration test: zstd (C) → Rust.
  *
  * Downloads the official zstd v1.5.7 release from GitHub and runs the
@@ -173,14 +118,11 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
     // 1. Download the real zstd source (cached across runs)
     await ensureZstdSource();
 
-    // 2. Write a config pointing at the downloaded source
-    await writeMigrationConfig();
-
-    // 3. Clean up any previous migration artefacts
+    // 2. Clean up any previous migration artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
 
-    // 4. Run the full migration (all 7 phases)
+    // 3. Run the full migration using the checked-in fixture config
     const runtime = new MigrationRuntime();
     await runtime.initialize({
       configPath,
@@ -248,10 +190,8 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
   });
 
   it('should execute all 7 phases', () => {
-    expect(result.phases.length).toBe(7);
-    for (let i = 0; i < 7; i++) {
-      expect(result.phases[i]?.phase).toBe(i + 1);
-    }
+    const phaseIds = result.phases.map(phase => phase.phase).sort((left, right) => left - right);
+    expect(phaseIds).toEqual([0, 2, 3, 4, 5, 6, 8]);
   });
 
   it('should have non-zero total duration', () => {
@@ -270,6 +210,13 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
   });
 
   // ── Per-phase checks ─────────────────────────────────────────────────────
+
+  it('Phase 0 (KB Indexing) should succeed', () => {
+    const phase = result.phases.find(p => p.phase === 0);
+    expect(phase).toBeDefined();
+    expect(phase!.success).toBe(true);
+    expect(phase!.name).toBe('KB Indexing');
+  });
 
   it('Phase 2 (Knowledge Base Construction) should succeed', () => {
     const phase = result.phases.find(p => p.phase === 2);
@@ -322,7 +269,7 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
     expect(checkpoint.projectName).toBe('zstd-to-rust');
     expect(checkpoint.completedPhases).toEqual(
-      expect.arrayContaining([1, 2, 3, 4, 5, 6, 7]),
+      expect.arrayContaining([0, 2, 3, 4, 5, 6, 8]),
     );
   });
 

@@ -14,7 +14,7 @@ const tmpRoot = join(fixtureDir, 'tmp');
 const outputDir = join(tmpRoot, 'e2e-output');
 
 /**
- * Full end-to-end migration test that runs ALL 7 phases against the
+ * Full end-to-end migration test that runs all configured phases against the
  * tiny-python-project fixture, producing a complete TypeScript output.
  *
  * Gated behind the AAMF_E2E=1 environment variable because it requires:
@@ -59,11 +59,9 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
     expect(result.projectName).toBe('tiny-calc-migration');
   });
 
-  it('should execute all 7 phases', () => {
-    expect(result.phases.length).toBe(7);
-    for (let i = 0; i < 7; i++) {
-      expect(result.phases[i]?.phase).toBe(i + 1);
-    }
+  it('should execute all configured phases from the fixture config', () => {
+    const phaseIds = result.phases.map(phase => phase.phase).sort((left, right) => left - right);
+    expect(phaseIds).toEqual([0, 2, 3, 4, 5, 6, 8]);
   });
 
   it('should have non-zero total duration', () => {
@@ -82,6 +80,13 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
   });
 
   // ── Per-phase checks ────────────────────────────────────────────────────
+
+  it('Phase 0 (KB Indexing) should succeed', () => {
+    const phase = result.phases.find(p => p.phase === 0);
+    expect(phase).toBeDefined();
+    expect(phase!.success).toBe(true);
+    expect(phase!.name).toBe('KB Indexing');
+  });
 
   it('Phase 2 (Knowledge Base Construction) should succeed', () => {
     const phase = result.phases.find(p => p.phase === 2);
@@ -133,7 +138,7 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
 
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
     expect(checkpoint.projectName).toBe('tiny-calc-migration');
-    expect(checkpoint.completedPhases).toEqual(expect.arrayContaining([1, 2, 3, 4, 5, 6, 7]));
+    expect(checkpoint.completedPhases).toEqual(expect.arrayContaining([0, 2, 3, 4, 5, 6, 8]));
   });
 
   it('should create progress.md covering every phase', async () => {
