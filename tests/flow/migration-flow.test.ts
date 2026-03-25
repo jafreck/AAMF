@@ -105,6 +105,7 @@ describe('nodeIdToPhase', () => {
 
   it('should return 7 for idiomatic-refactor nodes', () => {
     expect(nodeIdToPhase('idiomatic-refactor-gate')).toBe(7);
+    expect(nodeIdToPhase('idiomatic-loop-configure')).toBe(7);
     expect(nodeIdToPhase('idiomatic-loop')).toBe(7);
     expect(nodeIdToPhase('idiomatic-iteration')).toBe(7);
   });

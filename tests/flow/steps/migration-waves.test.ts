@@ -74,6 +74,41 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
     }
   });
 
+  it('should allow unlimited wave convergence iterations when configured as 0', async () => {
+    const launcherFn = createMockLauncher();
+    env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK], {
+      target: {
+        language: 'typescript',
+        outputPath: '/tmp/target',
+        buildCommand: 'npm run build',
+      },
+      options: {
+        executionMode: 'wave-barrier',
+        waveControl: { maxConvergenceIterations: 0 },
+        qualityPolicy: 'strict',
+        maxRetriesPerTask: 3,
+      },
+    });
+
+    let buildCallCount = 0;
+    const spawnMod = await import('../../../src/util/process.js');
+    const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async () => {
+      buildCallCount++;
+      if (buildCallCount === 1) {
+        return { exitCode: 1, stdout: '', stderr: 'build failed', killed: false };
+      }
+      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false };
+    });
+
+    try {
+      const result = await runPhase4(env);
+      expect(result.status).toBe('completed');
+      expect(buildCallCount).toBeGreaterThanOrEqual(2);
+    } finally {
+      spawnSpy.mockRestore();
+    }
+  });
+
   it('should emit wave lifecycle events', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK], {

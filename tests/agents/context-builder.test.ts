@@ -190,6 +190,21 @@ describe('ContextBuilder', () => {
       expect(strategy.requiresNonOverlappingTargets).toBe(true);
     });
 
+    it('should preserve unlimited wave convergence in migration-planner executionStrategy', async () => {
+      const config = createMockConfig({
+        options: {
+          executionMode: 'wave-barrier' as const,
+          waveControl: { maxConvergenceIterations: 0 },
+        },
+      });
+      const b = new ContextBuilder(config, progressDir, paths);
+      const { contextPath } = await b.buildContext('migration-planner', 4);
+      const context = await readJson<AgentContext>(contextPath);
+      const strategy = context.payload?.executionStrategy as Record<string, unknown>;
+
+      expect(strategy.waveControl).toEqual({ maxConvergenceIterations: 0 });
+    });
+
     it('should route adjudicator to competing strategies file', async () => {
       const { contextPath } = await builder.buildContext('adjudicator', 3, undefined, {
         competingStrategiesFile: '/tmp/strategies.md',

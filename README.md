@@ -336,7 +336,7 @@ The `final-parity-checker` performs a codebase-wide parity sweep. If issues are 
 
 ### Phase 7: Idiomatic Refactor (Optional)
 
-When `options.idiomaticRefactor.enabled` is set, Phase 7 runs up to `maxIterations` (default: 2) review-and-refactor cycles:
+When `options.idiomaticRefactor.enabled` is set, Phase 7 runs up to `maxIterations` (default: 2, `0` = unlimited) review-and-refactor cycles:
 
 1. `idiomatic-reviewer` scans the migrated codebase for non-idiomatic patterns.
 2. For each flagged issue, `idiomatic-refactorer` applies targeted fixes with git commits.

@@ -18,6 +18,7 @@ import type { TaskGraphOutput } from './task-graph.js';
 import { toAgentRemediationContext } from '../../agents/types.js';
 import type { PriorRecoveryAttempt } from '../../agents/types.js';
 import { parseMigrationPlan } from '../../agents/plan-parser.js';
+import { resolveLoopMaxIterations } from '../iteration-policy.js';
 import { ParallelExecutor } from '../../execution/parallel-executor.js';
 import { TaskQueue } from '../../execution/task-queue.js';
 import { RetryExecutor } from '../../execution/retry.js';
@@ -568,7 +569,11 @@ function buildWaveBarrierFlow(
 ): FlowDefinition<MigrationFlowContext> {
   const waves = computeTopologicalWaves(tasks);
   const nodes: FlowNode<MigrationFlowContext>[] = [];
-  const maxConvergence = ctx.config.options.waveControl?.maxConvergenceIterations ?? 3;
+  const configuredMaxConvergence = ctx.config.options.waveControl?.maxConvergenceIterations;
+  const maxConvergence = resolveLoopMaxIterations(configuredMaxConvergence, 3);
+  const maxConvergenceLabel = (configuredMaxConvergence ?? 3) === 0
+    ? 'unlimited'
+    : String(configuredMaxConvergence ?? 3);
   const gateMode = getQualityGateMode(ctx);
 
   for (let w = 0; w < waves.length; w++) {
@@ -687,7 +692,7 @@ function buildWaveBarrierFlow(
         if (result && !result.success) {
           await raiseTerminalExhaustion(c.context, {
             reasonCode: 'wave-convergence-exhausted', wave: w, check: 'wave-validation',
-            summary: `Wave ${w} failed to converge after ${maxConvergence} iteration(s)`,
+            summary: `Wave ${w} failed to converge after ${maxConvergenceLabel} iteration(s)`,
           });
         }
       },
