@@ -2,7 +2,7 @@
   "projectName": "tmux-to-rust",
   "guidance": [
     "Preserve tmux 3.6a compatibility across every platform supported by the C implementation, including terminal behavior, command/config semantics, key bindings, formats, control mode, copy-mode, mouse behavior, and client/server/session/window/pane behavior; any deviation must be explicit and documented.",
-    "Deliver a full pure native Rust port. Do NOT use FFI, bindgen, or link against the tmux C implementation. Do not use rust crates of a tmux port.",
+    "Deliver a full pure native Rust port. Do NOT use FFI, bindgen, or link against the tmux C implementation. DO NOT use Rust crates that are tmux ports like tmux-rs.",
     "Preserve event-loop ordering, command queue semantics, protocol and error behavior, and OS-facing behavior for PTYs, signals, termios/ioctl, jobs, and socket IPC; do not introduce concurrent mutation of core tmux state.",
     "Prefer idiomatic Rust ownership, enums, Result-based error handling, and modular crate boundaries over direct transliterations of tmux globals, macros, linked lists, and manual memory management.",
     "Retain performance-critical terminal parsing, UTF-8 and cell-width behavior, screen diffing, and layout logic; use unsafe Rust only when clearly justified and encapsulated, and require differential parity tests against tmux 3.6a."

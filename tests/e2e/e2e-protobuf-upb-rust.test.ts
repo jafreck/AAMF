@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rm, readdir, readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
@@ -58,41 +58,6 @@ async function ensureUpbSource(): Promise<void> {
   console.log(`upb source ready at ${upbDir}`);
 }
 
-async function writeMigrationConfig(): Promise<void> {
-  const config = {
-    projectName: 'protobuf-upb-to-rust',
-    source: {
-      path: upbDir,
-      language: 'c',
-      entryPoints: ['decode.c', 'encode.c'],
-      excludePatterns: ['.git', '*.o', '*.lo', '*.la', '*.pc', 'Makefile*', '*.md', '*_test.c', 'fuzz'],
-    },
-    target: {
-      language: 'rust',
-      framework: 'stable',
-      outputPath: outputDir,
-      buildCommand: 'cargo build',
-      testCommand: 'cargo test',
-    },
-    options: {
-      maxParallelAgents: 3,
-      maxRetriesPerTask: 2,
-      maxLinesPerTask: 500,
-      tokenBudget: 3_000_000,
-      dryRun: false,
-      resume: false,
-    },
-    agentBackend: {
-      runtime: 'copilot',
-      cliCommand: 'copilot',
-      model: 'claude-sonnet-4.6',
-      agentDir: '../../../../.github/agents',
-      timeout: 900_000,
-    },
-  };
-  await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
-}
-
 /**
  * E2E test: protobuf upb (C) -> Rust.
  *
@@ -122,7 +87,6 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
 
   beforeAll(async () => {
     await ensureUpbSource();
-    await writeMigrationConfig();
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
 
@@ -172,8 +136,8 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
   });
 
   it('should execute all 7 phases', () => {
-    expect(result.phases.length).toBe(7);
-    for (let i = 0; i < 7; i++) expect(result.phases[i]?.phase).toBe(i + 1);
+    const phaseIds = result.phases.map(phase => phase.phase).sort((left, right) => left - right);
+    expect(phaseIds).toEqual([0, 2, 3, 4, 5, 6, 8]);
   });
 
   it('should have non-zero total duration', () => {
@@ -192,6 +156,13 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
   });
 
   // -- Per-phase checks --
+
+  it('Phase 0 (KB Indexing) should succeed', () => {
+    const phase = result.phases.find(p => p.phase === 0);
+    expect(phase).toBeDefined();
+    expect(phase!.success).toBe(true);
+    expect(phase!.name).toBe('KB Indexing');
+  });
 
   it('Phase 2 (Knowledge Base Construction) should succeed', () => {
     const phase = result.phases.find(p => p.phase === 2);
@@ -242,7 +213,7 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
     expect(await fileExists(checkpointPath)).toBe(true);
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
     expect(checkpoint.projectName).toBe('protobuf-upb-to-rust');
-    expect(checkpoint.completedPhases).toEqual(expect.arrayContaining([1, 2, 3, 4, 5, 6, 7]));
+    expect(checkpoint.completedPhases).toEqual(expect.arrayContaining([0, 2, 3, 4, 5, 6, 8]));
   });
 
   it('should create progress.md covering every phase', async () => {

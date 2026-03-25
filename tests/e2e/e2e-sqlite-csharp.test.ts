@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { rm, readdir, readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
@@ -71,74 +71,6 @@ async function ensureSqliteSource(): Promise<void> {
 }
 
 /**
- * Write a migration.config.json pointing at the downloaded SQLite
- * amalgamation source, targeting C# on .NET 9.
- */
-async function writeMigrationConfig(): Promise<void> {
-  const config = {
-    projectName: 'sqlite-to-csharp-net9',
-    guidance: [
-      'Preserve externally observable behavior, but do not do a line-by-line transliteration of C into C#.',
-      'Prefer idiomatic .NET 9 and C# patterns over manual C-style memory and control-flow patterns when behavior can remain equivalent.',
-      'Use .NET standard library abstractions such as Stream, Span<T>, Memory<T>, string, collections, IDisposable, and SafeHandle where appropriate.',
-      'Avoid exposing pointer-oriented or macro-shaped designs in the target unless they are required for parity at the public boundary.',
-      'Choose C# naming, file layout, and project structure that are idiomatic for a .NET codebase rather than preserving C source layout mechanically.',
-    ],
-    source: {
-      path: sourceDir,
-      language: 'c',
-      entryPoints: ['sqlite3.c'],
-      excludePatterns: ['.git', '*.o', '*.lo', '*.la', '*.pc', 'Makefile*', 'config.*', 'libtool', 'stamp-*'],
-    },
-    target: {
-      language: 'csharp',
-      framework: 'net9.0',
-      outputPath: outputDir,
-      buildCommand: 'dotnet build',
-      testCommand: 'dotnet test',
-      formatCommand: 'dotnet format',
-      lintCommand: 'dotnet format --verify-no-changes',
-    },
-    options: {
-      qualityPolicy: 'strict',
-      maxParallelAgents: 3,
-      maxRetriesPerTask: 2,
-      maxLinesPerTask: 500,
-      executionMode: 'wave-barrier',
-      waveControl: {
-        maxConvergenceIterations: 3,
-      },
-      tokenBudget: 500000,
-      dryRun: false,
-      resume: false,
-      idiomaticRefactor: {
-        enabled: true,
-        maxIterations: 3,
-      },
-    },
-    models: {
-      default: 'claude-sonnet-4.6',
-      routing: {
-        enabled: true,
-        heavy: 'claude-opus-4.6',
-        critical: 'claude-opus-4.6',
-        heavyThreshold: 30,
-        criticalThreshold: 55,
-      },
-    },
-    agentBackend: {
-      runtime: 'copilot',
-      cliCommand: 'copilot',
-      effort: 'high',
-      agentDir: '../../../.github/agents',
-      timeout: 1_800_000,
-    },
-  };
-
-  await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
-}
-
-/**
  * End-to-end integration test: SQLite (C) → C# (.NET 9).
  *
  * Downloads the official SQLite amalgamation (sqlite3.c + sqlite3.h,
@@ -166,14 +98,11 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
     // 1. Download the real SQLite amalgamation (cached across runs)
     await ensureSqliteSource();
 
-    // 2. Write a config pointing at the downloaded source
-    await writeMigrationConfig();
-
-    // 3. Clean up any previous migration artefacts
+    // 2. Clean up any previous migration artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
 
-    // 4. Run the full migration (all 7 phases)
+    // 3. Run the full migration using the checked-in fixture config
     const runtime = new MigrationRuntime();
     await runtime.initialize({
       configPath,
@@ -218,10 +147,8 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
   });
 
   it('should execute all 7 phases', () => {
-    expect(result.phases.length).toBe(7);
-    for (let i = 0; i < 7; i++) {
-      expect(result.phases[i]?.phase).toBe(i + 1);
-    }
+    const phaseIds = result.phases.map(phase => phase.phase).sort((left, right) => left - right);
+    expect(phaseIds).toEqual([0, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it('should have non-zero total duration', () => {
@@ -240,6 +167,13 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
   });
 
   // ── Per-phase checks ────────────────────────────────────────────────────
+
+  it('Phase 0 (KB Indexing) should succeed', () => {
+    const phase = result.phases.find(p => p.phase === 0);
+    expect(phase).toBeDefined();
+    expect(phase!.success).toBe(true);
+    expect(phase!.name).toBe('KB Indexing');
+  });
 
   it('Phase 2 (Knowledge Base Construction) should succeed', () => {
     const phase = result.phases.find(p => p.phase === 2);
@@ -276,6 +210,13 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
     expect(phase!.name).toBe('E2E Testing & Documentation');
   });
 
+  it('Phase 7 (Idiomatic Refactor) should succeed', () => {
+    const phase = result.phases.find(p => p.phase === 7);
+    expect(phase).toBeDefined();
+    expect(phase!.success).toBe(true);
+    expect(phase!.name).toBe('Idiomatic Refactor');
+  });
+
   it('Phase 8 (Completion) should succeed', () => {
     const phase = result.phases.find(p => p.phase === 8);
     expect(phase).toBeDefined();
@@ -292,7 +233,7 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
     expect(checkpoint.projectName).toBe('sqlite-to-csharp-net9');
     expect(checkpoint.completedPhases).toEqual(
-      expect.arrayContaining([1, 2, 3, 4, 5, 6, 7]),
+      expect.arrayContaining([0, 2, 3, 4, 5, 6, 7, 8]),
     );
   });
 
