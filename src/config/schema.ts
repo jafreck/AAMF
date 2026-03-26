@@ -98,8 +98,11 @@ export const MigrationConfigSchema = z.object({
      * Phase 4 execution strategy.
      * - `per-task`: existing behavior (migrate + validate task-by-task).
      * - `wave-barrier`: migrate in waves, then validate between waves.
+     * - `sync-epoch`: migrate in dependency-closed epochs formed from
+     *   consecutive topological levels, preferring compilation-unit
+     *   boundaries.  Build runs every epoch; tests run every N epochs.
      */
-    executionMode: z.enum(['per-task', 'wave-barrier']).default('per-task'),
+    executionMode: z.enum(['per-task', 'wave-barrier', 'sync-epoch']).default('per-task'),
     /**
      * Controls for Phase 4 wave/barrier execution mode.
      * These values are ignored in `per-task` mode.
@@ -108,6 +111,36 @@ export const MigrationConfigSchema = z.object({
       /** Maximum validation/fix iterations per wave. 0 = unlimited. */
       maxConvergenceIterations: z.number().int().min(0).default(3),
     }).default({
+      maxConvergenceIterations: 3,
+    }),
+    /**
+     * Controls for Phase 4 sync-epoch execution mode.
+     * These values are ignored in `per-task` and `wave-barrier` modes.
+     */
+    epochControl: z.object({
+      /**
+       * Number of consecutive topological levels to merge into one epoch.
+       * Higher values increase throughput but delay sync points.
+       * Default: 2.
+       */
+      levelsPerSync: z.number().int().min(1).max(10).default(2),
+      /**
+       * Run the full test suite every N epochs. Build runs every epoch.
+       * Set to 1 to test every epoch. Default: 2.
+       */
+      testEveryNEpochs: z.number().int().min(1).default(2),
+      /**
+       * When true, expand epoch boundaries to avoid splitting compilation
+       * units (crates, packages, projects) when possible without violating
+       * dependency order.  Default: true.
+       */
+      preferCompilationUnitClosure: z.boolean().default(true),
+      /** Maximum validation/fix iterations per epoch sync point. 0 = unlimited. */
+      maxConvergenceIterations: z.number().int().min(0).default(3),
+    }).default({
+      levelsPerSync: 2,
+      testEveryNEpochs: 2,
+      preferCompilationUnitClosure: true,
       maxConvergenceIterations: 3,
     }),
     /**
@@ -275,6 +308,12 @@ export const MigrationConfigSchema = z.object({
     buildConcurrency: 1,
     executionMode: 'per-task',
     waveControl: {
+      maxConvergenceIterations: 3,
+    },
+    epochControl: {
+      levelsPerSync: 2,
+      testEveryNEpochs: 2,
+      preferCompilationUnitClosure: true,
       maxConvergenceIterations: 3,
     },
     continueOnBlocked: true,
