@@ -61,7 +61,7 @@ describe('migrationFlow', () => {
     const nodeMap = new Map(migrationFlow.nodes.map(n => [n.id, n]));
     expect(nodeMap.get('budget-check-2')!.dependsOn).toContain('kb-construction');
     expect(nodeMap.get('budget-check-3')!.dependsOn).toContain('migration-planning');
-    expect(nodeMap.get('budget-check-4')!.dependsOn).toContain('iterative-migration');
+    expect(nodeMap.get('budget-check-4')!.dependsOn).toContain('phase-4-teardown');
   });
 });
 
@@ -105,9 +105,7 @@ describe('nodeIdToPhase', () => {
 
   it('should return 7 for idiomatic-refactor nodes', () => {
     expect(nodeIdToPhase('idiomatic-refactor-gate')).toBe(7);
-    expect(nodeIdToPhase('idiomatic-loop-configure')).toBe(7);
-    expect(nodeIdToPhase('idiomatic-loop')).toBe(7);
-    expect(nodeIdToPhase('idiomatic-iteration')).toBe(7);
+    expect(nodeIdToPhase('idiomatic-refactor-pipeline')).toBe(7);
   });
 
   it('should return 8 for completion', () => {

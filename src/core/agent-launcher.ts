@@ -1,9 +1,13 @@
 import { join } from 'node:path';
 import { readFile, readdir, stat } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import {
   AgentLauncher as FrameworkAgentLauncher,
+  registerAgentBackendFactory,
+  isCopilotCliInvocationError,
   type BackendRuntimeConfig,
   type BackendLoggerLike,
+  type AgentBackend,
 } from '@cadre-dev/framework/runtime';
 import type {
   AgentInvocation as FrameworkInvocation,
@@ -242,6 +246,192 @@ async function detectOutputFiles(contextPath: string): Promise<string[]> {
   return [];
 }
 
+// ─── Custom Copilot backend (--output-format json) ───────────────────────────
+
+/**
+ * Strip VS Code / Electron env vars that leak through when launched from
+ * the VS Code integrated terminal — mirrors the framework's stripVSCodeEnv.
+ */
+function stripVSCodeEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const stripped = { ...env };
+  for (const key of Object.keys(stripped)) {
+    if (key.startsWith('VSCODE_') || key.startsWith('ELECTRON_') || key === 'TERM_PROGRAM_VERSION' || key === 'ORIGINAL_XDG_CURRENT_DESKTOP') {
+      delete stripped[key];
+    }
+  }
+  return stripped;
+}
+
+interface SpawnResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+}
+
+function spawnAgent(command: string, args: string[], opts: { cwd: string; env: Record<string, string | undefined>; timeout: number }): Promise<SpawnResult> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: opts.cwd,
+      env: opts.env as NodeJS.ProcessEnv,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: true,
+    });
+    child.unref();
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    if (opts.timeout > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        try { process.kill(-child.pid!, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
+        setTimeout(() => { if (!child.killed) { try { process.kill(-child.pid!, 'SIGKILL'); } catch { child.kill('SIGKILL'); } } }, 5000);
+      }, opts.timeout);
+    }
+
+    child.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      resolve({
+        stdout: Buffer.concat(stdoutChunks).toString(),
+        stderr: Buffer.concat(stderrChunks).toString(),
+        exitCode: code,
+        timedOut,
+      });
+    });
+    child.on('error', (err) => {
+      if (timer) clearTimeout(timer);
+      resolve({
+        stdout: Buffer.concat(stdoutChunks).toString(),
+        stderr: err.message,
+        exitCode: null,
+        timedOut: false,
+      });
+    });
+  });
+}
+
+/**
+ * Custom Copilot CLI backend that uses `--output-format json` to get JSONL
+ * output with token usage data, instead of the framework's `-s` (silent)
+ * which only emits plain text with no usage info.
+ *
+ * Also passes `--effort` when configured.
+ */
+class AamfCopilotBackend implements AgentBackend {
+  readonly name = 'copilot';
+  private readonly cliCommand: string;
+  private readonly defaultTimeout: number;
+  private readonly defaultModel: string | undefined;
+  private readonly allowAllTools: boolean;
+  private readonly allowAllPaths: boolean;
+  private readonly effort: string | undefined;
+  private readonly extraPath: string[];
+  private readonly logger: BackendLoggerLike;
+
+  constructor(config: BackendRuntimeConfig, logger: BackendLoggerLike) {
+    this.logger = logger;
+    const copilotOpts = config.agent.copilot as Record<string, unknown> | undefined;
+    this.cliCommand = (typeof copilotOpts?.cliCommand === 'string' && copilotOpts.cliCommand.trim()) || 'copilot';
+    this.defaultTimeout = config.agent.timeout ?? 120_000;
+    this.defaultModel = config.agent.model;
+    this.allowAllTools = (copilotOpts?.allowAllTools as boolean) ?? false;
+    this.allowAllPaths = (copilotOpts?.allowAllPaths as boolean) ?? false;
+    this.effort = copilotOpts?.effort as string | undefined;
+    this.extraPath = config.environment.extraPath ?? [];
+  }
+
+  async init(): Promise<void> {
+    this.logger.debug(`AamfCopilotBackend initialized (cli: ${this.cliCommand}, outputFormat: json)`);
+  }
+
+  async invoke(invocation: FrameworkInvocation, worktreePath: string): Promise<FrameworkResult> {
+    const startTime = Date.now();
+    const prompt = `Read your context file at: ${invocation.contextPath}`;
+    const args: string[] = [
+      '--agent', invocation.agent,
+      '-p', prompt,
+      '--no-ask-user',
+      '--output-format', 'json',
+    ];
+    if (this.allowAllTools) args.push('--allow-all-tools');
+    if (this.allowAllPaths) args.push('--allow-all-paths');
+    if (this.defaultModel) args.push('--model', this.defaultModel);
+    if (this.effort) args.push('--effort', this.effort);
+    if (invocation.mcpServers) {
+      for (const [name, cfg] of Object.entries(invocation.mcpServers)) {
+        args.push('--additional-mcp-config', JSON.stringify({ mcpServers: { [name]: cfg } }));
+      }
+    }
+
+    const timeout = invocation.timeout ?? this.defaultTimeout;
+    const env = this.buildEnv(invocation, worktreePath);
+
+    this.logger.info(`Launching agent (copilot): ${invocation.agent}`, {
+      workItemId: invocation.workItemId,
+      phase: invocation.phase,
+    });
+
+    const result = await spawnAgent(this.cliCommand, args, { cwd: worktreePath, env, timeout });
+
+    const invocationError = isCopilotCliInvocationError(result.stderr);
+    const success = result.exitCode === 0 && !result.timedOut && !invocationError;
+    const duration = Date.now() - startTime;
+
+    const outputExists = await fileExists(invocation.outputPath);
+
+    if (success) {
+      this.logger.info(`Agent ${invocation.agent} completed in ${duration}ms`, {
+        workItemId: invocation.workItemId,
+        phase: invocation.phase,
+        data: { tokenUsage: 0, outputExists },
+      });
+    } else {
+      this.logger.error(`Agent ${invocation.agent} failed (exit: ${result.exitCode}, timeout: ${result.timedOut})`, {
+        workItemId: invocation.workItemId,
+        phase: invocation.phase,
+        data: { stderr: result.stderr.slice(0, 500) },
+      });
+    }
+
+    return {
+      agent: invocation.agent,
+      success,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      duration,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      tokenUsage: null,
+      outputPath: invocation.outputPath,
+      outputExists,
+      error: success ? undefined : (result.stderr.trim() || `Exit code: ${result.exitCode}`),
+    };
+  }
+
+  private buildEnv(invocation: FrameworkInvocation, worktreePath: string): Record<string, string | undefined> {
+    let env = stripVSCodeEnv({ ...process.env });
+    env['CADRE_WORK_ITEM_ID'] = invocation.workItemId;
+    env['CADRE_WORKTREE_PATH'] = worktreePath;
+    env['CADRE_PHASE'] = String(invocation.phase);
+    if (invocation.sessionId) env['CADRE_SESSION_ID'] = invocation.sessionId;
+    if (this.extraPath.length > 0) {
+      const sep = process.platform === 'win32' ? ';' : ':';
+      env['PATH'] = [...this.extraPath, env['PATH'] ?? ''].join(sep);
+    }
+    return env;
+  }
+}
+
+/** Register the AAMF copilot backend so the framework uses --output-format json. */
+export function registerAamfCopilotBackend(): void {
+  registerAgentBackendFactory('copilot', (config, logger) => new AamfCopilotBackend(config, logger));
+}
+
 // ─── AAMF ↔ Framework type mapping ───────────────────────────────────────────
 
 /** Build a BackendRuntimeConfig from AAMF's MigrationConfig. */
@@ -415,6 +605,11 @@ export class AgentLauncher {
     private readonly projectRoot: string,
     private readonly logger: Logger,
   ) {
+    // Register AAMF's copilot backend (uses --output-format json for token usage)
+    // before the framework creates its launcher — must happen before FrameworkAgentLauncher ctor.
+    if (config.agentBackend.runtime === 'copilot') {
+      registerAamfCopilotBackend();
+    }
     const runtimeConfig = buildBackendRuntimeConfig(config);
     this.frameworkLauncher = new FrameworkAgentLauncher(runtimeConfig, adaptLogger(logger));
     this.logDir = buildRuntimePaths(projectRoot, config.projectName).logsAgentsDir;

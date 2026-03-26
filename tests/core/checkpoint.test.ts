@@ -592,6 +592,7 @@ describe('CheckpointManager', () => {
       'migration-planning': 3,
       'budget-check-3': 3,
       'iterative-migration': 4,
+      'phase-4-teardown': 4,
       'budget-check-4': 4,
       'final-parity-loop': 5,
       'final-parity-iteration': 5,
@@ -600,8 +601,7 @@ describe('CheckpointManager', () => {
       'e2e-suite-writers': 6,
       'documentation-writer': 6,
       'idiomatic-refactor-gate': 7,
-      'idiomatic-loop': 7,
-      'idiomatic-iteration': 7,
+      'idiomatic-refactor-pipeline': 7,
       'completion': 8,
     };
     return map[id] ?? -1;
@@ -686,6 +686,7 @@ describe('CheckpointManager', () => {
         'aamf-migration/migration-planning',    // phase 3
         'aamf-migration/budget-check-3',        // phase 3
         'aamf-migration/iterative-migration',   // phase 4
+        'aamf-migration/phase-4-teardown',       // phase 4
         'aamf-migration/budget-check-4',        // phase 4
         'aamf-migration/final-parity-loop',     // phase 5
       ],

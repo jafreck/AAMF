@@ -8,7 +8,7 @@
     "Retain performance-critical terminal parsing, UTF-8 and cell-width behavior, screen diffing, and layout logic; use unsafe Rust only when clearly justified and encapsulated, and require differential parity tests against tmux 3.6a."
   ],
   "source": {
-    "path": "./tmux-src/tmux-3.6a",
+    "path": "../../../.cache/tmux-3.6a",
     "language": "c",
     "entryPoints": [
       "tmux.c",
@@ -58,7 +58,7 @@
     "waveControl": {
       "maxConvergenceIterations": 0
     },
-    "tokenBudget": 50000000,
+    "tokenBudget": 5000000000,
     "dryRun": false,
     "resume": true,
     "idiomaticRefactor": {
