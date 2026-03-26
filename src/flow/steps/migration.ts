@@ -564,10 +564,9 @@ function buildPerTaskFlow(
  */
 function buildWaveBarrierFlow(
   ctx: MigrationFlowContext,
-  tasks: MigrationTask[],
+  waves: MigrationTask[][],
   retryExec: RetryExecutor,
 ): FlowDefinition<MigrationFlowContext> {
-  const waves = computeTopologicalWaves(tasks);
   const nodes: FlowNode<MigrationFlowContext>[] = [];
   const configuredMaxConvergence = ctx.config.options.waveControl?.maxConvergenceIterations;
   const maxConvergence = resolveLoopMaxIterations(configuredMaxConvergence, 3);
@@ -716,10 +715,209 @@ function buildWaveBarrierFlow(
 }
 
 /**
+ * Build a sync-epoch nested flow from pre-computed epochs.
+ *
+ * Each epoch is a dependency-closed group of topological levels.
+ * Build runs at every epoch boundary. Tests run every `testEveryNEpochs` epochs
+ * and always at the final epoch.
+ */
+function buildSyncEpochFlow(
+  ctx: MigrationFlowContext,
+  epochs: Epoch[],
+  retryExec: RetryExecutor,
+): FlowDefinition<MigrationFlowContext> {
+  const nodes: FlowNode<MigrationFlowContext>[] = [];
+  const epochConfig = ctx.config.options.epochControl;
+  const configuredMaxConvergence = epochConfig?.maxConvergenceIterations;
+  const maxConvergence = resolveLoopMaxIterations(configuredMaxConvergence, 3);
+  const maxConvergenceLabel = (configuredMaxConvergence ?? 3) === 0
+    ? 'unlimited'
+    : String(configuredMaxConvergence ?? 3);
+  const testEveryN = epochConfig?.testEveryNEpochs ?? 2;
+  const gateMode = getQualityGateMode(ctx);
+
+  for (let e = 0; e < epochs.length; e++) {
+    const epoch = epochs[e]!;
+    const epochTasks = epoch.tasks;
+    const prevDep = e > 0 ? [`epoch-${e - 1}-commit`] : undefined;
+    const epochTaskIds = epochTasks.map(t => t.id);
+    const epochBatches = splitWaveIntoNonOverlappingBatches(epochTasks);
+    const isLastEpoch = e === epochs.length - 1;
+    const runTestsThisEpoch = isLastEpoch || ((e + 1) % testEveryN === 0);
+
+    // Epoch start marker
+    nodes.push(step<MigrationFlowContext>({
+      id: `epoch-${e}-start`,
+      dependsOn: prevDep,
+      run: async (c) => {
+        if (c.context.phase4Snapshot) c.context.phase4Snapshot.waveCount++;
+        c.context.logger.info(
+          `Epoch ${e}: migrating ${epochTasks.length} task(s) spanning level(s) [${epoch.levels.join(', ')}]`,
+        );
+        if (epochBatches.length > 1) {
+          c.context.logger.info(
+            `Epoch ${e}: split into ${epochBatches.length} non-overlapping batch(es)`,
+          );
+        }
+        c.context.logger.event({ type: 'epoch-started', epoch: e, taskIds: epochTaskIds, levels: epoch.levels });
+        await c.context.progress.appendWaveLifecycle({ wave: e, milestone: 'started' });
+      },
+    }));
+
+    // Epoch task execution (parallel branches, batched by target-file overlap)
+    if (epochBatches.length === 1) {
+      nodes.push(parallel<MigrationFlowContext>({
+        id: `epoch-${e}-tasks`,
+        dependsOn: [`epoch-${e}-start`],
+        branches: Object.fromEntries(epochTasks.map(task => [
+          task.id,
+          buildWaveTaskBranch(task, retryExec, gateMode),
+        ])),
+      }));
+    } else {
+      let batchDep = `epoch-${e}-start`;
+      for (let bi = 0; bi < epochBatches.length; bi++) {
+        const batch = epochBatches[bi]!;
+        const batchId = `epoch-${e}-tasks-batch-${bi}`;
+        nodes.push(parallel<MigrationFlowContext>({
+          id: batchId,
+          dependsOn: [batchDep],
+          branches: Object.fromEntries(batch.map(task => [
+            task.id,
+            buildWaveTaskBranch(task, retryExec, gateMode),
+          ])),
+        }));
+        batchDep = batchId;
+      }
+      nodes.push(step<MigrationFlowContext>({
+        id: `epoch-${e}-tasks`,
+        dependsOn: [batchDep],
+        run: async () => undefined,
+      }));
+    }
+
+    // Sync point entry
+    nodes.push(step<MigrationFlowContext>({
+      id: `epoch-${e}-sync-enter`,
+      dependsOn: [`epoch-${e}-tasks`],
+      run: async (c) => {
+        c.context.logger.event({ type: 'epoch-completed', epoch: e, taskIds: epochTaskIds, duration: 0 });
+        await c.context.progress.appendWaveLifecycle({ wave: e, milestone: 'completed' });
+        c.context.logger.event({ type: 'epoch-sync-entered', epoch: e });
+        await c.context.progress.appendWaveLifecycle({ wave: e, milestone: 'barrier-entered' });
+      },
+    }));
+
+    // Convergence loop: build (always) + test (conditional) → fix → re-validate
+    nodes.push(loop<MigrationFlowContext>({
+      id: `epoch-${e}-convergence`,
+      dependsOn: [`epoch-${e}-sync-enter`],
+      maxIterations: maxConvergence,
+      do: [
+        step<MigrationFlowContext>({
+          id: `epoch-${e}-validate`,
+          run: async (c) => runEpochValidation(c.context, e, runTestsThisEpoch),
+        }),
+        conditional<MigrationFlowContext>({
+          id: `epoch-${e}-recovery`,
+          when: (c) => {
+            const result = c.getStepOutput<WaveValidationResult>(`epoch-${e}-validate`);
+            return result?.success === false;
+          },
+          then: [step<MigrationFlowContext>({
+            id: `epoch-${e}-fix`,
+            run: async (c) => {
+              const validation = c.getStepOutput<WaveValidationResult>(`epoch-${e}-validate`);
+              if (!validation) {
+                throw new Error(
+                  `Epoch ${e} recovery triggered but no validation result found. ` +
+                  `This is a runtime bug.`,
+                );
+              }
+              return recoverWaveValidationFailure(c.context, e, epochTasks, validation);
+            },
+          })],
+        }),
+      ],
+      until: (c) => {
+        const result = c.getStepOutput<WaveValidationResult>(`epoch-${e}-validate`);
+        return result?.success === true;
+      },
+    }));
+
+    // Convergence check
+    nodes.push(step<MigrationFlowContext>({
+      id: `epoch-${e}-check`,
+      dependsOn: [`epoch-${e}-convergence`],
+      run: async (c) => {
+        const result = c.getStepOutput<WaveValidationResult>(`epoch-${e}-validate`);
+        if (result && !result.success) {
+          await raiseTerminalExhaustion(c.context, {
+            reasonCode: 'wave-convergence-exhausted', wave: e, check: 'epoch-validation',
+            summary: `Epoch ${e} failed to converge after ${maxConvergenceLabel} iteration(s)`,
+          });
+        }
+      },
+    }));
+
+    // Epoch commit + sync release
+    nodes.push(step<MigrationFlowContext>({
+      id: `epoch-${e}-commit`,
+      dependsOn: [`epoch-${e}-check`],
+      run: async (c) => {
+        c.context.deferGitCommits = false;
+        await commitForWave(c.context, e, epochTaskIds);
+        c.context.deferGitCommits = true;
+        c.context.logger.event({ type: 'epoch-sync-released', epoch: e, duration: 0 });
+        await c.context.progress.appendWaveLifecycle({ wave: e, milestone: 'barrier-released' });
+      },
+    }));
+  }
+
+  return defineFlow('phase-4-sync-epoch', nodes);
+}
+
+/**
+ * Run epoch sync-point validation.
+ * Build always runs. Tests run only when `runTests` is true.
+ */
+async function runEpochValidation(
+  ctx: MigrationFlowContext, epoch: number, runTests: boolean,
+): Promise<WaveValidationResult> {
+  if (ctx.phase4Snapshot) ctx.phase4Snapshot.waveValidationRuns++;
+  const epochTaskId = `epoch-${epoch}`;
+
+  if (ctx.config.target.formatCommand) {
+    const format = await runCommand(ctx, 'format', ctx.config.target.formatCommand, epochTaskId);
+    if (!format.success) ctx.logger.warn(`Epoch ${epoch} format failed: ${format.error ?? 'unknown'}`);
+  }
+
+  // Build always runs at epoch boundaries
+  if (ctx.config.target.buildCommand) {
+    const build = await runCommand(ctx, 'build', ctx.config.target.buildCommand, epochTaskId);
+    if (!build.success) {
+      return { success: false, failedLabel: 'build', failedCommand: ctx.config.target.buildCommand, failure: build };
+    }
+  }
+
+  // Tests run conditionally
+  if (runTests && ctx.config.target.testCommand) {
+    const test = await runCommand(ctx, 'test', ctx.config.target.testCommand, epochTaskId);
+    if (!test.success) {
+      return { success: false, failedLabel: 'test', failedCommand: ctx.config.target.testCommand, failure: test };
+    }
+  }
+
+  return { success: true };
+}
+
+/**
  * Group tasks into topological waves using Kahn's algorithm.
  * Each wave contains tasks whose dependencies are all in prior waves.
+ *
+ * @throws {Error} if any tasks cannot be scheduled (e.g. unresolved cyclic deps)
  */
-function computeTopologicalWaves(tasks: MigrationTask[]): MigrationTask[][] {
+export function computeTopologicalWaves(tasks: MigrationTask[]): MigrationTask[][] {
   const taskMap = new Map(tasks.map(t => [t.id, t]));
   const taskSet = new Set(tasks.map(t => t.id));
   const inDegree = new Map<string, number>();
@@ -750,7 +948,145 @@ function computeTopologicalWaves(tasks: MigrationTask[]): MigrationTask[][] {
     ready = nextReady;
   }
 
+  const scheduledCount = waves.reduce((sum, w) => sum + w.length, 0);
+  if (scheduledCount !== tasks.length) {
+    const scheduled = new Set(waves.flat().map(t => t.id));
+    const unscheduled = tasks.filter(t => !scheduled.has(t.id));
+    const ids = unscheduled.map(t => t.id).slice(0, 20);
+    throw new Error(
+      `computeTopologicalWaves: scheduled ${scheduledCount}/${tasks.length} tasks. ` +
+      `${tasks.length - scheduledCount} task(s) have unresolvable dependencies ` +
+      `(likely SCC-internal cycles not stripped). Unscheduled: [${ids.join(', ')}]`,
+    );
+  }
+
   return waves;
+}
+
+/**
+ * Epoch metadata produced by {@link computeEpochs}.
+ * Contains the tasks in the epoch and which topological levels it spans.
+ */
+export interface Epoch {
+  /** Zero-based epoch index. */
+  index: number;
+  /** Tasks in this epoch. */
+  tasks: MigrationTask[];
+  /** Topological level indices included in this epoch. */
+  levels: number[];
+}
+
+/**
+ * Group tasks into sync-epochs from topological levels.
+ *
+ * Algorithm:
+ *   1. Build topological levels (reuses computeTopologicalWaves).
+ *   2. Merge `levelsPerSync` consecutive levels into each epoch.
+ *   3. When `preferCompilationUnitClosure` is true, expand the epoch
+ *      boundary to pull in tasks from the next level(s) that share a
+ *      compilation unit with tasks already admitted, as long as that
+ *      does not violate dependency order (all predecessors are either
+ *      in the current or earlier epochs).
+ *
+ * @throws {Error} if tasks cannot be fully scheduled.
+ */
+export function computeEpochs(
+  tasks: MigrationTask[],
+  levelsPerSync: number,
+  preferCompilationUnitClosure: boolean,
+): Epoch[] {
+  const levels = computeTopologicalWaves(tasks);
+  if (levels.length === 0) return [];
+
+  const taskSet = new Set(tasks.map(t => t.id));
+  const assigned = new Set<string>(); // tasks already assigned to an epoch
+  const epochs: Epoch[] = [];
+  let levelIdx = 0;
+
+  while (levelIdx < levels.length) {
+    // Merge `levelsPerSync` consecutive levels
+    const endIdx = Math.min(levelIdx + levelsPerSync, levels.length);
+    const epochLevels: number[] = [];
+    const epochTasks: MigrationTask[] = [];
+
+    for (let i = levelIdx; i < endIdx; i++) {
+      epochLevels.push(i);
+      for (const t of levels[i]!) {
+        if (!assigned.has(t.id)) {
+          epochTasks.push(t);
+        }
+      }
+    }
+
+    let nextLevelIdx = endIdx;
+
+    // Compilation-unit closure expansion
+    if (preferCompilationUnitClosure && nextLevelIdx < levels.length) {
+      const epochTaskIds = new Set(epochTasks.map(t => t.id));
+      // Collect compilation units referenced by tasks in this epoch
+      const epochUnits = new Set<string>();
+      for (const t of epochTasks) {
+        if (t.compilationUnit) epochUnits.add(t.compilationUnit);
+      }
+
+      // Try pulling tasks from subsequent levels into this epoch
+      let expanded = true;
+      while (expanded && nextLevelIdx < levels.length) {
+        expanded = false;
+        const candidateLevel = levels[nextLevelIdx]!;
+        const pulled: MigrationTask[] = [];
+
+        for (const candidate of candidateLevel) {
+          if (assigned.has(candidate.id)) continue;
+          if (!candidate.compilationUnit || !epochUnits.has(candidate.compilationUnit)) continue;
+          // Check dependency closure: all deps must be in this epoch or already assigned
+          const depsOk = candidate.dependencies
+            .filter(d => taskSet.has(d))
+            .every(d => epochTaskIds.has(d) || assigned.has(d));
+          if (depsOk) {
+            pulled.push(candidate);
+          }
+        }
+
+        if (pulled.length > 0) {
+          for (const t of pulled) {
+            epochTasks.push(t);
+            epochTaskIds.add(t.id);
+          }
+          epochLevels.push(nextLevelIdx);
+
+          // Count unassigned tasks remaining in this level
+          const remainingInLevel = candidateLevel.filter(
+            t => !assigned.has(t.id) && !epochTaskIds.has(t.id),
+          ).length;
+
+          if (remainingInLevel === 0) {
+            // Entire level consumed → advance past it
+            nextLevelIdx++;
+            expanded = true;
+          } else {
+            // Partial pull — remaining tasks stay for the next epoch
+            break;
+          }
+        }
+      }
+    }
+
+    // Mark all tasks in this epoch as assigned
+    for (const t of epochTasks) {
+      assigned.add(t.id);
+    }
+
+    epochs.push({
+      index: epochs.length,
+      tasks: epochTasks,
+      levels: epochLevels,
+    });
+
+    levelIdx = nextLevelIdx;
+  }
+
+  return epochs;
 }
 
 // ─── Subflow Builder ─────────────────────────────────────────────────
@@ -811,9 +1147,7 @@ async function sortTasksSccAware(
     const sccSet = new Set(myScc);
     return { ...t, dependencies: t.dependencies.filter(d => !sccSet.has(d)) };
   });
-  const sorted = TaskQueue.topologicalSort(tasksForSort);
-  const origMap = new Map(tasks.map(t => [t.id, t]));
-  return sorted.map(t => origMap.get(t.id) ?? t);
+  return TaskQueue.topologicalSort(tasksForSort);
 }
 
 /**
@@ -821,7 +1155,7 @@ async function sortTasksSccAware(
  */
 export function computePhase4Concurrency(ctx: MigrationFlowContext): number {
   const executionMode = ctx.config.options.executionMode ?? 'per-task';
-  return isGitAutomationEnabled(ctx) && executionMode !== 'wave-barrier'
+  return isGitAutomationEnabled(ctx) && executionMode !== 'wave-barrier' && executionMode !== 'sync-epoch'
     ? 1 : ctx.config.options.maxParallelAgents;
 }
 
@@ -911,9 +1245,20 @@ export async function buildPhase4Subflow(
     (inv) => launchAgentWithEvents(ctx, inv), ctx.logger,
   );
   const executionMode = ctx.config.options.executionMode ?? 'per-task';
+  const plannedWaves = executionMode === 'wave-barrier'
+    ? computeTopologicalWaves(sortedTasks)
+    : [];
+  const plannedEpochs = executionMode === 'sync-epoch'
+    ? computeEpochs(
+        sortedTasks,
+        ctx.config.options.epochControl?.levelsPerSync ?? 2,
+        ctx.config.options.epochControl?.preferCompilationUnitClosure ?? true,
+      )
+    : [];
 
   ctx.phase4Snapshot = {
     executionMode, phase4DurationMs: 0, completedTaskCount: 0,
+    plannedWaveCount: plannedWaves.length || plannedEpochs.length,
     waveCount: 0, waveValidationRuns: 0, waveConvergenceIterations: 0,
     waveConvergenceFailures: 0, waveConvergenceLimitHits: 0,
     buildCommandRuns: 0, testCommandRuns: 0, formatCommandRuns: 0,
@@ -922,12 +1267,56 @@ export async function buildPhase4Subflow(
   };
   ctx.progress.setTotalTasks(sortedTasks.length);
 
-  if (executionMode === 'wave-barrier') {
+  if (plannedWaves.length > 0) {
+    const plannedWaveTaskIds = plannedWaves.map((wave) => wave.map((task) => task.id));
+    await ctx.progress.setWavePlan(plannedWaveTaskIds);
+    ctx.logger.info(
+      `Phase 4 wave plan: ${plannedWaves.length} wave(s) precomputed for ${sortedTasks.length} task(s)`,
+    );
+    await ctx.progress.appendEvent(
+      `Phase 4 wave plan published: ${plannedWaves.length} wave(s) precomputed ahead of execution`,
+    );
+    for (let waveIndex = 0; waveIndex < plannedWaveTaskIds.length; waveIndex++) {
+      const taskIds = plannedWaveTaskIds[waveIndex]!;
+      ctx.logger.info(
+        `Phase 4 wave ${waveIndex} (${waveIndex + 1}/${plannedWaveTaskIds.length}): ` +
+        `${taskIds.length} task(s) -> ${taskIds.join(', ')}`,
+      );
+    }
+  }
+
+  if (plannedEpochs.length > 0) {
+    const epochTaskIds = plannedEpochs.map(ep => ep.tasks.map(t => t.id));
+    await ctx.progress.setWavePlan(epochTaskIds);
+    const testEveryN = ctx.config.options.epochControl?.testEveryNEpochs ?? 2;
+    ctx.logger.info(
+      `Phase 4 epoch plan: ${plannedEpochs.length} epoch(s) for ${sortedTasks.length} task(s) ` +
+      `(levelsPerSync=${ctx.config.options.epochControl?.levelsPerSync ?? 2}, ` +
+      `testEvery=${testEveryN}, ` +
+      `compilationUnitClosure=${ctx.config.options.epochControl?.preferCompilationUnitClosure ?? true})`,
+    );
+    await ctx.progress.appendEvent(
+      `Phase 4 epoch plan published: ${plannedEpochs.length} epoch(s) precomputed ahead of execution`,
+    );
+    for (let epochIdx = 0; epochIdx < plannedEpochs.length; epochIdx++) {
+      const epoch = plannedEpochs[epochIdx]!;
+      const ids = epoch.tasks.map(t => t.id);
+      ctx.logger.info(
+        `Phase 4 epoch ${epochIdx} (${epochIdx + 1}/${plannedEpochs.length}): ` +
+        `${ids.length} task(s), levels [${epoch.levels.join(', ')}] -> ${ids.join(', ')}`,
+      );
+    }
+  }
+
+  if (executionMode === 'wave-barrier' || executionMode === 'sync-epoch') {
     ctx.deferGitCommits = true;
   }
 
+  if (executionMode === 'sync-epoch') {
+    return buildSyncEpochFlow(ctx, plannedEpochs, retryExec);
+  }
   return executionMode === 'wave-barrier'
-    ? buildWaveBarrierFlow(ctx, sortedTasks, retryExec)
+    ? buildWaveBarrierFlow(ctx, plannedWaves, retryExec)
     : buildPerTaskFlow(ctx, sortedTasks, retryExec);
 }
 

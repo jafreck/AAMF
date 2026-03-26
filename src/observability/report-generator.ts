@@ -195,6 +195,7 @@ export class ReportGenerator {
       `**Execution mode:** ${aggregates.phase4ExecutionMode}`,
       `**Phase 4 duration:** ${aggregates.phase4DurationMs}ms`,
       `**Completed Phase 4 tasks:** ${aggregates.completedPhase4Tasks}`,
+      `**Waves planned:** ${aggregates.plannedWaveCount}`,
       `**Waves executed:** ${aggregates.waveCount}`,
       `**Wave validation runs:** ${aggregates.waveValidationRuns}`,
       `**Convergence iterations:** ${aggregates.waveConvergenceIterations}`,
