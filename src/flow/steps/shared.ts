@@ -60,6 +60,7 @@ const INFRASTRUCTURE_ERROR_PATTERNS: ReadonlyArray<{ pattern: RegExp; label: str
   { pattern: /failed to download|registry .* unavailable/i, label: 'network' },
   { pattern: /HTTP\/2 GOAWAY|connection_error|\b503\b|service unavailable/i, label: 'network' },
   { pattern: /timed? ?out|deadline exceeded/i, label: 'timeout' },
+  { pattern: /command hung|timed out.*command/i, label: 'hung' },
   { pattern: /permission denied|EACCES/i, label: 'permission' },
 ];
 
@@ -595,7 +596,8 @@ export async function runCommand(
     if (label === 'lint') ctx.phase4Snapshot.lintCommandRuns++;
   }
   return ctx.buildLimiter(async () => {
-    const timeout = getRuntimeTimeout(ctx);
+    const commandTimeout = ctx.config.options.commandTimeout;
+    const timeout = commandTimeout > 0 ? commandTimeout : getRuntimeTimeout(ctx);
     ctx.logger.info(`Running ${label} command for task ${taskId}: ${command}`);
     try {
       const resolvedPath = ctx.launcher.getResolvedPath();
@@ -620,7 +622,7 @@ export async function runCommand(
       if (result.exitCode !== 0 || result.killed) {
         const combinedOutput = `${result.stdout}\n${result.stderr}`;
         const errorText = result.killed
-          ? `${label} failed (timed out after ${timeout}ms). See full output: ${logPath}`
+          ? `${label} command hung (timed out after ${timeout}ms). See full output: ${logPath}`
           : `${label} failed (exit code ${result.exitCode}). See full output: ${logPath}`;
         ctx.logger.error(errorText);
         const infraLabel = classifyError(combinedOutput);

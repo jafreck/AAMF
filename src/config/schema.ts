@@ -131,6 +131,13 @@ export const MigrationConfigSchema = z.object({
      * Default: 3.
      */
     maxInfraRetries: z.number().int().min(0).max(10).default(3),
+    /**
+     * Timeout in milliseconds for build, test, format, and lint commands.
+     * Commands that exceed this timeout are killed and classified as hung.
+     * This is separate from the agent invocation timeout.
+     * Default: 300000 (5 minutes). Set to 0 to use the agent timeout.
+     */
+    commandTimeout: z.number().int().min(0).default(300_000),
 
     /**
      * Options for the optional idiomatic refactor phase (Phase 7).
@@ -274,6 +281,7 @@ export const MigrationConfigSchema = z.object({
     maxBlockedTasks: 1,
     qualityPolicy: 'strict',
     maxInfraRetries: 3,
+    commandTimeout: 300_000,
     keepArtifacts: false,
     git: {
       enabled: true,
