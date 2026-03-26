@@ -564,10 +564,9 @@ function buildPerTaskFlow(
  */
 function buildWaveBarrierFlow(
   ctx: MigrationFlowContext,
-  tasks: MigrationTask[],
+  waves: MigrationTask[][],
   retryExec: RetryExecutor,
 ): FlowDefinition<MigrationFlowContext> {
-  const waves = computeTopologicalWaves(tasks);
   const nodes: FlowNode<MigrationFlowContext>[] = [];
   const configuredMaxConvergence = ctx.config.options.waveControl?.maxConvergenceIterations;
   const maxConvergence = resolveLoopMaxIterations(configuredMaxConvergence, 3);
@@ -718,8 +717,10 @@ function buildWaveBarrierFlow(
 /**
  * Group tasks into topological waves using Kahn's algorithm.
  * Each wave contains tasks whose dependencies are all in prior waves.
+ *
+ * @throws {Error} if any tasks cannot be scheduled (e.g. unresolved cyclic deps)
  */
-function computeTopologicalWaves(tasks: MigrationTask[]): MigrationTask[][] {
+export function computeTopologicalWaves(tasks: MigrationTask[]): MigrationTask[][] {
   const taskMap = new Map(tasks.map(t => [t.id, t]));
   const taskSet = new Set(tasks.map(t => t.id));
   const inDegree = new Map<string, number>();
@@ -748,6 +749,18 @@ function computeTopologicalWaves(tasks: MigrationTask[]): MigrationTask[][] {
       }
     }
     ready = nextReady;
+  }
+
+  const scheduledCount = waves.reduce((sum, w) => sum + w.length, 0);
+  if (scheduledCount !== tasks.length) {
+    const scheduled = new Set(waves.flat().map(t => t.id));
+    const unscheduled = tasks.filter(t => !scheduled.has(t.id));
+    const ids = unscheduled.map(t => t.id).slice(0, 20);
+    throw new Error(
+      `computeTopologicalWaves: scheduled ${scheduledCount}/${tasks.length} tasks. ` +
+      `${tasks.length - scheduledCount} task(s) have unresolvable dependencies ` +
+      `(likely SCC-internal cycles not stripped). Unscheduled: [${ids.join(', ')}]`,
+    );
   }
 
   return waves;
@@ -811,9 +824,7 @@ async function sortTasksSccAware(
     const sccSet = new Set(myScc);
     return { ...t, dependencies: t.dependencies.filter(d => !sccSet.has(d)) };
   });
-  const sorted = TaskQueue.topologicalSort(tasksForSort);
-  const origMap = new Map(tasks.map(t => [t.id, t]));
-  return sorted.map(t => origMap.get(t.id) ?? t);
+  return TaskQueue.topologicalSort(tasksForSort);
 }
 
 /**
@@ -911,9 +922,13 @@ export async function buildPhase4Subflow(
     (inv) => launchAgentWithEvents(ctx, inv), ctx.logger,
   );
   const executionMode = ctx.config.options.executionMode ?? 'per-task';
+  const plannedWaves = executionMode === 'wave-barrier'
+    ? computeTopologicalWaves(sortedTasks)
+    : [];
 
   ctx.phase4Snapshot = {
     executionMode, phase4DurationMs: 0, completedTaskCount: 0,
+    plannedWaveCount: plannedWaves.length,
     waveCount: 0, waveValidationRuns: 0, waveConvergenceIterations: 0,
     waveConvergenceFailures: 0, waveConvergenceLimitHits: 0,
     buildCommandRuns: 0, testCommandRuns: 0, formatCommandRuns: 0,
@@ -922,12 +937,30 @@ export async function buildPhase4Subflow(
   };
   ctx.progress.setTotalTasks(sortedTasks.length);
 
+  if (plannedWaves.length > 0) {
+    const plannedWaveTaskIds = plannedWaves.map((wave) => wave.map((task) => task.id));
+    await ctx.progress.setWavePlan(plannedWaveTaskIds);
+    ctx.logger.info(
+      `Phase 4 wave plan: ${plannedWaves.length} wave(s) precomputed for ${sortedTasks.length} task(s)`,
+    );
+    await ctx.progress.appendEvent(
+      `Phase 4 wave plan published: ${plannedWaves.length} wave(s) precomputed ahead of execution`,
+    );
+    for (let waveIndex = 0; waveIndex < plannedWaveTaskIds.length; waveIndex++) {
+      const taskIds = plannedWaveTaskIds[waveIndex]!;
+      ctx.logger.info(
+        `Phase 4 wave ${waveIndex} (${waveIndex + 1}/${plannedWaveTaskIds.length}): ` +
+        `${taskIds.length} task(s) -> ${taskIds.join(', ')}`,
+      );
+    }
+  }
+
   if (executionMode === 'wave-barrier') {
     ctx.deferGitCommits = true;
   }
 
   return executionMode === 'wave-barrier'
-    ? buildWaveBarrierFlow(ctx, sortedTasks, retryExec)
+    ? buildWaveBarrierFlow(ctx, plannedWaves, retryExec)
     : buildPerTaskFlow(ctx, sortedTasks, retryExec);
 }
 

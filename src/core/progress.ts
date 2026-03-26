@@ -23,15 +23,22 @@ export interface RetryTargetEvent {
   summary: string;
 }
 
+interface WavePlanEntry {
+  wave: number;
+  taskIds: string[];
+}
+
 export class ProgressWriter {
   private phases: Map<number, { name: string; status: string; notes?: string; exitCode?: number; stderr?: string }> = new Map();
   private tasks: Map<string, { status: string; details?: TaskDetails }> = new Map();
   private events: string[] = [];
   private waveLifecycle: WaveLifecycleEvent[] = [];
+  private wavePlan: WavePlanEntry[] = [];
   private retryTargets: RetryTargetEvent[] = [];
   private terminalExhaustion?: TerminalExhaustionState;
   private adjudicationEvents: AdjudicationEventRecord[] = [];
   private totalTasks: number = 0;
+  private totalWaves: number = 0;
   private tokenUsage: { total: number; byPhase: Record<number, number>; byAgent: Record<string, number> } = { total: 0, byPhase: {}, byAgent: {} };
   private startTime: Date = new Date();
   private agentStatuses: Map<string, string> = new Map();
@@ -45,6 +52,8 @@ export class ProgressWriter {
     this.retryTargets = [];
     this.terminalExhaustion = undefined;
     this.adjudicationEvents = [];
+    this.wavePlan = [];
+    this.totalWaves = 0;
     this.phases.set(2, { name: 'Knowledge Base Construction', status: 'pending' });
     this.phases.set(3, { name: 'Migration Planning', status: 'pending' });
     this.phases.set(4, { name: 'Iterative Migration', status: 'pending' });
@@ -127,6 +136,18 @@ export class ProgressWriter {
   /** Set total task count for progress bar */
   setTotalTasks(count: number): void {
     this.totalTasks = count;
+  }
+
+  /** Set total precomputed wave count for Phase 4 wave-barrier mode. */
+  setTotalWaves(count: number): void {
+    this.totalWaves = count;
+  }
+
+  /** Persist the precomputed wave ordering for Phase 4 wave-barrier mode. */
+  async setWavePlan(waves: string[][]): Promise<void> {
+    this.wavePlan = waves.map((taskIds, wave) => ({ wave, taskIds: [...taskIds] }));
+    this.totalWaves = waves.length;
+    await this.writeCurrentState();
   }
 
   /** Update task progress within Phase 4 */
@@ -269,6 +290,31 @@ export class ProgressWriter {
         md += `- **${agent}**: ${agentStatus}\n`;
       }
       md += '\n';
+    }
+
+    if (this.totalWaves > 0) {
+      const startedWaves = new Set(
+        this.waveLifecycle
+          .filter((event) => event.milestone === 'started')
+          .map((event) => event.wave),
+      );
+      const completedWaves = new Set(
+        this.waveLifecycle
+          .filter((event) => event.milestone === 'completed')
+          .map((event) => event.wave),
+      );
+      md += `## Wave Plan\n\n`;
+      md += `**Planned waves:** ${this.totalWaves}\n`;
+      md += `**Started waves:** ${startedWaves.size}\n`;
+      md += `**Completed waves:** ${completedWaves.size}\n\n`;
+      if (this.wavePlan.length > 0) {
+        md += `| Wave | Tasks | Ordered Task IDs |\n`;
+        md += `|------|-------|------------------|\n`;
+        for (const wave of this.wavePlan) {
+          md += `| ${wave.wave} | ${wave.taskIds.length} | ${wave.taskIds.join(', ')} |\n`;
+        }
+        md += '\n';
+      }
     }
 
     // Task progress bar (Phase 4)

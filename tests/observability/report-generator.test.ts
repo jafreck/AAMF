@@ -54,6 +54,7 @@ function makeAggregates(overrides?: Partial<MetricsAggregate>): MetricsAggregate
     phase4ExecutionMode: 'wave-barrier',
     phase4DurationMs: 12000,
     completedPhase4Tasks: 2,
+    plannedWaveCount: 2,
     waveCount: 1,
     waveValidationRuns: 1,
     waveConvergenceIterations: 1,
@@ -154,6 +155,7 @@ describe('ReportGenerator', () => {
     it('should include wave lifecycle and efficiency section', async () => {
       const metrics = [makeMetric()];
       const aggregates = makeAggregates({
+        plannedWaveCount: 3,
         waveCount: 2,
         waveValidationRuns: 3,
         waveConvergenceIterations: 4,
@@ -171,6 +173,7 @@ describe('ReportGenerator', () => {
       const content = await readFile(join(reportDir, 'index.md'), 'utf-8');
       expect(content).toContain('Wave Lifecycle & Efficiency');
       expect(content).toContain('Execution mode');
+      expect(content).toContain('Waves planned:** 3');
       expect(content).toContain('Convergence iterations:** 4');
       expect(content).toContain('Convergence failures:** 2');
       expect(content).toContain('Convergence limit hits:** 1');
@@ -188,6 +191,7 @@ describe('ReportGenerator', () => {
       const raw = await readFile(join(reportDir, 'metrics.json'), 'utf-8');
       const parsed = JSON.parse(raw);
       expect(parsed.aggregates).toHaveProperty('phase4ExecutionMode', 'per-task');
+      expect(parsed.aggregates).toHaveProperty('plannedWaveCount');
       expect(parsed.aggregates).toHaveProperty('waveCount');
       expect(parsed.aggregates).toHaveProperty('buildTestInvocationsPerCompletedTask');
     });

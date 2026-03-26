@@ -141,6 +141,7 @@ describe('MetricsCollector', () => {
       expect(summary).toHaveProperty('peakParallelInvocations');
       expect(summary).toHaveProperty('parallelismOverTime');
       expect(summary).toHaveProperty('phase4ExecutionMode');
+      expect(summary).toHaveProperty('plannedWaveCount');
       expect(summary).toHaveProperty('waveCount');
       expect(summary).toHaveProperty('buildCommandRuns');
       expect(summary).toHaveProperty('testCommandRuns');
@@ -211,6 +212,7 @@ describe('MetricsCollector', () => {
       expect(agg.totalCost).toBe(0);
       expect(agg.peakParallelInvocations).toBe(0);
       expect(agg.parallelismOverTime).toEqual([]);
+      expect(agg.plannedWaveCount).toBe(0);
       expect(agg.waveCount).toBe(0);
       expect(agg.buildCommandRuns).toBe(0);
       expect(agg.buildTestInvocationsPerCompletedTask).toBe(0);
@@ -361,6 +363,7 @@ describe('MetricsCollector', () => {
         executionMode: 'wave-barrier',
         phase4DurationMs: 9000,
         completedTaskCount: 2,
+        plannedWaveCount: 3,
         waveCount: 1,
         waveValidationRuns: 2,
         waveConvergenceIterations: 2,
@@ -377,6 +380,7 @@ describe('MetricsCollector', () => {
       expect(agg.phase4ExecutionMode).toBe('wave-barrier');
       expect(agg.phase4DurationMs).toBe(9000);
       expect(agg.completedPhase4Tasks).toBe(2);
+      expect(agg.plannedWaveCount).toBe(3);
       expect(agg.waveCount).toBe(1);
       expect(agg.waveValidationRuns).toBe(2);
       expect(agg.waveConvergenceIterations).toBe(2);

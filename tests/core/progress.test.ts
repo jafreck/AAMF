@@ -138,6 +138,11 @@ describe('ProgressWriter', () => {
 
   it('should render wave lifecycle milestones', async () => {
     await writer.initialize(config);
+    await writer.setWavePlan([
+      ['task-001', 'task-002'],
+      ['task-003'],
+      ['task-004'],
+    ]);
     await writer.appendWaveLifecycle({ wave: 1, milestone: 'started' });
     await writer.appendWaveLifecycle({
       wave: 1,
@@ -148,6 +153,11 @@ describe('ProgressWriter', () => {
     });
 
     const content = await readFile(progressFile, 'utf-8');
+    expect(content).toContain('Wave Plan');
+    expect(content).toContain('Planned waves:** 3');
+    expect(content).toContain('Started waves:** 1');
+    expect(content).toContain('| 0 | 2 | task-001, task-002 |');
+    expect(content).toContain('| 1 | 1 | task-003 |');
     expect(content).toContain('Wave Lifecycle');
     expect(content).toContain('| 1 | started |  |');
     expect(content).toContain('iteration=2');
