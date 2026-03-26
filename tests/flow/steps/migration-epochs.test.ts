@@ -129,7 +129,11 @@ describe('computeEpochs', () => {
     // epoch 2: d (level 2)
     expect(epochs).toHaveLength(3);
     expect(epochs[0]!.tasks.map(t => t.id).sort()).toEqual(['a', 'c']);
+    // Level 1 appears in epoch 0 (partial pull) but NOT duplicated
+    expect(epochs[0]!.levels).toEqual([0, 1]);
     expect(epochs[1]!.tasks.map(t => t.id)).toEqual(['b']);
+    // Level 1 still has remaining tasks so it also appears in epoch 1
+    expect(epochs[1]!.levels).toEqual([1]);
     expect(epochs[2]!.tasks.map(t => t.id)).toEqual(['d']);
   });
 

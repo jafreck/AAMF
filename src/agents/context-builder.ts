@@ -316,11 +316,21 @@ export class ContextBuilder {
   private buildExecutionStrategy(): import('./types.js').ExecutionStrategy {
     const opts = this.config.options;
     const waveControl = opts.waveControl ?? { maxConvergenceIterations: 3 };
+    const epochControl = opts.epochControl ?? {
+      levelsPerSync: 2, testEveryNEpochs: 2,
+      preferCompilationUnitClosure: true, maxConvergenceIterations: 3,
+    };
     return {
       executionMode: opts.executionMode ?? 'per-task',
       maxParallelAgents: opts.maxParallelAgents,
       waveControl: {
         maxConvergenceIterations: waveControl.maxConvergenceIterations,
+      },
+      epochControl: {
+        levelsPerSync: epochControl.levelsPerSync,
+        testEveryNEpochs: epochControl.testEveryNEpochs,
+        preferCompilationUnitClosure: epochControl.preferCompilationUnitClosure,
+        maxConvergenceIterations: epochControl.maxConvergenceIterations,
       },
       maxRetriesPerTask: opts.maxRetriesPerTask,
       buildCommand: this.config.target.buildCommand,

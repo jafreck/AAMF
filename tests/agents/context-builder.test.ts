@@ -146,6 +146,10 @@ describe('ContextBuilder', () => {
       expect(strategy.maxRetriesPerTask).toBe(3);
       expect(strategy.requiresNonOverlappingTargets).toBe(true);
       expect(strategy.waveControl).toEqual({ maxConvergenceIterations: 3 });
+      expect(strategy.epochControl).toEqual({
+        levelsPerSync: 2, testEveryNEpochs: 2,
+        preferCompilationUnitClosure: true, maxConvergenceIterations: 3,
+      });
       expect(strategy.buildCommand).toBeUndefined();
       expect(strategy.testCommand).toBeUndefined();
     });
@@ -185,6 +189,10 @@ describe('ContextBuilder', () => {
       expect(strategy.maxParallelAgents).toBe(5);
       expect(strategy.maxRetriesPerTask).toBe(2);
       expect(strategy.waveControl).toEqual({ maxConvergenceIterations: 5 });
+      expect(strategy.epochControl).toEqual({
+        levelsPerSync: 2, testEveryNEpochs: 2,
+        preferCompilationUnitClosure: true, maxConvergenceIterations: 3,
+      });
       expect(strategy.buildCommand).toBe('cargo build');
       expect(strategy.testCommand).toBe('cargo test');
       expect(strategy.requiresNonOverlappingTargets).toBe(true);
