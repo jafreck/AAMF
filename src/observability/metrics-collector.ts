@@ -13,7 +13,7 @@ import type { InvocationMetric } from '../agents/types.js';
 // ─── Aggregate Types ─────────────────────────────────────────────────────────
 
 export interface Phase4MetricsSnapshot {
-  executionMode: 'per-task' | 'wave-barrier';
+  executionMode: 'per-task' | 'wave-barrier' | 'sync-epoch';
   phase4DurationMs: number;
   completedTaskCount: number;
   plannedWaveCount: number;
@@ -56,7 +56,7 @@ export interface MetricsAggregate {
   /** Routed invocations (tier != normal) that succeeded on first attempt. */
   retriesAvoidedByRouting: number;
   /** Phase 4 execution strategy used for this run. */
-  phase4ExecutionMode: 'per-task' | 'wave-barrier' | 'unknown';
+  phase4ExecutionMode: 'per-task' | 'wave-barrier' | 'sync-epoch' | 'unknown';
   /** Total duration of phase 4 in milliseconds. */
   phase4DurationMs: number;
   /** Number of phase 4 tasks marked completed. */

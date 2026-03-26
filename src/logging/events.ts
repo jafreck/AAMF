@@ -40,6 +40,12 @@ export type RuntimeEvent =
   | { type: 'wave-barrier-released'; wave: number; duration: number }
   | { type: 'wave-convergence-status'; wave: number; iteration: number; converged: boolean; remainingFailures: number }
   | { type: 'wave-convergence-limit-reached'; wave: number; maxIterations: number; remainingFailures: number }
+  | { type: 'epoch-started'; epoch: number; taskIds: string[]; levels: number[] }
+  | { type: 'epoch-completed'; epoch: number; taskIds: string[]; duration: number }
+  | { type: 'epoch-sync-entered'; epoch: number }
+  | { type: 'epoch-sync-released'; epoch: number; duration: number }
+  | { type: 'epoch-convergence-status'; epoch: number; iteration: number; converged: boolean; remainingFailures: number }
+  | { type: 'epoch-convergence-limit-reached'; epoch: number; maxIterations: number; remainingFailures: number }
   | { type: 'terminal-exhaustion'; reasonCode: TerminalReasonCode; wave?: number; taskId?: string; check?: string }
   | { type: 'checkpoint-saved'; phase: number; taskId?: string }
   | { type: 'budget-warning'; usage: number; budget: number; percentage: number }

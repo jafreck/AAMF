@@ -241,8 +241,8 @@ export interface AgentContext {
  * calibrate task complexity against the available recovery budget.
  */
 export interface ExecutionStrategy {
-  /** Phase 4 execution mode: `'per-task'` (task-local validation) or `'wave-barrier'` (concurrent waves). */
-  executionMode: 'per-task' | 'wave-barrier';
+  /** Phase 4 execution mode. */
+  executionMode: 'per-task' | 'wave-barrier' | 'sync-epoch';
 
   /** Maximum number of agent subprocesses running in parallel. */
   maxParallelAgents: number;
