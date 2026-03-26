@@ -150,7 +150,7 @@ describe('runCommand', () => {
 
     env.ctx.phase4Snapshot = {
       executionMode: 'per-task', phase4DurationMs: 0,
-      completedTaskCount: 0, waveCount: 0,
+      completedTaskCount: 0, plannedWaveCount: 0, waveCount: 0,
       waveValidationRuns: 0, waveConvergenceIterations: 0,
       waveConvergenceFailures: 0, waveConvergenceLimitHits: 0,
       buildCommandRuns: 0, testCommandRuns: 0,

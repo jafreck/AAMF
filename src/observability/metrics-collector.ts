@@ -16,6 +16,7 @@ export interface Phase4MetricsSnapshot {
   executionMode: 'per-task' | 'wave-barrier';
   phase4DurationMs: number;
   completedTaskCount: number;
+  plannedWaveCount: number;
   waveCount: number;
   waveValidationRuns: number;
   waveConvergenceIterations: number;
@@ -60,6 +61,8 @@ export interface MetricsAggregate {
   phase4DurationMs: number;
   /** Number of phase 4 tasks marked completed. */
   completedPhase4Tasks: number;
+  /** Number of migration waves precomputed before execution begins. */
+  plannedWaveCount: number;
   /** Number of migration waves executed in wave-barrier mode. */
   waveCount: number;
   /** Number of build/test validation passes run after waves. */
@@ -268,6 +271,7 @@ export class MetricsCollector {
       phase4ExecutionMode: this.phase4Snapshot?.executionMode ?? 'unknown',
       phase4DurationMs: this.phase4Snapshot?.phase4DurationMs ?? 0,
       completedPhase4Tasks,
+      plannedWaveCount: this.phase4Snapshot?.plannedWaveCount ?? 0,
       waveCount: this.phase4Snapshot?.waveCount ?? 0,
       waveValidationRuns: this.phase4Snapshot?.waveValidationRuns ?? 0,
       waveConvergenceIterations: this.phase4Snapshot?.waveConvergenceIterations ?? 0,

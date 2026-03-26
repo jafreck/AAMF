@@ -7,8 +7,8 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
-import { writeFile, mkdir } from 'node:fs/promises';
-import { buildPhase4Subflow, computePhase4Concurrency } from '../../../src/flow/steps/migration.js';
+import { writeFile, mkdir, readFile } from 'node:fs/promises';
+import { buildPhase4Subflow, computePhase4Concurrency, computeTopologicalWaves } from '../../../src/flow/steps/migration.js';
 import { FlowRunner } from '@cadre-dev/framework/flow';
 import { Phase4CheckpointAdapter } from '../../../src/flow/checkpoint-adapter.js';
 import type { MigrationFlowContext } from '../../../src/flow/context.js';
@@ -139,6 +139,31 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
     } finally {
       spawnSpy.mockRestore();
     }
+  });
+
+  it('should publish the full precomputed wave ordering before execution starts', async () => {
+    const launcherFn = createMockLauncher();
+    env = await setupFlowTestWithTasks(launcherFn, DEFAULT_PLANNING_TASKS, {
+      options: {
+        executionMode: 'wave-barrier',
+        waveControl: { maxConvergenceIterations: 1 },
+        qualityPolicy: 'balanced',
+      },
+    });
+
+    const infoMessages: string[] = [];
+    vi.spyOn(env.logger, 'info').mockImplementation((message: string) => {
+      infoMessages.push(message);
+    });
+
+    await buildPhase4Subflow(env.flowCtx);
+
+    const progressContent = await readFile(join(env.progressDir, 'progress.md'), 'utf-8');
+    expect(infoMessages.some((message) => message.includes('Phase 4 wave plan: 2 wave(s) precomputed'))).toBe(true);
+    expect(infoMessages.some((message) => message.includes('Phase 4 wave 0 (1/2): 1 task(s) -> task-001'))).toBe(true);
+    expect(infoMessages.some((message) => message.includes('Phase 4 wave 1 (2/2): 1 task(s) -> task-002'))).toBe(true);
+    expect(progressContent).toContain('| 0 | 1 | task-001 |');
+    expect(progressContent).toContain('| 1 | 1 | task-002 |');
   });
 
   it('should set deferGitCommits during wave migration when git is enabled', async () => {
@@ -582,5 +607,147 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
       c => typeof c[0] === 'string' && c[0].includes('exceeds budget'),
     );
     expect(budgetWarnings.length).toBeGreaterThan(0);
+  });
+
+  // ─── SCC Wave-Scheduling Regression ─────────────────────────────────
+
+  describe('SCC-aware wave scheduling (regression)', () => {
+    it('should schedule all tasks when dependencies contain SCC-internal cycles', async () => {
+      // A↔B form an SCC, C depends on A (external dep)
+      const tasks = [
+        makeTask('task-A', ['task-B']),
+        makeTask('task-B', ['task-A']),
+        makeTask('task-C', ['task-A']),
+      ];
+      const launcherFn = createMockLauncher();
+      env = await setupFlowTestWithTasks(launcherFn, tasks, {
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { maxConvergenceIterations: 1 },
+          qualityPolicy: 'balanced',
+        },
+      });
+
+      // Inject SCC so sortTasksSccAware strips the A↔B cycle
+      env.ctx.phase1TaskGraphResult!.extensions.structuredOutput!['sccs'] = [['task-A', 'task-B']];
+
+      const infoMessages: string[] = [];
+      vi.spyOn(env.logger, 'info').mockImplementation((message: string) => {
+        infoMessages.push(message);
+      });
+
+      const spawnMod = await import('../../../src/util/process.js');
+      const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
+        exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      });
+
+      try {
+        const result = await runPhase4(env);
+        expect(result.status).toBe('completed');
+
+        // All 3 tasks must appear in the wave plan
+        const wavePlanMsg = infoMessages.find(m => m.includes('Phase 4 wave plan:'));
+        expect(wavePlanMsg).toBeDefined();
+        expect(wavePlanMsg).toContain('3 task(s)');
+
+        // Each task ID must appear in at least one wave log line
+        for (const id of ['task-A', 'task-B', 'task-C']) {
+          expect(infoMessages.some(m => m.includes('Phase 4 wave') && m.includes(id))).toBe(true);
+        }
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+
+    it('should include all tasks in wave plan after SCC filtering with larger task set', async () => {
+      // Two SCCs: {1,2,3} and {5,6}, plus independent tasks 4 and 7
+      const tasks = [
+        makeTask('t-1', ['t-2']),
+        makeTask('t-2', ['t-3']),
+        makeTask('t-3', ['t-1']),
+        makeTask('t-4', ['t-1']),
+        makeTask('t-5', ['t-6', 't-4']),
+        makeTask('t-6', ['t-5']),
+        makeTask('t-7', []),
+      ];
+      const launcherFn = createMockLauncher();
+      env = await setupFlowTestWithTasks(launcherFn, tasks, {
+        options: {
+          executionMode: 'wave-barrier',
+          waveControl: { maxConvergenceIterations: 1 },
+          qualityPolicy: 'balanced',
+        },
+      });
+
+      env.ctx.phase1TaskGraphResult!.extensions.structuredOutput!['sccs'] = [
+        ['t-1', 't-2', 't-3'],
+        ['t-5', 't-6'],
+      ];
+
+      const infoMessages: string[] = [];
+      vi.spyOn(env.logger, 'info').mockImplementation((message: string) => {
+        infoMessages.push(message);
+      });
+
+      const spawnMod = await import('../../../src/util/process.js');
+      const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
+        exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      });
+
+      try {
+        const result = await runPhase4(env);
+        expect(result.status).toBe('completed');
+
+        const wavePlanMsg = infoMessages.find(m => m.includes('Phase 4 wave plan:'));
+        expect(wavePlanMsg).toBeDefined();
+        expect(wavePlanMsg).toContain('7 task(s)');
+
+        // Every task ID must be scheduled
+        for (const id of ['t-1', 't-2', 't-3', 't-4', 't-5', 't-6', 't-7']) {
+          expect(infoMessages.some(m => m.includes('Phase 4 wave') && m.includes(id))).toBe(true);
+        }
+      } finally {
+        spawnSpy.mockRestore();
+      }
+    });
+  });
+
+  // ─── computeTopologicalWaves completeness assertion ────────────────
+
+  describe('computeTopologicalWaves', () => {
+    it('should throw when not all tasks can be scheduled due to unresolved cycles', () => {
+      const tasks = [
+        makeTask('A', ['B']),
+        makeTask('B', ['A']),
+      ];
+      expect(() => computeTopologicalWaves(tasks)).toThrow(
+        /scheduled 0\/2/,
+      );
+    });
+
+    it('should schedule all tasks when there are no cycles', () => {
+      const tasks = [
+        makeTask('x', []),
+        makeTask('y', ['x']),
+        makeTask('z', ['y']),
+      ];
+      const waves = computeTopologicalWaves(tasks);
+      expect(waves).toHaveLength(3);
+      expect(waves[0]!.map(t => t.id)).toEqual(['x']);
+      expect(waves[1]!.map(t => t.id)).toEqual(['y']);
+      expect(waves[2]!.map(t => t.id)).toEqual(['z']);
+    });
+
+    it('should place independent tasks in the same wave', () => {
+      const tasks = [
+        makeTask('a', []),
+        makeTask('b', []),
+        makeTask('c', ['a', 'b']),
+      ];
+      const waves = computeTopologicalWaves(tasks);
+      expect(waves).toHaveLength(2);
+      expect(waves[0]!.map(t => t.id).sort()).toEqual(['a', 'b']);
+      expect(waves[1]!.map(t => t.id)).toEqual(['c']);
+    });
   });
 });
