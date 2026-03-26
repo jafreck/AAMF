@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { runFinalParityIteration, noFixesNeeded } from '../../../src/flow/steps/final-parity.js';
 import { launchE2eTestCrafter, launchE2eSuiteWriters, launchDocWriter } from '../../../src/flow/steps/finalization.js';
-import { runIdiomaticReviewIteration, noIdiomaticIssues } from '../../../src/flow/steps/idiomatic-refactor.js';
+import { runIdiomaticRefactorPipeline } from '../../../src/flow/steps/idiomatic-refactor.js';
 import { finalizeAndReport } from '../../../src/flow/steps/completion.js';
 import {
   setupFlowTest,
@@ -248,8 +248,8 @@ describe('launchDocWriter', () => {
 
 // ─── Phase 7 — Idiomatic Refactor ───────────────────────────────────────────
 
-describe('runIdiomaticReviewIteration', () => {
-  it('should return issues: 0 when no idiomatic issues found', async () => {
+describe('runIdiomaticRefactorPipeline', () => {
+  it('should return tasksCompleted: 0 when no idiomatic issues found', async () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
         return { extensions: { outputParsed: true, structuredOutput: { issues: [] } } };
@@ -258,22 +258,42 @@ describe('runIdiomaticReviewIteration', () => {
     });
     env = await setupFlowTest(launcherFn);
 
-    const result = await runIdiomaticReviewIteration(env.flowCtx);
+    const result = await runIdiomaticRefactorPipeline(env.flowCtx);
 
-    expect(result).toEqual({ issues: 0 });
-    // No refactorer should have been invoked
+    expect(result).toEqual({ tasksCompleted: 0 });
+    // No planner or refactorer should have been invoked
+    const plannerInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'idiomatic-planner');
     const refactorerInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'idiomatic-refactorer');
+    expect(plannerInvocations).toHaveLength(0);
     expect(refactorerInvocations).toHaveLength(0);
   });
 
-  it('should invoke idiomatic-refactorer for each issue found', async () => {
+  it('should invoke planner and then refactorer for each planned task', async () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
         return {
           extensions: { outputParsed: true, structuredOutput: {
             issues: [
-              { file: 'src/main.ts', issue: 'use const', suggestion: 'replace let with const' },
-              { file: 'src/utils.ts', issue: 'use map', suggestion: 'replace for loop with map' },
+              { file: 'src/main.ts', issue: 'use const', suggestion: 'replace let with const', category: 'style' },
+              { file: 'src/utils.ts', issue: 'use map', suggestion: 'replace for loop with map', category: 'style' },
+            ],
+          } },
+        };
+      }
+      if (inv.agent === 'idiomatic-planner') {
+        return {
+          extensions: { outputParsed: true, structuredOutput: {
+            tasks: [
+              {
+                id: 'idiomatic-1', name: 'Modernize iteration patterns',
+                description: 'Replace imperative loops with functional patterns',
+                files: ['src/main.ts', 'src/utils.ts'],
+                issues: [
+                  { file: 'src/main.ts', location: '1-5', issue: 'use const', suggestion: 'replace let with const' },
+                  { file: 'src/utils.ts', location: '10-20', issue: 'use map', suggestion: 'replace for loop with map' },
+                ],
+                dependencies: [],
+              },
             ],
           } },
         };
@@ -282,35 +302,46 @@ describe('runIdiomaticReviewIteration', () => {
     });
     env = await setupFlowTest(launcherFn);
 
-    const result = await runIdiomaticReviewIteration(env.flowCtx);
+    const result = await runIdiomaticRefactorPipeline(env.flowCtx);
 
-    expect(result.issues).toBe(2);
+    expect(result).toEqual({ tasksCompleted: 1 });
+    const plannerInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'idiomatic-planner');
+    expect(plannerInvocations).toHaveLength(1);
     const refactorerInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'idiomatic-refactorer');
-    expect(refactorerInvocations).toHaveLength(2);
+    expect(refactorerInvocations).toHaveLength(1);
   });
 
-  it('should resume from checkpoint issue index', async () => {
+  it('should resume from checkpoint with completed tasks', async () => {
     const launcherFn = createMockLauncher((inv) => {
-      if (inv.agent === 'idiomatic-reviewer') {
-        return {
-          extensions: { outputParsed: true, structuredOutput: {
-            issues: [
-              { file: 'src/a.ts', issue: 'issue a', suggestion: 'fix a' },
-              { file: 'src/b.ts', issue: 'issue b', suggestion: 'fix b' },
-            ],
-          } },
-        };
-      }
       return {};
     });
     env = await setupFlowTest(launcherFn);
+
+    const tasks = [
+      { id: 'idiomatic-1', name: 'Task A', description: 'A', files: ['a.ts'], issues: [{ file: 'a.ts', location: '1', issue: 'x', suggestion: 'y' }], dependencies: [] },
+      { id: 'idiomatic-2', name: 'Task B', description: 'B', files: ['b.ts'], issues: [{ file: 'b.ts', location: '1', issue: 'x', suggestion: 'y' }], dependencies: [] },
+    ];
+    const issues = [{ file: 'a.ts', issue: 'x', suggestion: 'y' }];
+
+    // Write sidecar artifacts
+    const { writeJson } = await import('../../../src/util/fs.js');
+    const { join } = await import('node:path');
+    const planningDir = env.ctx.paths.artifactsPlanningDir;
+    await writeJson(join(planningDir, 'idiomatic-review.json'), issues);
+    await writeJson(join(planningDir, 'idiomatic-tasks.json'), tasks);
 
     const state = env.checkpoint.getState();
     state.phaseCursors ??= {};
-    state.phaseCursors['7'] = { iteration: 0, issueIndex: 1, currentFile: 'src/b.ts', lastSuccessfulStep: 'refactor-started' };
+    state.phaseCursors['7'] = {
+      iteration: 0, issueIndex: 1,
+      lastSuccessfulStep: 'task-complete',
+      reviewArtifact: join(planningDir, 'idiomatic-review.json'),
+      taskArtifact: join(planningDir, 'idiomatic-tasks.json'),
+      completedTaskIds: ['idiomatic-1'],
+    };
     await env.checkpoint.save(state);
 
-    await runIdiomaticReviewIteration(env.flowCtx);
+    await runIdiomaticRefactorPipeline(env.flowCtx);
 
     const refactorerInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'idiomatic-refactorer');
     expect(refactorerInvocations).toHaveLength(1);

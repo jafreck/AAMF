@@ -540,21 +540,23 @@ export async function ensureGitRepositoryReady(ctx: MigrationFlowContext): Promi
   await ensureDir(ctx.config.target.outputPath);
   const outputPath = resolve(ctx.config.target.outputPath);
   const probe = await runGit(ctx, ['rev-parse', '--show-toplevel']);
-  if (probe.success && resolve(probe.stdout.trim()) === outputPath) return;
-  const init = await runGit(ctx, ['init']);
-  if (!init.success) {
-    ctx.logger.warn(`Failed to initialize git: ${init.stderr || init.stdout}`);
-    return;
+  const alreadyInitialized = probe.success && resolve(probe.stdout.trim()) === outputPath;
+  if (!alreadyInitialized) {
+    const init = await runGit(ctx, ['init']);
+    if (!init.success) {
+      ctx.logger.warn(`Failed to initialize git: ${init.stderr || init.stdout}`);
+      return;
+    }
+    await runGit(ctx, ['config', 'user.name', gitCfg.authorName]);
+    await runGit(ctx, ['config', 'user.email', gitCfg.authorEmail]);
+    ctx.logger.info(`Initialized git repository at ${ctx.config.target.outputPath}`);
   }
-  await runGit(ctx, ['config', 'user.name', gitCfg.authorName]);
-  await runGit(ctx, ['config', 'user.email', gitCfg.authorEmail]);
   const gitignorePath = join(outputPath, '.gitignore');
   if (!(await fileExists(gitignorePath))) {
     const content = gitignoreForLanguage(ctx.config.target.language);
     await atomicWrite(gitignorePath, content);
     ctx.logger.info(`Wrote .gitignore for "${ctx.config.target.language}"`);
   }
-  ctx.logger.info(`Initialized git repository at ${ctx.config.target.outputPath}`);
 }
 
 export async function commitForAgent(
@@ -954,7 +956,14 @@ export async function savePhase6Cursor(ctx: MigrationFlowContext, cursor: { comp
   await ctx.checkpoint.save(ctx.checkpoint.getState());
 }
 
-export function getPhase7Cursor(ctx: MigrationFlowContext): { iteration: number; issueIndex: number; currentFile?: string; lastSuccessfulStep?: string } {
+export function getPhase7Cursor(ctx: MigrationFlowContext): {
+  iteration: number; issueIndex: number; currentFile?: string; lastSuccessfulStep?: string;
+  reviewArtifact?: string; taskArtifact?: string; taskIndex?: number; completedTaskIds?: string[];
+  /** @deprecated Inline data — replaced by sidecar artifacts. Retained for resume compat. */
+  reviewIssues?: unknown[];
+  /** @deprecated Inline data — replaced by sidecar artifacts. Retained for resume compat. */
+  tasks?: unknown[];
+} {
   const phaseCursors = getPhaseCursors(ctx);
   phaseCursors['7'] ??= { iteration: 0, issueIndex: 0 };
   phaseCursors['7'].iteration ??= 0;
@@ -962,7 +971,11 @@ export function getPhase7Cursor(ctx: MigrationFlowContext): { iteration: number;
   return phaseCursors['7'];
 }
 
-export async function savePhase7Cursor(ctx: MigrationFlowContext, cursor: { iteration: number; issueIndex: number; currentFile?: string; lastSuccessfulStep?: string }): Promise<void> {
+export async function savePhase7Cursor(ctx: MigrationFlowContext, cursor: {
+  iteration: number; issueIndex: number; currentFile?: string; lastSuccessfulStep?: string;
+  reviewArtifact?: string; taskArtifact?: string; taskIndex?: number; completedTaskIds?: string[];
+  reviewIssues?: unknown[]; tasks?: unknown[];
+}): Promise<void> {
   getPhaseCursors(ctx)['7'] = cursor;
   await ctx.checkpoint.save(ctx.checkpoint.getState());
 }

@@ -37,15 +37,15 @@ When `taskScope` is absent, migrate the full source file scope as described belo
 3. **Write Migrated Code**
    - Produce the target code in the specified target file(s)
    - When `taskScope.symbols` is present, write **only** the listed symbols — the target file may already contain code from other tasks; append or replace stubs for your symbols only
-   - Ensure behavioral equivalence with the source (same inputs → same outputs)
-   - Follow target language idioms and best practices
+   - Ensure behavioral equivalence with the source (same observable inputs → same observable outputs), using idiomatic target-language constructs
+   - Write code that a skilled target-language developer would recognize as natural and well-structured
    - Preserve all business logic faithfully
 
 4. **Self-Verification**
    - After writing, do a quick sanity check:
      - Does the migrated code compile / parse correctly?
      - Are all imports/dependencies available?
-     - Are all exported APIs equivalent?
+     - Does the code cover all source behavior (all code paths reachable)?
    - Run any available linter or type-checker on the output
 
 5. **Report Results**
@@ -54,20 +54,35 @@ When `taskScope` is absent, migrate the full source file scope as described belo
 
 ## Migration Guidelines
 
+### Idiomatic-First Principle
+
+Your primary goal is to produce code that a skilled developer in the **target language** would write from scratch given the same requirements. Do NOT transliterate source-language constructs into the target — instead, express the same behavior using the target language's native idioms, type system, error handling, and standard library.
+
+Concretely:
+- **Data structures.** Replace source-language containers (C linked lists, manual arrays, red-black trees) with the target language's standard equivalents (Vec, BTreeMap, HashMap, etc.). Do not port intrusive data structures when the standard library provides the same semantics.
+- **Memory management.** Use the target language's ownership model (Rust ownership/borrows, C# GC, Go GC) instead of replicating malloc/free patterns, reference counting, or manual lifetime tracking from the source.
+- **Error handling.** Use the target language's error model (Result/Option in Rust, exceptions in C#, error returns in Go) instead of mirroring the source's conventions (C return codes, errno, sentinel values).
+- **API surface.** Function signatures should be idiomatic for the target language. A C function `int foo(char *out, size_t len)` should become `fn foo() -> Result<String>` in Rust, not `fn foo(out: *mut c_char, len: usize) -> c_int`. Callers will be adapted by their own migration tasks.
+- **Module organization.** Use the target language's module system naturally. A single C file with 20 functions may become multiple Rust modules with focused responsibilities.
+- **Global state.** Replace global mutable state with explicit context objects, dependency injection, or other patterns idiomatic to the target language.
+
+The parity verifier will evaluate **behavioral equivalence** (same observable inputs → same observable outputs), not structural similarity. You will NOT be penalized for using different types, different function signatures, different module layouts, or different internal patterns — as long as the externally observable behavior is preserved.
+
 ### DO
-- Preserve all business logic exactly
-- Use idiomatic target language patterns
-- Maintain equivalent error handling behavior
-- Keep the same public API surface (function names, parameters, return types)
+- Preserve all business logic and observable behavior exactly
+- Write idiomatic target-language code that a native developer would recognize
+- Use the target language's standard library, type system, and error model
+- Adapt API signatures to be natural in the target language
+- Handle edge cases identically to the source (same observable outcomes)
 - Add inline comments noting migration decisions where behavior mapping is non-obvious
-- Handle edge cases identically to the source
 
 ### DO NOT
-- Add new features or "improvements" not in the source
-- Skip error handling paths
+- Add new features or improvements not in the source
+- Skip error handling paths or edge cases
 - Leave stubs, TODOs, or placeholder implementations
 - Attempt to migrate files outside your assigned task
-- Optimize algorithms (preserve original behavior exactly)
+- Transliterate source-language idioms when a target-language idiom exists
+- Preserve source-language API shapes (pointer parameters, error codes, global state) when the target language has better patterns
 - Read files beyond your task scope
 
 ## Handling Difficulties

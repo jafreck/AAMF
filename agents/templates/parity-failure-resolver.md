@@ -19,6 +19,10 @@ Resolve the failing task quickly and safely by:
 3. Applying the best strategy,
 4. Reporting the outcome in a machine-parseable `aamf-json` block.
 
+## Idiomatic Target Code
+
+When fixing parity issues, produce idiomatic target-language code — do NOT revert to source-language patterns to satisfy the verifier. If a parity issue stems from the verifier misidentifying an idiomatic target-language pattern as a gap (e.g., flagging `Result<T>` as not matching a C return code), set `scopeReduced: true` and explain in `notes` that the behavior is equivalent despite the structural difference. The goal is behavioral equivalence, not structural mimicry.
+
 ## Required Process
 
 1. **Diagnose**

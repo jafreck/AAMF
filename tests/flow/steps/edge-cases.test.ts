@@ -354,35 +354,20 @@ describe('launchMigrationPlanner — extended', () => {
 
 // ─── Phase 7 — Idiomatic Refactor: failure + format/lint ─────────────────────
 
-import { runIdiomaticReviewIteration, noIdiomaticIssues } from '../../../src/flow/steps/idiomatic-refactor.js';
+import { runIdiomaticRefactorPipeline } from '../../../src/flow/steps/idiomatic-refactor.js';
 
-describe('runIdiomaticReviewIteration — failure paths', () => {
-  it('should throw when idiomatic-reviewer fails', async () => {
+describe('runIdiomaticRefactorPipeline — failure paths', () => {
+  it('should return 0 tasks when all reviewer chunks fail', async () => {
     const launcherFn = createFailingLauncher(['idiomatic-reviewer']);
     env = await setupFlowTest(launcherFn);
 
-    await expect(runIdiomaticReviewIteration(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
+    const result = await runIdiomaticRefactorPipeline(env.flowCtx);
+    expect(result).toEqual({ tasksCompleted: 0 });
   });
 
-  it('should throw when structured output has no issues array', async () => {
-    // The withParityPassOutput wrapper fills `issues: []` for idiomatic-reviewer
-    // when issues is not already an array. To trigger the "no structured output"
-    // branch (line 50-56), we need the wrapper to NOT fill it. The wrapper only
-    // fills when !Array.isArray(issues). Setting issues to a real array means
-    // the wrapper leaves it alone, but then the function won't throw.
-    //
-    // The only way to trigger this path is for the agent to succeed but
-    // outputParsed to remain false — which means the wrapper must also
-    // not override it.  The wrapper checks `!result.extensions.structuredOutput ||
-    // !Array.isArray(...)` — if structuredOutput already has an array
-    // issues field, it leaves it alone.  So we set structuredOutput with
-    // a valid array of issues and outputParsed=false.  But then the check
-    // at line 46 is `outputParsed && Array.isArray(...)` — false.
+  it('should return 0 tasks when structured output has no issues array', async () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
-        // Trick: set structuredOutput.issues to a real array so the
-        // withParityPassOutput wrapper leaves it alone, but set
-        // outputParsed = false so the actual step code rejects it.
         return {
           extensions: { outputParsed: false, structuredOutput: { issues: [{ file: 'a.ts', issue: 'test' }] } },
         };
@@ -391,10 +376,11 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
     });
     env = await setupFlowTest(launcherFn);
 
-    await expect(runIdiomaticReviewIteration(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
+    const result = await runIdiomaticRefactorPipeline(env.flowCtx);
+    expect(result).toEqual({ tasksCompleted: 0 });
   });
 
-  it('should throw when idiomatic-refactorer fails', async () => {
+  it('should throw when idiomatic-planner fails', async () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
         return {
@@ -403,22 +389,34 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
           } },
         };
       }
-      if (inv.agent === 'idiomatic-refactorer') {
-        return { exitCode: 1, success: false, error: 'refactoring failed' };
+      if (inv.agent === 'idiomatic-planner') {
+        return { exitCode: 1, success: false, error: 'planning failed' };
       }
       return {};
     });
     env = await setupFlowTest(launcherFn);
 
-    await expect(runIdiomaticReviewIteration(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
+    await expect(runIdiomaticRefactorPipeline(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
   });
 
-  it('should run format and lint commands when configured', async () => {
+  it('should run format command when configured and refactorer succeeds', async () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
         return {
           extensions: { outputParsed: true, structuredOutput: {
             issues: [{ file: 'src/a.ts', issue: 'test', suggestion: 'fix' }],
+          } },
+        };
+      }
+      if (inv.agent === 'idiomatic-planner') {
+        return {
+          extensions: { outputParsed: true, structuredOutput: {
+            tasks: [{
+              id: 'idiomatic-1', name: 'Fix style',
+              description: 'Fix style issues', files: ['src/a.ts'],
+              issues: [{ file: 'src/a.ts', location: '1-5', issue: 'test', suggestion: 'fix' }],
+              dependencies: [],
+            }],
           } },
         };
       }
@@ -429,7 +427,6 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
         language: 'typescript',
         outputPath: '/tmp/target',
         formatCommand: 'prettier --write .',
-        lintCommand: 'eslint .',
       },
     });
 
@@ -439,10 +436,10 @@ describe('runIdiomaticReviewIteration — failure paths', () => {
     });
 
     try {
-      const result = await runIdiomaticReviewIteration(env.flowCtx);
-      expect(result.issues).toBe(1);
-      // Both format and lint should have been invoked
-      expect(spawnSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      const result = await runIdiomaticRefactorPipeline(env.flowCtx);
+      expect(result).toEqual({ tasksCompleted: 1 });
+      // Format should have been invoked
+      expect(spawnSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
     } finally {
       spawnSpy.mockRestore();
     }

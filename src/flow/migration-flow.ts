@@ -40,11 +40,9 @@ import {
   launchDocWriter,
 } from './steps/finalization.js';
 import {
-  runIdiomaticReviewIteration,
-  noIdiomaticIssues,
+  runIdiomaticRefactorPipeline,
 } from './steps/idiomatic-refactor.js';
 import { finalizeAndReport } from './steps/completion.js';
-import { resolveLoopMaxIterations } from './iteration-policy.js';
 
 /**
  * Budget gate evaluator — returns true when budget is OK.
@@ -64,25 +62,6 @@ function budgetOk(ctx: { context: MigrationFlowContext }): boolean {
 const _phase4RunnerOpts: FlowRunnerOptions<MigrationFlowContext> = {};
 
 /**
- * Shared mutable ref for the Phase 7 loop node.
- *
- * As with Phase 4 runner options, the loop bound must be derived from runtime
- * config even though the flow node is declared statically.
- */
-const _idiomaticLoopNode = loop<MigrationFlowContext>({
-  id: 'idiomatic-loop',
-  dependsOn: ['idiomatic-loop-configure'],
-  maxIterations: 2,
-  do: [
-    step<MigrationFlowContext>({
-      id: 'idiomatic-iteration',
-      run: runIdiomaticReviewIteration,
-    }),
-  ],
-  until: noIdiomaticIssues,
-});
-
-/**
  * The AAMF migration pipeline expressed as a declarative flow.
  *
  * All phases are critical — a failure in any phase halts the flow.
@@ -95,7 +74,7 @@ const _idiomaticLoopNode = loop<MigrationFlowContext>({
  *   Phase 4  → Iterative Migration → budget gate
  *   Phase 5  → Final Parity (loop: check → fix, until no fixes or max 3)
  *   Phase 6  → E2E Testing & Documentation (parallel: suites + docs)
- *   Phase 7  → Idiomatic Refactor (conditional → loop: review → refactor)
+ *   Phase 7  → Idiomatic Refactor (conditional → review → plan → parallel execute)
  *   Phase 8  → Completion
  */
 export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<MigrationFlowContext>(
@@ -151,9 +130,14 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       contextMap: (ctx) => ctx.context,
       runnerOptions: _phase4RunnerOpts,
     }) as unknown as FlowNode<MigrationFlowContext>,
+    step<MigrationFlowContext>({
+      id: 'phase-4-teardown',
+      dependsOn: ['iterative-migration'],
+      run: async (ctx) => { ctx.context.deferGitCommits = false; },
+    }),
     gate<MigrationFlowContext>({
       id: 'budget-check-4',
-      dependsOn: ['iterative-migration'],
+      dependsOn: ['phase-4-teardown'],
       evaluate: budgetOk,
     }),
 
@@ -196,25 +180,16 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       },
     }),
 
-    // ── Phase 7 — Idiomatic Refactor (optional, review-refactor loop) ──
+    // ── Phase 7 — Idiomatic Refactor (optional, task-graph approach) ──
     conditional<MigrationFlowContext>({
       id: 'idiomatic-refactor-gate',
       dependsOn: ['finalization'],
       when: (ctx) => ctx.context.config.options.idiomaticRefactor?.enabled === true,
       then: [
         step<MigrationFlowContext>({
-          id: 'idiomatic-loop-configure',
-          run: async (ctx) => {
-            _idiomaticLoopNode.maxIterations = resolveLoopMaxIterations(
-              ctx.context.config.options.idiomaticRefactor?.maxIterations,
-              2,
-            );
-            return {
-              maxIterations: ctx.context.config.options.idiomaticRefactor?.maxIterations ?? 2,
-            };
-          },
+          id: 'idiomatic-refactor-pipeline',
+          run: runIdiomaticRefactorPipeline,
         }),
-        _idiomaticLoopNode,
       ],
     }),
 
@@ -240,6 +215,7 @@ export function nodeIdToPhase(nodeId: string): number {
     'migration-planning': 3,
     'budget-check-3': 3,
     'iterative-migration': 4,
+    'phase-4-teardown': 4,
     'budget-check-4': 4,
     'final-parity-loop': 5,
     'final-parity-iteration': 5,
@@ -248,9 +224,7 @@ export function nodeIdToPhase(nodeId: string): number {
     'e2e-suite-writers': 6,
     'documentation-writer': 6,
     'idiomatic-refactor-gate': 7,
-    'idiomatic-loop-configure': 7,
-    'idiomatic-loop': 7,
-    'idiomatic-iteration': 7,
+    'idiomatic-refactor-pipeline': 7,
     'completion': 8,
   };
   return map[nodeId] ?? -1;

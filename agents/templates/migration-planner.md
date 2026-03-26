@@ -38,6 +38,7 @@ You **must** read and use `dependency-summary.json` to inform your compilation-u
    - Merge small connected components into a single unit when they are closely related.
    - Declare inter-unit dependencies (`dependsOn`) — the runtime validates these against actual symbol/type edges.
    - Choose `targetPath` values that are idiomatic for the target language (e.g., `crates/zstd-core` for Rust, `src/ZstdCore` for C#, `pkg/core` for Go).
+   - **Design for idiomatic target architecture**, not a 1:1 mirror of the source layout. A C project with `foo.c` + `foo.h` should not become `foo.rs` with the same flat structure — design compilation units around the target language's natural module/package/crate boundaries and responsibility grouping.
 
 3. **Generate Strategy Candidates**
    - Produce **at least 2 competing migration strategies** (e.g., bottom-up vs top-down, by-module vs by-layer).

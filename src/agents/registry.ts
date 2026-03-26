@@ -129,9 +129,26 @@ export const IdiomaticReviewerSchema = AamfOutputBase.extend({
   issues: z.array(z.object({
     file: z.string().min(1),
     location: z.string(),
+    category: z.string().optional(),
     issue: z.string().min(1),
     suggestion: z.string().min(1),
     details: z.string(),
+    relatedFiles: z.array(z.string()).optional(),
+  })).optional(),
+});
+export const IdiomaticPlannerSchema = AamfOutputBase.extend({
+  tasks: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string(),
+    files: z.array(z.string().min(1)),
+    issues: z.array(z.object({
+      file: z.string().min(1),
+      location: z.string(),
+      issue: z.string().min(1),
+      suggestion: z.string().min(1),
+    })),
+    dependencies: z.array(z.string()).default([]),
   })).optional(),
 });
 export const IdiomaticRefactorerSchema = AamfOutputBase;
@@ -423,11 +440,13 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
             type: 'object',
             required: ['file', 'location', 'issue', 'suggestion', 'details'],
             properties: {
-              file:       { type: 'string', minLength: 1 },
-              location:   { type: 'string', minLength: 1 },
-              issue:      { type: 'string', minLength: 1 },
-              suggestion: { type: 'string', minLength: 1 },
-              details:    { type: 'string', minLength: 1 },
+              file:         { type: 'string', minLength: 1 },
+              location:     { type: 'string', minLength: 1 },
+              category:     { type: 'string' },
+              issue:        { type: 'string', minLength: 1 },
+              suggestion:   { type: 'string', minLength: 1 },
+              details:      { type: 'string', minLength: 1 },
+              relatedFiles: { type: 'array', items: { type: 'string' } },
             },
           },
         },
@@ -437,20 +456,52 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
     copilotTools: ['read', 'search'],
     claudeTools: CLAUDE_TOOLS,
   },
+  'idiomatic-planner': {
+    name: 'idiomatic-planner',
+    displayName: 'Idiomatic Planner',
+    description: 'Analyzes holistic idiomatic review findings and constructs a dependency-ordered task graph for refactoring.',
+    outputSchema: IdiomaticPlannerSchema,
+    inputJsonSchema: inputSchema({
+      extraProperties: {
+        reviewFindings: { type: 'object' },
+      },
+    }),
+    outputJsonSchema: outputSchema('idiomatic-planner', {
+      extraProperties: {
+        tasks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['id', 'name', 'description', 'files', 'issues'],
+            properties: {
+              id:           { type: 'string', minLength: 1 },
+              name:         { type: 'string', minLength: 1 },
+              description:  { type: 'string' },
+              files:        { type: 'array', items: { type: 'string', minLength: 1 } },
+              issues:       { type: 'array', items: { type: 'object' } },
+              dependencies: { type: 'array', items: { type: 'string' } },
+            },
+          },
+        },
+      },
+    }),
+    phases: [7],
+    copilotTools: ['read', 'search', 'execute'],
+    claudeTools: CLAUDE_TOOLS,
+  },
   'idiomatic-refactorer': {
     name: 'idiomatic-refactorer',
     displayName: 'Idiomatic Refactorer',
-    description: 'Applies a single idiomatic improvement suggestion from the idiomatic review report to a specific file.',
+    description: 'Applies idiomatic improvements from a refactoring task to one or more files in the migrated codebase.',
     outputSchema: IdiomaticRefactorerSchema,
     inputJsonSchema: inputSchema({
       extraProperties: {
-        targetFile: { type: 'string', minLength: 1 },
-        issue:      { type: 'object' },
+        task: { type: 'object' },
       },
     }),
     outputJsonSchema: outputSchema('idiomatic-refactorer'),
     phases: [7],
-    copilotTools: ['read', 'edit'],
+    copilotTools: ['read', 'edit', 'execute'],
     claudeTools: CLAUDE_TOOLS,
   },
 };

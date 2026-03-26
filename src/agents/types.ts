@@ -26,6 +26,7 @@ export type AgentName =
   | 'documentation-writer'
   | 'migration-runner'
   | 'idiomatic-reviewer'
+  | 'idiomatic-planner'
   | 'idiomatic-refactorer';
 
 // ─── MCP Server Config ───────────────────────────────────────────────────────
