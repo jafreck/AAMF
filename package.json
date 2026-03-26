@@ -29,7 +29,7 @@
     "date-fns": "^4",
     "fast-glob": "^3.3.3",
     "p-limit": "^7.3.0",
-    "sqlite-vec": "^0.1.6",
+    "sqlite-vec": "^0.1.7",
     "zod": "^4.3"
   },
   "devDependencies": {
