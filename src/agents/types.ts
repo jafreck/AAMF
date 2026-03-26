@@ -241,7 +241,13 @@ export interface AgentContext {
  * calibrate task complexity against the available recovery budget.
  */
 export interface ExecutionStrategy {
-  /** Phase 4 execution mode. */
+  /**
+   * Phase 4 execution mode.
+   * - `'per-task'`: migrate + validate task-by-task.
+   * - `'wave-barrier'`: migrate in concurrent waves, validate between waves.
+   * - `'sync-epoch'`: migrate in dependency-closed epochs formed from
+   *   consecutive topological levels; build every epoch, test every N.
+   */
   executionMode: 'per-task' | 'wave-barrier' | 'sync-epoch';
 
   /** Maximum number of agent subprocesses running in parallel. */
@@ -250,6 +256,18 @@ export interface ExecutionStrategy {
   /** Wave-barrier settings (only meaningful when `executionMode === 'wave-barrier'`). */
   waveControl: {
     /** Maximum build/test convergence iterations per wave before giving up. 0 = unlimited. */
+    maxConvergenceIterations: number;
+  };
+
+  /** Sync-epoch settings (only meaningful when `executionMode === 'sync-epoch'`). */
+  epochControl: {
+    /** Number of consecutive topological levels merged into one epoch. */
+    levelsPerSync: number;
+    /** Run the full test suite every N epochs. Build runs every epoch. */
+    testEveryNEpochs: number;
+    /** Whether epoch boundaries expand to avoid splitting compilation units. */
+    preferCompilationUnitClosure: boolean;
+    /** Maximum validation/fix iterations per epoch sync point. 0 = unlimited. */
     maxConvergenceIterations: number;
   };
 

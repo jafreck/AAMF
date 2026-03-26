@@ -841,7 +841,14 @@ function buildSyncEpochFlow(
       ],
       until: (c) => {
         const result = c.getStepOutput<WaveValidationResult>(`epoch-${e}-validate`);
-        return result?.success === true;
+        const converged = result?.success === true;
+        if (c.context.phase4Snapshot) c.context.phase4Snapshot.waveConvergenceIterations++;
+        c.context.logger.event({
+          type: 'epoch-convergence-status', epoch: e,
+          iteration: c.context.phase4Snapshot?.waveConvergenceIterations ?? 0,
+          converged, remainingFailures: converged ? 0 : 1,
+        });
+        return converged;
       },
     }));
 
@@ -852,6 +859,12 @@ function buildSyncEpochFlow(
       run: async (c) => {
         const result = c.getStepOutput<WaveValidationResult>(`epoch-${e}-validate`);
         if (result && !result.success) {
+          if (c.context.phase4Snapshot) c.context.phase4Snapshot.waveConvergenceLimitHits++;
+          c.context.logger.event({
+            type: 'epoch-convergence-limit-reached', epoch: e,
+            maxIterations: configuredMaxConvergence ?? 3,
+            remainingFailures: 1,
+          });
           await raiseTerminalExhaustion(c.context, {
             reasonCode: 'wave-convergence-exhausted', wave: e, check: 'epoch-validation',
             summary: `Epoch ${e} failed to converge after ${maxConvergenceLabel} iteration(s)`,
@@ -1053,7 +1066,9 @@ export function computeEpochs(
             epochTasks.push(t);
             epochTaskIds.add(t.id);
           }
-          epochLevels.push(nextLevelIdx);
+          if (!epochLevels.includes(nextLevelIdx)) {
+            epochLevels.push(nextLevelIdx);
+          }
 
           // Count unassigned tasks remaining in this level
           const remainingInLevel = candidateLevel.filter(
@@ -1258,7 +1273,7 @@ export async function buildPhase4Subflow(
 
   ctx.phase4Snapshot = {
     executionMode, phase4DurationMs: 0, completedTaskCount: 0,
-    plannedWaveCount: plannedWaves.length || plannedEpochs.length,
+    plannedWaveCount: executionMode === 'sync-epoch' ? plannedEpochs.length : plannedWaves.length,
     waveCount: 0, waveValidationRuns: 0, waveConvergenceIterations: 0,
     waveConvergenceFailures: 0, waveConvergenceLimitHits: 0,
     buildCommandRuns: 0, testCommandRuns: 0, formatCommandRuns: 0,
