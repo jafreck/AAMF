@@ -145,6 +145,11 @@ function parseCopilotJsonl(stdout: string): {
           if (data?.content) textContent += data.content;
           break;
         }
+        case 'assistant.message_delta': {
+          const data = event.data as { deltaContent?: string } | undefined;
+          if (data?.deltaContent) textContent += data.deltaContent;
+          break;
+        }
         case 'assistant.tool_call': {
           const data = event.data as { toolName?: string } | undefined;
           if (data?.toolName) toolCalls.push({ name: data.toolName, status: 'called' });

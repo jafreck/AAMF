@@ -73,7 +73,7 @@ export const MigrationConfigSchema = z.object({
   }).default({}),
   options: z.object({
     maxParallelAgents: z.number().int().min(1).default(3),
-    maxRetriesPerTask: z.number().int().min(1).max(5).default(3),
+    maxRetriesPerTask: z.number().int().min(1).max(10).default(3),
     maxLinesPerTask: z.number().int().default(1000),
     tokenBudget: z.number().int().optional(),
     dryRun: z.boolean().default(false),

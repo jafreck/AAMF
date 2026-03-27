@@ -156,10 +156,10 @@ describe('MigrationConfigSchema', () => {
       expect(result.agentBackend.failureRecoveryModel).toBe('claude-sonnet-4.5');
     });
 
-    it('should reject maxRetriesPerTask above 5', () => {
+    it('should reject maxRetriesPerTask above 10', () => {
       const result = MigrationConfigSchema.safeParse({
         ...validConfig,
-        options: { maxRetriesPerTask: 6 },
+        options: { maxRetriesPerTask: 11 },
       });
       expect(result.success).toBe(false);
     });
