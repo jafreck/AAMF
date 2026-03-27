@@ -2,9 +2,9 @@
   "projectName": "zstd-to-rust",
   "guidance": [
     "Do NOT use any existing Rust crates that wrap the C implementation (e.g. zstd, zstd-safe, zstd-sys, lz4-sys). Write a pure native Rust port of the C source code.",
-    "Do NOT use FFI, bindgen, or any C interop. All code must be idiomatic Rust.",
+    "Do NOT use FFI, bindgen, or any C interop. All code must be idiomatic safe Rust.",
     "Preserve the original algorithmic structure so that the Rust port is auditable against the C reference.",
-    "Performance parity with the C implementation is required. Retain performance-critical optimizations such as SIMD intrinsics using unsafe Rust where necessary."
+    "Performance parity with the C implementation is required. Retain performance-critical optimizations such as SIMD intrinsics using minimal unsafe Rust where necessary."
   ],
   "source": {
     "path": "./zstd-src/zstd-1.5.7",
@@ -52,12 +52,12 @@
   "options": {
     "qualityPolicy": "strict",
     "maxParallelAgents": 12,
-    "maxRetriesPerTask": 3,
+    "maxRetriesPerTask": 7,
     "maxLinesPerTask": 1000,
     "tokenBudget": 400000000,
-    "executionMode": "wave-barrier",
+    "executionMode": "sync-epoch",
     "waveControl": {
-      "maxConvergenceIterations": 3
+      "maxConvergenceIterations": 7
     },
     "dryRun": false,
     "resume": true,
@@ -89,6 +89,6 @@
     "effort": "xhigh",
     "agentDir": "../../../../.github/agents",
     "timeout": 3600000,
-    "phaseTimeouts": { "0": 600000 }
+    "phaseTimeouts": { "0": 1800000 }
   }
 }
