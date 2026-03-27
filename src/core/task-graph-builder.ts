@@ -1690,6 +1690,27 @@ function buildAcceptanceCriteria(cluster: Cluster): string[] {
   }
   criteria.push('Call-site signatures match upstream dependency contracts');
   criteria.push('Target code compiles without type errors');
+
+  // Behavioral depth: every function body must contain a real implementation,
+  // not stubs, pass-throughs, or hollow wrappers.  The target language idioms
+  // may differ from the source (Result vs error code, Vec vs linked list, etc.)
+  // but the *computational depth* must match: if the source performs a non-trivial
+  // transformation (compression, hashing, encoding, decoding, parsing, etc.),
+  // the target must perform an equivalently non-trivial transformation.
+  const hasFunctions = cluster.symbols.some(
+    s => s.kind === 'function' || s.kind === 'method',
+  );
+  if (hasFunctions) {
+    criteria.push(
+      'Every function body is fully implemented — no stubs, TODOs, unimplemented!() macros, or placeholder logic',
+    );
+    criteria.push(
+      'Behavioral equivalence: for all reachable inputs, the migrated code produces the same observable outputs, side effects, and error conditions as the source — using idiomatic target-language patterns (different types, signatures, and error models are expected)',
+    );
+    criteria.push(
+      'Implementation depth matches source complexity — if the source performs a non-trivial transformation (compression, hashing, encryption, codec logic, etc.), the target must perform an equivalently non-trivial computation, not a pass-through or synthetic wrapper',
+    );
+  }
   return criteria;
 }
 
@@ -1699,6 +1720,24 @@ function buildParityChecks(cluster: Cluster): string[] {
   checks.push('All call sites to migrated symbols use correct argument types');
   if (cluster.symbols.some(s => s.kind === 'type' || s.kind === 'class' || s.kind === 'struct')) {
     checks.push('Type definitions preserve public field names and types');
+  }
+
+  // Behavioral parity checks — enforce depth without enforcing structural
+  // similarity.  These checks tell the parity verifier (and the migrator)
+  // what "correct" means for this task: same behavior, not same shape.
+  const hasFunctions = cluster.symbols.some(
+    s => s.kind === 'function' || s.kind === 'method',
+  );
+  if (hasFunctions) {
+    checks.push(
+      'All source code paths and branches are reachable in the target — no dead dispatch or unreachable algorithm branches',
+    );
+    checks.push(
+      'No hollow implementations: functions must produce non-trivial, input-dependent output matching the source semantics (not zeros, defaults, or pass-through copies)',
+    );
+    checks.push(
+      'Internal call chains are wired end-to-end — public entry points transitively invoke the same algorithmic stages as the source (e.g., a compressor must call encoding, matching, and entropy stages, not return the input with framing)',
+    );
   }
   return checks;
 }
