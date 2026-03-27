@@ -825,7 +825,7 @@ describe('MigrationRuntime', () => {
       await rm(root, { recursive: true, force: true });
     });
 
-    it('setupShutdownHandlers registers SIGINT/SIGTERM handlers that flush and save state', async () => {
+    it('setupShutdownHandlers registers SIGINT/SIGTERM/SIGHUP handlers that flush and save state', async () => {
       const runtime = new MigrationRuntime() as any;
       const onSpy = vi.spyOn(process, 'on').mockReturnValue(process);
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
@@ -846,18 +846,22 @@ describe('MigrationRuntime', () => {
 
       const sigintHandler = onSpy.mock.calls.find(([signal]) => signal === 'SIGINT')?.[1] as (() => void) | undefined;
       const sigtermHandler = onSpy.mock.calls.find(([signal]) => signal === 'SIGTERM')?.[1] as (() => void) | undefined;
+      const sighupHandler = onSpy.mock.calls.find(([signal]) => signal === 'SIGHUP')?.[1] as (() => void) | undefined;
 
       expect(sigintHandler).toBeDefined();
       expect(sigtermHandler).toBeDefined();
+      expect(sighupHandler).toBeDefined();
 
       sigintHandler!();
       sigtermHandler!();
+      sighupHandler!();
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      expect(runtime.logger.flush).toHaveBeenCalledTimes(2);
-      expect(runtime.checkpoint.save).toHaveBeenCalledTimes(2);
+      expect(runtime.logger.flush).toHaveBeenCalledTimes(3);
+      expect(runtime.checkpoint.save).toHaveBeenCalledTimes(3);
       expect(runtime.progress.appendEvent).toHaveBeenCalledWith('Migration interrupted by SIGINT');
       expect(runtime.progress.appendEvent).toHaveBeenCalledWith('Migration interrupted by SIGTERM');
+      expect(runtime.progress.appendEvent).toHaveBeenCalledWith('Migration interrupted by SIGHUP');
       expect(exitSpy).toHaveBeenCalledWith(130);
       expect(exitSpy).toHaveBeenCalledWith(143);
 
