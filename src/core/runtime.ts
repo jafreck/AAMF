@@ -688,6 +688,7 @@ export class MigrationRuntime {
     
     process.on('SIGINT', () => void handler('SIGINT'));
     process.on('SIGTERM', () => void handler('SIGTERM'));
+    process.on('SIGHUP', () => void handler('SIGHUP'));
     process.on('exit', () => {
       this.releaseRunLockSync();
     });

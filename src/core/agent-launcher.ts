@@ -5,6 +5,7 @@ import {
   AgentLauncher as FrameworkAgentLauncher,
   registerAgentBackendFactory,
   isCopilotCliInvocationError,
+  trackProcess,
   type BackendRuntimeConfig,
   type BackendLoggerLike,
   type AgentBackend,
@@ -277,6 +278,7 @@ function spawnAgent(command: string, args: string[], opts: { cwd: string; env: R
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: true,
     });
+    trackProcess(child);
     child.unref();
 
     const stdoutChunks: Buffer[] = [];
