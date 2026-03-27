@@ -78,6 +78,16 @@ export const MigrationConfigSchema = z.object({
     tokenBudget: z.number().int().optional(),
     dryRun: z.boolean().default(false),
     resume: z.boolean().default(false),
+    /**
+     * Reuse the knowledge base from a prior run when starting a fresh migration.
+     * When true, a fresh start (resume=false) will preserve the KB index (Phase 0),
+     * task graph (Phase 1), and knowledge base (Phase 2) artifacts if they exist
+     * and the source fingerprint has not changed.  This avoids re-running expensive
+     * agent-based analysis when only the migration strategy, guidance, or later
+     * phases need to change.
+     * Default: false.
+     */
+    reuseKb: z.boolean().default(false),
     invocationDelayMs: z.number().int().min(0).default(0),
     /**
      * Maximum number of concurrent build/test commands per output path.
@@ -304,6 +314,7 @@ export const MigrationConfigSchema = z.object({
     maxLinesPerTask: 1000,
     dryRun: false,
     resume: false,
+    reuseKb: false,
     invocationDelayMs: 0,
     buildConcurrency: 1,
     executionMode: 'per-task',

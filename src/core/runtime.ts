@@ -197,6 +197,7 @@ export class MigrationRuntime {
     const impliedResume = this.fromPhase !== undefined;
     await this.checkpoint.load(this.config.projectName, {
       fresh: !this.config.options.resume && !impliedResume,
+      reuseKb: this.config.options.reuseKb,
     });
 
     // Apply --from-phase reset before anything else

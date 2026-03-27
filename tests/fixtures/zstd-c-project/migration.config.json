@@ -54,6 +54,7 @@
     "qualityPolicy": "strict",
     "maxParallelAgents": 12,
     "maxRetriesPerTask": 7,
+    "reuseKb": true,
     "maxLinesPerTask": 1000,
     "tokenBudget": 400000000,
     "executionMode": "sync-epoch",

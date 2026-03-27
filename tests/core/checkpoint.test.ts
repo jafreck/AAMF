@@ -787,4 +787,90 @@ describe('CheckpointManager', () => {
     expect(reset.adjudicationEvents).toEqual([]);
     expect(reset.terminalExhaustion).toBeUndefined();
   });
+
+  it('fresh start with reuseKb should preserve KB phases and reset everything else', async () => {
+    // Set up a prior run with phases 0-4 completed
+    const state = await manager.load('test-project');
+    for (let p = 0; p <= 4; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+    state.phase0Fingerprint = 'abc123';
+    state.scaffoldComplete = true;
+    state.completedTasks = [{ taskId: 'task-1', attempts: 1, lastError: '', recoveryAttempted: false }];
+    state.__flowCheckpoint = {
+      flowId: 'aamf-migration',
+      status: 'completed',
+      completedExecutionIds: [
+        'aamf-migration/kb-index',
+        'aamf-migration/task-graph-construction',
+        'aamf-migration/kb-construction',
+        'aamf-migration/budget-check-2',
+        'aamf-migration/migration-planning',
+        'aamf-migration/budget-check-3',
+      ],
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await manager.save(state);
+
+    // Fresh start with reuseKb
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const reused = await manager2.load('test-project', { fresh: true, reuseKb: true });
+
+    // KB phases preserved
+    expect(reused.completedPhases).toContain(0);
+    expect(reused.completedPhases).toContain(1);
+    expect(reused.completedPhases).toContain(2);
+    expect(reused.completedPhases).not.toContain(3);
+    expect(reused.completedPhases).not.toContain(4);
+    expect(reused.currentPhase).toBe(3);
+    expect(reused.phase0Fingerprint).toBe('abc123');
+    expect(reused.scaffoldComplete).toBe(true);
+
+    // Phase outputs preserved for KB phases only
+    expect(reused.phaseOutputs[0]).toBe('/out/0');
+    expect(reused.phaseOutputs[1]).toBe('/out/1');
+    expect(reused.phaseOutputs[2]).toBe('/out/2');
+    expect(reused.phaseOutputs[3]).toBeUndefined();
+    expect(reused.phaseOutputs[4]).toBeUndefined();
+
+    // Migration state reset
+    expect(reused.completedTasks).toEqual([]);
+    expect(reused.failedTasks).toEqual([]);
+    expect(reused.resumeCount).toBe(0);
+
+    // Flow checkpoint filtered to KB steps only
+    const fc = reused.__flowCheckpoint as Record<string, unknown>;
+    const completedIds = fc.completedExecutionIds as string[];
+    expect(completedIds).toContain('aamf-migration/kb-index');
+    expect(completedIds).toContain('aamf-migration/task-graph-construction');
+    expect(completedIds).toContain('aamf-migration/kb-construction');
+    expect(completedIds).toContain('aamf-migration/budget-check-2');
+    expect(completedIds).not.toContain('aamf-migration/migration-planning');
+    expect(completedIds).not.toContain('aamf-migration/budget-check-3');
+  });
+
+  it('fresh start with reuseKb but no prior checkpoint should start from scratch', async () => {
+    const state = await manager.load('test-project', { fresh: true, reuseKb: true });
+    expect(state.completedPhases).toEqual([]);
+    expect(state.currentPhase).toBe(0);
+    expect(state.phase0Fingerprint).toBeUndefined();
+  });
+
+  it('fresh start without reuseKb should ignore prior state entirely', async () => {
+    // Set up a prior run
+    const state = await manager.load('test-project');
+    for (let p = 0; p <= 2; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+    state.phase0Fingerprint = 'abc123';
+    await manager.save(state);
+
+    // Fresh start without reuseKb
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const fresh = await manager2.load('test-project', { fresh: true });
+    expect(fresh.completedPhases).toEqual([]);
+    expect(fresh.currentPhase).toBe(0);
+    expect(fresh.phase0Fingerprint).toBeUndefined();
+  });
 });
