@@ -846,6 +846,92 @@ describe('buildTaskGraph', () => {
       );
     }
   });
+
+  it('should include behavioral acceptance criteria for tasks with functions', async () => {
+    const dbPath = join(tempDir, 'kb.db');
+    const db = createTestDb(dbPath);
+    const f = insertFile(db, 'src/codec.c');
+    insertSymbol(db, f, 'compress', 'function', 1, 80);
+    db.close();
+
+    const result = await buildTaskGraph({ ...DEFAULT_OPTIONS, kbDbPath: dbPath });
+    const task = result.tasks.find(t =>
+      t.symbols?.some(s => s.name === 'compress'),
+    );
+    expect(task).toBeDefined();
+    expect(task!.acceptanceCriteria).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/fully implemented/i),
+        expect.stringMatching(/behavioral equivalence/i),
+        expect.stringMatching(/implementation depth/i),
+      ]),
+    );
+  });
+
+  it('should include behavioral parity checks for tasks with functions', async () => {
+    const dbPath = join(tempDir, 'kb.db');
+    const db = createTestDb(dbPath);
+    const f = insertFile(db, 'src/hash.c');
+    insertSymbol(db, f, 'xxh64', 'function', 1, 80);
+    db.close();
+
+    const result = await buildTaskGraph({ ...DEFAULT_OPTIONS, kbDbPath: dbPath });
+    const task = result.tasks.find(t =>
+      t.symbols?.some(s => s.name === 'xxh64'),
+    );
+    expect(task).toBeDefined();
+    expect(task!.parityChecks).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/code paths.*reachable/i),
+        expect.stringMatching(/hollow implementations/i),
+        expect.stringMatching(/call chains.*wired/i),
+      ]),
+    );
+  });
+
+  it('should not include behavioral criteria for type-only tasks', async () => {
+    const dbPath = join(tempDir, 'kb.db');
+    const db = createTestDb(dbPath);
+    const f = insertFile(db, 'src/types.c');
+    insertSymbol(db, f, 'Options', 'struct', 1, 40);
+    insertSymbol(db, f, 'Mode', 'enum', 41, 60);
+    db.close();
+
+    const result = await buildTaskGraph({ ...DEFAULT_OPTIONS, kbDbPath: dbPath });
+    const task = result.tasks.find(t =>
+      t.symbols?.every(s => s.kind === 'struct' || s.kind === 'enum'),
+    );
+    expect(task).toBeDefined();
+    // Should NOT have function-specific behavioral criteria
+    expect(task!.acceptanceCriteria.join(' ')).not.toMatch(/fully implemented/i);
+    expect(task!.parityChecks.join(' ')).not.toMatch(/hollow implementations/i);
+  });
+
+  it('should apply behavioral criteria uniformly regardless of task size', async () => {
+    const dbPath = join(tempDir, 'kb.db');
+    const db = createTestDb(dbPath);
+    const f = insertFile(db, 'src/util.c');
+    // Small function — above micro-elision threshold but still simple
+    insertSymbol(db, f, 'crc32', 'function', 1, 40);
+    db.close();
+
+    const result = await buildTaskGraph({ ...DEFAULT_OPTIONS, kbDbPath: dbPath });
+    const task = result.tasks.find(t =>
+      t.symbols?.some(s => s.name === 'crc32'),
+    );
+    expect(task).toBeDefined();
+    // Even a tiny function gets the full behavioral criteria
+    expect(task!.acceptanceCriteria).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/implementation depth/i),
+      ]),
+    );
+    expect(task!.parityChecks).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/call chains.*wired/i),
+      ]),
+    );
+  });
 });
 
 // ─── buildDependencySummary Tests ───────────────────────────────────────────
