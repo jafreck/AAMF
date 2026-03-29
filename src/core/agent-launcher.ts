@@ -127,6 +127,7 @@ function parseCopilotJsonl(stdout: string): {
   const errorEvents: CopilotEvent[] = [];
   let resultSummary: CopilotResultSummary | undefined;
   let textContent = '';
+  let accumulatedOutputTokens = 0;
 
   for (const line of stdout.split('\n')) {
     if (!line.trim()) continue;
@@ -141,8 +142,9 @@ function parseCopilotJsonl(stdout: string): {
 
       switch (event.type) {
         case 'assistant.message': {
-          const data = event.data as { content?: string } | undefined;
+          const data = event.data as { content?: string; outputTokens?: number } | undefined;
           if (data?.content) textContent += data.content;
+          if (typeof data?.outputTokens === 'number') accumulatedOutputTokens += data.outputTokens;
           break;
         }
         case 'assistant.message_delta': {
@@ -188,7 +190,8 @@ function parseCopilotJsonl(stdout: string): {
             exitCode: typeof eventData?.exitCode === 'number'
               ? eventData.exitCode
               : (typeof event.exitCode === 'number' ? event.exitCode : -1),
-            tokenUsage: extractCopilotTokenUsage(usage),
+            tokenUsage: extractCopilotTokenUsage(usage)
+              ?? (accumulatedOutputTokens > 0 ? { input: 0, output: accumulatedOutputTokens } : undefined),
             premiumRequests: usage?.premiumRequests,
             totalApiDurationMs: usage?.totalApiDurationMs,
             sessionDurationMs: usage?.sessionDurationMs,

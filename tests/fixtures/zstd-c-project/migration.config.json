@@ -52,7 +52,7 @@
   },
   "options": {
     "qualityPolicy": "strict",
-    "maxParallelAgents": 12,
+    "maxParallelAgents": 8,
     "maxRetriesPerTask": 7,
     "reuseKb": true,
     "maxLinesPerTask": 1000,
@@ -62,7 +62,7 @@
       "maxConvergenceIterations": 7
     },
     "dryRun": false,
-    "resume": true,
+    "resume": false,
     "keepArtifacts": true,
     "git": {
       "enabled": true,

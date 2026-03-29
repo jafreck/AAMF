@@ -196,6 +196,7 @@ export class CheckpointManager {
       try {
         this.state = await readJson<CheckpointState>(checkpointToRead);
         this.applyBackwardCompatibleDefaults(this.state);
+        this.prepareForResume(this.state);
         this.state.resumeCount += 1;
         this.logger.info(`Loaded checkpoint: Phase ${this.state.currentPhase}, ${this.state.completedTasks.length} tasks completed, resume #${this.state.resumeCount}`);
         await this.save(this.state);
@@ -207,6 +208,7 @@ export class CheckpointManager {
           try {
             this.state = await readJson<CheckpointState>(backupToRead);
             this.applyBackwardCompatibleDefaults(this.state);
+            this.prepareForResume(this.state);
             this.state.resumeCount += 1;
             this.logger.info(`Loaded backup checkpoint: Phase ${this.state.currentPhase}`);
             await this.save(this.state);
@@ -477,8 +479,9 @@ export class CheckpointManager {
     }
 
     // 6. Flow checkpoint — remove completedExecutionIds for phases >= fromPhase
+    //    and reset status so the runner re-enters from the correct point.
     if (state.__flowCheckpoint && typeof state.__flowCheckpoint === 'object') {
-      const fc = state.__flowCheckpoint as FlowCheckpointSnapshot<unknown>;
+      const fc = state.__flowCheckpoint as FlowCheckpointSnapshot<unknown> & { error?: unknown };
       if (Array.isArray(fc.completedExecutionIds)) {
         fc.completedExecutionIds = fc.completedExecutionIds.filter((id: string) => {
           // Execution IDs are namespaced: "<flowId>/<nodeId>".
@@ -491,6 +494,11 @@ export class CheckpointManager {
           // internal framework nodes not mapped to any phase.
           return phase === -1 || phase < fromPhase;
         });
+      }
+      // Reset status so the Cadre runner re-enters from the correct point.
+      if (fc.status === 'failed' || fc.status === 'completed') {
+        fc.status = 'running';
+        fc.error = undefined;
       }
     }
 
@@ -539,6 +547,150 @@ export class CheckpointManager {
       adjudicationEvents: [],
       phaseCursors: {},
     };
+  }
+
+  /**
+   * Prepare checkpoint state for a resume run.
+   *
+   * Clears transient failure markers so previously-exhausted tasks get fresh
+   * retry budgets instead of immediately failing again:
+   *
+   * 1. **terminalExhaustion** — cleared so the parity-gate loop re-enters
+   *    instead of raising TerminalExhaustionError on the same task.
+   * 2. **failedTasks** — retry counters reset so code-migrator and
+   *    parity-failure-resolver get fresh attempts.
+   * 3. **Phase 4 flow checkpoint** — completedExecutionIds are filtered to
+   *    only retain substeps for fully-completed tasks. Failed/in-flight tasks
+   *    are removed so they re-enter the scheduling pool from scratch (fresh
+   *    code-migrator run, not just parity retry).
+   * 4. **Flow checkpoint status** — both top-level and Phase 4 subflow
+   *    checkpoints are reset from 'failed' to 'running' so the Cadre runner
+   *    re-enters the Phase 4 subflow.
+   * 5. **Phase 4 cursors** — per-task substep tracking is cleared for
+   *    non-completed tasks.
+   * 6. **Blocked tasks** — cleared so previously-blocked tasks re-enter the pool.
+   */
+  private prepareForResume(state: CheckpointState): void {
+    // 1. Clear terminal exhaustion so the run doesn't immediately re-fail.
+    if (state.terminalExhaustion) {
+      this.logger.info(
+        `Clearing terminal exhaustion from prior run: ${state.terminalExhaustion.reasonCode}` +
+        (state.terminalExhaustion.taskId ? ` (task=${state.terminalExhaustion.taskId})` : ''),
+      );
+      state.terminalExhaustion = undefined;
+    }
+
+    // 2. Reset failed task retry counters so they get fresh attempts.
+    if (state.failedTasks.length > 0) {
+      this.logger.info(`Resetting retry counters for ${state.failedTasks.length} failed task(s)`);
+      state.failedTasks = [];
+    }
+
+    // 2b. Clear blocked tasks so they re-enter the pool.
+    if (state.blockedTasks.length > 0) {
+      this.logger.info(`Unblocking ${state.blockedTasks.length} blocked task(s)`);
+      state.blockedTasks = [];
+    }
+
+    // 3. Filter Phase 4 flow checkpoint to only keep substeps for completed tasks.
+    //    Failed/in-flight tasks re-enter the pool from scratch.
+    this.filterPhase4CompletedExecutionIds(state);
+
+    // 4. Reset flow checkpoint statuses from 'failed' → 'running' so the
+    //    Cadre runner re-enters failed nodes while skipping completed ones.
+    this.resetFlowCheckpointStatus(state, '__flowCheckpoint');
+    this.resetFlowCheckpointStatus(state, '__phase4FlowCheckpoint');
+
+    // 5. Clear Phase 4 per-task cursor state for non-completed tasks.
+    if (state.phaseCursors?.['4']?.tasks) {
+      const completedSet = new Set(state.completedTasks);
+      const cursorTasks = Object.keys(state.phaseCursors['4'].tasks);
+      let removed = 0;
+      for (const taskId of cursorTasks) {
+        if (!completedSet.has(taskId)) {
+          delete state.phaseCursors['4'].tasks[taskId];
+          removed++;
+        }
+      }
+      if (removed > 0) {
+        this.logger.info(`Cleared Phase 4 cursor state for ${removed} non-completed task(s)`);
+      }
+    }
+  }
+
+  /**
+   * Filter `__phase4FlowCheckpoint.completedExecutionIds` to only retain
+   * entries for tasks listed in `completedTasks`.
+   *
+   * Execution IDs for task substeps follow the pattern:
+   *   `{flowId}/.../{taskId}/{taskId}/{substep}`
+   * Non-task entries (epoch starts, sync points) are always kept.
+   */
+  private filterPhase4CompletedExecutionIds(state: CheckpointState): void {
+    const fc = state.__phase4FlowCheckpoint;
+    if (!fc || typeof fc !== 'object') return;
+
+    const snapshot = fc as Record<string, unknown>;
+    const ids = snapshot.completedExecutionIds;
+    if (!Array.isArray(ids) || ids.length === 0) return;
+
+    const completedSet = new Set(state.completedTasks);
+    if (completedSet.size === ids.length) return; // all tasks completed, nothing to filter
+
+    const filtered = ids.filter((id: string) => {
+      // Task substep IDs contain the task ID as a path segment.
+      // Detect by checking for known substep suffixes.
+      const lastSlash = id.lastIndexOf('/');
+      const substep = lastSlash >= 0 ? id.slice(lastSlash + 1) : id;
+      const TASK_SUBSTEPS = ['migrate', 'commit', 'target-index', 'parity', 'parity-gate', 'minor-repass'];
+      if (!TASK_SUBSTEPS.includes(substep)) return true; // not a task substep, keep
+
+      // Extract the task ID: it's the segment before the substep's parent.
+      // Pattern: .../{taskId}/{taskId}/{substep}
+      const segments = id.split('/');
+      // The task ID is at segments[segments.length - 3] (branch key)
+      const taskId = segments.length >= 3 ? segments[segments.length - 3] : undefined;
+      if (!taskId) return true; // can't extract task ID, keep to be safe
+
+      return completedSet.has(taskId);
+    });
+
+    const removed = ids.length - filtered.length;
+    if (removed > 0) {
+      snapshot.completedExecutionIds = filtered;
+      // Also clear executionOutputs for removed tasks
+      if (snapshot.executionOutputs && typeof snapshot.executionOutputs === 'object') {
+        const outputs = snapshot.executionOutputs as Record<string, unknown>;
+        for (const key of Object.keys(outputs)) {
+          const lastSlash = key.lastIndexOf('/');
+          const substep = lastSlash >= 0 ? key.slice(lastSlash + 1) : key;
+          const TASK_SUBSTEPS = ['migrate', 'commit', 'target-index', 'parity', 'parity-gate', 'minor-repass'];
+          if (!TASK_SUBSTEPS.includes(substep)) continue;
+          const segments = key.split('/');
+          const taskId = segments.length >= 3 ? segments[segments.length - 3] : undefined;
+          if (taskId && !completedSet.has(taskId)) {
+            delete outputs[key];
+          }
+        }
+      }
+      this.logger.info(
+        `Removed ${removed} Phase 4 execution ID(s) for non-completed tasks ` +
+        `(keeping ${filtered.length} for ${completedSet.size} completed task(s))`,
+      );
+    }
+  }
+
+  /** Reset a stored flow checkpoint's status from 'failed' to 'running', preserving completedExecutionIds. */
+  private resetFlowCheckpointStatus(state: CheckpointState, key: '__flowCheckpoint' | '__phase4FlowCheckpoint'): void {
+    const fc = state[key];
+    if (fc && typeof fc === 'object') {
+      const snapshot = fc as Record<string, unknown>;
+      if (snapshot.status === 'failed') {
+        snapshot.status = 'running';
+        snapshot.error = undefined;
+        this.logger.info(`Reset ${key} status from 'failed' to 'running'`);
+      }
+    }
   }
 
   private applyBackwardCompatibleDefaults(state: CheckpointState): void {
