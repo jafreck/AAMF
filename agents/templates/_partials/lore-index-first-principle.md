@@ -1,21 +1,31 @@
 ## Lore Code-Intelligence Servers
 
-You have access to two **Lore** MCP servers for querying indexed codebases. Both expose the same four tools — `lore_search`, `lore_lookup`, `lore_graph`, `lore_snippet` — but operate on different indexes. Check your available tool list to find the exact tool names for each server.
+You have access to two **Lore** MCP servers for querying indexed codebases. **You MUST use these tools instead of `view` or `bash` for reading source and target code.** They return structured, precise results that consume far less context than raw file reads.
 
-### Source KB — server name `aamf-kb`
+> **IMPORTANT:** Do NOT use `view` to read source or target files. Do NOT use `bash` with `cat`, `grep`, or `head` to read code. Use the Lore MCP tools below — they are faster, return only the relevant code, and avoid exhausting your turn budget on large file reads.
 
-The **source** codebase index. Prefer Lore tools over reading raw source files — they provide structured, precise results with less context overhead.
+### Source KB — `aamf-kb`
 
-- **`lore_search`** / **`lore_lookup`** — find symbols, functions, and files by name or query.
-- **`lore_graph`** — understand call chains and dependency relationships.
-- **`lore_snippet`** — extract specific code sections by symbol or line range.
+Query the **source** codebase index. Tool names (use these exact names):
 
-### Target KB — server name `aamf-kb-target`
+| Tool | Purpose |
+|------|---------|
+| `aamf-kb(lore_search)` | Find symbols, functions, and files by name or text query |
+| `aamf-kb(lore_lookup)` | Look up a specific symbol by exact name — returns its definition, location, and metadata |
+| `aamf-kb(lore_graph)` | Query call chains and dependency relationships between symbols |
+| `aamf-kb(lore_snippet)` | Extract a specific code section by file path and line range |
 
-The **migrated target** codebase index. Updated incrementally after each task commit, so it reflects all code migrated by prior tasks. Use it to discover how dependency symbols were ported, check existing target code structure, and avoid re-implementing or conflicting with work from earlier tasks.
+### Target KB — `aamf-kb-target`
 
-The target KB exposes the same four tools as the source KB, but queries the migrated codebase.
+Query the **migrated target** codebase index. Updated after each task commit, so it reflects all code migrated by prior tasks. Use it to discover how dependency symbols were ported and check existing target code structure.
 
-> **Note:** The target KB is only available after the first task has been committed. If tools return empty results, the target index may not yet contain relevant code — fall back to reading target files directly.
+| Tool | Purpose |
+|------|---------|
+| `aamf-kb-target(lore_search)` | Search the migrated codebase for symbols and files |
+| `aamf-kb-target(lore_lookup)` | Look up a specific migrated symbol by name |
+| `aamf-kb-target(lore_graph)` | Query dependency relationships in the migrated code |
+| `aamf-kb-target(lore_snippet)` | Extract a specific migrated code section by file and line range |
 
-Fall back to direct file reads only when Lore cannot answer the query (e.g., files created after indexing, or target files you are actively writing).
+> **Note:** The target KB is only available after the first task has been committed. If tools return empty results, the target index may not yet contain relevant code — fall back to reading target files directly with `view`.
+
+Fall back to `view` only when: (1) Lore cannot answer the query, (2) you are reading files you are actively writing in this session, or (3) the target KB has not yet indexed the file.
