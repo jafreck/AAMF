@@ -126,10 +126,12 @@ describe('CheckpointManager', () => {
     expect(state.terminalExhaustion?.reasonCode).toBe('task-retries-exhausted');
     expect(state.terminalExhaustion?.taskId).toBe('task-001');
 
-    const manager2 = new CheckpointManager(tempDir, logger);
-    const reloaded = await manager2.load('test-project');
-    expect(reloaded.terminalExhaustion?.reasonCode).toBe('task-retries-exhausted');
-    expect(reloaded.terminalExhaustion?.check).toBe('code-migrator');
+    // Verify the data was written to disk (read raw JSON, not via CheckpointManager
+    // which clears terminalExhaustion via prepareForResume on reload).
+    const raw = await readJson<Record<string, unknown>>(join(tempDir, 'state', 'checkpoint.json'));
+    const te = raw.terminalExhaustion as Record<string, unknown>;
+    expect(te.reasonCode).toBe('task-retries-exhausted');
+    expect(te.check).toBe('code-migrator');
   });
 
   it('should default cumulativeDurationMs to 0 when field is absent in stored checkpoint (backward compat)', async () => {
@@ -788,6 +790,41 @@ describe('CheckpointManager', () => {
     expect(reset.terminalExhaustion).toBeUndefined();
   });
 
+  it('resetFromPhase should reset flow checkpoint status and error', async () => {
+    const state = await manager.load('test-project');
+    for (let p = 0; p <= 5; p++) {
+      await manager.completePhase(p, `/out/${p}`);
+    }
+    state.__flowCheckpoint = {
+      flowId: 'aamf-migration',
+      status: 'failed',
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      completedExecutionIds: [
+        'aamf-migration/kb-index',
+        'aamf-migration/task-graph-construction',
+        'aamf-migration/iterative-migration',
+        'aamf-migration/final-parity-loop',
+      ],
+      outputs: {},
+      executionOutputs: {},
+      error: 'Phase 5 terminal exhaustion',
+    };
+    await manager.save(state);
+
+    await manager.resetFromPhase(4, testNodeIdToPhase);
+
+    const reset = manager.getState();
+    const fc = reset.__flowCheckpoint as Record<string, unknown>;
+    expect(fc.status).toBe('running');
+    expect(fc.error).toBeUndefined();
+    // Phase 4+ execution IDs removed, phases 0-3 kept
+    expect(fc.completedExecutionIds).toEqual([
+      'aamf-migration/kb-index',
+      'aamf-migration/task-graph-construction',
+    ]);
+  });
+
   it('fresh start with reuseKb should preserve KB phases and reset everything else', async () => {
     // Set up a prior run with phases 0-4 completed
     const state = await manager.load('test-project');
@@ -872,5 +909,168 @@ describe('CheckpointManager', () => {
     expect(fresh.completedPhases).toEqual([]);
     expect(fresh.currentPhase).toBe(0);
     expect(fresh.phase0Fingerprint).toBeUndefined();
+  });
+
+  // ─── resume preparation (prepareForResume) ────────────────────────
+
+  it('should clear terminalExhaustion on resume', async () => {
+    await manager.load('test-project');
+    await manager.setTerminalExhaustion({
+      reasonCode: 'parity-non-minor-exhausted',
+      taskId: 'task-133-0',
+      check: 'parity-verifier',
+      summary: 'Parity still has non-minor issues after 7 attempt(s)',
+    });
+    const state = manager.getState();
+    expect(state.terminalExhaustion).toBeDefined();
+
+    // Resume: reload without fresh flag
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const resumed = await manager2.load('test-project');
+    expect(resumed.terminalExhaustion).toBeUndefined();
+  });
+
+  it('should reset failedTasks on resume so tasks get fresh retry budgets', async () => {
+    await manager.load('test-project');
+    await manager.failTask('task-197-0', 'Exit code: null', 3, false);
+    await manager.failTask('task-133-0', 'parity exhaustion', 7, true);
+    expect(manager.getState().failedTasks).toHaveLength(2);
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const resumed = await manager2.load('test-project');
+    expect(resumed.failedTasks).toEqual([]);
+  });
+
+  it('should reset flow checkpoint status from failed to running on resume', async () => {
+    const { writeJson } = await import('../../src/util/fs.js');
+    const checkpoint = {
+      projectName: 'test-flow-resume',
+      version: 1,
+      currentPhase: 4,
+      currentTask: null,
+      completedPhases: [0, 1, 2, 3],
+      completedTasks: ['task-ok-0'],
+      failedTasks: [{ taskId: 'task-bad-0', attempts: 7, lastError: 'parity exhausted', recoveryAttempted: true }],
+      blockedTasks: ['task-blocked-0'],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 0,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      metricsCount: 0,
+      __flowCheckpoint: {
+        flowId: 'aamf-migration',
+        status: 'failed',
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        completedExecutionIds: ['aamf-migration/kb-index', 'aamf-migration/task-graph-construction'],
+        outputs: {},
+        executionOutputs: {},
+        error: 'Phase 4 terminal exhaustion',
+      },
+      __phase4FlowCheckpoint: {
+        flowId: 'phase-4-sync-epoch',
+        status: 'failed',
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        completedExecutionIds: [
+          'phase-4-sync-epoch/epoch-0-start',
+          // Completed task — all substeps present
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/migrate',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/commit',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/parity',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/parity-gate',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/minor-repass',
+          // Failed task — only migrate/commit completed before parity-gate blew up
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/migrate',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/commit',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/parity',
+          // Blocked task
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-blocked-0/task-blocked-0/migrate',
+        ],
+        outputs: {
+          'task-ok-0/migrate': { durationMs: 100 },
+          'task-bad-0/migrate': { durationMs: 200 },
+        },
+        executionOutputs: {
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/migrate': { durationMs: 100 },
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/migrate': { durationMs: 200 },
+        },
+        error: 'terminal exhaustion',
+      },
+    };
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), checkpoint);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const resumed = await manager3.load('test-flow-resume');
+
+    // Status should be reset to 'running', errors cleared
+    const fc = resumed.__flowCheckpoint as Record<string, unknown>;
+    expect(fc.status).toBe('running');
+    expect(fc.error).toBeUndefined();
+
+    const p4fc = resumed.__phase4FlowCheckpoint as Record<string, unknown>;
+    expect(p4fc.status).toBe('running');
+    expect(p4fc.error).toBeUndefined();
+
+    // Top-level completedExecutionIds preserved
+    expect(fc.completedExecutionIds).toEqual(['aamf-migration/kb-index', 'aamf-migration/task-graph-construction']);
+
+    // Phase 4: only completed task substeps + non-task entries kept
+    const p4Ids = p4fc.completedExecutionIds as string[];
+    expect(p4Ids).toContain('phase-4-sync-epoch/epoch-0-start');
+    expect(p4Ids).toContain('phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/migrate');
+    expect(p4Ids).toContain('phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/parity-gate');
+    // Failed/blocked task entries removed
+    expect(p4Ids).not.toContain('phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/migrate');
+    expect(p4Ids).not.toContain('phase-4-sync-epoch/epoch-0-tasks-batch-0/task-blocked-0/task-blocked-0/migrate');
+
+    // executionOutputs for non-completed tasks also cleaned
+    const p4execOutputs = p4fc.executionOutputs as Record<string, unknown>;
+    expect(p4execOutputs).toHaveProperty('phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/migrate');
+    expect(p4execOutputs).not.toHaveProperty('phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/migrate');
+
+    // failedTasks and blockedTasks cleared
+    expect(resumed.failedTasks).toEqual([]);
+    expect(resumed.blockedTasks).toEqual([]);
+  });
+
+  it('should not alter flow checkpoint when status is not failed', async () => {
+    const { writeJson } = await import('../../src/util/fs.js');
+    const checkpoint = {
+      projectName: 'test-running-resume',
+      version: 1,
+      currentPhase: 4,
+      currentTask: null,
+      completedPhases: [0, 1, 2, 3],
+      completedTasks: [],
+      failedTasks: [],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 0,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      metricsCount: 0,
+      __flowCheckpoint: {
+        flowId: 'aamf-migration',
+        status: 'completed',
+        completedExecutionIds: ['aamf-migration/kb-index'],
+        outputs: {},
+        executionOutputs: {},
+      },
+    };
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), checkpoint);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const resumed = await manager3.load('test-running-resume');
+    const fc = resumed.__flowCheckpoint as Record<string, unknown>;
+    expect(fc.status).toBe('completed');
   });
 });
