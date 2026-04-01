@@ -65,6 +65,15 @@ beforeAll(async () => {
       } catch {
         // FTS table may not exist in all Lore versions — non-fatal.
       }
+      // Populate symbol_metrics so the metrics handler test works.
+      try {
+        rwDb.prepare(
+          `INSERT INTO symbol_metrics (symbol_id, line_count, param_count, cyclomatic, max_nesting)
+           VALUES (?, 20, 0, 1, 0)`,
+        ).run(symId);
+      } catch {
+        // symbol_metrics may not exist — non-fatal.
+      }
     }
   }
   rwDb.close();
