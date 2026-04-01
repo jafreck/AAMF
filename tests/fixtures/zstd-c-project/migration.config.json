@@ -52,9 +52,9 @@
   },
   "options": {
     "qualityPolicy": "strict",
-    "maxParallelAgents": 5,
-    "maxRetriesPerTask": 10,
-    "reuseKb": false,
+    "maxParallelAgents": 8,
+    "maxRetriesPerTask": 7,
+    "reuseKb": true,
     "maxLinesPerTask": 1000,
     "tokenBudget": 400000000,
     "executionMode": "sync-epoch",
