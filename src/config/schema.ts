@@ -11,7 +11,7 @@ export const MigrationConfigSchema = z.object({
    *
    * Examples:
    *   - "Do NOT use any existing crates/packages that wrap the C implementation."
-   *   - "Write a pure native Rust port — no FFI or bindgen."
+  *   - "Write a pure native Rust port — no wrapper crates or bindgen; allow only audited leaf unsafe/ABI shims when no safe equivalent exists."
    *   - "Preserve the original directory layout in the target output."
    */
   guidance: z.array(z.string().min(1)).optional(),
@@ -194,8 +194,10 @@ export const MigrationConfigSchema = z.object({
     }).optional(),
     /**
      * Options for KB indexing (Phase 0).
-     * The Lore indexer always runs in Phase 0 to build a SQLite knowledge-base.
-     * An HTTP MCP server is started for agents to query it.
+      * The Lore indexer always runs in Phase 0 to build a SQLite knowledge-base.
+      * SCIP indexing is always enabled; optional LSP enrichment augments the
+      * baseline index and powers overlay updates.
+      * An HTTP MCP server is started for agents to query it.
      */
     kbIndex: z.object({
       /**
@@ -223,14 +225,14 @@ export const MigrationConfigSchema = z.object({
         pythonBin: z.string().default('python3'),
       }).optional(),
       /**
-       * LSP integration for the Lore indexer.
+       * Optional LSP enrichment for the Lore indexer.
        * When enabled, Lore starts language servers (e.g. clangd for C/C++,
-       * typescript-language-server for TS) to resolve cross-file symbol
-       * references, type definitions, and call targets with full semantic
-       * accuracy — beyond what tree-sitter can provide alone.
+       * typescript-language-server for TS) to enrich symbols and refs with
+       * semantic definition and type information, and to power overlay updates
+       * after the baseline SCIP index is built.
        */
       lsp: z.object({
-        /** Enable LSP-powered symbol resolution during indexing. Default: false. */
+        /** Enable LSP enrichment and overlay updates. Default: false. */
         enabled: z.boolean().default(false),
         /** Timeout in ms for each LSP request (hover, definition, references). */
         requestTimeoutMs: z.number().int().min(500).default(5000),

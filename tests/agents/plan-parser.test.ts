@@ -557,6 +557,31 @@ intermediate text
       }
     });
 
+    it('should normalize legacy success status and notes arrays', () => {
+      const stdout = `\`\`\`aamf-json
+{"status":"success","written":["strategy.md","compilation-units.json"],"notes":["First note","Second note"]}
+\`\`\``;
+      const result = parseAamfOutput(stdout, AamfOutputBase);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('completed');
+        expect(result.data.notes).toBe('First note\nSecond note');
+        expect((result.data as Record<string, unknown>).outputFiles).toEqual([
+          'strategy.md',
+          'compilation-units.json',
+        ]);
+      }
+    });
+
+    it('should normalize needs_review status alias', () => {
+      const stdout = '```aamf-json\n{"status":"needs_review"}\n```';
+      const result = parseAamfOutput(stdout, MigrationPlannerSchema);
+      expect(result.parsed).toBe(true);
+      if (result.parsed) {
+        expect(result.data.status).toBe('needs-review');
+      }
+    });
+
     it('should handle CRLF line endings in the fenced block', () => {
       const stdout = '```aamf-json\r\n{"status":"completed"}\r\n```';
       const result = parseAamfOutput(stdout, AdjudicatorSchema);

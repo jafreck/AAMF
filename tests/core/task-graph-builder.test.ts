@@ -36,7 +36,8 @@ function createTestDb(dbPath: string): Database.Database {
       start_line INTEGER NOT NULL, end_line INTEGER NOT NULL,
       signature TEXT, doc_comment TEXT,
       resolved_type_signature TEXT, resolved_return_type TEXT,
-      definition_uri TEXT, definition_path TEXT
+      definition_uri TEXT, definition_path TEXT,
+      parent_symbol_id INTEGER REFERENCES symbols(id)
     );
     CREATE TABLE IF NOT EXISTS symbol_refs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

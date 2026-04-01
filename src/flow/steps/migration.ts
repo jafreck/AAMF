@@ -240,6 +240,7 @@ async function runCommitSubstep(
   ctx: MigrationFlowContext, task: MigrationTask,
 ): Promise<void> {
   await commitForAgent(ctx, 'code-migrator', 5, task.id, task.name);
+  await ctx.checkpoint.completeTask(task.id);
 }
 
 async function runTargetIndexSubstep(
@@ -552,6 +553,7 @@ function buildPerTaskFlow(
         await ctx.progress.updateTask(task.id, 'completed', { sourceFiles: task.sourceFiles, targetFiles: task.targetFiles });
         ctx.logger.event({ type: 'task-completed', taskId: task.id, name: task.name, duration: 0 });
         await commitForTask(c.context, task);
+        await ctx.checkpoint.completeTask(task.id);
       },
     }));
   }

@@ -21,6 +21,7 @@ import { ContextBuilder } from '../agents/context-builder.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
 import { TargetIndexer } from './target-indexer.js';
+import { buildLoreIndexSettings } from './lore-index-settings.js';
 import { FlowRunner, type FlowRunnerOptions } from '@cadre-dev/framework/flow';
 import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToPhase } from '../flow/index.js';
 import { MigrationError } from '../flow/steps/shared.js';
@@ -247,7 +248,13 @@ export class MigrationRuntime {
     const gitLimiter = pLimit(1);
 
     // Target codebase indexer
-    const targetIndexer = new TargetIndexer(this.paths.kbTargetDbFile, this.config.target.outputPath, this.logger);
+    const loreIndexSettings = buildLoreIndexSettings(this.config.options.kbIndex);
+    const targetIndexer = new TargetIndexer(
+      this.paths.kbTargetDbFile,
+      this.config.target.outputPath,
+      this.logger,
+      loreIndexSettings,
+    );
 
     // If the target DB already exists (resume), mark the indexer as built.
     if (await fileExists(this.paths.kbTargetDbFile)) {

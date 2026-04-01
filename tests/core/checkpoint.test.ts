@@ -1038,6 +1038,79 @@ describe('CheckpointManager', () => {
     expect(resumed.blockedTasks).toEqual([]);
   });
 
+  it('should back-fill completedTasks from Phase 4 commit entries when completedTasks is empty', async () => {
+    const { writeJson } = await import('../../src/util/fs.js');
+    const checkpoint = {
+      projectName: 'test-backfill-resume',
+      version: 1,
+      currentPhase: 4,
+      currentTask: null,
+      completedPhases: [0, 1, 2, 3],
+      completedTasks: [],  // BUG: completeTask was never called
+      failedTasks: [{ taskId: 'task-bad-0', attempts: 2, lastError: 'Exit code: null', recoveryAttempted: false }],
+      blockedTasks: [],
+      phaseOutputs: {},
+      tokenUsage: { total: 0, byPhase: {}, byAgent: {} },
+      startedAt: new Date().toISOString(),
+      lastCheckpoint: new Date().toISOString(),
+      resumeCount: 0,
+      cumulativeDurationMs: 0,
+      completedTaskDurationsMs: [],
+      metricsCount: 0,
+      __flowCheckpoint: {
+        flowId: 'aamf-migration',
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        completedExecutionIds: ['aamf-migration/kb-index'],
+        outputs: {},
+        executionOutputs: {},
+      },
+      __phase4FlowCheckpoint: {
+        flowId: 'phase-4-sync-epoch',
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        completedExecutionIds: [
+          'phase-4-sync-epoch/epoch-0-start',
+          // Committed task A — all substeps present
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/migrate',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/commit',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/target-index',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/parity',
+          // Committed task B
+          'phase-4-sync-epoch/epoch-0-tasks-batch-1/task-ok-1/task-ok-1/migrate',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-1/task-ok-1/task-ok-1/commit',
+          'phase-4-sync-epoch/epoch-0-tasks-batch-1/task-ok-1/task-ok-1/parity',
+          // Failed task — migrated but no commit
+          'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/migrate',
+        ],
+        outputs: {},
+        executionOutputs: {},
+      },
+    };
+    await ensureDir(join(tempDir, 'state'));
+    await writeJson(join(tempDir, 'state', 'checkpoint.json'), checkpoint);
+
+    const manager3 = new CheckpointManager(tempDir, logger);
+    const resumed = await manager3.load('test-backfill-resume');
+
+    // completedTasks should be back-filled from commit entries
+    expect(resumed.completedTasks).toContain('task-ok-0');
+    expect(resumed.completedTasks).toContain('task-ok-1');
+    expect(resumed.completedTasks).not.toContain('task-bad-0');
+
+    // Phase 4 flow checkpoint should preserve committed task entries
+    const p4fc = resumed.__phase4FlowCheckpoint as Record<string, unknown>;
+    const p4Ids = p4fc.completedExecutionIds as string[];
+    expect(p4Ids).toContain('phase-4-sync-epoch/epoch-0-start');
+    expect(p4Ids).toContain('phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/migrate');
+    expect(p4Ids).toContain('phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/commit');
+    expect(p4Ids).toContain('phase-4-sync-epoch/epoch-0-tasks-batch-1/task-ok-1/task-ok-1/migrate');
+    // Failed task entries should be removed
+    expect(p4Ids).not.toContain('phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/migrate');
+  });
+
   it('should not alter flow checkpoint when status is not failed', async () => {
     const { writeJson } = await import('../../src/util/fs.js');
     const checkpoint = {

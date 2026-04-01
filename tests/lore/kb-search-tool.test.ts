@@ -105,8 +105,9 @@ describe('kb search tool handler', () => {
     const result = await handler(db, { query: 'concept', mode: 'semantic' }, embedder as any);
 
     expect(result.mode_used).toBe('semantic');
-    // v0.2.1 re-sorts semantic results ascending by score
-    expect(result.results.map((r: any) => r.symbol_id)).toEqual([2, 3]);
+    // Semantic results are returned in the order provided by the DB query;
+    // the lore library no longer re-sorts them.
+    expect(result.results.map((r: any) => r.symbol_id)).toEqual([3, 2]);
     expect(embedder.embed).toHaveBeenCalledWith(['concept']);
   });
 
