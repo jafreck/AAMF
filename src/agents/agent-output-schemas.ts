@@ -27,6 +27,56 @@ export const AamfOutputBase = z.object({
 
 export type AamfOutputBaseType = z.infer<typeof AamfOutputBase>;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeLegacyStatus(status: unknown): unknown {
+  if (typeof status !== 'string') return status;
+
+  switch (status.trim().toLowerCase()) {
+    case 'success':
+    case 'succeeded':
+    case 'ok':
+      return 'completed';
+    case 'needs_review':
+    case 'needs review':
+      return 'needs-review';
+    case 'error':
+    case 'failure':
+      return 'failed';
+    default:
+      return status;
+  }
+}
+
+function normalizeLegacyNotes(notes: unknown): unknown {
+  if (!Array.isArray(notes) || !notes.every(item => typeof item === 'string')) {
+    return notes;
+  }
+
+  return notes.join('\n');
+}
+
+function normalizeAamfOutput(raw: unknown): unknown {
+  if (!isRecord(raw)) return raw;
+
+  const normalized: Record<string, unknown> = { ...raw };
+
+  normalized.status = normalizeLegacyStatus(normalized.status);
+  normalized.notes = normalizeLegacyNotes(normalized.notes);
+
+  if (
+    normalized.outputFiles === undefined
+    && Array.isArray(normalized.written)
+    && normalized.written.every(item => typeof item === 'string')
+  ) {
+    normalized.outputFiles = normalized.written;
+  }
+
+  return normalized;
+}
+
 /**
  * JSON schema for structured agent task results.
  * @deprecated Parity results are now extracted from aamf-json output directly.
@@ -106,6 +156,8 @@ export function parseAamfOutput<T extends z.ZodTypeAny>(
       return { parsed: false, error: MISSING_BLOCK_ERROR };
     }
   }
+
+  raw = normalizeAamfOutput(raw);
 
   const result = schema.safeParse(raw);
   if (!result.success) {

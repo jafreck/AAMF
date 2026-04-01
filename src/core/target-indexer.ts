@@ -11,19 +11,36 @@
  */
 
 import type { Logger } from '../logging/logger.js';
+import { buildLoreIndexSettings, type LoreIndexSettings } from './lore-index-settings.js';
 
 export class TargetIndexer {
   private readonly dbPath: string;
   private readonly rootDir: string;
   private readonly logger: Logger;
+  private readonly indexSettings: LoreIndexSettings;
   private built = false;
   private building = false;
   private onFirstBuild?: () => Promise<void>;
 
-  constructor(dbPath: string, rootDir: string, logger: Logger) {
+  constructor(
+    dbPath: string,
+    rootDir: string,
+    logger: Logger,
+    indexSettings: LoreIndexSettings = buildLoreIndexSettings(undefined),
+  ) {
     this.dbPath = dbPath;
     this.rootDir = rootDir;
     this.logger = logger;
+    this.indexSettings = indexSettings;
+  }
+
+  private createBuilder(lore: typeof import('@jafreck/lore')): InstanceType<typeof lore.IndexBuilder> {
+    return new lore.IndexBuilder(
+      this.dbPath,
+      { rootDir: this.rootDir },
+      undefined,
+      this.indexSettings,
+    );
   }
 
   /** Register a callback that fires once after the first build/update completes. */
@@ -34,7 +51,7 @@ export class TargetIndexer {
   /** Full build of the target index from scratch. */
   async build(): Promise<void> {
     const lore = await import('@jafreck/lore');
-    const builder = new lore.IndexBuilder(this.dbPath, { rootDir: this.rootDir });
+    const builder = this.createBuilder(lore);
     await builder.build();
     this.built = true;
     this.logger.info('Target index built');
@@ -54,7 +71,7 @@ export class TargetIndexer {
       if (this.building) return;
       this.building = true;
       // First update — do a full build to establish the schema.
-      const builder = new lore.IndexBuilder(this.dbPath, { rootDir: this.rootDir });
+      const builder = this.createBuilder(lore);
       await builder.build();
       this.built = true;
       this.building = false;
@@ -64,9 +81,16 @@ export class TargetIndexer {
         this.onFirstBuild = undefined;
       }
     } else {
-      const builder = new lore.IndexBuilder(this.dbPath, { rootDir: this.rootDir });
-      await builder.update(changedFiles);
-      this.logger.debug(`Target index updated for ${changedFiles.length} file(s)`);
+      const builder = this.createBuilder(lore);
+      if (this.indexSettings.lsp.enabled) {
+        await builder.update(changedFiles);
+        this.logger.debug(`Target index updated for ${changedFiles.length} file(s)`);
+      } else {
+        await builder.baselineRebuild();
+        this.logger.debug(
+          `Target index baseline rebuilt for ${changedFiles.length} changed file(s) because LSP is disabled`,
+        );
+      }
     }
   }
 

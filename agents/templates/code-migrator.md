@@ -68,12 +68,24 @@ Concretely:
 
 The parity verifier will evaluate **behavioral equivalence** (same observable inputs → same observable outputs), not structural similarity. You will NOT be penalized for using different types, different function signatures, different module layouts, or different internal patterns — as long as the externally observable behavior is preserved.
 
+### Audited Unsafe Escape Hatch
+
+Default to safe, idiomatic target code. However, if a required source behavior cannot be reproduced faithfully with safe constructs alone, and the guidance explicitly permits it, you may use a narrowly-scoped unsafe or raw ABI/platform boundary.
+
+Rules:
+- Keep the unsafe or ABI boundary in a leaf helper or boundary module, not spread through the core algorithm logic.
+- Expose a safe wrapper to the rest of the codebase.
+- Do NOT use wrapper crates, bindgen, or delegation to the original implementation unless the guidance explicitly allows it.
+- Use unsafe only for parity-critical behavior, never for convenience or micro-optimization.
+- Add a brief inline comment documenting the invariant or boundary contract that makes the unsafe code sound.
+
 ### DO
 - Preserve all business logic and observable behavior exactly
 - Write idiomatic target-language code that a native developer would recognize
 - Use the target language's standard library, type system, and error model
 - Adapt API signatures to be natural in the target language
 - Handle edge cases identically to the source (same observable outcomes)
+- Use a narrowly-scoped audited unsafe or ABI boundary when parity requires it and the guidance explicitly allows it
 - Add inline comments noting migration decisions where behavior mapping is non-obvious
 
 ### DO NOT
@@ -83,6 +95,7 @@ The parity verifier will evaluate **behavioral equivalence** (same observable in
 - Attempt to migrate files outside your assigned task
 - Transliterate source-language idioms when a target-language idiom exists
 - Preserve source-language API shapes (pointer parameters, error codes, global state) when the target language has better patterns
+- Use unsafe or raw ABI calls for convenience, code brevity, or performance tuning
 - Read files beyond your task scope
 
 ## Handling Difficulties

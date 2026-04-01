@@ -14,6 +14,7 @@ import type { MigrationFlowContext } from '../context.js';
 import type { PhaseResult } from '../../agents/types.js';
 import { assertPhaseSuccess } from './shared.js';
 import { startKbServer } from './kb-server-lifecycle.js';
+import { buildLoreIndexSettings } from '../../core/lore-index-settings.js';
 import { fileExists } from '../../util/fs.js';
 
 const loadLore = () => import('@jafreck/lore');
@@ -102,31 +103,22 @@ export async function buildKbIndex(
     }
   }
 
-  // ── LSP settings ──
+  const loreIndexSettings = buildLoreIndexSettings(ctx.config.options.kbIndex);
   const lspConfig = ctx.config.options.kbIndex?.lsp;
-  const lspSettings = lspConfig?.enabled ? {
-    enabled: true as const,
-    requestTimeoutMs: lspConfig.requestTimeoutMs ?? 5000,
-    servers: lspConfig.servers
-      ? Object.fromEntries(
-          Object.entries(lspConfig.servers).map(([lang, srv]) => [
-            lang, { command: srv.command, args: srv.args ?? [] },
-          ]),
-        )
-      : {},
-  } : undefined;
 
-  if (lspSettings) {
+  if (loreIndexSettings.lsp.enabled) {
     ctx.logger.info(
-      `LSP enabled (timeout: ${lspSettings.requestTimeoutMs}ms` +
-      (Object.keys(lspSettings.servers).length > 0
-        ? `, servers: ${Object.keys(lspSettings.servers).join(', ')}` : '') + ')',
+      `LSP enabled (timeout: ${loreIndexSettings.lsp.requestTimeoutMs}ms` +
+      (Object.keys(lspConfig?.servers ?? {}).length > 0
+        ? `, overrides: ${Object.keys(lspConfig?.servers ?? {}).join(', ')}` : '') + ')',
     );
-    for (const [lang, srv] of Object.entries(lspSettings.servers)) {
+    for (const [lang, srv] of Object.entries(lspConfig?.servers ?? {})) {
       try { execFileSync('which', [srv.command], { stdio: 'pipe' }); }
       catch { ctx.logger.warn(`LSP server '${srv.command}' for '${lang}' not found on PATH`); }
     }
   }
+
+  ctx.logger.info(`SCIP enabled (timeout: ${loreIndexSettings.scip.timeoutMs}ms)`);
 
   // ── Logger init ──
   const loreLogLevel = ctx.config.options.kbIndex?.logLevel ?? 'debug';
@@ -135,7 +127,7 @@ export async function buildKbIndex(
     logFile: ctx.paths.loreLogFile,
   });
 
-  const builder = new lore.IndexBuilder(kbDbPath, walkerConfig, ctx.embedder, { lsp: lspSettings });
+  const builder = new lore.IndexBuilder(kbDbPath, walkerConfig, ctx.embedder, loreIndexSettings);
 
   // ── Retry loop ──
   const maxAttempts = ctx.config.options.maxRetriesPerTask;
@@ -161,7 +153,7 @@ export async function buildKbIndex(
         ctx.logger.warn(
           `KB index build still running after ${Math.round(halfTimeout / 1000)}s ` +
           `(timeout: ${Math.round(timeout / 1000)}s)` +
-          (lspSettings ? ' — LSP server may still be indexing.' : ''),
+          (loreIndexSettings.lsp.enabled ? ' — LSP server may still be indexing.' : ''),
         );
       }, halfTimeout),
     );
@@ -173,7 +165,7 @@ export async function buildKbIndex(
         new Promise<never>((_, reject) =>
           setTimeout(() => {
             clearHeartbeat();
-            const msg = lspSettings
+            const msg = loreIndexSettings.lsp.enabled
               ? `KB index timed out after ${Math.round(timeout / 1000)}s — LSP may be stalled.`
               : `KB index timed out after ${Math.round(timeout / 1000)}s`;
             reject(new Error(msg));

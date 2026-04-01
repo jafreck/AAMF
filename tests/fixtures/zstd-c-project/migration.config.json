@@ -2,10 +2,10 @@
   "projectName": "zstd-to-rust",
   "guidance": [
     "Do NOT use any existing Rust crates that wrap the C implementation (e.g. zstd, zstd-safe, zstd-sys, lz4-sys). Write a pure native Rust port of the C source code.",
-    "Do NOT use FFI, bindgen, or any C interop. All code must be idiomatic safe Rust.",
-    "All code must be safe Rust. Do NOT use `unsafe` blocks, `unsafe fn`, raw pointers (`*const`, `*mut`), or `core::ffi::c_void`. Use slices (`&[u8]`, `&mut [u8]`), Vec, iterators, and Rust's standard byte-order methods (e.g. `u32::from_le_bytes`, `to_be_bytes`) instead of pointer casts and manual memory access. If a C pattern seems to require unsafe, find the safe Rust equivalent — it almost always exists.",
+    "Do NOT use bindgen or delegate to the original C implementation through FFI. If a platform or OS boundary truly has no safe Rust equivalent, a narrowly-scoped Rust-side ABI shim is allowed only at the leaf boundary, with the rest of the port remaining native Rust.",
+    "Prefer safe Rust everywhere. You may use audited `unsafe` blocks, `unsafe fn`, raw pointers (`*const`, `*mut`), or `core::ffi::c_void` only when no safe equivalent exists and the behavior is required for parity. Keep unsafe localized to the smallest possible boundary, document the invariant being relied on, and expose a safe API to the rest of the code.",
     "Preserve the algorithmic logic (same algorithmic steps, same data flow) so the port is auditable against the C reference — but use idiomatic Rust types and APIs. The algorithm should be recognizable, not the function signatures or pointer patterns.",
-    "Prefer correctness and safety over micro-optimization. It is acceptable for the Rust port to be slightly slower than the C original if the alternative is unsafe code. Do not use unsafe for performance reasons."
+    "Prefer correctness and safety over micro-optimization. It is acceptable for the Rust port to be slightly slower than the C original if the alternative is broader unsafe code. Do not use unsafe for convenience or performance reasons; if unsafe is used at all, it must be to preserve required behavior at a constrained boundary."
   ],
   "source": {
     "path": "./zstd-src/zstd-1.5.7",
@@ -52,9 +52,9 @@
   },
   "options": {
     "qualityPolicy": "strict",
-    "maxParallelAgents": 8,
-    "maxRetriesPerTask": 7,
-    "reuseKb": true,
+    "maxParallelAgents": 5,
+    "maxRetriesPerTask": 10,
+    "reuseKb": false,
     "maxLinesPerTask": 1000,
     "tokenBudget": 400000000,
     "executionMode": "sync-epoch",
@@ -74,7 +74,7 @@
         "enabled": false
       },
       "lsp": {
-        "enabled": true,
+        "enabled": false,
         "servers": {
           "c": { "command": "clangd", "args": ["--compile-commands-dir=zstd-src/zstd-1.5.7/build"] }
         }

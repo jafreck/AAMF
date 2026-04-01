@@ -634,7 +634,24 @@ export class CheckpointManager {
     const ids = snapshot.completedExecutionIds;
     if (!Array.isArray(ids) || ids.length === 0) return;
 
-    const completedSet = new Set(state.completedTasks);
+    // Build the set of completed tasks. If completedTasks is empty (legacy
+    // checkpoints that never called completeTask()), derive the set from
+    // the flow checkpoint's own commit entries so we don't discard all progress.
+    let completedSet = new Set(state.completedTasks);
+    if (completedSet.size === 0) {
+      const TASK_ID_RE = /\/(task-[^/]+)\/[^/]+\/commit$/;
+      for (const id of ids) {
+        const m = TASK_ID_RE.exec(id);
+        if (m) completedSet.add(m[1]!);
+      }
+      // Back-fill completedTasks so downstream logic stays consistent.
+      if (completedSet.size > 0) {
+        state.completedTasks = [...completedSet];
+        this.logger.info(
+          `Back-filled ${completedSet.size} completed task(s) from Phase 4 flow checkpoint commit entries`,
+        );
+      }
+    }
     if (completedSet.size === ids.length) return; // all tasks completed, nothing to filter
 
     const filtered = ids.filter((id: string) => {
