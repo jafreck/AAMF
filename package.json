@@ -20,24 +20,24 @@
   },
   "dependencies": {
     "@cadre-dev/framework": "^0.2.5",
-    "@jafreck/lore": "^0.3.9",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@types/better-sqlite3": "^7.6.13",
-    "better-sqlite3": "^12.6.2",
-    "chalk": "^5",
-    "commander": "^14",
+    "@jafreck/lore": "^0.4.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@types/better-sqlite3": "^9.6.0",
+    "better-sqlite3": "^13.0.3",
+    "chalk": "^6",
+    "commander": "^15",
     "date-fns": "^4",
     "fast-glob": "^3.3.3",
-    "p-limit": "^7.3.0",
+    "p-limit": "^7.3.2",
     "sqlite-vec": "^0.1.9",
-    "zod": "^4.3"
+    "zod": "^4.5"
   },
   "devDependencies": {
-    "@types/node": "^25",
-    "@vitest/coverage-v8": "^4.1.2",
+    "@types/node": "^26",
+    "@vitest/coverage-v8": "^5.0.0",
     "tsx": "^4",
-    "typescript": "^6.0",
-    "vitest": "^4.1.2"
+    "typescript": "^7.0",
+    "vitest": "^5.0.0"
   },
   "engines": {
     "node": ">=22.0.0"
