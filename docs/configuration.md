@@ -4,7 +4,7 @@ The AAMF runtime is the execution harness for the Autonomous Agent Migration Fra
 
 ## Prerequisites
 
-- **Node.js 20+**
+- **Node.js 22+** (the repository pins Node 22 in `.nvmrc`)
 - An agent CLI installation — either Copilot CLI (`copilot --agent`) or Claude Code (`claude --agent`)
 - Agent definition files in the configured agent directory (`.github/agents/` or `.claude/agents/`)
 
@@ -47,16 +47,13 @@ Create a `migration.config.json` file in your project root. Below is a full refe
     "resume": false,
     "executionMode": "wave-barrier",
     "waveControl": {
-      "waveSize": 3,
       "maxConvergenceIterations": 3
     },
     "continueOnBlocked": true,
     "maxBlockedTasks": 0,
     "qualityPolicy": "strict",
     "maxInfraRetries": 3,
-    "keepArtifacts": true,
     "kbIndex": {
-      "enabled": true,
       "embeddings": {
         "enabled": false,
         "model": "Qwen/Qwen3-Embedding-0.6B",
@@ -131,30 +128,30 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | `options.maxRetriesPerTask` | `integer (1–5)` | `3` | How many times to retry a failed agent task before escalating. |
 | `options.maxLinesPerTask` | `integer` | `500` | Maximum lines per migration task chunk. |
 | `options.tokenBudget` | `integer` | — | Total token budget across all LLM calls. |
-| `options.contextWindowStrategy` | `'per-invocation' \| 'session'` | `'per-invocation'` | How context windows are managed across invocations. |
-| `options.contextWindowTokens` | `integer` | — | Maximum context window tokens per invocation. |
 | `options.dryRun` | `boolean` | `false` | Validate config and plan work without executing agents. |
 | `options.resume` | `boolean` | `false` | Resume from the last checkpoint instead of starting fresh. |
 | `options.invocationDelayMs` | `integer (≥0)` | `0` | Delay in ms between agent invocations. |
 | `options.buildConcurrency` | `integer (0–10)` | `1` | Max concurrent build/test commands. 0 = uses `maxParallelAgents`. |
-| `options.executionMode` | `'per-task' \| 'wave-barrier'` | `'per-task'` | Phase 4 scheduler mode. |
-| `options.waveControl.waveSize` | `integer (≥1)` | `3` | Max migration tasks per wave in `wave-barrier` mode. |
+| `options.executionMode` | `'per-task' \| 'wave-barrier' \| 'sync-epoch'` | `'per-task'` | Phase 4 scheduler mode. |
 | `options.waveControl.maxConvergenceIterations` | `integer (≥0)` | `3` | Max validation/fix iterations per wave before blocking. `0` = unlimited. |
 | `options.continueOnBlocked` | `boolean` | `true` | Continue migration when tasks are blocked. |
 | `options.maxBlockedTasks` | `integer (≥0)` | `0` | Max blocked tasks before halting. 0 = unlimited. |
 | `options.qualityPolicy` | `'strict' \| 'balanced' \| 'deferred-strict'` | `'strict'` | Quality gating policy for wave-end validation. |
 | `options.maxInfraRetries` | `integer (0–10)` | `3` | Max retries for infrastructure errors (OOM, network, etc.). Does not consume `maxRetriesPerTask`. |
-| `options.avgTokensPerTask` | `integer (≥1)` | `5000` | Estimated average tokens per Phase 4 task (for cost projection). |
-| `options.keepArtifacts` | `boolean` | `false` | Preserve `.aamf` and output directories after migration. Overridden by `AAMF_KEEP_ARTIFACTS=1`. |
 
 #### KB Indexing (Phase 0)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `options.kbIndex.enabled` | `boolean` | `false` | Enable the KB indexing phase. Also enabled by `AAMF_USE_KB_INDEX=1`. |
+| `options.kbIndex.logLevel` | `'debug' \| 'info' \| 'warn' \| 'error' \| 'silent'` | `'debug'` | Lore index/server logging level. KB indexing always runs in Phase 0. |
 | `options.kbIndex.embeddings.enabled` | `boolean` | `false` | Enable embedding-based semantic search (requires Python + sentence-transformers). |
 | `options.kbIndex.embeddings.model` | `string` | `'Qwen/Qwen3-Embedding-0.6B'` | Sentence-transformers model for embeddings. |
 | `options.kbIndex.embeddings.pythonBin` | `string` | `'python3'` | Path to Python binary. |
+| `options.kbIndex.server.maxRequestBytes` | `integer` | `4194304` | Maximum buffered MCP POST body size. |
+| `options.kbIndex.server.sessionIdleTimeoutMs` | `integer` | `1800000` | Evict abandoned sessions after this idle period; `0` disables expiry. |
+| `options.kbIndex.server.sessionSweepIntervalMs` | `integer` | `60000` | Idle-session scan interval; `0` disables scanning. |
+| `options.kbIndex.server.maxSessions` | `integer` | `64` | Maximum retained MCP sessions. |
+| `options.kbIndex.server.stopTimeoutMs` | `integer` | `5000` | Bound for session and server shutdown. |
 
 #### Model Policy
 
@@ -284,13 +281,13 @@ Phase 4 supports two scheduler strategies:
 
 In `wave-barrier` mode, each cycle is:
 
-1. **Migration wave** — run up to `waveControl.waveSize` ready, non-overlapping migration tasks in parallel.
+1. **Migration wave** — run the dependency-ready tasks in non-overlapping parallel batches.
 2. **Validation wave** — after migration settles, run build/test at the barrier (no migration/validation overlap).
 3. **Fix wave (if needed)** — rerun targeted migration tasks for failed validation and repeat validation until convergence or `waveControl.maxConvergenceIterations` is reached (`0` = unlimited).
 
 Blocked-task policy (`continueOnBlocked`, `maxBlockedTasks`) is enforced after each wave.
 
-When migration/parity retries are exhausted, Phase 4 invokes `failure-adjudicator` and applies decision outcomes:
+When migration/parity retries are exhausted, Phase 4 invokes `parity-failure-resolver` and applies the recovery outcome:
 
 - `fixed`: rerun targeted verifier checks after applying the adjudicated fix path.
 - `false_positive`: persist waiver/fingerprint evidence and unblock without repeating the identical parity failure loop.
@@ -314,18 +311,12 @@ The runtime writes several artifacts to track migration progress:
 
 ## Artifact Retention
 
-By default, AAMF cleans up the `.aamf` checkpoint directory and the target output directory (`target.outputPath`) after a migration completes. To preserve these directories for post-run inspection or debugging, you can enable artifact retention in two ways:
-
-1. **Config option** — set `options.keepArtifacts` to `true` in `migration.config.json`:
-   ```json
-   { "options": { "keepArtifacts": true } }
-   ```
-2. **Environment variable** — set `AAMF_KEEP_ARTIFACTS=1` at runtime:
-   ```bash
-   AAMF_KEEP_ARTIFACTS=1 npx aamf migrate -c migration.config.json
-   ```
-
-**Precedence:** The environment variable takes priority over the config file. If `AAMF_KEEP_ARTIFACTS=1` is set, artifacts are retained regardless of the `keepArtifacts` config value.
+AAMF always retains migration state and output. It never automatically removes
+`.aamf/migration/{projectName}/` or `target.outputPath`. Retaining the runtime
+directory is required for `--resume`; retaining the target directory preserves
+the migration deliverable. Cleanup is the user's responsibility. The
+`aamf reset` command resets checkpoint execution state and does not delete the
+target codebase.
 
 | Directories affected | Description |
 |----------------------|-------------|
@@ -342,7 +333,7 @@ By default, AAMF cleans up the `.aamf` checkpoint directory and the target outpu
 | **Checkpoint corruption** | The runtime automatically falls back to the most recent backup checkpoint. If both are corrupted, use `npx aamf reset` and restart. |
 | **Agent not found** | Ensure `.agent.md` files exist in the directory specified by `copilot.agentDir` (or `claudeCode.agentDir`). |
 | **Infrastructure errors** | File-lock, OOM, network, and permission errors are classified as infrastructure failures and retried separately (up to `maxInfraRetries`). |
-| **KB index stale** | The runtime computes a source fingerprint; set `kbIndex.enabled` and re-run to auto-rebuild when sources change. Or run `npx aamf index build` manually. |
+| **KB index stale** | The runtime computes a source fingerprint and automatically rebuilds Phase 0 when sources change. Or run `npx aamf index build` manually. |
 
 ## Structured JSON Agent Output (Sidecar)
 
@@ -425,7 +416,7 @@ runtime/src/
 │   └── runtime.ts                    # Core runtime initialization and shutdown
 ├── execution/
 │   ├── parallel-executor.ts          # Runs tasks concurrently up to maxParallelAgents
-│   ├── retry.ts                      # Retry with backoff and failure-adjudicator escalation
+│   ├── retry.ts                      # Retry with backoff and recovery escalation
 │   ├── serial-executor.ts            # Runs tasks sequentially for ordered dependencies
 │   └── task-queue.ts                 # Dependency-aware priority queue with topological sort
 ├── logging/

@@ -6,7 +6,6 @@
  * on convergence failure, and completed-task invariant.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { join } from 'node:path';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { buildPhase4Subflow, computePhase4Concurrency, computeTopologicalWaves } from '../../../src/flow/steps/migration.js';
 import { FlowRunner } from '@cadre-dev/framework/flow';
@@ -59,7 +58,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
     // Mock spawnWithTimeout to succeed for wave validation commands
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -69,6 +68,34 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
       // All tasks should be processed
       const codeMigratorInvs = env.mockLauncher.invocations.filter(i => i.agent === 'code-migrator');
       expect(codeMigratorInvs.length).toBeGreaterThanOrEqual(2);
+      expect(env.checkpoint.getState().completedTasks).toEqual(['task-001', 'task-002']);
+      expect(env.checkpoint.getState().completedTaskDurationsMs).toHaveLength(2);
+      expect(env.ctx.phase4Snapshot?.completedTaskCount).toBe(2);
+    } finally {
+      spawnSpy.mockRestore();
+    }
+  });
+
+  it('should skip completed wave tasks after checkpoint reload', async () => {
+    env = await setupFlowTestWithTasks(createMockLauncher(), DEFAULT_PLANNING_TASKS, {
+      options: {
+        executionMode: 'wave-barrier',
+        waveControl: { maxConvergenceIterations: 1 },
+        qualityPolicy: 'balanced',
+      },
+    });
+    const spawnMod = await import('../../../src/util/process.js');
+    const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
+    });
+
+    try {
+      await runPhase4(env);
+      env.mockLauncher.invocations.length = 0;
+      await env.checkpoint.load(env.ctx.config.projectName);
+      await runPhase4(env);
+      expect(env.mockLauncher.invocations).toHaveLength(0);
+      expect(env.checkpoint.getState().completedTasks).toEqual(['task-001', 'task-002']);
     } finally {
       spawnSpy.mockRestore();
     }
@@ -95,9 +122,9 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async () => {
       buildCallCount++;
       if (buildCallCount === 1) {
-        return { exitCode: 1, stdout: '', stderr: 'build failed', killed: false };
+        return { exitCode: 1, stdout: '', stderr: 'build failed', killed: false, duration: 0 };
       }
-      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false };
+      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0 };
     });
 
     try {
@@ -124,7 +151,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -158,7 +185,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
     await buildPhase4Subflow(env.flowCtx);
 
-    const progressContent = await readFile(join(env.progressDir, 'progress.md'), 'utf-8');
+    const progressContent = await readFile(env.ctx.paths.progressReportFile, 'utf-8');
     expect(infoMessages.some((message) => message.includes('Phase 4 wave plan: 2 wave(s) precomputed'))).toBe(true);
     expect(infoMessages.some((message) => message.includes('Phase 4 wave 0 (1/2): 1 task(s) -> task-001'))).toBe(true);
     expect(infoMessages.some((message) => message.includes('Phase 4 wave 1 (2/2): 1 task(s) -> task-002'))).toBe(true);
@@ -180,14 +207,14 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
     // Track deferGitCommits via the launcher spy
     const origFn = env.mockLauncher.fn;
-    (env.mockLauncher as any).fn = async (inv: AgentInvocation) => {
+    env.mockLauncher.fn = async (inv: AgentInvocation) => {
       deferStates.push(env.ctx.deferGitCommits);
       return origFn(inv);
     };
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -229,7 +256,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -266,10 +293,10 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
       buildCallCount++;
       if (buildCallCount <= 1) {
         // First build call fails (wave validation)
-        return { exitCode: 1, stdout: '', stderr: 'build failed', killed: false };
+        return { exitCode: 1, stdout: '', stderr: 'build failed', killed: false, duration: 0 };
       }
       // Subsequent calls succeed
-      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false };
+      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0 };
     });
 
     try {
@@ -303,7 +330,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
     // Build always fails → convergence can't succeed
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 1, stdout: '', stderr: 'build always fails', killed: false,
+      exitCode: 1, stdout: '', stderr: 'build always fails', killed: false, duration: 0,
     });
 
     try {
@@ -345,7 +372,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -386,7 +413,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -414,7 +441,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -472,7 +499,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async (_cmd, args) => {
       const cmdStr = Array.isArray(args) ? args.join(' ') : String(args);
       spawnCalls.push(cmdStr);
-      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false };
+      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0 };
     });
 
     try {
@@ -500,7 +527,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
     const spawnMod = await import('../../../src/util/process.js');
     // Always fail build commands — in strict/enforce mode, this causes failure
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 1, stdout: '', stderr: 'build fail', killed: false,
+      exitCode: 1, stdout: '', stderr: 'build fail', killed: false, duration: 0,
     });
 
     try {
@@ -537,7 +564,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -638,7 +665,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
       const spawnMod = await import('../../../src/util/process.js');
       const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-        exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+        exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
       });
 
       try {
@@ -691,7 +718,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
 
       const spawnMod = await import('../../../src/util/process.js');
       const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-        exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+        exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
       });
 
       try {

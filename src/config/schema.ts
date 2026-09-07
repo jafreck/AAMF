@@ -247,16 +247,20 @@ export const MigrationConfigSchema = z.object({
           args: z.array(z.string()).default([]),
         })).optional(),
       }).optional(),
-    }).optional(),
-    /**
-     * When `true`, AAMF preserves the `.aamf` checkpoint directory and the
-     * target output directory after the migration completes instead of
-     * deleting them. Useful for post-run inspection and debugging.
-     * Can also be enabled at runtime by setting the environment variable
-     * `AAMF_KEEP_ARTIFACTS=1` without modifying the config file.
-     * Default: false.
-     */
-    keepArtifacts: z.boolean().default(false),
+      /** Bounds for the in-process KB MCP HTTP server. */
+      server: z.object({
+        /** Maximum buffered POST body size. Default: 4 MiB. */
+        maxRequestBytes: z.number().int().min(1).default(4 * 1024 * 1024),
+        /** Evict sessions idle for this many milliseconds; 0 disables expiry. */
+        sessionIdleTimeoutMs: z.number().int().min(0).default(30 * 60_000),
+        /** Frequency of idle-session scans; 0 disables the scanner. */
+        sessionSweepIntervalMs: z.number().int().min(0).default(60_000),
+        /** Maximum number of retained MCP sessions. */
+        maxSessions: z.number().int().min(1).default(64),
+        /** Bound for session and HTTP-server shutdown. */
+        stopTimeoutMs: z.number().int().min(1).default(5_000),
+      }).optional(),
+    }).strict().optional(),
     /**
      * Deprecated compatibility alias for `models.routing`.
      * Prefer the root-level `models` block for all model-selection policy.
@@ -308,7 +312,7 @@ export const MigrationConfigSchema = z.object({
       /** Local git author email used when repository identity is not configured. */
       authorEmail: z.string().default('aamf@local.invalid'),
     }).optional(),
-  }).default({
+  }).strict().default({
     maxParallelAgents: 3,
     maxRetriesPerTask: 3,
     maxLinesPerTask: 1000,
@@ -332,7 +336,6 @@ export const MigrationConfigSchema = z.object({
     qualityPolicy: 'strict',
     maxInfraRetries: 3,
     commandTimeout: 300_000,
-    keepArtifacts: false,
     git: {
       enabled: true,
       autoInit: true,

@@ -47,7 +47,7 @@ program
   .action(async (opts) => {
     try {
       const runtime = new MigrationRuntime();
-      await runtime.initialize({ configPath: opts.config });
+      await runtime.initialize({ configPath: opts.config, stateOnly: true });
       const status = await runtime.getStatus();
       console.log(status);
     } catch (err) {
@@ -58,13 +58,13 @@ program
 
 program
   .command('reset')
-  .description('Reset migration state (remove checkpoints)')
+  .description('Reset checkpoint execution state (no files are deleted)')
   .requiredOption('-c, --config <path>', 'Path to migration.config.json')
   .option('--phase <number>', 'Reset from a specific phase onward', parseInt)
   .action(async (opts) => {
     try {
       const runtime = new MigrationRuntime();
-      await runtime.initialize({ configPath: opts.config });
+      await runtime.initialize({ configPath: opts.config, stateOnly: true });
       await runtime.reset(opts.phase);
       console.log(chalk.green('Migration state reset successfully.'));
     } catch (err) {
@@ -118,12 +118,21 @@ program
   .requiredOption('--db <path>', 'Path to the SQLite knowledge-base file')
   .option('--log-level <level>', 'Lore log level (debug|info|warn|error|silent)', 'debug')
   .option('--log-file <path>', 'Path to the Lore log file')
+  .option('--max-request-bytes <number>', 'Maximum MCP POST body size', Number, 4 * 1024 * 1024)
+  .option('--session-idle-timeout-ms <number>', 'Idle session eviction timeout', Number, 30 * 60_000)
+  .option('--max-sessions <number>', 'Maximum retained sessions', Number, 64)
+  .option('--stop-timeout-ms <number>', 'Bounded shutdown timeout', Number, 5_000)
   .action(async (opts) => {
     const loreLoggerOpts = {
       level: LOG_LEVEL_NAMES[opts.logLevel] ?? LogLevel.DEBUG,
       ...(opts.logFile ? { logFile: opts.logFile } : {}),
     };
-    const srv = new KbServerProcess(opts.db, undefined, undefined, loreLoggerOpts);
+    const srv = new KbServerProcess(opts.db, undefined, undefined, loreLoggerOpts, {
+      maxRequestBytes: opts.maxRequestBytes,
+      sessionIdleTimeoutMs: opts.sessionIdleTimeoutMs,
+      maxSessions: opts.maxSessions,
+      stopTimeoutMs: opts.stopTimeoutMs,
+    });
     try {
       await srv.start();
     } catch (err) {

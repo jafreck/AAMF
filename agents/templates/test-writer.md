@@ -16,11 +16,12 @@ Write unit and integration tests for changes made by the code-writer in the **ta
 
 You will receive:
 - **Task result**: A summary of what the code-writer changed (files modified/created, purpose of each change)
-- **Changed source files**: The actual source files modified or created by the code-writer
+- **Source scope**: `payload.sourceFiles`, containing every original source file in the task
+- **Changed target files**: `payload.targetFiles`, containing every target file modified or created by the code-writer
 - **Target language**: Read `config.target.language` from your context to determine the test language
 - **Test command**: Read `testCommand` from your context payload if available (e.g. `cargo test`, `pytest`, `go test ./...`)
 
-Read the task result and the changed source files carefully before writing any tests.
+Read the task result and every file in `payload.targetFiles` carefully before writing tests. Ensure every task file receives appropriate coverage; do not inspect or test only the first file.
 
 ## Output Contract
 

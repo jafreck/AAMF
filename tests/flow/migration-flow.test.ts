@@ -216,7 +216,7 @@ describe('TerminalExhaustionError', () => {
       taskId: 'task-001',
       wave: 2,
       check: 'build',
-      reasonCode: 'max-retries' as const,
+      reasonCode: 'task-retries-exhausted' as const,
       summary: 'Build failed 3 times',
       lastError: 'compilation error',
       attempt: 3,
@@ -228,19 +228,19 @@ describe('TerminalExhaustionError', () => {
     expect(err.details).toBe(details);
     expect(err.message).toContain('task=task-001');
     expect(err.message).toContain('wave=2');
-    expect(err.message).toContain('max-retries');
+    expect(err.message).toContain('task-retries-exhausted');
   });
 
   it('should handle details without optional fields', () => {
     const details = {
-      reasonCode: 'max-retries' as const,
+      reasonCode: 'task-retries-exhausted' as const,
       summary: 'Failed',
       lastError: 'error',
       attempt: 1,
       maxAttempts: 1,
     };
     const err = new TerminalExhaustionError(details);
-    expect(err.message).toContain('max-retries');
+    expect(err.message).toContain('task-retries-exhausted');
     expect(err).toBeInstanceOf(Error);
   });
 });

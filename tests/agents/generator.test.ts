@@ -39,8 +39,8 @@ function parseFrontMatter(content: string): { frontMatter: FrontMatter; body: st
   if (!match) {
     return { frontMatter: {}, body: content };
   }
-  const rawYaml = match[1];
-  const body = match[2];
+  const rawYaml = match[1]!;
+  const body = match[2]!;
 
   const frontMatter: FrontMatter = {};
   let currentKey: string | null = null;
@@ -51,13 +51,13 @@ function parseFrontMatter(content: string): { frontMatter: FrontMatter; body: st
     const keyValueMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*):\s*(.*)$/);
 
     if (listItemMatch && currentList !== null) {
-      currentList.push(listItemMatch[1].trim());
+      currentList.push(listItemMatch[1]!.trim());
     } else if (keyValueMatch) {
       if (currentKey && currentList) {
         frontMatter[currentKey] = currentList;
       }
-      currentKey = keyValueMatch[1];
-      const rawValue = keyValueMatch[2].trim();
+      currentKey = keyValueMatch[1]!;
+      const rawValue = keyValueMatch[2]!.trim();
 
       if (rawValue === '' || rawValue === '|' || rawValue === '>') {
         currentList = [];
@@ -80,7 +80,7 @@ function extractSchemaJson(content: string, sectionTitle: string): unknown {
   const afterHeading = content.slice(headingMatch.index + headingMatch[0].length);
   const jsonBlock = afterHeading.match(/```json\r?\n([\s\S]*?)```/m);
   if (!jsonBlock) return undefined;
-  return JSON.parse(jsonBlock[1].trim());
+  return JSON.parse(jsonBlock[1]!.trim());
 }
 
 // ─── Template Tests ──────────────────────────────────────────────────────────

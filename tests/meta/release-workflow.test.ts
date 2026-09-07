@@ -57,10 +57,10 @@ describe('Release workflow (.github/workflows/release.yml)', () => {
     expect(text).toContain('npm ci');
   });
 
-  it('should run type-check with npx tsc --noEmit before full build', async () => {
+  it('should run production and test type-checks before full build', async () => {
     const text = await loadContent();
-    expect(text).toContain('npx tsc --noEmit');
-    const typeCheckIdx = text.indexOf('npx tsc --noEmit');
+    expect(text).toContain('npm run typecheck');
+    const typeCheckIdx = text.indexOf('npm run typecheck');
     const buildIdx = text.indexOf('npx tsc\n');
     expect(typeCheckIdx).toBeGreaterThan(-1);
     expect(buildIdx).toBeGreaterThan(-1);

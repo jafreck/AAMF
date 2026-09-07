@@ -39,7 +39,6 @@
       "maxIterations": 3
     },
     "kbIndex": {
-      "enabled": true,
       "embeddings": {
         "enabled": true
       }

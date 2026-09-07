@@ -370,7 +370,8 @@ class AamfCopilotBackend implements AgentBackend {
     ];
     if (this.allowAllTools) args.push('--allow-all-tools');
     if (this.allowAllPaths) args.push('--allow-all-paths');
-    if (this.defaultModel) args.push('--model', this.defaultModel);
+    const resolvedModel = invocation.modelOverride ?? this.defaultModel;
+    if (resolvedModel) args.push('--model', resolvedModel);
     if (this.effort) args.push('--effort', this.effort);
     if (invocation.mcpServers) {
       for (const [name, cfg] of Object.entries(invocation.mcpServers)) {
@@ -537,7 +538,9 @@ function toAamfResult(
     outputPath: fwResult.outputPath,
     outputExists: fwResult.outputExists,
     error: fwResult.error,
-    extensions: {},
+    extensions: {
+      ...(tokenUsage ? { tokenUsageSource: 'backend' as const } : {}),
+    },
   };
 }
 
@@ -553,14 +556,12 @@ function finaliseResult(
 ): AgentResult {
   const schema = getOutputSchema(agentResult.agent);
   const parseResult = parseAamfOutput(stdout, schema);
+  let structuredTokenUsage: AgentResult['tokenUsage'] = null;
   if (parseResult.parsed) {
     const parsedData = parseResult.data as Record<string, unknown>;
     agentResult.extensions.structuredOutput = parsedData;
     agentResult.extensions.outputParsed = true;
-    const normalizedTokenUsage = normalizeStructuredTokenUsage(parsedData.tokenUsage);
-    if (normalizedTokenUsage) {
-      agentResult.tokenUsage = normalizedTokenUsage;
-    }
+    structuredTokenUsage = normalizeStructuredTokenUsage(parsedData.tokenUsage);
   } else if (parseResult.error === MISSING_BLOCK_ERROR) {
     logger.warn(`Agent ${agentResult.agent} did not emit an aamf-json block`);
     agentResult.extensions.outputParsed = false;
@@ -579,9 +580,16 @@ function finaliseResult(
         output: parsedTokenUsage.output,
         ...(parsedTokenUsage.cachedInput != null ? { cachedInput: parsedTokenUsage.cachedInput } : {}),
       };
+      agentResult.extensions.tokenUsageSource = 'cli-parsed';
       if (parsedTokenUsage.premiumRequests != null) {
         agentResult.extensions.premiumRequests = parsedTokenUsage.premiumRequests;
       }
+      return agentResult;
+    }
+
+    if (structuredTokenUsage) {
+      agentResult.tokenUsage = structuredTokenUsage;
+      agentResult.extensions.tokenUsageSource = 'agent-reported';
       return agentResult;
     }
 
@@ -591,6 +599,7 @@ function finaliseResult(
       { estimatedPromptTokens: estimatedTotal },
     );
     agentResult.tokenUsage = { input: estimatedTotal, output: 0 };
+    agentResult.extensions.tokenUsageSource = 'estimated';
   }
 
   return agentResult;
@@ -706,6 +715,7 @@ export class AgentLauncher {
       };
       if (!hasMeaningfulTokenUsage(agentResult.tokenUsage) && parsed.resultSummary?.tokenUsage) {
         agentResult.tokenUsage = parsed.resultSummary.tokenUsage;
+        agentResult.extensions.tokenUsageSource = 'copilot-jsonl';
       }
       // Extract premiumRequests from copilot result summary
       if (parsed.resultSummary?.premiumRequests != null) {

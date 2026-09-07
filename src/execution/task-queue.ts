@@ -116,6 +116,16 @@ export class TaskQueue {
    */
   static topologicalSort(tasks: MigrationTask[]): MigrationTask[] {
     const taskMap = new Map(tasks.map(t => [t.id, t]));
+    const danglingDependencies: string[] = [];
+    for (const task of tasks) {
+      for (const dependency of task.dependencies) {
+        if (!taskMap.has(dependency)) danglingDependencies.push(`${task.id} -> ${dependency}`);
+      }
+    }
+    if (danglingDependencies.length > 0) {
+      throw new Error(`Unknown task dependencies: ${danglingDependencies.join(', ')}`);
+    }
+
     const visited = new Set<string>();
     const result: MigrationTask[] = [];
     const visiting = new Set<string>(); // for cycle detection
@@ -125,7 +135,11 @@ export class TaskQueue {
       if (visiting.has(id)) throw new Error(`Circular dependency detected involving task ${id}`);
       visiting.add(id);
       const task = taskMap.get(id);
-      if (!task) return;
+      if (!task) {
+        visiting.delete(id);
+        visited.add(id);
+        return;
+      }
       for (const dep of task.dependencies) {
         visit(dep);
       }

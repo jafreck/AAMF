@@ -24,6 +24,9 @@ When `taskScope` is absent, migrate the full source file scope as described belo
 
 1. **Read the Task Definition**
    - Read your assigned task from the migration plan
+   - Treat `payload.sourceFiles` as the complete authoritative array of source files for the task
+   - Treat `payload.targetFiles` as the complete authoritative array of target files to create or update
+   - Process every file in both arrays; never assume index zero represents a multi-file task
    - Read the relevant knowledge base document(s) referenced by the task
    - Understand the source file(s) structure, behavior, and dependencies
    - {{> user-guidance-check}} For example, if guidance says "do not use wrapper crates", you must write native code rather than importing an existing binding.

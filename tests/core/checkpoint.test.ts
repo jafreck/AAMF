@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { CheckpointManager } from '../../src/core/checkpoint.js';
 import { Logger } from '../../src/logging/logger.js';
@@ -182,6 +182,16 @@ describe('CheckpointManager', () => {
 
     const state = manager.getState();
     expect(state.completedTaskDurationsMs).toEqual([1234, 5678]);
+  });
+
+  it('should record a completed task and its duration exactly once', async () => {
+    await manager.load('test-project');
+    await manager.completeTask('task-001', 1234);
+    await manager.completeTask('task-001', 9999);
+
+    const state = manager.getState();
+    expect(state.completedTasks).toEqual(['task-001']);
+    expect(state.completedTaskDurationsMs).toEqual([1234]);
   });
 
   it('should not append to completedTaskDurationsMs when durationMs is omitted', async () => {
@@ -389,6 +399,29 @@ describe('CheckpointManager', () => {
     const loaded = await manager3.load('old-project');
     expect(loaded.phaseCursors?.['6']?.completedAgents).toEqual(['e2e-test-crafter']);
     expect(loaded.phaseCursors?.['6']?.completedSuites).toEqual([]);
+  });
+
+  it('peek should leave a populated stopped-run checkpoint byte-for-byte unchanged', async () => {
+    const state = await manager.load('test-project');
+    state.failedTasks = [{ taskId: 'failed', attempts: 3, lastError: 'boom', recoveryAttempted: true }];
+    state.blockedTasks = ['blocked'];
+    state.terminalExhaustion = { reasonCode: 'task-retries-exhausted', taskId: 'failed' };
+    state.resumeCount = 7;
+    state.__flowCheckpoint = { flowId: 'aamf-migration', status: 'failed', completedExecutionIds: ['aamf-migration/kb-index'] };
+    await manager.save(state);
+    const checkpointPath = join(tempDir, 'state', 'checkpoint.json');
+    const before = await readFile(checkpointPath);
+
+    const inspector = new CheckpointManager(tempDir, logger);
+    const inspected = await inspector.peek();
+    const after = await readFile(checkpointPath);
+
+    expect(after.equals(before)).toBe(true);
+    expect(inspected?.failedTasks).toEqual(state.failedTasks);
+    expect(inspected?.blockedTasks).toEqual(['blocked']);
+    expect(inspected?.terminalExhaustion).toEqual(state.terminalExhaustion);
+    expect(inspected?.resumeCount).toBe(7);
+    expect(inspected?.__flowCheckpoint).toEqual(state.__flowCheckpoint);
   });
 
   it('should ignore existing checkpoint state on fresh load', async () => {
@@ -657,6 +690,10 @@ describe('CheckpointManager', () => {
     expect(reset.phase0Fingerprint).toBeUndefined();
     expect(reset.phase3aComplete).toBe(false);
     expect(reset.scaffoldComplete).toBe(false);
+    const backup = await readJson<Record<string, unknown>>(join(tempDir, 'state', 'checkpoint.backup.json'));
+    expect(backup.__flowCheckpoint).toBeUndefined();
+    expect(backup.__phase4FlowCheckpoint).toBeUndefined();
+    expect(backup.completedPhases).toEqual([]);
   });
 
   it('resetFromPhase should throw if prerequisite phases are missing', async () => {
@@ -732,7 +769,7 @@ describe('CheckpointManager', () => {
       await manager.completePhase(p, `/out/${p}`);
     }
     state.phaseCursors = {
-      '4': { tasks: { 'task-1': { completedSubsteps: ['migrate', 'verify'] } } },
+      '4': { tasks: { 'task-1': { completedSubsteps: ['migrate', 'parity'] } } },
       '5': { iteration: 2, fixIndex: 3 },
       '6': { completedAgents: ['e2e-test-crafter'], completedSuites: ['suite-a'] },
       '7': { iteration: 1, issueIndex: 5 },
@@ -790,6 +827,87 @@ describe('CheckpointManager', () => {
     expect(reset.terminalExhaustion).toBeUndefined();
   });
 
+  it('resetFromPhase should reset executable state at every phase boundary from 0 through 8', async () => {
+    for (let fromPhase = 0; fromPhase <= 8; fromPhase++) {
+      const state = await manager.load('test-project', { fresh: true });
+      state.completedPhases = Array.from({ length: 9 }, (_, phase) => phase);
+      state.phaseOutputs = Object.fromEntries(Array.from({ length: 9 }, (_, phase) => [phase, `/out/${phase}`]));
+      state.completedTasks = ['task-001'];
+      state.completedTaskDurationsMs = [123];
+      state.failedTasks = [{ taskId: 'failed', attempts: 2, lastError: 'boom', recoveryAttempted: true }];
+      state.blockedTasks = ['blocked'];
+      state.phase0Fingerprint = 'fingerprint';
+      state.phase3aComplete = true;
+      state.scaffoldComplete = true;
+      state.completedPhase2Groups = ['group'];
+      state.metricsCount = 12;
+      state.tokenUsage = { total: 100, byPhase: { 4: 100 }, byAgent: { agent: 100 } };
+      state.cumulativeDurationMs = 500;
+      state.phaseCursors = {
+        '4': { tasks: { 'task-001': { completedSubsteps: ['migrate'] } } },
+        '5': { iteration: 2, fixIndex: 3 },
+        '6': { completedAgents: ['documentation-writer'], completedSuites: ['suite'] },
+        '7': { iteration: 2, issueIndex: 3 },
+      };
+      state.__phase4FlowCheckpoint = { flowId: 'phase-4-per-task', status: 'completed' };
+      state.__flowCheckpoint = {
+        flowId: 'aamf-migration',
+        status: 'completed',
+        completedExecutionIds: [
+          ...Array.from({ length: 9 }, (_, phase) => {
+          const ids = ['kb-index', 'task-graph-construction', 'budget-check-2', 'budget-check-3', 'budget-check-4', 'final-parity-loop', 'finalization', 'idiomatic-refactor-gate', 'completion'];
+          return `aamf-migration/${ids[phase]}`;
+          }),
+          'aamf-migration/final-parity-loop/0/final-parity-iteration',
+          'aamf-migration/finalization/e2e/e2e-suite-writers',
+          'aamf-migration/finalization/docs/documentation-writer',
+          'aamf-migration/idiomatic-refactor-gate/then/idiomatic-refactor-pipeline',
+        ],
+        outputs: {
+          'finalization/e2e/e2e-suite-writers': { stale: true },
+          'migration-planning': { retained: true },
+        },
+        executionOutputs: {
+          'aamf-migration/finalization/e2e/e2e-suite-writers': { stale: true },
+        },
+      };
+      await manager.save(state);
+
+      await manager.resetFromPhase(fromPhase, testNodeIdToPhase, { requirePrerequisites: false, maxPhase: 8 });
+      const reset = manager.getState();
+
+      expect(reset.currentPhase).toBe(fromPhase);
+      expect(reset.completedPhases).toEqual(Array.from({ length: fromPhase }, (_, phase) => phase));
+      expect(Object.keys(reset.phaseOutputs).map(Number).every(phase => phase < fromPhase)).toBe(true);
+      expect(reset.metricsCount).toBe(0);
+      expect(reset.tokenUsage).toEqual({ total: 0, byPhase: {}, byAgent: {} });
+      expect(reset.cumulativeDurationMs).toBe(0);
+      if (fromPhase > 0) {
+        const flowCheckpoint = reset.__flowCheckpoint as {
+          completedExecutionIds: string[];
+          outputs: Record<string, unknown>;
+        };
+        if (fromPhase <= 6) {
+          expect(flowCheckpoint.completedExecutionIds).not.toContain(
+            'aamf-migration/finalization/e2e/e2e-suite-writers',
+          );
+          expect(flowCheckpoint.outputs).not.toHaveProperty('finalization/e2e/e2e-suite-writers');
+        }
+      }
+      if (fromPhase <= 4) {
+        expect(reset.completedTasks).toEqual([]);
+        expect(reset.__phase4FlowCheckpoint).toBeUndefined();
+      } else {
+        expect(reset.completedTasks).toEqual(['task-001']);
+        expect(reset.__phase4FlowCheckpoint).toBeDefined();
+      }
+      if (fromPhase === 0) {
+        expect(reset.phase0Fingerprint).toBeUndefined();
+        expect(reset.resumeCount).toBe(0);
+      }
+    }
+  });
+
   it('resetFromPhase should reset flow checkpoint status and error', async () => {
     const state = await manager.load('test-project');
     for (let p = 0; p <= 5; p++) {
@@ -833,7 +951,7 @@ describe('CheckpointManager', () => {
     }
     state.phase0Fingerprint = 'abc123';
     state.scaffoldComplete = true;
-    state.completedTasks = [{ taskId: 'task-1', attempts: 1, lastError: '', recoveryAttempted: false }];
+    state.completedTasks = ['task-1'];
     state.__flowCheckpoint = {
       flowId: 'aamf-migration',
       status: 'completed',
@@ -960,6 +1078,36 @@ describe('CheckpointManager', () => {
       cumulativeDurationMs: 0,
       completedTaskDurationsMs: [],
       metricsCount: 0,
+      phaseCursors: {
+        '4': {
+          tasks: {
+            'task-ok-0': {
+              completedSubsteps: ['migrate', 'commit', 'parity', 'parity-gate', 'minor-repass', 'complete'],
+              executionIds: {
+                migrate: 'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/migrate',
+                commit: 'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/commit',
+                parity: 'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/parity',
+                'parity-gate': 'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/parity-gate',
+                'minor-repass': 'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-ok-0/task-ok-0/minor-repass',
+              },
+            },
+            'task-bad-0': {
+              completedSubsteps: ['migrate', 'commit', 'parity'],
+              executionIds: {
+                migrate: 'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/migrate',
+                commit: 'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/commit',
+                parity: 'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-bad-0/task-bad-0/parity',
+              },
+            },
+            'task-blocked-0': {
+              completedSubsteps: ['migrate'],
+              executionIds: {
+                migrate: 'phase-4-sync-epoch/epoch-0-tasks-batch-0/task-blocked-0/task-blocked-0/migrate',
+              },
+            },
+          },
+        },
+      },
       __flowCheckpoint: {
         flowId: 'aamf-migration',
         status: 'failed',

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { ProgressWriter } from '../../src/core/progress.js';
+import type { CheckpointState } from '../../src/core/checkpoint.js';
 import { createMockConfig } from '../helpers/mocks.js';
 import { ensureDir, fileExists } from '../../src/util/fs.js';
 
@@ -371,7 +372,7 @@ describe('ProgressWriter', () => {
   describe('reconstructFromCheckpoint', () => {
     it('should restore full token breakdown (total, byPhase, byAgent) from checkpoint state', async () => {
       await writer.initialize(config);
-      const state = {
+      const state: CheckpointState = {
         projectName: 'test-project',
         version: 1,
         currentPhase: 3,
@@ -410,7 +411,7 @@ describe('ProgressWriter', () => {
 
     it('should mark completed phases and current phase correctly', async () => {
       await writer.initialize(config);
-      const state = {
+      const state: CheckpointState = {
         projectName: 'test-project',
         version: 1,
         currentPhase: 4,
@@ -442,7 +443,7 @@ describe('ProgressWriter', () => {
 
     it('should restore and render adjudication events from checkpoint state', async () => {
       await writer.initialize(config);
-      const state = {
+      const state: CheckpointState = {
         projectName: 'test-project',
         version: 1,
         currentPhase: 4,
@@ -482,7 +483,7 @@ describe('ProgressWriter', () => {
 
     it('should restore terminal exhaustion metadata from checkpoint state', async () => {
       await writer.initialize(config);
-      const state = {
+      const state: CheckpointState = {
         projectName: 'test-project',
         version: 1,
         currentPhase: 5,

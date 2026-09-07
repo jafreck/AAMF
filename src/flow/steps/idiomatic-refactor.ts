@@ -21,6 +21,7 @@ import {
   getPhase7Cursor, savePhase7Cursor,
   assertPhaseSuccess,
 } from './shared.js';
+import { PHASE } from '../phases.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -134,10 +135,10 @@ export async function runIdiomaticRefactorPipeline(
     const reviewInvocations = await Promise.all(
       chunks.map(async (chunk) => {
         const reviewCtx = await ctx.contextBuilder.buildContext(
-          'idiomatic-reviewer', 7, chunk.id,
+          'idiomatic-reviewer', PHASE.IDIOMATIC, chunk.id,
           { scope: { unitId: chunk.id, unitName: chunk.name, targetPath: chunk.targetPath } },
         );
-        return buildInvocation(ctx, 'idiomatic-reviewer', reviewCtx, 7, chunk.id);
+        return buildInvocation(ctx, 'idiomatic-reviewer', reviewCtx, PHASE.IDIOMATIC, chunk.id);
       }),
     );
 
@@ -148,7 +149,7 @@ export async function runIdiomaticRefactorPipeline(
     issues = [];
     for (let i = 0; i < reviewResults.length; i++) {
       const result = reviewResults[i]!;
-      recordTokens(ctx, result, 7);
+      recordTokens(ctx, result, PHASE.IDIOMATIC);
       if (!result.success) {
         ctx.logger.warn(`Idiomatic review failed for chunk ${chunks[i]!.id}: ${result.error ?? 'unknown'} — skipping`);
         continue;
@@ -199,12 +200,12 @@ export async function runIdiomaticRefactorPipeline(
     tasks = await loadTasksFromArtifact(ctx);
     ctx.logger.info(`Resuming Phase 7 from plan: ${tasks.length} task(s)`);
   } else {
-    const planCtx = await ctx.contextBuilder.buildContext('idiomatic-planner', 7, undefined, {
+    const planCtx = await ctx.contextBuilder.buildContext('idiomatic-planner', PHASE.IDIOMATIC, undefined, {
       reviewFindings: { issues },
     });
-    const planInv = buildInvocation(ctx, 'idiomatic-planner', planCtx, 7);
+    const planInv = buildInvocation(ctx, 'idiomatic-planner', planCtx, PHASE.IDIOMATIC);
     const planResult = await launchAgentWithEvents(ctx, planInv);
-    recordTokens(ctx, planResult, 7);
+    recordTokens(ctx, planResult, PHASE.IDIOMATIC);
 
     if (!planResult.success) {
       const failResult: PhaseResult = {
@@ -291,9 +292,9 @@ export async function runIdiomaticRefactorPipeline(
     const waveInvocations = await Promise.all(
       ready.map(async (task) => {
         const refactorCtx = await ctx.contextBuilder.buildContext(
-          'idiomatic-refactorer', 7, task.id, { task },
+          'idiomatic-refactorer', PHASE.IDIOMATIC, task.id, { task },
         );
-        return buildInvocation(ctx, 'idiomatic-refactorer', refactorCtx, 7, task.id);
+        return buildInvocation(ctx, 'idiomatic-refactorer', refactorCtx, PHASE.IDIOMATIC, task.id);
       }),
     );
 
@@ -303,14 +304,14 @@ export async function runIdiomaticRefactorPipeline(
     for (let i = 0; i < waveResults.length; i++) {
       const task = ready[i]!;
       const result = waveResults[i]!;
-      recordTokens(ctx, result, 7);
+      recordTokens(ctx, result, PHASE.IDIOMATIC);
 
       if (result.success) {
         if (ctx.config.target.formatCommand) {
           const fmtResult = await runCommand(ctx, 'format', ctx.config.target.formatCommand, `phase7-${task.id}`);
           if (!fmtResult.success) ctx.logger.warn(`Phase 7 format failed for ${task.id}: ${fmtResult.error ?? 'unknown'}`);
         }
-        await commitForAgent(ctx, 'idiomatic-refactorer', 7, task.id, task.name);
+        await commitForAgent(ctx, 'idiomatic-refactorer', PHASE.IDIOMATIC, task.id, task.name);
         ctx.logger.info(`Completed idiomatic task ${task.id}: ${task.name}`);
       } else {
         ctx.logger.warn(`Idiomatic refactorer failed for task ${task.id}: ${result.error ?? 'unknown'} — skipping`);

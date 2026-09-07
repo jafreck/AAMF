@@ -23,6 +23,7 @@ import {
 import type { MigrationFlowContext } from './context.js';
 import type { TaskGraphOutput } from './steps/task-graph.js';
 import { checkBudget } from './steps/shared.js';
+import { MAX_PHASE } from './phases.js';
 
 // Step implementations
 import { buildKbIndex } from './steps/kb-indexing.js';
@@ -245,6 +246,8 @@ export const PHASE_BOUNDARY_NODE_IDS: readonly string[] = [
   'idiomatic-refactor-gate', // Phase 7
   'completion',             // Phase 8
 ];
+
+export { MAX_PHASE };
 
 /**
  * Build a flow definition truncated to include only phases 0..maxPhase.

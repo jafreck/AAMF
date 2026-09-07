@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hostname, tmpdir } from 'node:os';
 import { MigrationRuntime, validateSourceAvailability } from '../../src/core/runtime.js';
 import type { MigrationResult } from '../../src/agents/types.js';
+import type { FlowRunResult } from '@cadre-dev/framework/flow';
 import { Logger } from '../../src/logging/logger.js';
+import { CheckpointManager } from '../../src/core/checkpoint.js';
 import { getAgentsForPhase } from '../../src/agents/registry.js';
 // MigrationOrchestrator replaced by flow runner
 import { formatDuration } from '../../src/util/format.js';
@@ -25,6 +27,19 @@ function makeResult(overrides: Partial<MigrationResult> = {}): MigrationResult {
 
 function makeRunLockPath(label: string): string {
   return join(tmpdir(), `aamf-${label}-${Math.random().toString(36).slice(2)}.lock.json`);
+}
+
+function makeCompletedFlowResult(): FlowRunResult {
+  return {
+    flowId: 'aamf-migration',
+    status: 'completed',
+    outputs: {},
+    executionOutputs: {},
+    context: {},
+    startedAt: '2026-01-01T00:00:00.000Z',
+    finishedAt: '2026-01-01T00:00:01.000Z',
+    completedExecutionIds: [],
+  };
 }
 
 describe('MigrationRuntime', () => {
@@ -122,6 +137,29 @@ describe('MigrationRuntime', () => {
       } finally {
         setRunIdSpy.mockRestore();
       }
+    });
+  });
+
+  describe('state-only initialization', () => {
+    it('initializes checkpoint inspection without source or agent runtime services', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'aamf-state-only-'));
+      const configPath = join(root, 'migration.config.json');
+      await writeFile(configPath, JSON.stringify({
+        projectName: 'state-only',
+        source: { path: './missing-source', language: 'python' },
+        target: { language: 'typescript', outputPath: './target' },
+        agentBackend: { runtime: 'copilot', cliCommand: 'missing-agent-cli' },
+      }));
+      const runtime = new MigrationRuntime() as any;
+
+      await runtime.initialize({ configPath, stateOnly: true });
+
+      expect(runtime.checkpoint).toBeDefined();
+      expect(runtime.launcher).toBeUndefined();
+      expect(runtime.progress).toBeUndefined();
+      await expect(runtime.getStatus()).resolves.toContain('No checkpoint found');
+      await runtime.logger.flush();
+      await rm(root, { recursive: true, force: true });
     });
   });
 
@@ -366,10 +404,8 @@ describe('MigrationRuntime', () => {
 
     it('runs flow runner on non-dry run, flushes logger, and returns result', async () => {
       const { FlowRunner } = await import('@cadre-dev/framework/flow');
-      const flowRunnerRunSpy = vi.spyOn(FlowRunner.prototype, 'run').mockResolvedValue({
-        status: 'completed',
-        outputs: new Map(),
-      });
+      const flowRunnerRunSpy = vi.spyOn(FlowRunner.prototype, 'run')
+        .mockResolvedValue(makeCompletedFlowResult());
 
       const runtime = new MigrationRuntime() as any;
       const printSummarySpy = vi.spyOn(runtime, 'printSummary').mockImplementation(() => {});
@@ -568,9 +604,8 @@ describe('MigrationRuntime', () => {
 
     it('filters stale failed/blocked tasks from completed set', async () => {
       const { FlowRunner } = await import('@cadre-dev/framework/flow');
-      const flowRunnerRunSpy = vi.spyOn(FlowRunner.prototype, 'run').mockResolvedValue({
-        status: 'completed', outputs: new Map(),
-      });
+      const flowRunnerRunSpy = vi.spyOn(FlowRunner.prototype, 'run')
+        .mockResolvedValue(makeCompletedFlowResult());
 
       const runtime = new MigrationRuntime() as any;
       vi.spyOn(runtime, 'printSummary').mockImplementation(() => {});
@@ -647,7 +682,7 @@ describe('MigrationRuntime', () => {
       const runtime = new MigrationRuntime() as any;
       runtime.config = { projectName: 'demo' };
       runtime.checkpoint = {
-        load: vi.fn().mockResolvedValue({
+        peek: vi.fn().mockResolvedValue({
           projectName: 'demo',
           currentPhase: 4,
           completedPhases: [1, 2, 3],
@@ -663,75 +698,105 @@ describe('MigrationRuntime', () => {
 
       const status = await runtime.getStatus();
       expect(status).toContain('Project: demo');
-      expect(status).toContain('Phase: 4/7');
+      expect(status).toContain('Phase: 4/8');
       expect(status).toContain('Completed Tasks: 2');
       expect(status).toContain('Token Usage: 12,345');
       expect(status).toContain('Resume Count: 2');
     });
 
+    it('reads status without changing a stopped-run checkpoint', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'aamf-status-test-'));
+      const logger = new Logger({ logDir: join(root, 'logs'), level: 'error', console: false });
+      const checkpoint = new CheckpointManager(root, logger);
+      const state = await checkpoint.load('demo');
+      state.resumeCount = 4;
+      state.failedTasks = [{ taskId: 'failed', attempts: 3, lastError: 'boom', recoveryAttempted: true }];
+      state.blockedTasks = ['blocked'];
+      state.terminalExhaustion = { reasonCode: 'task-retries-exhausted', taskId: 'failed' };
+      state.__flowCheckpoint = { flowId: 'aamf-migration', status: 'failed', completedExecutionIds: [] };
+      await checkpoint.save(state);
+      const checkpointPath = join(root, 'state', 'checkpoint.json');
+      const before = await readFile(checkpointPath);
+
+      const runtime = new MigrationRuntime() as any;
+      runtime.config = { projectName: 'demo' };
+      runtime.checkpoint = new CheckpointManager(root, logger);
+      const status = await runtime.getStatus();
+      const after = await readFile(checkpointPath);
+
+      expect(after.equals(before)).toBe(true);
+      expect(status).toContain('Failed Tasks: 1');
+      expect(status).toContain('Blocked Tasks: 1');
+      expect(status).toContain('Resume Count: 4');
+      await rm(root, { recursive: true, force: true });
+    });
+
     it('resets only from selected phase onward', async () => {
       const runtime = new MigrationRuntime() as any;
-      const state = {
-        projectName: 'demo',
-        currentPhase: 4,
-        currentTask: 'task-x',
-        completedPhases: [1, 2, 3],
-        completedTasks: ['a', 'b'],
-        failedTasks: ['f1'],
-        blockedTasks: ['b1'],
-        phaseOutputs: { 0: {}, 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} } as Record<number, unknown>,
-        tokenUsage: { total: 100, byPhase: {}, byAgent: {} },
-      };
       runtime.config = { projectName: 'demo' };
       runtime.checkpoint = {
-        load: vi.fn().mockResolvedValue(state),
-        save: vi.fn().mockResolvedValue(undefined),
+        peek: vi.fn().mockResolvedValue({}),
+        load: vi.fn().mockResolvedValue(undefined),
+        resetFromPhase: vi.fn().mockResolvedValue(undefined),
       };
       runtime.logger = { info: vi.fn() };
 
       await runtime.reset(3);
 
-      expect(state.completedPhases).toEqual([1, 2]);
-      expect(state.currentPhase).toBe(3);
-      expect(state.currentTask).toBeNull();
-      expect(state.phaseOutputs[0]).toBeDefined();
-      expect(state.phaseOutputs[2]).toBeDefined();
-      expect(state.phaseOutputs[3]).toBeUndefined();
-      expect(state.phaseOutputs[6]).toBeUndefined();
-      expect(runtime.checkpoint.save).toHaveBeenCalledWith(state);
+      expect(runtime.checkpoint.load).toHaveBeenCalledWith('demo', { readOnly: true });
+      expect(runtime.checkpoint.resetFromPhase).toHaveBeenCalledWith(3, expect.any(Function), {
+        requirePrerequisites: false,
+        maxPhase: 8,
+      });
     });
 
     it('resets full migration state when phase is omitted', async () => {
       const runtime = new MigrationRuntime() as any;
-      const state = {
-        projectName: 'demo',
-        currentPhase: 5,
-        currentTask: 'task-x',
-        completedPhases: [1, 2, 3, 4],
-        completedTasks: ['a', 'b'],
-        failedTasks: ['f1'],
-        blockedTasks: ['b1'],
-        phaseOutputs: { 1: {}, 2: {} },
-        tokenUsage: { total: 100, byPhase: { 1: 10 }, byAgent: { a: 20 } },
-      };
       runtime.config = { projectName: 'demo' };
       runtime.checkpoint = {
-        load: vi.fn().mockResolvedValue(state),
-        save: vi.fn().mockResolvedValue(undefined),
+        peek: vi.fn().mockResolvedValue({}),
+        load: vi.fn().mockResolvedValue(undefined),
+        resetAll: vi.fn().mockResolvedValue(undefined),
       };
       runtime.logger = { info: vi.fn() };
 
       await runtime.reset();
 
-      expect(state.currentPhase).toBe(1);
-      expect(state.currentTask).toBeNull();
-      expect(state.completedPhases).toEqual([]);
-      expect(state.completedTasks).toEqual([]);
-      expect(state.failedTasks).toEqual([]);
-      expect(state.blockedTasks).toEqual([]);
-      expect(state.phaseOutputs).toEqual({});
-      expect(state.tokenUsage).toEqual({ total: 0, byPhase: {}, byAgent: {} });
-      expect(runtime.checkpoint.save).toHaveBeenCalledWith(state);
+      expect(runtime.checkpoint.load).toHaveBeenCalledWith('demo', { readOnly: true });
+      expect(runtime.checkpoint.resetAll).toHaveBeenCalledWith('demo');
+    });
+
+    it('handles reset phase 0 explicitly', async () => {
+      const runtime = new MigrationRuntime() as any;
+      runtime.config = { projectName: 'demo' };
+      runtime.checkpoint = {
+        peek: vi.fn().mockResolvedValue({}),
+        load: vi.fn().mockResolvedValue(undefined),
+        resetFromPhase: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await runtime.reset(0);
+
+      expect(runtime.checkpoint.resetFromPhase).toHaveBeenCalledWith(0, expect.any(Function), {
+        requirePrerequisites: false,
+        maxPhase: 8,
+      });
+    });
+
+    it('does not create a checkpoint when there is nothing to reset', async () => {
+      const runtime = new MigrationRuntime() as any;
+      runtime.config = { projectName: 'demo' };
+      runtime.checkpoint = {
+        peek: vi.fn().mockResolvedValue(undefined),
+        load: vi.fn(),
+        resetAll: vi.fn(),
+      };
+      runtime.logger = { info: vi.fn() };
+
+      await runtime.reset();
+
+      expect(runtime.checkpoint.load).not.toHaveBeenCalled();
+      expect(runtime.checkpoint.resetAll).not.toHaveBeenCalled();
     });
   });
 

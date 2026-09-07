@@ -23,7 +23,7 @@ export async function startKbServer(ctx: MigrationFlowContext): Promise<void> {
     }, {
       level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
       logFile: ctx.paths.loreLogFile,
-    });
+    }, ctx.config.options.kbIndex?.server);
     await ctx.kbServer.start();
     ctx.logger.info(`KB server started (lore log: ${ctx.paths.loreLogFile})`);
   } catch (err) {
@@ -54,7 +54,7 @@ export async function startTargetKbServer(ctx: MigrationFlowContext): Promise<vo
     }, {
       level: lore.LOG_LEVEL_NAMES[loreLogLevel] ?? lore.LogLevel.DEBUG,
       logFile: ctx.paths.loreTargetLogFile,
-    });
+    }, ctx.config.options.kbIndex?.server);
     await ctx.targetKbServer.start();
     ctx.logger.info(`Target KB server started (lore log: ${ctx.paths.loreTargetLogFile})`);
   } catch (err) {

@@ -4,12 +4,13 @@ import { fileURLToPath } from 'node:url';
 import { rm, readdir, readFile, stat } from 'node:fs/promises';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
+import { e2eRuntimePaths, keepE2eArtifacts, validateE2ePreflight } from '../helpers/e2e.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const fixtureDir = join(__dirname, '..', 'fixtures', 'tiny-python-project');
 const configPath = join(fixtureDir, 'migration.config.json');
 const aamfRoot = join(fixtureDir, '.aamf');
-const progressDir = join(aamfRoot, 'migration', 'tiny-calc-migration');
+const runtimePaths = e2eRuntimePaths(fixtureDir, 'tiny-calc-migration');
 const tmpRoot = join(fixtureDir, 'tmp');
 const outputDir = join(tmpRoot, 'e2e-output');
 
@@ -26,17 +27,17 @@ const outputDir = join(tmpRoot, 'e2e-output');
  *   AAMF_E2E=1 npx vitest run tests/e2e-smoke.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
-const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E Smoke Test', () => {
   beforeAll(async () => {
     // Clean up any previous run artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(tmpRoot, { recursive: true, force: true });
+    await validateE2ePreflight({ configPath, fixtureRoot: fixtureDir, expectedProjectName: 'tiny-calc-migration' });
   });
 
   afterAll(async () => {
-    if (keepArtifacts) return;
+    if (keepE2eArtifacts) return;
     // Clean up artefacts created during the test (even after failures)
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(tmpRoot, { recursive: true, force: true });
@@ -64,26 +65,25 @@ describe.skipIf(!runE2E)('E2E Smoke Test', () => {
     const result = await runtime.run();
 
     // --- Verify a checkpoint was created ---
-    const checkpointPath = join(progressDir, 'checkpoint.json');
+    const checkpointPath = runtimePaths.checkpointFile;
     expect(await fileExists(checkpointPath)).toBe(true);
 
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
     expect(checkpoint.projectName).toBe('tiny-calc-migration');
 
     // --- Verify progress directory structure ---
-    expect(await fileExists(progressDir)).toBe(true);
-    const progressFiles = await readdir(progressDir);
-    expect(progressFiles).toContain('progress.md');
-    expect(progressFiles).toContain('checkpoint.json');
-    expect(progressFiles).toContain('logs');
+    expect(await fileExists(runtimePaths.root)).toBe(true);
+    expect(await fileExists(runtimePaths.progressReportFile)).toBe(true);
+    expect(await fileExists(runtimePaths.checkpointFile)).toBe(true);
+    expect(await fileExists(runtimePaths.logsRuntimeDir)).toBe(true);
 
     // --- Verify progress.md was written ---
-    const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+    const progressMd = await readFile(runtimePaths.progressReportFile, 'utf-8');
     expect(progressMd).toContain('tiny-calc-migration');
     expect(progressMd).toContain('Knowledge Base Construction');
 
     // --- Verify the logs directory has at least one log ---
-    const logsDir = join(progressDir, 'logs');
+    const logsDir = runtimePaths.logsRuntimeDir;
     if (await fileExists(logsDir)) {
       const logs = await readdir(logsDir);
       expect(logs.length).toBeGreaterThan(0);

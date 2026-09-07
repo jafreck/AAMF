@@ -172,10 +172,6 @@ describe('createMockConfig', () => {
     expect(config.projectName).toBe('my-project');
   });
 
-  it('should default keepArtifacts to false', () => {
-    const config = createMockConfig();
-    expect(config.options.keepArtifacts).toBe(false);
-  });
 });
 
 // ─── makeTask ─────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import { AgentContext } from '../../src/agents/types.js';
 import { createMockConfig, createSilentLogger } from '../helpers/mocks.js';
 import { ensureDir, fileExists, readJson } from '../../src/util/fs.js';
 import type { RuntimePaths } from '../../src/core/runtime-paths.js';
+import { ALL_AGENT_NAMES } from '../../src/agents/registry.js';
 
 describe('ContextBuilder', () => {
   let tempDir: string;
@@ -169,7 +170,6 @@ describe('ContextBuilder', () => {
           continueOnBlocked: true,
           maxBlockedTasks: 0,
           maxInfraRetries: 3,
-          keepArtifacts: false,
           qualityPolicy: 'strict' as const,
           executionMode: 'wave-barrier' as const,
           waveControl: { maxConvergenceIterations: 5 },
@@ -307,8 +307,11 @@ describe('ContextBuilder', () => {
       });
       const context = await readJson<AgentContext>(contextPath);
 
-      // Should only have the migration plan (kbEntry is in payload, not inputFiles)
-      expect(context.inputFiles.length).toBe(1);
+      // Task files and the migration plan are inputs; kbEntry stays structured.
+      expect(context.inputFiles).toEqual(expect.arrayContaining([
+        'src/auth.py', 'src/auth.ts', paths.migrationPlanFile,
+      ]));
+      expect(context.inputFiles).not.toContain('kb/auth.md');
     });
 
     it('should prioritize nested remediationContext payload for code-migrator when both shapes are provided', async () => {
@@ -331,20 +334,23 @@ describe('ContextBuilder', () => {
 
     it('should route parity-verifier to source + target files', async () => {
       const { contextPath } = await builder.buildContext('parity-verifier', 4, 'task-001', {
-        sourceFile: 'src/auth.py',
-        targetFile: 'src/auth.ts',
+        sourceFiles: ['src/auth.py', 'src/session.py'],
+        targetFiles: ['src/auth.ts', 'src/session.ts'],
       });
       const context = await readJson<AgentContext>(contextPath);
 
-      expect(context.inputFiles).toContain('src/auth.py');
-      expect(context.inputFiles).toContain('src/auth.ts');
+      expect(context.inputFiles).toEqual(expect.arrayContaining([
+        'src/auth.py', 'src/session.py', 'src/auth.ts', 'src/session.ts',
+      ]));
+      expect(context.payload?.sourceFiles).toEqual(['src/auth.py', 'src/session.py']);
+      expect(context.payload?.targetFiles).toEqual(['src/auth.ts', 'src/session.ts']);
       expect(context.outputPath).toBe('/tmp/target');
     });
 
     it('should include taskScope in parity-verifier payload when provided', async () => {
       const { contextPath } = await builder.buildContext('parity-verifier', 4, 'task-001', {
-        sourceFile: 'src/auth.py',
-        targetFile: 'src/auth.ts',
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
         taskScope: {
           description: 'Scaffold auth module with type stubs',
           acceptanceCriteria: ['Function signatures compile'],
@@ -362,31 +368,33 @@ describe('ContextBuilder', () => {
 
     it('should omit taskScope from parity-verifier payload when not provided', async () => {
       const { contextPath } = await builder.buildContext('parity-verifier', 4, 'task-001', {
-        sourceFile: 'src/auth.py',
-        targetFile: 'src/auth.ts',
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
       });
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.payload?.taskScope).toBeUndefined();
     });
 
-    it('should route test-writer to target file + KB entry', async () => {
+    it('should route test-writer to every source and target task file', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
-        targetFile: 'src/auth.ts',
-        kbEntry: 'kb/auth.md',
+        sourceFiles: ['src/auth.py', 'src/session.py'],
+        targetFiles: ['src/auth.ts', 'src/session.ts'],
         testType: 'unit',
       });
       const context = await readJson<AgentContext>(contextPath);
 
-      expect(context.inputFiles).toContain('src/auth.ts');
-      expect(context.inputFiles).toContain('kb/auth.md');
+      expect(context.inputFiles).toEqual([
+        'src/auth.py', 'src/session.py', 'src/auth.ts', 'src/session.ts',
+      ]);
+      expect(context.payload?.sourceFiles).toEqual(['src/auth.py', 'src/session.py']);
+      expect(context.payload?.targetFiles).toEqual(['src/auth.ts', 'src/session.ts']);
       expect(context.outputPath).toBe('/tmp/target');
     });
 
     it('should include taskScope in test-writer payload when provided', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
-        targetFile: 'src/auth.ts',
-        kbEntry: 'kb/auth.md',
+        targetFiles: ['src/auth.ts'],
         testType: 'unit',
         taskScope: {
           description: 'Migrate auth module login flow',
@@ -404,7 +412,7 @@ describe('ContextBuilder', () => {
 
     it('should set test-writer outputPath to target root, not a subdirectory', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
-        targetFile: 'src/auth.ts',
+        targetFiles: ['src/auth.ts'],
       });
       const context = await readJson<AgentContext>(contextPath);
 
@@ -414,7 +422,7 @@ describe('ContextBuilder', () => {
 
     it('should include parityReport in test-writer inputFiles when provided', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
-        targetFile: 'src/auth.ts',
+        targetFiles: ['src/auth.ts'],
         parityReport: '/tmp/parity/auth-report.md',
       });
       const context = await readJson<AgentContext>(contextPath);
@@ -426,7 +434,7 @@ describe('ContextBuilder', () => {
 
     it('should default test-writer testType to unit when not specified', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
-        targetFile: 'src/auth.ts',
+        targetFiles: ['src/auth.ts'],
       });
       const context = await readJson<AgentContext>(contextPath);
 
@@ -484,14 +492,12 @@ describe('ContextBuilder', () => {
 
     it('should not change Phase 4 test-writer context when e2eSuiteBrief is absent', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
-        targetFile: 'src/auth.ts',
-        kbEntry: 'kb/auth.md',
+        targetFiles: ['src/auth.ts'],
         testType: 'unit',
       });
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('src/auth.ts');
-      expect(context.inputFiles).toContain('kb/auth.md');
       expect(context.payload?.testType).toBe('unit');
       expect(context.payload?.e2eSuiteBrief).toBeUndefined();
     });
@@ -517,7 +523,7 @@ describe('ContextBuilder', () => {
     it('should fall through to Phase 4 path when e2eSuiteBrief is not a record', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-str', {
         e2eSuiteBrief: 'not-an-object',
-        targetFile: 'src/payments.ts',
+        targetFiles: ['src/payments.ts'],
       });
       const context = await readJson<AgentContext>(contextPath);
 
@@ -567,8 +573,8 @@ describe('ContextBuilder', () => {
     it('should route parity-failure-resolver with source/target (no failureReport in inputFiles)', async () => {
       const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
-        sourceFile: 'src/auth.py',
-        targetFile: 'src/auth.ts',
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
         kbEntry: 'kb/auth.md',
         attemptNumber: 2,
       });
@@ -584,8 +590,8 @@ describe('ContextBuilder', () => {
     it('should include taskScope in parity-failure-resolver payload when provided', async () => {
       const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: 'Parity failed',
-        sourceFile: 'src/auth.py',
-        targetFile: 'src/auth.ts',
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
         kbEntry: 'kb/auth.md',
         attemptNumber: 1,
         taskScope: {
@@ -635,8 +641,8 @@ describe('ContextBuilder', () => {
     it('should preserve remediation payload fields in parity-failure-resolver payload', async () => {
       const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
-        sourceFile: 'src/auth.py',
-        targetFile: 'src/auth.ts',
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
         kbEntry: 'kb/auth.md',
         attemptNumber: 2,
         failureKind: 'command',
@@ -665,8 +671,8 @@ describe('ContextBuilder', () => {
       const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'wave-1', {
         failureReport: inlineFailure,
         failureType: 'test',
-        sourceFile: 'examples/common.h',
-        targetFile: 'examples/common.rs',
+        sourceFiles: ['examples/common.h'],
+        targetFiles: ['examples/common.rs'],
       });
       const context = await readJson<AgentContext>(contextPath);
 
@@ -680,8 +686,8 @@ describe('ContextBuilder', () => {
     it('should support legacy remediation alias in parity-failure-resolver payload', async () => {
       const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
-        sourceFile: 'src/auth.py',
-        targetFile: 'src/auth.ts',
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
         remediation: {
           failureKind: 'build',
           failureTarget: { wave: 2, workItemId: 'task-001', check: 'build' },
@@ -699,8 +705,8 @@ describe('ContextBuilder', () => {
     it('should omit remediationContext when nested remediation payload is not an object', async () => {
       const { contextPath } = await builder.buildContext('parity-failure-resolver', 4, 'task-001', {
         failureReport: '/tmp/failure.md',
-        sourceFile: 'src/auth.py',
-        targetFile: 'src/auth.ts',
+        sourceFiles: ['src/auth.py'],
+        targetFiles: ['src/auth.ts'],
         remediationContext: 'invalid-remediation-shape',
       });
       const context = await readJson<AgentContext>(contextPath);
@@ -739,33 +745,62 @@ describe('ContextBuilder', () => {
     });
 
     it('should route idiomatic-reviewer to target output dir', async () => {
-      const { contextPath } = await builder.buildContext('idiomatic-reviewer', 8);
+      const { contextPath } = await builder.buildContext('idiomatic-reviewer', 7);
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/target');
       expect(context.outputPath).toBe('/tmp/target');
     });
 
-    it('should route idiomatic-refactorer with targetFile and structured issue from payload', async () => {
-      const issue = {
-        file: '/tmp/target/src/utils.ts',
-        location: '42-58',
-        issue: 'Uses manual for-loop instead of map',
-        suggestion: 'Replace with Array.prototype.map()',
-        details: 'The for-loop iterates over an array and pushes to a new array, which is the exact use case for map().',
+    it('should round-trip an idiomatic-refactorer task and include every task file', async () => {
+      const task = {
+        id: 'idiomatic-1',
+        name: 'Use array combinators',
+        description: 'Apply related collection idioms',
+        files: ['src/utils.ts', 'src/session.ts'],
+        issues: [{
+          file: 'src/utils.ts', location: '42-58',
+          issue: 'Uses manual loop', suggestion: 'Use map()',
+        }],
+        dependencies: [],
       };
-      const { contextPath } = await builder.buildContext('idiomatic-refactorer', 8, undefined, {
-        targetFile: '/tmp/target/src/utils.ts',
-        issue,
+      const { contextPath } = await builder.buildContext('idiomatic-refactorer', 7, task.id, {
+        task,
       });
       const context = await readJson<AgentContext>(contextPath);
 
-      expect(context.inputFiles).toContain('/tmp/target/src/utils.ts');
-      // No idiomaticReport path in inputFiles
-      expect(context.inputFiles).toHaveLength(1);
+      expect(context.inputFiles).toEqual([
+        '/tmp/target/src/utils.ts', '/tmp/target/src/session.ts',
+      ]);
       expect(context.outputPath).toBe('/tmp/target');
-      expect(context.payload?.issue).toEqual(issue);
-      expect(context.payload?.targetFile).toBe('/tmp/target/src/utils.ts');
+      expect(context.payload?.task).toEqual(task);
+    });
+
+    it('should honor idiomatic-reviewer target scopes', async () => {
+      const { contextPath } = await builder.buildContext('idiomatic-reviewer', 7, 'core', {
+        scope: { unitId: 'core', targetPath: 'src/core' },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      expect(context.inputFiles).toEqual(['/tmp/target/src/core']);
+      expect(context.payload?.scope).toEqual({ unitId: 'core', targetPath: 'src/core' });
+    });
+
+    it.each(ALL_AGENT_NAMES)('should preserve caller payload for explicit %s context mapping', async (agent) => {
+      const phaseByAgent: Partial<Record<typeof agent, 0 | 2 | 3 | 4 | 5 | 6 | 7>> = {
+        'knowledge-builder': 2, 'migration-planner': 3, adjudicator: 3,
+        'code-migrator': 4, 'parity-verifier': 4, 'test-writer': 4,
+        'parity-failure-resolver': 4, 'final-parity-checker': 5,
+        'e2e-test-crafter': 6, 'documentation-writer': 6,
+        'idiomatic-reviewer': 7, 'idiomatic-planner': 7, 'idiomatic-refactorer': 7,
+      };
+      const payload = {
+        callerMarker: agent,
+        ...(agent === 'idiomatic-refactorer' ? { task: { files: ['src/a.ts'] } } : {}),
+      };
+      const { contextPath } = await builder.buildContext(agent, phaseByAgent[agent] ?? 0, 'contract', payload);
+      const context = await readJson<AgentContext>(contextPath);
+      expect(context.agent).toBe(agent);
+      expect(context.payload?.callerMarker).toBe(agent);
     });
 
     it('should use default routing for unknown/orchestrator agents', async () => {

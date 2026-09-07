@@ -18,16 +18,18 @@ import { CostEstimator } from '../../src/budget/cost-estimator.js';
 import { MetricsCollector } from '../../src/observability/metrics-collector.js';
 import { ReportGenerator } from '../../src/observability/report-generator.js';
 import { buildRuntimePaths } from '../../src/core/runtime-paths.js';
+import { ContextBuilder } from '../../src/agents/context-builder.js';
 import { ensureDir } from '../../src/util/fs.js';
 import {
   createMockConfig,
   createMockLauncher,
   createFailingLauncher,
   createSilentLogger,
+  makeAgentResult,
   MockAgentLauncher,
   makeTask,
 } from './mocks.js';
-import type { AgentInvocation, AgentResult, AgentName, MigrationTask } from '../../src/agents/types.js';
+import type { AgentInvocation, AgentResult, MigrationTask } from '../../src/agents/types.js';
 
 // Re-export so test files only need one import
 export {
@@ -35,6 +37,7 @@ export {
   createMockLauncher,
   createFailingLauncher,
   createSilentLogger,
+  makeAgentResult,
   MockAgentLauncher,
   makeTask,
 };
@@ -208,26 +211,16 @@ export async function setupFlowTest(
   const checkpoint = new CheckpointManager(paths.root, logger);
   await checkpoint.load(config.projectName);
 
-  const progressFile = join(paths.root, 'progress.md');
-  const progress = new ProgressWriter(progressFile);
+  const progress = new ProgressWriter(paths.progressReportFile);
   await progress.initialize(config);
 
   const mockLauncher = new MockAgentLauncher(withParityPassOutput(launcherFn));
   const tokenTracker = new TokenTracker();
   const costEstimator = new CostEstimator();
-  const metricsCollector = new MetricsCollector('test-run-id');
-  const reportGenerator = new ReportGenerator(metricsCollector);
+  const metricsCollector = new MetricsCollector();
+  const reportGenerator = new ReportGenerator();
 
-  // Stub ContextBuilder so it writes a real file and returns the path
-  const contextBuilder = {
-    buildContext: async (_agent: AgentName, _phase: number, taskId?: string, payload?: Record<string, unknown>) => {
-      const contextPath = join(paths.artifactsContextsDir, `${_agent}-${taskId ?? 'main'}-${Date.now()}.json`);
-      await writeFile(contextPath, JSON.stringify({
-        config, payload: payload ?? {}, inputFiles: [], outputDir: config.target.outputPath,
-      }, null, 2));
-      return contextPath;
-    },
-  };
+  const contextBuilder = new ContextBuilder(config, paths.root, paths);
 
   const ctx: MigrationFlowContext = {
     config,
@@ -235,14 +228,14 @@ export async function setupFlowTest(
     runId: 'test-run-id',
     paths,
     checkpoint,
-    launcher: mockLauncher as any,
+    launcher: mockLauncher,
     progress,
     logger,
     tokenTracker,
     costEstimator,
     metricsCollector,
     reportGenerator,
-    contextBuilder: contextBuilder as any,
+    contextBuilder,
     buildLimiter: pLimit(1),
     gitLimiter: pLimit(1),
     kbServer: undefined,
@@ -260,10 +253,12 @@ export async function setupFlowTest(
   const flowCtx: FlowExecutionContext<MigrationFlowContext> = {
     context: ctx,
     flowId: 'aamf-migration',
-    nodeId: 'test-node',
-    executionId: 'test-exec-id',
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any;
+    executionPath: ['aamf-migration', 'test-node'],
+    outputs: {},
+    executionOutputs: {},
+    getStepOutput: () => undefined,
+    getExecutionOutput: () => undefined,
+  };
 
   const cleanup = async () => {
     await rm(tempDir, { recursive: true, force: true });

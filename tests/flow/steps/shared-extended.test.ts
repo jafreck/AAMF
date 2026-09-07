@@ -40,6 +40,7 @@ import {
   setupFlowTest,
   setupFlowTestWithTasks,
   createMockLauncher,
+  makeAgentResult,
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
   makeTask,
@@ -61,7 +62,7 @@ describe('runCommand', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'build ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'build ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -78,7 +79,7 @@ describe('runCommand', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 1, stdout: '', stderr: 'compile error', killed: false,
+      exitCode: 1, stdout: '', stderr: 'compile error', killed: false, duration: 0,
     });
 
     try {
@@ -96,7 +97,7 @@ describe('runCommand', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 1, stdout: '', stderr: 'no space left on device', killed: false,
+      exitCode: 1, stdout: '', stderr: 'no space left on device', killed: false, duration: 0,
     });
 
     try {
@@ -132,7 +133,7 @@ describe('runCommand', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 137, stdout: '', stderr: '', killed: true,
+      exitCode: 137, stdout: '', stderr: '', killed: true, duration: 0,
     });
 
     try {
@@ -161,7 +162,7 @@ describe('runCommand', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: '', stderr: '', killed: false,
+      exitCode: 0, stdout: '', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -191,7 +192,7 @@ describe('runCommandWithRecovery', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     const task = makeTask('task-001');
@@ -215,9 +216,9 @@ describe('runCommandWithRecovery', () => {
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async () => {
       callCount++;
       if (callCount <= 1) {
-        return { exitCode: 1, stdout: '', stderr: 'no space left on device', killed: false };
+        return { exitCode: 1, stdout: '', stderr: 'no space left on device', killed: false, duration: 0 };
       }
-      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false };
+      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0 };
     });
 
     const task = makeTask('task-001');
@@ -242,9 +243,9 @@ describe('runCommandWithRecovery', () => {
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async () => {
       buildCallCount++;
       if (buildCallCount <= 2) {
-        return { exitCode: 1, stdout: '', stderr: 'type error', killed: false };
+        return { exitCode: 1, stdout: '', stderr: 'type error', killed: false, duration: 0 };
       }
-      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false };
+      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0 };
     });
 
     const task = makeTask('task-001');
@@ -269,7 +270,7 @@ describe('runCommandWithRecovery', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 1, stdout: '', stderr: 'always fails', killed: false,
+      exitCode: 1, stdout: '', stderr: 'always fails', killed: false, duration: 0,
     });
 
     const task = makeTask('task-001');
@@ -291,7 +292,7 @@ describe('runCommandWithRecovery', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 1, stdout: '', stderr: 'always fails', killed: false,
+      exitCode: 1, stdout: '', stderr: 'always fails', killed: false, duration: 0,
     });
 
     const task = makeTask('task-001');
@@ -408,11 +409,13 @@ describe('launchAgentWithEvents', () => {
       phase: 4,
       workItemId: 'task-001',
       timeout: 300_000,
+      modelOverride: 'gpt-5.6',
     });
 
     expect(result.success).toBe(true);
     expect(events.some(e => e.type === 'agent-launched')).toBe(true);
     expect(events.some(e => e.type === 'agent-completed')).toBe(true);
+    expect(env.ctx.metricsCollector.getMetrics()[0]?.model).toBe('gpt-5.6');
   });
 
   it('should emit agent-failed event on failure', async () => {
@@ -452,19 +455,19 @@ describe('Phase 4 checkpoint cursors', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    expect(hasPhase4Substep(env.ctx, 'task-001', 'migrator')).toBe(false);
-    await markPhase4Substep(env.ctx, 'task-001', 'migrator');
-    expect(hasPhase4Substep(env.ctx, 'task-001', 'migrator')).toBe(true);
+    expect(hasPhase4Substep(env.ctx, 'task-001', 'migrate')).toBe(false);
+    await markPhase4Substep(env.ctx, 'task-001', 'migrate');
+    expect(hasPhase4Substep(env.ctx, 'task-001', 'migrate')).toBe(true);
   });
 
   it('should not duplicate substeps on repeated markings', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    await markPhase4Substep(env.ctx, 'task-001', 'migrator');
-    await markPhase4Substep(env.ctx, 'task-001', 'migrator');
+    await markPhase4Substep(env.ctx, 'task-001', 'migrate');
+    await markPhase4Substep(env.ctx, 'task-001', 'migrate');
     const state = getPhase4TaskState(env.ctx, 'task-001');
-    expect(state.completedSubsteps.filter(s => s === 'migrator')).toHaveLength(1);
+    expect(state.completedSubsteps.filter(s => s === 'migrate')).toHaveLength(1);
   });
 });
 
@@ -628,15 +631,9 @@ describe('recordTokens', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const fakeResult = {
-      agent: 'code-migrator' as const,
-      exitCode: 0,
-      success: true,
-      outputFiles: [] as string[],
-      duration: 100,
-      extensions: { outputParsed: false },
+    const fakeResult = makeAgentResult({
       tokenUsage: { input: 1000, output: 500 },
-    };
+    });
 
     recordTokens(env.ctx, fakeResult, 5);
     expect(env.ctx.tokenTracker.getTotal()).toBe(1500);
@@ -646,16 +643,9 @@ describe('recordTokens', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    const fakeResult = {
-      agent: 'code-migrator' as const,
-      exitCode: 0,
-      success: true,
-      outputFiles: [] as string[],
-      duration: 100,
-      extensions: { outputParsed: false },
-    };
+    const fakeResult = makeAgentResult({ tokenUsage: null });
 
-    recordTokens(env.ctx, fakeResult as any, 5);
+    recordTokens(env.ctx, fakeResult, 5);
     expect(env.ctx.tokenTracker.getTotal()).toBe(0);
   });
 });

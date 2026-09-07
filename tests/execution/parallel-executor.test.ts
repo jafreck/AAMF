@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { ParallelExecutor } from '../../src/execution/parallel-executor.js';
 import { AgentInvocation, AgentResult } from '../../src/agents/types.js';
-import { createMockLauncher, createSilentLogger, createMockConfig } from '../helpers/mocks.js';
+import { createMockLauncher, createSilentLogger, createMockConfig, makeAgentResult } from '../helpers/mocks.js';
 
 describe('ParallelExecutor', () => {
   let tempDir: string;
@@ -54,13 +54,14 @@ describe('ParallelExecutor', () => {
       // Simulate work
       await new Promise((r) => setTimeout(r, 50));
       currentConcurrent--;
-      return {
+      return makeAgentResult({
         agent: inv.agent,
         workItemId: inv.workItemId,
         exitCode: 0,
         success: true,
         duration: 50,
-      };
+        outputPath: inv.outputPath,
+      });
     };
 
     const logger = createSilentLogger(tempDir);
@@ -103,13 +104,14 @@ describe('ParallelExecutor', () => {
       if (inv.workItemId === 'b') {
         throw new Error('Launcher crashed');
       }
-      return {
+      return makeAgentResult({
         agent: inv.agent,
         workItemId: inv.workItemId,
         exitCode: 0,
         success: true,
         duration: 100,
-      };
+        outputPath: inv.outputPath,
+      });
     };
     const logger = createSilentLogger(tempDir);
     const executor = new ParallelExecutor(3, launcher, logger);
@@ -180,13 +182,14 @@ describe('ParallelExecutor', () => {
     it('should track peak concurrency during executeAll', async () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
         await new Promise((r) => setTimeout(r, 50));
-        return {
+        return makeAgentResult({
           agent: inv.agent,
           workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
           duration: 50,
-        };
+          outputPath: inv.outputPath,
+        });
       };
 
       const logger = createSilentLogger(tempDir);
@@ -200,13 +203,14 @@ describe('ParallelExecutor', () => {
     it('should report peakConcurrency of 1 with concurrency limit of 1', async () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
         await new Promise((r) => setTimeout(r, 10));
-        return {
+        return makeAgentResult({
           agent: inv.agent,
           workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
           duration: 10,
-        };
+          outputPath: inv.outputPath,
+        });
       };
 
       const logger = createSilentLogger(tempDir);
@@ -229,13 +233,14 @@ describe('ParallelExecutor', () => {
     it('should track peak concurrency even when invocations throw', async () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
         if (inv.workItemId === 'b') throw new Error('crash');
-        return {
+        return makeAgentResult({
           agent: inv.agent,
           workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
           duration: 10,
-        };
+          outputPath: inv.outputPath,
+        });
       };
 
       const logger = createSilentLogger(tempDir);

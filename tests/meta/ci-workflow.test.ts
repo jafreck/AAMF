@@ -72,9 +72,12 @@ describe('CI workflow (.github/workflows/ci.yml)', () => {
     expect(text).toContain('npm ci');
   });
 
-  it('should run type-check with npx tsc --noEmit', async () => {
+  it('should run production and test type-checks before Vitest', async () => {
     const text = await loadContent();
-    expect(text).toContain('npx tsc --noEmit');
+    expect(text).toContain('npm run typecheck:prod');
+    expect(text).toContain('npm run typecheck:test');
+    expect(text.indexOf('npm run typecheck:prod')).toBeLessThan(text.indexOf('npx vitest run --coverage'));
+    expect(text.indexOf('npm run typecheck:test')).toBeLessThan(text.indexOf('npx vitest run --coverage'));
   });
 
   it('should run unit tests with npx vitest run', async () => {

@@ -96,6 +96,21 @@ describe('TaskQueue.topologicalSort', () => {
     expect(() => TaskQueue.topologicalSort(tasks)).toThrow(/[Cc]ircular/);
   });
 
+  it('should report one dangling dependency without calling it a cycle', () => {
+    const sort = () => TaskQueue.topologicalSort([makeTask('a', ['ghost'])]);
+    expect(sort).toThrow('Unknown task dependencies: a -> ghost');
+    expect(sort).not.toThrow(/[Cc]ircular/);
+  });
+
+  it('should report repeated references to a dangling dependency without a false cycle', () => {
+    const sort = () => TaskQueue.topologicalSort([
+      makeTask('a', ['ghost']),
+      makeTask('b', ['ghost']),
+    ]);
+    expect(sort).toThrow('Unknown task dependencies: a -> ghost, b -> ghost');
+    expect(sort).not.toThrow(/[Cc]ircular/);
+  });
+
   it('should handle tasks with no dependencies', () => {
     const tasks = [makeTask('a'), makeTask('b'), makeTask('c')];
     const sorted = TaskQueue.topologicalSort(tasks);

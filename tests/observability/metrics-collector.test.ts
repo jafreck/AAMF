@@ -371,6 +371,8 @@ describe('MetricsCollector', () => {
         waveConvergenceLimitHits: 0,
         buildCommandRuns: 2,
         testCommandRuns: 1,
+        formatCommandRuns: 1,
+        lintCommandRuns: 1,
         commandRecoveryAttempts: 1,
         commandInfraRetries: 1,
         recoveryLoopTimeMs: 1200,
@@ -387,6 +389,8 @@ describe('MetricsCollector', () => {
       expect(agg.waveConvergenceFailures).toBe(1);
       expect(agg.buildCommandRuns).toBe(2);
       expect(agg.testCommandRuns).toBe(1);
+      expect(agg.formatCommandRuns).toBe(1);
+      expect(agg.lintCommandRuns).toBe(1);
       expect(agg.commandRecoveryAttempts).toBe(1);
       expect(agg.commandInfraRetries).toBe(1);
       expect(agg.recoveryLoopTimeMs).toBe(1200);

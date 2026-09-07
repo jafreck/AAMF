@@ -22,7 +22,8 @@ import {
   withParityOutput,
 } from '../../helpers/flow-mocks.js';
 import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
-import type { AgentInvocation, AgentResult, MigrationTask } from '../../../src/agents/types.js';
+import type { AgentContext, AgentInvocation, AgentResult, MigrationTask } from '../../../src/agents/types.js';
+import { PHASE4_TASK_SUBSTEPS } from '../../../src/flow/phase4-substeps.js';
 
 let env: FlowTestEnv;
 
@@ -57,6 +58,52 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       expect(result.status).toBe('completed');
       const codeMigratorInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'code-migrator');
       expect(codeMigratorInvocations.length).toBeGreaterThanOrEqual(2);
+      expect(env.checkpoint.getState().completedTasks).toEqual(['task-001', 'task-002']);
+      expect(env.checkpoint.getState().completedTaskDurationsMs).toHaveLength(2);
+      expect(env.ctx.phase4Snapshot?.completedTaskCount).toBe(2);
+    });
+
+    it('should checkpoint every configured per-task substep with its exact execution ID', async () => {
+      env = await setupFlowTestWithTasks(createMockLauncher(), [SINGLE_AUTH_TASK], {
+        target: {
+          language: 'typescript',
+          outputPath: '/tmp/target',
+          formatCommand: 'format',
+          buildCommand: 'build',
+          testCommand: 'test',
+        },
+        options: { qualityPolicy: 'balanced' },
+      });
+      const spawnMod = await import('../../../src/util/process.js');
+      const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
+        exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
+      });
+
+      try {
+        await runPhase4(env);
+      } finally {
+        spawnSpy.mockRestore();
+      }
+
+      const taskState = env.checkpoint.getState().phaseCursors?.['4']?.tasks['task-001'];
+      expect(new Set(taskState?.completedSubsteps)).toEqual(new Set(PHASE4_TASK_SUBSTEPS));
+      expect(Object.keys(taskState?.executionIds ?? {}).sort()).toEqual([...PHASE4_TASK_SUBSTEPS].sort());
+      for (const [substep, executionId] of Object.entries(taskState?.executionIds ?? {})) {
+        expect(executionId).toBe(`phase-4-per-task/task-001/${substep}`);
+      }
+    });
+
+    it('should clear stale failure and blocked state when a task later succeeds', async () => {
+      env = await setupFlowTestWithTasks(createMockLauncher(), [SINGLE_AUTH_TASK]);
+      await env.checkpoint.failTask('task-001', 'prior attempt failed', 1, true);
+      await env.checkpoint.blockTask('task-001');
+
+      await runPhase4(env);
+
+      const state = env.checkpoint.getState();
+      expect(state.completedTasks).toEqual(['task-001']);
+      expect(state.failedTasks).toEqual([]);
+      expect(state.blockedTasks).toEqual([]);
     });
 
     it('should handle empty task list gracefully', async () => {
@@ -66,6 +113,19 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       const result = await runPhase4(env);
 
       expect(result.status).toBe('completed');
+    });
+
+    it('should drop dangling dependencies from structured task graphs before scheduling', async () => {
+      env = await setupFlowTestWithTasks(createMockLauncher(), [
+        { ...SINGLE_AUTH_TASK, dependencies: ['missing-task'] },
+      ]);
+      const warnSpy = vi.spyOn(env.logger, 'warn');
+
+      const result = await runPhase4(env);
+
+      expect(result.status).toBe('completed');
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('missing-task'));
+      expect(env.checkpoint.getState().completedTasks).toEqual(['task-001']);
     });
 
     it('should log cost projection with retry overhead', async () => {
@@ -136,6 +196,37 @@ describe('buildPhase4Subflow (Phase 4)', () => {
   // ─── Parity Verification ─────────────────────────────────────────────
 
   describe('Parity Verification', () => {
+    it('should give every task-scoped agent all files in a multi-file task', async () => {
+      const task: MigrationTask = {
+        ...SINGLE_AUTH_TASK,
+        sourceFiles: ['src/auth.py', 'src/session.py', 'src/token.py'],
+        targetFiles: ['src/auth.ts', 'src/session.ts', 'src/token.ts'],
+      };
+      const launcherFn = withParityOutput(createMockLauncher(), {
+        'task-001': {
+          parity: 'fail',
+          issues: [{
+            severity: 'critical', description: 'multi-file failure', details: 'test recovery scope',
+            sourceLocation: 'src/session.py:1', targetLocation: 'src/session.ts:1',
+          }],
+        },
+      });
+      env = await setupFlowTestWithTasks(launcherFn, [task], {
+        options: { maxRetriesPerTask: 1 },
+      });
+
+      await expect(runPhase4(env)).rejects.toThrow();
+
+      for (const agent of ['code-migrator', 'parity-verifier', 'test-writer', 'parity-failure-resolver'] as const) {
+        const invocation = env.mockLauncher.invocations.find(candidate => candidate.agent === agent);
+        expect(invocation, `missing ${agent} invocation`).toBeDefined();
+        const context = JSON.parse(await readFile(invocation!.contextPath, 'utf-8')) as AgentContext;
+        expect(context.inputFiles).toEqual(expect.arrayContaining([...task.sourceFiles, ...task.targetFiles]));
+        expect(context.payload?.sourceFiles).toEqual(task.sourceFiles);
+        expect(context.payload?.targetFiles).toEqual(task.targetFiles);
+      }
+    });
+
     it('should invoke parity-verifier after code-migrator', async () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
@@ -143,7 +234,7 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       await runPhase4(env);
 
       const parityInvocations = env.mockLauncher.invocations.filter(
-        i => i.agent === 'parity-verifier' && i.phase === 5,
+        i => i.agent === 'parity-verifier' && i.phase === 4,
       );
       expect(parityInvocations.length).toBeGreaterThanOrEqual(1);
     });
@@ -174,7 +265,7 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       } catch { /* expected */ }
 
       const recoveryInvocations = env.mockLauncher.invocations.filter(
-        i => i.agent === 'parity-failure-resolver' && i.phase === 5,
+        i => i.agent === 'parity-failure-resolver' && i.phase === 4,
       );
       expect(recoveryInvocations.length).toBeGreaterThan(0);
     });
@@ -201,7 +292,7 @@ describe('buildPhase4Subflow (Phase 4)', () => {
 
       expect(result.status).toBe('completed');
       const recoveryForParity = env.mockLauncher.invocations.filter(
-        i => i.agent === 'parity-failure-resolver' && i.phase === 5,
+        i => i.agent === 'parity-failure-resolver' && i.phase === 4,
       );
       expect(recoveryForParity).toHaveLength(0);
     });
@@ -228,10 +319,10 @@ describe('buildPhase4Subflow (Phase 4)', () => {
 
       expect(result.status).toBe('completed');
       const migrators = env.mockLauncher.invocations.filter(
-        i => i.agent === 'code-migrator' && i.phase === 5,
+        i => i.agent === 'code-migrator' && i.phase === 4,
       );
       const parityRuns = env.mockLauncher.invocations.filter(
-        i => i.agent === 'parity-verifier' && i.phase === 5,
+        i => i.agent === 'parity-verifier' && i.phase === 4,
       );
       expect(migrators.length).toBeGreaterThanOrEqual(2);
       expect(parityRuns.length).toBeGreaterThanOrEqual(2);
@@ -273,7 +364,7 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       const { runCommand } = await import('../../../src/flow/steps/shared.js');
       const spawnMod = await import('../../../src/util/process.js');
       const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-        exitCode: 1, stdout: '', stderr: 'build failed', killed: false,
+        exitCode: 1, stdout: '', stderr: 'build failed', killed: false, duration: 0,
       });
 
       try {
@@ -456,6 +547,20 @@ describe('buildPhase4Subflow (Phase 4)', () => {
   // ─── Deterministic Resume Cursors ─────────────────────────────────────
 
   describe('Deterministic Resume Cursors', () => {
+    it('should skip every substep after reloading a fully completed task', async () => {
+      env = await setupFlowTestWithTasks(createMockLauncher(), [SINGLE_AUTH_TASK]);
+      await runPhase4(env);
+      env.mockLauncher.invocations.length = 0;
+
+      await env.checkpoint.load(env.ctx.config.projectName);
+      const result = await runPhase4(env);
+
+      expect(result.status).toBe('completed');
+      expect(env.mockLauncher.invocations).toHaveLength(0);
+      expect(env.checkpoint.getState().completedTasks).toEqual(['task-001']);
+      expect(env.checkpoint.getState().completedTaskDurationsMs).toHaveLength(1);
+    });
+
     it('should skip completed substeps on resume', async () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
@@ -484,7 +589,7 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       // The migrate, commit, and parity substeps were checkpointed as complete,
       // so no code-migrator invocations should occur for task-001.
       const task001MigratorInvocations = env.mockLauncher.invocations.filter(
-        inv => inv.phase === 5 && inv.workItemId === 'task-001' && inv.agent === 'code-migrator',
+        inv => inv.phase === 4 && inv.workItemId === 'task-001' && inv.agent === 'code-migrator',
       );
       expect(task001MigratorInvocations.length).toBe(0);
     });
@@ -493,13 +598,13 @@ describe('buildPhase4Subflow (Phase 4)', () => {
   // ─── phaseTimeouts ────────────────────────────────────────────────────
 
   describe('phaseTimeouts', () => {
-    it('should use phaseTimeouts[5] as timeout for Phase 4 agents', async () => {
+    it('should use phaseTimeouts[4] independently for Phase 4 agents', async () => {
       const launcherFn = createMockLauncher();
       env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK], {
         agentBackend: {
           runtime: 'copilot',
           timeout: 300_000,
-          phaseTimeouts: { 5: 60_000 },
+          phaseTimeouts: { 4: 60_000, 5: 90_000 },
         },
       });
 
@@ -508,6 +613,9 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       const codeMigratorInv = env.mockLauncher.invocations.find(i => i.agent === 'code-migrator');
       expect(codeMigratorInv).toBeDefined();
       expect(codeMigratorInv!.timeout).toBe(60_000);
+      expect(env.mockLauncher.invocations.every(invocation => invocation.phase === 4)).toBe(true);
+      expect(env.ctx.tokenTracker.toCheckpointData().byPhase[4]).toBeGreaterThan(0);
+      expect(env.ctx.tokenTracker.toCheckpointData().byPhase[5]).toBeUndefined();
     });
   });
 });

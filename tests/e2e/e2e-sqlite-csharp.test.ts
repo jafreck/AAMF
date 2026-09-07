@@ -5,6 +5,7 @@ import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
+import { e2eRuntimePaths, keepE2eArtifacts, validateE2ePreflight } from '../helpers/e2e.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -28,7 +29,7 @@ const downloadDir = join(fixtureDir, 'sqlite-src');   // extracted amalgamation 
 const sourceDir   = join(downloadDir, SQLITE_DIR);     // actual .c/.h files
 const configPath  = join(fixtureDir, 'migration.config.json');
 const aamfRoot    = join(fixtureDir, '.aamf');
-const progressDir = join(aamfRoot, 'migration', 'sqlite-to-csharp-net9');
+const runtimePaths = e2eRuntimePaths(fixtureDir, 'sqlite-to-csharp-net9');
 const tmpRoot     = join(fixtureDir, 'tmp');
 const outputDir   = join(tmpRoot, 'sqlite-csharp-output');
 
@@ -89,7 +90,6 @@ async function ensureSqliteSource(): Promise<void> {
  *   AAMF_E2E=1 npx vitest run tests/e2e-sqlite-csharp.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
-const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -101,6 +101,7 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
     // 2. Clean up any previous migration artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
+    await validateE2ePreflight({ configPath, fixtureRoot: fixtureDir, expectedProjectName: 'sqlite-to-csharp-net9' });
 
     // 3. Run the full migration using the checked-in fixture config
     const runtime = new MigrationRuntime();
@@ -112,7 +113,7 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
   }, 43_200_000); // 12-hour timeout — ~250 K lines of C amalgamation, 7 phases × many LLM round-trips
 
   afterAll(async () => {
-    if (keepArtifacts) return;
+    if (keepE2eArtifacts) return;
     // Clean up migration artefacts (keep downloaded source for cache)
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
@@ -227,7 +228,7 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
   // ── Progress & checkpoint artefacts ──────────────────────────────────────
 
   it('should create a checkpoint recording all phases complete', async () => {
-    const checkpointPath = join(progressDir, 'checkpoint.json');
+    const checkpointPath = runtimePaths.checkpointFile;
     expect(await fileExists(checkpointPath)).toBe(true);
 
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
@@ -238,14 +239,14 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
   });
 
   it('should create progress.md covering every phase', async () => {
-    const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+    const progressMd = await readFile(runtimePaths.progressReportFile, 'utf-8');
     expect(progressMd).toContain('sqlite-to-csharp-net9');
     expect(progressMd).toContain('Iterative Migration');
     expect(progressMd).toContain('Completion');
   });
 
   it('should produce log files', async () => {
-    const logsDir = join(progressDir, 'logs');
+    const logsDir = runtimePaths.logsRuntimeDir;
     expect(await fileExists(logsDir)).toBe(true);
     const logs = await readdir(logsDir);
     expect(logs.length).toBeGreaterThan(0);
@@ -268,7 +269,7 @@ describe.skipIf(!runE2E)('E2E SQLite C → C# (.NET 9) Migration', () => {
     const projFiles = outputFiles.filter(f => f.endsWith('.csproj'));
     expect(projFiles.length).toBeGreaterThan(0);
 
-    const projContent = await readFile(join(outputDir, projFiles[0]), 'utf-8');
+    const projContent = await readFile(join(outputDir, projFiles[0]!), 'utf-8');
     expect(projContent).toContain('net9.0');
   });
 

@@ -30,7 +30,6 @@
     "dryRun": false,
     "resume": false,
     "kbIndex": {
-      "enabled": true,
       "embeddings": {
         "enabled": true
       }

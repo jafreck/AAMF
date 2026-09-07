@@ -229,9 +229,9 @@ describe('getConfiguredRuntimeModel', () => {
     expect(getConfiguredRuntimeModel(ctx)).toBe('claude-sonnet-4');
   });
 
-  it('should fallback to claude-sonnet-4 when no model configured', () => {
+  it('should label an unconfigured backend model as cli-default', () => {
     const ctx = mockContext({ models: { default: undefined }, agentBackend: { runtime: 'copilot', timeout: 300_000 } });
-    expect(getConfiguredRuntimeModel(ctx)).toBe('claude-sonnet-4');
+    expect(getConfiguredRuntimeModel(ctx)).toBe('cli-default');
   });
 });
 
@@ -595,25 +595,25 @@ describe('buildInvocation', () => {
 
   it('should include workItemId when provided', () => {
     const ctx = mockContext();
-    const inv = buildInvocation(ctx, 'code-migrator', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 5, 'task-001');
+    const inv = buildInvocation(ctx, 'code-migrator', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 4, 'task-001');
     expect(inv.workItemId).toBe('task-001');
   });
 
   it('should use phase-specific timeout', () => {
-    const ctx = mockContext({ agentBackend: { runtime: 'copilot', timeout: 300_000, phaseTimeouts: { 5: 600_000 } } });
-    const inv = buildInvocation(ctx, 'code-migrator', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 5);
+    const ctx = mockContext({ agentBackend: { runtime: 'copilot', timeout: 300_000, phaseTimeouts: { 4: 600_000 } } });
+    const inv = buildInvocation(ctx, 'code-migrator', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 4);
     expect(inv.timeout).toBe(600_000);
   });
 
   it('should apply failureRecoveryModel for parity-failure-resolver', () => {
     const ctx = mockContext({ models: { default: 'claude-sonnet-4', failureRecovery: 'gpt-4o-fallback' } });
-    const inv = buildInvocation(ctx, 'parity-failure-resolver', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 5);
+    const inv = buildInvocation(ctx, 'parity-failure-resolver', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 4);
     expect(inv.modelOverride).toBe('gpt-4o-fallback');
   });
 
   it('should not set mcpConfig when kbServer is undefined', () => {
     const ctx = mockContext();
-    const inv = buildInvocation(ctx, 'knowledge-builder', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 3);
+    const inv = buildInvocation(ctx, 'knowledge-builder', { contextPath: '/tmp/ctx.json', outputPath: '/tmp/out' }, 2);
     expect(inv.extensions?.mcpConfig).toBeUndefined();
   });
 });
