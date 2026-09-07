@@ -1,5 +1,6 @@
 import { isAbsolute, join } from 'node:path';
-import { AgentName, AgentContext } from './types.js';
+import { AgentName, AgentContext, type AgentPayloadByName } from './types.js';
+import { AGENT_CONTEXT_SCHEMAS } from './contracts.js';
 import { MigrationConfig } from '../config/schema.js';
 import { writeJson, ensureDir } from '../util/fs.js';
 import type { RuntimePaths } from '../core/runtime-paths.js';
@@ -37,13 +38,13 @@ export class ContextBuilder {
    * @param payload - Optional additional data for the agent.
    * @returns The context path and output path for the invocation.
    */
-  async buildContext(
-    agent: AgentName,
+  async buildContext<A extends AgentName>(
+    agent: A,
     phase: PhaseId,
     taskId?: string,
-    payload?: Record<string, unknown>,
+    payload?: AgentPayloadByName[A] | object,
   ): Promise<{ contextPath: string; outputPath: string }> {
-    const context = this.createContext(agent, phase, taskId, payload);
+    const context = this.createContext(agent, phase, taskId, payload as Record<string, unknown> | undefined);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${agent}-${taskId ?? 'main'}-${timestamp}.json`;
     const contextDir = join(this.progressDir, 'artifacts', 'contexts');
@@ -134,7 +135,8 @@ export class ContextBuilder {
     const mergedPayload = payload || agentPayload
       ? { ...(payload ?? {}), ...(agentPayload ?? {}) }
       : undefined;
-    return { ...base, inputFiles: Array.from(new Set(inputFiles)), outputPath, payload: mergedPayload };
+    const context = { ...base, inputFiles: Array.from(new Set(inputFiles)), outputPath, payload: mergedPayload };
+    return AGENT_CONTEXT_SCHEMAS[agent].parse(context) as AgentContext;
   }
 
   /**
@@ -326,13 +328,6 @@ export class ContextBuilder {
           agentPayload: task ? { task } : {},
         };
       }
-
-      case 'migration-orchestrator':
-      case 'migration-runner':
-        return {
-          inputFiles: [src],
-          outputPath: this.progressDir,
-        };
 
       default: {
         const exhaustive: never = agent;

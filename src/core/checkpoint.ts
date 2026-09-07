@@ -34,6 +34,7 @@ export interface Phase5Cursor {
   fixIndex: number;
   lastSuccessfulStep?: string;
   hadUnresolvedFixes?: boolean;
+  failedFixes?: Array<{ taskId: string; description: string; error: string }>;
 }
 
 export interface Phase6Cursor {
@@ -152,6 +153,11 @@ export class CheckpointManager {
     projectName: string,
     options: { fresh?: boolean; reuseKb?: boolean; readOnly?: boolean } = {},
   ): Promise<CheckpointState> {
+    if (options.reuseKb) {
+      throw new Error(
+        'reuseKb is temporarily disabled until Lore index identity and artifact provenance can be validated',
+      );
+    }
     if (options.readOnly) {
       const stored = await this.readStoredState();
       this.state = stored ?? this.buildInitialState(projectName);
@@ -161,53 +167,8 @@ export class CheckpointManager {
     await ensureDir(this.stateDir);
 
     if (options.fresh) {
-      if (options.reuseKb) {
-        // Preserve KB-related state from the prior run while resetting everything else.
-        const prior = await this.loadPriorState();
-        this.state = this.buildInitialState(projectName);
-        if (prior) {
-          // Carry forward early-phase completion markers so Phases 0-2 can skip.
-          const kbPhases = [0, 1, 2];
-          this.state.completedPhases = prior.completedPhases.filter(p => kbPhases.includes(p));
-          this.state.currentPhase = this.state.completedPhases.length > 0
-            ? Math.max(...this.state.completedPhases) + 1 : 0;
-          if (prior.phase0Fingerprint) this.state.phase0Fingerprint = prior.phase0Fingerprint;
-          // Preserve phase outputs for KB phases so artifact paths remain valid.
-          for (const p of kbPhases) {
-            if (prior.phaseOutputs?.[p]) this.state.phaseOutputs[p] = prior.phaseOutputs[p]!;
-          }
-          // Preserve scaffold state so Phase 4 doesn't re-scaffold.
-          if (prior.scaffoldComplete) this.state.scaffoldComplete = prior.scaffoldComplete;
-          // Carry the flow checkpoint forward so the flow runner knows which
-          // steps are already done.  We filter its completedExecutionIds to
-          // only retain KB-related node completions.
-          if (prior.__flowCheckpoint && typeof prior.__flowCheckpoint === 'object') {
-            const fc = prior.__flowCheckpoint as Record<string, unknown>;
-            const KB_STEP_IDS = ['kb-index', 'task-graph-construction', 'kb-construction', 'budget-check-2'];
-            const priorCompleted = (fc.completedExecutionIds ?? []) as string[];
-            const kbCompleted = priorCompleted.filter(id => KB_STEP_IDS.some(s => id.endsWith('/' + s)));
-            if (kbCompleted.length > 0) {
-              this.state.__flowCheckpoint = {
-                ...fc,
-                completedExecutionIds: kbCompleted,
-                status: 'running',
-                outputs: {},
-                executionOutputs: {},
-                error: undefined,
-              };
-            }
-          }
-          this.logger.info(
-            `Fresh start with reuseKb — preserved phases [${this.state.completedPhases.join(', ')}], ` +
-            `resuming from Phase ${this.state.currentPhase}`,
-          );
-        } else {
-          this.logger.info('Fresh start with reuseKb — no prior checkpoint found, starting from scratch');
-        }
-      } else {
-        this.logger.info('Fresh start requested (resume=false) — ignoring prior checkpoint state');
-        this.state = this.buildInitialState(projectName);
-      }
+      this.logger.info('Fresh start requested (resume=false) — ignoring prior checkpoint state');
+      this.state = this.buildInitialState(projectName);
       await this.save(this.state);
       return this.state;
     }
@@ -839,17 +800,4 @@ export class CheckpointManager {
     await atomicWrite(this.backupPath, current);
   }
 
-  /** Attempt to load the prior checkpoint state without modifying this.state. */
-  private async loadPriorState(): Promise<CheckpointState | undefined> {
-    const path = await this.resolveCheckpointReadPath()
-      ?? await this.resolveBackupReadPath();
-    if (!path) return undefined;
-    try {
-      const state = await readJson<CheckpointState>(path);
-      this.applyBackwardCompatibleDefaults(state);
-      return state;
-    } catch {
-      return undefined;
-    }
-  }
 }

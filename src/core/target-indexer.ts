@@ -10,20 +10,52 @@
  * target codebase alongside the source index.
  */
 
+import { rm } from 'node:fs/promises';
 import type { Logger } from '../logging/logger.js';
+
+export interface TargetIndexBuilder {
+  build(): Promise<void>;
+  update(changedFiles: string[]): Promise<void>;
+}
+
+export type TargetIndexBuilderFactory = (
+  dbPath: string,
+  rootDir: string,
+) => Promise<TargetIndexBuilder>;
+
+interface PendingIndexRequest {
+  files: string[];
+  forceBuild: boolean;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
+const createLoreBuilder: TargetIndexBuilderFactory = async (dbPath, rootDir) => {
+  const lore = await import('@jafreck/lore');
+  return new lore.IndexBuilder(dbPath, { rootDir });
+};
 
 export class TargetIndexer {
   private readonly dbPath: string;
   private readonly rootDir: string;
   private readonly logger: Logger;
+  private readonly createBuilder: TargetIndexBuilderFactory;
   private built = false;
-  private building = false;
+  private builder?: TargetIndexBuilder;
+  private pending: PendingIndexRequest[] = [];
+  private draining?: Promise<void>;
   private onFirstBuild?: () => Promise<void>;
 
-  constructor(dbPath: string, rootDir: string, logger: Logger) {
+  constructor(
+    dbPath: string,
+    rootDir: string,
+    logger: Logger,
+    createBuilder: TargetIndexBuilderFactory = createLoreBuilder,
+  ) {
     this.dbPath = dbPath;
     this.rootDir = rootDir;
     this.logger = logger;
+    this.createBuilder = createBuilder;
   }
 
   /** Register a callback that fires once after the first build/update completes. */
@@ -33,11 +65,7 @@ export class TargetIndexer {
 
   /** Full build of the target index from scratch. */
   async build(): Promise<void> {
-    const lore = await import('@jafreck/lore');
-    const builder = new lore.IndexBuilder(this.dbPath, { rootDir: this.rootDir });
-    await builder.build();
-    this.built = true;
-    this.logger.info('Target index built');
+    return this.enqueue([], true);
   }
 
   /**
@@ -46,28 +74,7 @@ export class TargetIndexer {
    */
   async updateForFiles(changedFiles: string[]): Promise<void> {
     if (changedFiles.length === 0) return;
-
-    const lore = await import('@jafreck/lore');
-
-    if (!this.built) {
-      // Guard against concurrent first-build races.
-      if (this.building) return;
-      this.building = true;
-      // First update — do a full build to establish the schema.
-      const builder = new lore.IndexBuilder(this.dbPath, { rootDir: this.rootDir });
-      await builder.build();
-      this.built = true;
-      this.building = false;
-      this.logger.info(`Target index initial build (triggered by ${changedFiles.length} file(s))`);
-      if (this.onFirstBuild) {
-        await this.onFirstBuild();
-        this.onFirstBuild = undefined;
-      }
-    } else {
-      const builder = new lore.IndexBuilder(this.dbPath, { rootDir: this.rootDir });
-      await builder.update(changedFiles);
-      this.logger.debug(`Target index updated for ${changedFiles.length} file(s)`);
-    }
+    return this.enqueue(changedFiles, false);
   }
 
   /** Whether the target index DB has been built at least once. */
@@ -78,5 +85,83 @@ export class TargetIndexer {
   /** Mark the index as already built (for resume scenarios). */
   markBuilt(): void {
     this.built = true;
+  }
+
+  /** Discard index state after a target rollback so stale code is never served. */
+  async invalidate(): Promise<void> {
+    this.builder = undefined;
+    this.built = false;
+    await Promise.all([
+      rm(this.dbPath, { force: true }),
+      rm(`${this.dbPath}-wal`, { force: true }),
+      rm(`${this.dbPath}-shm`, { force: true }),
+    ]);
+  }
+
+  private enqueue(files: string[], forceBuild: boolean): Promise<void> {
+    const request = new Promise<void>((resolve, reject) => {
+      this.pending.push({ files: [...new Set(files)], forceBuild, resolve, reject });
+    });
+    this.ensureDrain();
+    return request;
+  }
+
+  private ensureDrain(): void {
+    if (this.draining) return;
+    this.draining = Promise.resolve()
+      .then(() => this.drain())
+      .finally(() => {
+        this.draining = undefined;
+        if (this.pending.length > 0) this.ensureDrain();
+      });
+  }
+
+  private async drain(): Promise<void> {
+    while (this.pending.length > 0) {
+      const requests = this.pending.splice(0);
+      const files = [...new Set(requests.flatMap(request => request.files))].sort();
+      const forceBuild = requests.some(request => request.forceBuild);
+
+      try {
+        await this.applyUpdate(files, forceBuild);
+        for (const request of requests) request.resolve();
+      } catch (error) {
+        for (const request of requests) request.reject(error);
+      }
+    }
+  }
+
+  private async applyUpdate(files: string[], forceBuild: boolean): Promise<void> {
+    const builder = await this.getBuilder();
+    if (!this.built || forceBuild) {
+      try {
+        await builder.build();
+      } catch (error) {
+        this.builder = undefined;
+        this.built = false;
+        throw error;
+      }
+      const wasInitialBuild = !this.built;
+      this.built = true;
+      this.logger.info(
+        wasInitialBuild
+          ? `Target index initial build (triggered by ${files.length} file(s))`
+          : 'Target index rebuilt',
+      );
+      if (wasInitialBuild && this.onFirstBuild) {
+        const callback = this.onFirstBuild;
+        this.onFirstBuild = undefined;
+        await callback();
+      }
+      return;
+    }
+
+    await builder.update(files);
+    this.logger.debug(`Target index updated for ${files.length} file(s)`);
+  }
+
+  private async getBuilder(): Promise<TargetIndexBuilder> {
+    this.builder ??= await this.createBuilder(this.dbPath, this.rootDir);
+    return this.builder;
   }
 }

@@ -49,19 +49,14 @@ const PER_TASK_FLOW_ID = 'phase-4-per-task';
 const WAVE_BARRIER_FLOW_ID = 'phase-4-wave-barrier';
 const SYNC_EPOCH_FLOW_ID = 'phase-4-sync-epoch';
 
-type RoutingConfig = NonNullable<MigrationFlowContext['config']['models']['routing']>
-  | NonNullable<MigrationFlowContext['config']['options']['modelRouting']>;
-
-function isLegacyRoutingConfig(routing: RoutingConfig): routing is NonNullable<MigrationFlowContext['config']['options']['modelRouting']> {
-  return 'heavyModel' in routing || 'criticalModel' in routing || 'maxCriticalTasks' in routing;
-}
+type RoutingConfig = NonNullable<MigrationFlowContext['config']['models']['routing']>;
 
 function getRoutingHeavyModel(routing: RoutingConfig): string | undefined {
-  return isLegacyRoutingConfig(routing) ? routing.heavyModel : routing.heavy;
+  return routing.heavy;
 }
 
 function getRoutingCriticalModel(routing: RoutingConfig): string | undefined {
-  return isLegacyRoutingConfig(routing) ? routing.criticalModel : routing.critical;
+  return routing.critical;
 }
 
 function buildWaveTaskBranch(
@@ -79,11 +74,6 @@ function buildWaveTaskBranch(
       id: `${task.id}/commit`,
       run: (c) => runTrackedPhase4TaskSubstep(c, task, 'commit', () =>
         runCommitSubstep(c.context, task)),
-    }),
-    step<MigrationFlowContext>({
-      id: `${task.id}/target-index`,
-      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'target-index', () =>
-        runTargetIndexSubstep(c.context, task)),
     }),
     step<MigrationFlowContext>({
       id: `${task.id}/parity`,
@@ -105,6 +95,11 @@ function buildWaveTaskBranch(
       }),
     );
   }
+  branchSteps.push(step<MigrationFlowContext>({
+    id: `${task.id}/target-index`,
+    run: (c) => runTrackedPhase4TaskSubstep(c, task, 'target-index', () =>
+      runTargetIndexSubstep(c.context, task)),
+  }));
   return branchSteps;
 }
 
@@ -118,9 +113,36 @@ async function runTrackedPhase4TaskSubstep<T>(
     return undefined as T;
   }
   if (substep === 'migrate') await markPhase4TaskStarted(flowCtx.context, task.id);
-  const result = await action();
-  await markPhase4Substep(flowCtx.context, task.id, substep, flowCtx.executionPath.join('/'));
-  return result;
+  try {
+    const result = await action();
+    await markPhase4Substep(flowCtx.context, task.id, substep, flowCtx.executionPath.join('/'));
+    return result;
+  } catch (error) {
+    await rollbackTaskCandidate(flowCtx.context, task.id);
+    throw error;
+  }
+}
+
+async function rollbackTaskCandidate(ctx: MigrationFlowContext, taskId: string): Promise<void> {
+  // A shared wave/epoch scope is rolled back only after its parallel work has
+  // quiesced (or by the runtime resource scope on fatal exit).
+  if (ctx.targetChanges.isSharedTaskScope(taskId)) return;
+  const rolledBack = await ctx.targetChanges.rollbackTask(taskId);
+  if (rolledBack) await invalidateRolledBackTarget(ctx);
+}
+
+async function rollbackScopeCandidate(ctx: MigrationFlowContext, scopeId: string): Promise<void> {
+  if (!(await ctx.targetChanges.has(scopeId))) return;
+  await ctx.targetChanges.rollback(scopeId);
+  await invalidateRolledBackTarget(ctx);
+}
+
+async function invalidateRolledBackTarget(ctx: MigrationFlowContext): Promise<void> {
+  if (ctx.targetKbServer) {
+    await ctx.targetKbServer.stop();
+    ctx.targetKbServer = undefined;
+  }
+  if (ctx.targetIndexer) await ctx.targetIndexer.invalidate();
 }
 
 async function completePhase4Tasks(
@@ -195,6 +217,11 @@ async function runMigrateSubstep(
   ctx: MigrationFlowContext, task: MigrationTask, retryExec: RetryExecutor,
   remediationContext?: import('../../agents/types.js').RemediationContext,
 ): Promise<{ durationMs: number }> {
+  const changeScope = ctx.targetChanges.scopeForTask(task.id);
+  await ctx.targetChanges.begin(changeScope, {
+    mode: ctx.targetChanges.isSharedTaskScope(task.id) ? 'full' : 'tracked',
+    files: task.targetFiles,
+  });
   const migratorCtx = await ctx.contextBuilder.buildContext('code-migrator', PHASE.MIGRATION, task.id, {
     sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
     kbEntry: task.knowledgeBaseRef, ...taskScopePayload(task),
@@ -202,7 +229,7 @@ async function runMigrateSubstep(
   });
   const migratorInv = buildInvocation(ctx, 'code-migrator', migratorCtx, PHASE.MIGRATION, task.id, task);
   const fallbackModel = getFailureRecoveryModel(ctx);
-  const routing = ctx.config.models?.routing ?? ctx.config.options.modelRouting;
+  const routing = ctx.config.models?.routing;
   const initialRoutingDecision = routing?.enabled
     ? selectModelForInvocation(ctx, task, 'code-migrator') : undefined;
 
@@ -219,7 +246,7 @@ async function runMigrateSubstep(
         migratorInv.modelOverride = fallbackModel;
         ctx.logger.warn(`Switching ${task.id} code-migrator to fallback model: ${fallbackModel}`);
       } else if (initialRoutingDecision) {
-        const routing = ctx.config.models?.routing ?? ctx.config.options.modelRouting;
+        const routing = ctx.config.models?.routing;
         if (!routing) return;
         const escalateAt = routing.escalateOnRetryAttempt ?? 2;
         if (attempt >= escalateAt) {
@@ -277,6 +304,11 @@ async function runMigrateSubstep(
     },
   });
 
+  await ctx.targetChanges.trackFiles(
+    changeScope,
+    migratorResult.extensions.outputFiles ?? task.targetFiles,
+  );
+
   recordTokens(ctx, migratorResult, PHASE.MIGRATION);
   if (!migratorResult.success) {
     await raiseTerminalExhaustion(ctx, {
@@ -328,7 +360,22 @@ async function runParitySubstep(
   ctx.peakConcurrency = Math.max(ctx.peakConcurrency, parallelExec.peakConcurrency);
   if (parityResult) { recordTokens(ctx, parityResult, PHASE.MIGRATION); storeParityResult(ctx, parityResult, task.id); }
   if (testResult) recordTokens(ctx, testResult, PHASE.MIGRATION);
+  if (testResult) {
+    await ctx.targetChanges.trackFiles(
+      ctx.targetChanges.scopeForTask(task.id),
+      testResult.extensions.outputFiles ?? [],
+    );
+  }
   if (testResult?.success) await commitForAgent(ctx, 'test-writer', PHASE.MIGRATION, task.id, task.name);
+  if (!parityResult?.success || !testResult?.success) {
+    const failed = [parityResult, testResult].find(result => !result?.success);
+    assertPhaseSuccess({
+      phase: 4, name: 'Iterative Migration', success: false, duration: 0,
+      error: failed?.error ?? `Required parity/test work failed for ${task.id}`,
+      exitCode: failed?.exitCode ?? undefined,
+      stderr: failed?.stderr,
+    });
+  }
 }
 
 async function runParityGateSubstep(
@@ -370,6 +417,10 @@ async function runParityGateSubstep(
       const recoveryInv = buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, PHASE.MIGRATION, task.id);
       const recoveryResult = await launchAgentWithEvents(ctx, recoveryInv);
       recordTokens(ctx, recoveryResult, PHASE.MIGRATION);
+      await ctx.targetChanges.trackFiles(
+        ctx.targetChanges.scopeForTask(task.id),
+        recoveryResult.extensions.outputFiles ?? task.targetFiles,
+      );
       if (!recoveryResult.success) { ctx.logger.warn(`Parity-failure-resolver failed for ${task.id} on attempt ${attempt}`); continue; }
       if (resolverReducedScope(recoveryResult)) {
         ctx.logger.info(`Resolver adjudicated remaining issues as out-of-scope for ${task.id}`);
@@ -425,26 +476,41 @@ async function runMinorRepassSubstep(
       kbEntry: task.knowledgeBaseRef, ...taskScopePayload(task),
       remediationContext: toAgentRemediationContext(minorRemediation),
     });
+    const repassScope = `${ctx.targetChanges.scopeForTask(task.id)}/minor-repass`;
+    await ctx.targetChanges.begin(repassScope, { mode: 'tracked', files: task.targetFiles });
     const repassResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'code-migrator', repassCtx, PHASE.MIGRATION, task.id));
     recordTokens(ctx, repassResult, PHASE.MIGRATION);
+    await ctx.targetChanges.trackFiles(repassScope, repassResult.extensions.outputFiles ?? task.targetFiles);
     if (repassResult.success) {
-      await commitForAgent(ctx, 'code-migrator', PHASE.MIGRATION, task.id, task.name);
       const reParityCtx = await ctx.contextBuilder.buildContext('parity-verifier', PHASE.MIGRATION, task.id, {
         sourceFiles: task.sourceFiles, targetFiles: task.targetFiles, ...taskScopePayload(task),
       });
       const reParityResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'parity-verifier', reParityCtx, PHASE.MIGRATION, task.id));
       recordTokens(ctx, reParityResult, PHASE.MIGRATION);
+      if (!reParityResult.success) {
+        await ctx.targetChanges.rollback(repassScope);
+        assertPhaseSuccess({
+          phase: 4, name: 'Iterative Migration', success: false, duration: 0,
+          error: reParityResult.error ?? `Minor re-pass verification failed for ${task.id}`,
+          exitCode: reParityResult.exitCode ?? undefined,
+          stderr: reParityResult.stderr,
+        });
+      }
       storeParityResult(ctx, reParityResult, task.id);
       const repassParity = ctx.parityResults.get(task.id);
       if (repassParity?.parity === 'pass' || (repassParity && repassParity.issues.length === 0)) {
         ctx.logger.info(`Minor parity issues fully resolved for ${task.id}`);
+        await ctx.targetChanges.accept(repassScope);
       } else if (repassParity && repassParity.issues.every(i => i.severity === 'minor')) {
         ctx.logger.info(`${task.id} still has ${repassParity.issues.length} minor issue(s) — accepting`);
+        await ctx.targetChanges.accept(repassScope);
       } else {
         ctx.logger.warn(`${task.id} re-pass introduced non-minor issues — reverting`);
+        await ctx.targetChanges.rollback(repassScope);
         ctx.parityResults.set(task.id, currentResult);
       }
     } else {
+      await ctx.targetChanges.rollback(repassScope);
       ctx.logger.warn(`Code-migrator re-pass failed for ${task.id} — proceeding with existing minor issues`);
     }
   }
@@ -528,21 +594,11 @@ function buildPerTaskFlow(
     }));
     substepIds.push(commitId);
 
-    // Target index update (after commit, before parity)
-    const targetIndexId = `${task.id}/target-index`;
-    nodes.push(step<MigrationFlowContext>({
-      id: targetIndexId,
-      dependsOn: [commitId],
-      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'target-index', () =>
-        runTargetIndexSubstep(c.context, task)),
-    }));
-    substepIds.push(targetIndexId);
-
     // Parity + test writer
     const parityId = `${task.id}/parity`;
     nodes.push(step<MigrationFlowContext>({
       id: parityId,
-      dependsOn: [targetIndexId],
+      dependsOn: [commitId],
       run: (c) => runTrackedPhase4TaskSubstep(c, task, 'parity', () =>
         runParitySubstep(c.context, task)),
     }));
@@ -605,6 +661,17 @@ function buildPerTaskFlow(
       lastId = testId;
     }
 
+    // Publish to the target index only after every required quality gate.
+    const targetIndexId = `${task.id}/target-index`;
+    nodes.push(step<MigrationFlowContext>({
+      id: targetIndexId,
+      dependsOn: [lastId],
+      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'target-index', () =>
+        runTargetIndexSubstep(c.context, task)),
+    }));
+    substepIds.push(targetIndexId);
+    lastId = targetIndexId;
+
     // Completion marker for dependency tracking
     const completeId = `${task.id}/complete`;
     nodes.push(step<MigrationFlowContext>({
@@ -614,6 +681,7 @@ function buildPerTaskFlow(
         if (c.context.checkpoint.getState().completedTasks.includes(task.id)) return;
         await commitForTask(c.context, task);
         await completePhase4Tasks(c.context, [task], c.executionPath.join('/'));
+        await c.context.targetChanges.accept(c.context.targetChanges.scopeForTask(task.id));
       },
     }));
   }
@@ -644,11 +712,13 @@ function buildWaveBarrierFlow(
     // Wave start marker — emit lifecycle event
     const waveTasksCopy = waveTasks;
     const waveTaskIds = waveTasksCopy.map(t => t.id);
+    const targetChangeScope = `phase-4-wave-${w}`;
     const waveBatches = splitWaveIntoNonOverlappingBatches(waveTasksCopy);
     nodes.push(step<MigrationFlowContext>({
       id: `wave-${w}-start`,
       dependsOn: prevDep,
       run: async (c) => {
+        await c.context.targetChanges.begin(targetChangeScope);
         if (c.context.phase4Snapshot) c.context.phase4Snapshot.waveCount++;
         c.context.logger.info(`Wave ${w}: migrating ${waveTasksCopy.length} task(s)`);
         if (waveBatches.length > 1) {
@@ -751,6 +821,7 @@ function buildWaveBarrierFlow(
       run: async (c) => {
         const result = c.getStepOutput<WaveValidationResult>(`wave-${w}-validate`);
         if (result && !result.success) {
+          await rollbackScopeCandidate(c.context, targetChangeScope);
           await raiseTerminalExhaustion(c.context, {
             reasonCode: 'wave-convergence-exhausted', wave: w, check: 'wave-validation',
             summary: `Wave ${w} failed to converge after ${maxConvergenceLabel} iteration(s)`,
@@ -767,6 +838,7 @@ function buildWaveBarrierFlow(
         c.context.deferGitCommits = false;
         await commitForWave(c.context, w, waveTasksCopy.map(t => t.id));
         await completePhase4Tasks(c.context, waveTasksCopy);
+        await c.context.targetChanges.accept(targetChangeScope);
         c.context.deferGitCommits = true;
         c.context.logger.event({ type: 'wave-barrier-released', wave: w, duration: 0 });
         await c.context.progress.appendWaveLifecycle({ wave: w, milestone: 'barrier-released' });
@@ -804,6 +876,7 @@ function buildSyncEpochFlow(
     const epochTasks = epoch.tasks;
     const prevDep = e > 0 ? [`epoch-${e - 1}-commit`] : undefined;
     const epochTaskIds = epochTasks.map(t => t.id);
+    const targetChangeScope = `phase-4-epoch-${e}`;
     const epochBatches = splitWaveIntoNonOverlappingBatches(epochTasks);
     const isLastEpoch = e === epochs.length - 1;
     const runTestsThisEpoch = isLastEpoch || ((e + 1) % testEveryN === 0);
@@ -813,6 +886,7 @@ function buildSyncEpochFlow(
       id: `epoch-${e}-start`,
       dependsOn: prevDep,
       run: async (c) => {
+        await c.context.targetChanges.begin(targetChangeScope);
         if (c.context.phase4Snapshot) c.context.phase4Snapshot.waveCount++;
         c.context.logger.info(
           `Epoch ${e}: migrating ${epochTasks.length} task(s) spanning level(s) [${epoch.levels.join(', ')}]`,
@@ -915,6 +989,7 @@ function buildSyncEpochFlow(
       run: async (c) => {
         const result = c.getStepOutput<WaveValidationResult>(`epoch-${e}-validate`);
         if (result && !result.success) {
+          await rollbackScopeCandidate(c.context, targetChangeScope);
           await raiseTerminalExhaustion(c.context, {
             reasonCode: 'wave-convergence-exhausted', wave: e, check: 'epoch-validation',
             summary: `Epoch ${e} failed to converge after ${maxConvergenceLabel} iteration(s)`,
@@ -931,6 +1006,7 @@ function buildSyncEpochFlow(
         c.context.deferGitCommits = false;
         await commitForWave(c.context, e, epochTaskIds);
         await completePhase4Tasks(c.context, epochTasks);
+        await c.context.targetChanges.accept(targetChangeScope);
         c.context.deferGitCommits = true;
         c.context.logger.event({ type: 'epoch-sync-released', epoch: e, duration: 0 });
         await c.context.progress.appendWaveLifecycle({ wave: e, milestone: 'barrier-released' });
@@ -1343,17 +1419,20 @@ export async function buildPhase4Subflow(
     for (let waveIndex = 0; waveIndex < plannedWaves.length; waveIndex++) {
       for (const task of plannedWaves[waveIndex]!) {
         registerPhase4TaskScope(ctx, task.id, `${WAVE_BARRIER_FLOW_ID}/wave-${waveIndex}-`);
+        ctx.targetChanges.bindTask(task.id, `phase-4-wave-${waveIndex}`);
       }
     }
   } else if (executionMode === 'sync-epoch') {
     for (let epochIndex = 0; epochIndex < plannedEpochs.length; epochIndex++) {
       for (const task of plannedEpochs[epochIndex]!.tasks) {
         registerPhase4TaskScope(ctx, task.id, `${SYNC_EPOCH_FLOW_ID}/epoch-${epochIndex}-`);
+        ctx.targetChanges.bindTask(task.id, `phase-4-epoch-${epochIndex}`);
       }
     }
   } else {
     for (const task of sortedTasks) {
       registerPhase4TaskScope(ctx, task.id, `${PER_TASK_FLOW_ID}/${task.id}/`);
+      ctx.targetChanges.bindTask(task.id, task.id);
     }
   }
   await ctx.checkpoint.save(ctx.checkpoint.getState());

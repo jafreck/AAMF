@@ -140,7 +140,10 @@ describe('AgentLauncher token usage post-processing', () => {
   async function createHarness(configOverrides?: Parameters<typeof createMockConfig>[0]) {
     const tempDir = await mkdtemp(join(tmpdir(), 'aamf-agent-launcher-'));
     const contextPath = join(tempDir, 'context.json');
-    await writeFile(contextPath, JSON.stringify({ outputPath: join(tempDir, 'out') }), 'utf-8');
+    const outputDir = join(tempDir, 'out');
+    await mkdir(outputDir);
+    await writeFile(join(outputDir, 'artifact.txt'), 'artifact', 'utf-8');
+    await writeFile(contextPath, JSON.stringify({ outputPath: outputDir }), 'utf-8');
 
     const config = createMockConfig({
       projectName: 'launcher-test',
@@ -509,7 +512,7 @@ describe('AgentLauncher token usage post-processing', () => {
     expect(result.extensions.tokenUsageSource).toBe('copilot-jsonl');
   });
 
-  it('should retain success for a missing structured block but reject an invalid block', async () => {
+  it('should reject both missing and invalid structured output', async () => {
     const { launcher, contextPath } = await createHarness();
     const launchAgent = vi.fn()
       .mockResolvedValueOnce({
@@ -542,19 +545,118 @@ describe('AgentLauncher token usage post-processing', () => {
     const missing = await launcher.launchAgent(invocation);
     const invalid = await launcher.launchAgent(invocation);
 
-    expect(missing.success).toBe(true);
+    expect(missing.success).toBe(false);
     expect(missing.extensions.outputParsed).toBe(false);
-    expect(missing.extensions.parseError).toBeUndefined();
+    expect(missing.extensions.parseError).toBe('missing aamf-json block');
+    expect(missing.extensions.failureKind).toBe('structured-output');
     expect(invalid.success).toBe(false);
     expect(invalid.extensions.outputParsed).toBe(false);
     expect(invalid.extensions.parseError).toBeTruthy();
     expect(invalid.error).toContain('aamf-json parse failed');
   });
 
+  it.each([
+    {
+      name: 'accepts exit zero plus completed output and a required artifact',
+      agent: 'knowledge-builder' as const,
+      exitCode: 0,
+      processSuccess: true,
+      stdout: '```aamf-json\n{"status":"completed"}\n```',
+      removeArtifact: false,
+      expectedSuccess: true,
+      expectedFailureKind: undefined,
+    },
+    {
+      name: 'rejects a nonzero process result even when structured output says completed',
+      agent: 'knowledge-builder' as const,
+      exitCode: 1,
+      processSuccess: false,
+      stdout: '```aamf-json\n{"status":"completed"}\n```',
+      removeArtifact: false,
+      expectedSuccess: false,
+      expectedFailureKind: 'process',
+    },
+    {
+      name: 'rejects structured failed status after exit zero',
+      agent: 'knowledge-builder' as const,
+      exitCode: 0,
+      processSuccess: true,
+      stdout: '```aamf-json\n{"status":"failed"}\n```',
+      removeArtifact: false,
+      expectedSuccess: false,
+      expectedFailureKind: 'structured-output',
+    },
+    {
+      name: 'routes needs-review as an explicit non-success outcome',
+      agent: 'knowledge-builder' as const,
+      exitCode: 0,
+      processSuccess: true,
+      stdout: '```aamf-json\n{"status":"needs-review"}\n```',
+      removeArtifact: false,
+      expectedSuccess: false,
+      expectedFailureKind: 'review-required',
+    },
+    {
+      name: 'rejects a completed artifact-producing agent without an artifact',
+      agent: 'knowledge-builder' as const,
+      exitCode: 0,
+      processSuccess: true,
+      stdout: '```aamf-json\n{"status":"completed"}\n```',
+      removeArtifact: true,
+      expectedSuccess: false,
+      expectedFailureKind: 'required-artifact',
+    },
+    {
+      name: 'accepts a structured-only agent without an artifact',
+      agent: 'final-parity-checker' as const,
+      exitCode: 0,
+      processSuccess: true,
+      stdout: '```aamf-json\n{"status":"completed","fixes":[]}\n```',
+      removeArtifact: true,
+      expectedSuccess: true,
+      expectedFailureKind: undefined,
+    },
+  ])('$name', async ({
+    agent, exitCode, processSuccess, stdout, removeArtifact,
+    expectedSuccess, expectedFailureKind,
+  }) => {
+    const { launcher, contextPath, tempDir } = await createHarness();
+    if (removeArtifact) {
+      await writeFile(contextPath, JSON.stringify({ outputPath: join(tempDir, 'missing-output') }), 'utf-8');
+    }
+    (launcher as any).frameworkLauncher = {
+      init: vi.fn(),
+      launchAgent: vi.fn().mockResolvedValue({
+        exitCode,
+        success: processSuccess,
+        timedOut: false,
+        duration: 1,
+        stdout,
+        stderr: processSuccess ? '' : 'process failed',
+        tokenUsage: { input: 1, output: 1 },
+        outputPath: '',
+        outputExists: !removeArtifact,
+      }),
+    };
+
+    const result = await launcher.launchAgent({
+      agent,
+      contextPath,
+      outputPath: '',
+      phase: agent === 'final-parity-checker' ? 5 : 2,
+      workItemId: '',
+    });
+
+    expect(result.success).toBe(expectedSuccess);
+    expect(result.extensions.failureKind).toBe(expectedFailureKind);
+    expect(result.extensions.reviewRequired).toBe(
+      expectedFailureKind === 'review-required' ? true : undefined,
+    );
+  });
+
   it('should discover directory and file outputs declared by the context', async () => {
     const { launcher, contextPath, tempDir } = await createHarness();
     const outputDir = join(tempDir, 'out');
-    await mkdir(outputDir);
     await Promise.all([
       writeFile(join(outputDir, 'a.json'), '{}'),
       writeFile(join(outputDir, 'b.json'), '{}'),

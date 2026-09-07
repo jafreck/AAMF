@@ -33,7 +33,7 @@ afterEach(async () => {
 // ─── Phase 5 — Final Parity Verification ────────────────────────────────────
 
 describe('runFinalParityIteration', () => {
-  it('should return fixes: 0 when parity checker finds no issues', async () => {
+  it('should return a converged result when parity checker finds no issues', async () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'final-parity-checker') {
         return { extensions: { outputParsed: true, structuredOutput: { fixes: [] } } };
@@ -44,7 +44,7 @@ describe('runFinalParityIteration', () => {
 
     const result = await runFinalParityIteration(env.flowCtx);
 
-    expect(result).toEqual({ fixes: 0 });
+    expect(result).toEqual({ detected: 0, applied: 0, failed: 0, remaining: 0 });
   });
 
   it('should return fixes count and launch code-migrator for each fix', async () => {
@@ -67,7 +67,7 @@ describe('runFinalParityIteration', () => {
 
     const result = await runFinalParityIteration(env.flowCtx);
 
-    expect(result.fixes).toBe(2);
+    expect(result).toEqual({ detected: 2, applied: 2, failed: 0, remaining: 2 });
     const codeMigratorInPhase6 = env.mockLauncher.invocations.filter(
       i => i.agent === 'code-migrator' && i.phase === 5,
     );
@@ -114,14 +114,14 @@ describe('noFixesNeeded', () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
     // Mock getStepOutput to simulate framework providing the last iteration result
-    (env.flowCtx as any).getStepOutput = () => ({ fixes: 0 });
+    (env.flowCtx as any).getStepOutput = () => ({ detected: 0, applied: 0, failed: 0, remaining: 0 });
     expect(noFixesNeeded(env.flowCtx)).toBe(true);
   });
 
   it('should return false when last iteration had fixes', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
-    (env.flowCtx as any).getStepOutput = () => ({ fixes: 3 });
+    (env.flowCtx as any).getStepOutput = () => ({ detected: 3, applied: 3, failed: 0, remaining: 3 });
     expect(noFixesNeeded(env.flowCtx)).toBe(false);
   });
 
@@ -210,12 +210,11 @@ describe('launchE2eSuiteWriters', () => {
     expect(suiteIds).toContain('suite-002');
   });
 
-  it('should succeed with zero suites when no plan exists', async () => {
+  it('should fail when the required suite plan does not exist', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
-    // No test plan file → zero suites
-    await expect(launchE2eSuiteWriters(env.flowCtx)).resolves.toBeDefined();
+    await expect(launchE2eSuiteWriters(env.flowCtx)).rejects.toThrow(/Phase 6.*failed/);
 
     const testWriterInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'test-writer');
     expect(testWriterInvocations).toHaveLength(0);

@@ -16,6 +16,7 @@ import { extractCadreJsonWithError } from '@cadre-dev/framework/runtime';
  */
 export const AamfOutputBase = z.object({
   status: z.enum(['completed', 'failed', 'needs-review']),
+  outputFiles: z.array(z.string().min(1)).default([]),
   taskId: z.string().min(1).optional(),
   tokenUsage: z.object({
     prompt: z.number().int(),

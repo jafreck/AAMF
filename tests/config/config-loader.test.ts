@@ -161,4 +161,18 @@ describe('Config Loader', () => {
     const config = await loadConfig(configPath);
     expect(config.options.qualityPolicy).toBe('balanced');
   });
+
+  it('deeply freezes normalized configuration and CLI overrides', async () => {
+    const configPath = join(tempDir, 'migration.config.json');
+    await writeFile(configPath, JSON.stringify(validConfig));
+    const config = await loadConfig(configPath);
+    const overridden = applyOverrides(config, { dryRun: true });
+
+    expect(Object.isFrozen(config)).toBe(true);
+    expect(Object.isFrozen(config.source)).toBe(true);
+    expect(Object.isFrozen(config.options)).toBe(true);
+    expect(Object.isFrozen(config.options.git)).toBe(true);
+    expect(Object.isFrozen(overridden)).toBe(true);
+    expect(Object.isFrozen(overridden.options)).toBe(true);
+  });
 });

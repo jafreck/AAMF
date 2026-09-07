@@ -19,7 +19,7 @@ import { MigrationConfig } from '../config/schema.js';
 import { ensureDir, atomicWrite, fileExists } from '../util/fs.js';
 import { parseAamfOutput, MISSING_BLOCK_ERROR } from '../agents/agent-output-schemas.js';
 import { parseTokenUsage } from '../agents/token-usage-parser.js';
-import { getOutputSchema } from '../agents/registry.js';
+import { AGENT_REGISTRY, getOutputSchema } from '../agents/registry.js';
 import { Logger } from '../logging/logger.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { buildRuntimePaths } from './runtime-paths.js';
@@ -244,15 +244,28 @@ async function detectOutputFiles(contextPath: string): Promise<string[]> {
     if (context.outputPath && await fileExists(context.outputPath)) {
       const s = await stat(context.outputPath);
       if (s.isDirectory()) {
-        const files = await readdir(context.outputPath);
-        return files.map(f => join(context.outputPath!, f));
+        return listFilesRecursively(context.outputPath);
       }
-      return [context.outputPath];
+      return s.isFile() ? [context.outputPath] : [];
     }
   } catch {
     // Context parsing failed, return empty
   }
   return [];
+}
+
+async function listFilesRecursively(directory: string): Promise<string[]> {
+  const files: string[] = [];
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listFilesRecursively(path));
+    } else if (entry.isFile()) {
+      files.push(path);
+    }
+  }
+  return files.sort();
 }
 
 // ─── Custom Copilot backend (--output-format json) ───────────────────────────
@@ -451,7 +464,7 @@ export function buildBackendRuntimeConfig(config: MigrationConfig): BackendRunti
   return {
     agent: {
       backend: backendName,
-      model: config.models?.default ?? config.agentBackend.model,
+      model: config.models.default,
       timeout: config.agentBackend.timeout,
       copilot: {
         cliCommand: backendName === 'copilot' ? config.agentBackend.cliCommand : undefined,
@@ -559,17 +572,40 @@ function finaliseResult(
   let structuredTokenUsage: AgentResult['tokenUsage'] = null;
   if (parseResult.parsed) {
     const parsedData = parseResult.data as Record<string, unknown>;
+    const status = parsedData.status as 'completed' | 'failed' | 'needs-review';
     agentResult.extensions.structuredOutput = parsedData;
     agentResult.extensions.outputParsed = true;
+    agentResult.extensions.structuredStatus = status;
     structuredTokenUsage = normalizeStructuredTokenUsage(parsedData.tokenUsage);
-  } else if (parseResult.error === MISSING_BLOCK_ERROR) {
-    logger.warn(`Agent ${agentResult.agent} did not emit an aamf-json block`);
-    agentResult.extensions.outputParsed = false;
+
+    if (status === 'failed') {
+      agentResult.success = false;
+      agentResult.extensions.failureKind = 'structured-output';
+      agentResult.error = 'Agent reported status "failed"';
+    } else if (status === 'needs-review') {
+      agentResult.success = false;
+      agentResult.extensions.failureKind = 'review-required';
+      agentResult.extensions.reviewRequired = true;
+      agentResult.error = 'Agent reported status "needs-review"';
+    } else if (!agentResult.success) {
+      agentResult.extensions.failureKind = 'process';
+    } else if (
+      AGENT_REGISTRY[agentResult.agent].artifactPolicy === 'required' &&
+      (agentResult.extensions.outputFiles?.length ?? 0) === 0
+    ) {
+      agentResult.success = false;
+      agentResult.extensions.failureKind = 'required-artifact';
+      agentResult.error = `Agent ${agentResult.agent} produced no required filesystem artifact`;
+    }
   } else {
     agentResult.extensions.outputParsed = false;
     agentResult.extensions.parseError = parseResult.error;
     agentResult.success = false;
+    agentResult.extensions.failureKind = 'structured-output';
     agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
+    if (parseResult.error === MISSING_BLOCK_ERROR) {
+      logger.warn(`Agent ${agentResult.agent} did not emit an aamf-json block`);
+    }
   }
 
   if (!hasMeaningfulTokenUsage(agentResult.tokenUsage)) {

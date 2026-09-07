@@ -32,6 +32,7 @@ import type {
 import type { EmbeddingProvider } from '@jafreck/lore';
 import type { KbServerProcess } from '../core/kb-server-process.js';
 import type { TargetIndexer } from '../core/target-indexer.js';
+import type { TargetChangeSetManager } from '../core/target-change-set.js';
 
 /** Parity result data extracted from parity-verifier aamf-json output. */
 export interface ParityResultData {
@@ -105,6 +106,7 @@ export interface MigrationFlowContext {
   readonly contextBuilder: ContextBuilder;
   readonly buildLimiter: ReturnType<typeof pLimit>;
   readonly gitLimiter: ReturnType<typeof pLimit>;
+  readonly targetChanges: TargetChangeSetManager;
 
   // ── Mutable run-time state ──
   /** KB server process - started during Phase 0 */

@@ -135,7 +135,10 @@ describe('launchMigrationPlanner', () => {
     await mkdir(planningDir, { recursive: true });
     const compilationUnitsFile = join(planningDir, 'compilation-units.json');
     await writeFile(compilationUnitsFile, JSON.stringify([
-      { id: 'cu-1', sourceFiles: ['src/main.py'], targetFiles: ['src/main.ts'], dependencies: [] },
+      {
+        id: 'cu-1', name: 'Main', targetPath: 'src',
+        sourceFiles: ['src/main.py'], dependsOn: [],
+      },
     ]));
 
     const result = await launchMigrationPlanner(env.flowCtx);

@@ -6,28 +6,22 @@
  * migration tasks, and phase tracking.
  */
 
+import type {
+  AgentName as ContractAgentName,
+  AgentPayloadByName,
+  TypedAgentContext,
+  TypedAgentContextByName,
+} from './contracts.js';
+
+export type { AgentPayloadByName, TypedAgentContext, TypedAgentContextByName };
+
 // ─── Agent Identity ──────────────────────────────────────────────────────────
 
 /** Lightweight alias for a JSON Schema object. */
 export type JsonSchema = Record<string, unknown>;
 
 /** All recognized agent names in the AAMF system. */
-export type AgentName =
-  | 'migration-orchestrator'
-  | 'knowledge-builder'
-  | 'migration-planner'
-  | 'adjudicator'
-  | 'code-migrator'
-  | 'parity-verifier'
-  | 'test-writer'
-  | 'parity-failure-resolver'
-  | 'final-parity-checker'
-  | 'e2e-test-crafter'
-  | 'documentation-writer'
-  | 'migration-runner'
-  | 'idiomatic-reviewer'
-  | 'idiomatic-planner'
-  | 'idiomatic-refactorer';
+export type AgentName = ContractAgentName;
 
 // ─── MCP Server Config ───────────────────────────────────────────────────────
 
@@ -113,6 +107,12 @@ export interface AgentResultExtensions {
   outputParsed?: boolean;
   /** Error message describing why output parsing failed, if applicable. */
   parseError?: string;
+  /** Parsed domain status reported by the agent. */
+  structuredStatus?: 'completed' | 'failed' | 'needs-review';
+  /** Why an invocation that may have exited successfully was rejected. */
+  failureKind?: 'process' | 'structured-output' | 'required-artifact' | 'review-required';
+  /** Signals that Cadre must route this result through review or recovery. */
+  reviewRequired?: boolean;
   /** Estimated premium requests consumed (Copilot only). */
   premiumRequests?: number;
   /** Structured event data from `copilot --output-format json`, when available. */
@@ -187,49 +187,8 @@ export interface AgentResult {
 
 // ─── Agent Context ───────────────────────────────────────────────────────────
 
-/**
- * Contextual data passed to an agent at invocation time.
- *
- * Serialised to JSON and written to `contextPath` so that the agent can
- * read its configuration, input files, and output expectations.
- */
-export interface AgentContext {
-  /** The agent this context is intended for. */
-  agent: AgentName;
-
-  /** Human-readable project name used for directory naming. */
-  projectName: string;
-
-  /** Current migration phase (1-based). */
-  phase: number;
-
-  /** Optional task identifier for task-scoped agents. */
-  taskId?: string;
-
-  /** Source and target configuration for the migration. */
-  config: {
-    /** Source project details. */
-    source: { path: string; language: string };
-    /** Target project details. */
-    target: { language: string; framework?: string; outputPath: string };
-  };
-
-  /** List of input file paths the agent should process. */
-  inputFiles: string[];
-
-  /** Directory or file path where the agent should write its output. */
-  outputPath: string;
-
-  /**
-   * User-provided migration guidance directives from the config file.
-   * Every agent receives the same array so it can respect project-specific
-   * constraints (e.g. "do not use wrapper crates").
-   */
-  guidance?: string[];
-
-  /** Arbitrary extra data specific to the invoking phase or agent. */
-  payload?: Record<string, unknown>;
-}
+/** Contextual JSON passed to agents, inferred from agent-specific Zod schemas. */
+export type AgentContext = TypedAgentContext;
 
 // ─── Execution Strategy ──────────────────────────────────────────────────────
 
@@ -538,6 +497,9 @@ export interface ModuleGroup {
 export interface MigrationResult {
   /** Whether every phase completed successfully. */
   success: boolean;
+
+  /** Terminal runtime state, including externally requested cancellation. */
+  status?: 'completed' | 'failed' | 'cancelled' | 'timed-out';
 
   /** Name of the project that was migrated. */
   projectName: string;

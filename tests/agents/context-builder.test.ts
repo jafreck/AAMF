@@ -7,7 +7,7 @@ import { AgentContext } from '../../src/agents/types.js';
 import { createMockConfig, createSilentLogger } from '../helpers/mocks.js';
 import { ensureDir, fileExists, readJson } from '../../src/util/fs.js';
 import type { RuntimePaths } from '../../src/core/runtime-paths.js';
-import { ALL_AGENT_NAMES } from '../../src/agents/registry.js';
+import { AGENT_REGISTRY, ALL_AGENT_NAMES } from '../../src/agents/registry.js';
 
 describe('ContextBuilder', () => {
   let tempDir: string;
@@ -745,7 +745,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route idiomatic-reviewer to target output dir', async () => {
-      const { contextPath } = await builder.buildContext('idiomatic-reviewer', 7);
+      const { contextPath } = await builder.buildContext('idiomatic-reviewer', 7, 'all');
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/target');
@@ -795,21 +795,16 @@ describe('ContextBuilder', () => {
       };
       const payload = {
         callerMarker: agent,
+        ...(agent === 'idiomatic-planner' ? { reviewFindings: { issues: [] } } : {}),
         ...(agent === 'idiomatic-refactorer' ? { task: { files: ['src/a.ts'] } } : {}),
       };
       const { contextPath } = await builder.buildContext(agent, phaseByAgent[agent] ?? 0, 'contract', payload);
       const context = await readJson<AgentContext>(contextPath);
       expect(context.agent).toBe(agent);
       expect(context.payload?.callerMarker).toBe(agent);
+      expect(() => AGENT_REGISTRY[agent].contextSchema.parse(context)).not.toThrow();
     });
 
-    it('should use default routing for unknown/orchestrator agents', async () => {
-      const { contextPath } = await builder.buildContext('migration-orchestrator', 1);
-      const context = await readJson<AgentContext>(contextPath);
-
-      expect(context.inputFiles).toContain('/tmp/source');
-      expect(context.outputPath).toBe(progressDir);
-    });
   });
 
   // ─── Guidance Propagation ──────────────────────────────────────────

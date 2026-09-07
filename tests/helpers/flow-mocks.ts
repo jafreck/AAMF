@@ -20,6 +20,7 @@ import { ReportGenerator } from '../../src/observability/report-generator.js';
 import { buildRuntimePaths } from '../../src/core/runtime-paths.js';
 import { ContextBuilder } from '../../src/agents/context-builder.js';
 import { ensureDir } from '../../src/util/fs.js';
+import { TargetChangeSetManager } from '../../src/core/target-change-set.js';
 import {
   createMockConfig,
   createMockLauncher,
@@ -192,7 +193,13 @@ export async function setupFlowTest(
   configOverrides?: Parameters<typeof createMockConfig>[0],
 ): Promise<FlowTestEnv> {
   const tempDir = await mkdtemp(join(tmpdir(), 'aamf-flow-test-'));
-  const config = createMockConfig(configOverrides);
+  const config = createMockConfig({
+    ...configOverrides,
+    target: {
+      ...configOverrides?.target,
+      outputPath: configOverrides?.target?.outputPath ?? join(tempDir, 'target'),
+    },
+  });
   const logger = createSilentLogger(tempDir);
   const paths = buildRuntimePaths(tempDir, config.projectName);
 
@@ -238,6 +245,7 @@ export async function setupFlowTest(
     contextBuilder,
     buildLimiter: pLimit(1),
     gitLimiter: pLimit(1),
+    targetChanges: new TargetChangeSetManager(config.target.outputPath, paths.stateDir, logger),
     kbServer: undefined,
     embedder: undefined,
     phase1TaskGraphResult: undefined,

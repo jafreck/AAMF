@@ -19,6 +19,7 @@ import {
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
   makeTask,
+  makeAgentResult,
   withParityOutput,
 } from '../../helpers/flow-mocks.js';
 import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
@@ -326,6 +327,56 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       );
       expect(migrators.length).toBeGreaterThanOrEqual(2);
       expect(parityRuns.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should restore target files when a minor re-pass introduces a major regression', async () => {
+      let targetFile = '';
+      let migratorCalls = 0;
+      let parityCalls = 0;
+      const launcherFn = async (invocation: AgentInvocation): Promise<AgentResult> => {
+        if (invocation.agent === 'code-migrator') {
+          migratorCalls++;
+          await mkdir(join(targetFile, '..'), { recursive: true });
+          await writeFile(targetFile, migratorCalls === 1 ? 'accepted candidate\n' : 'regressive candidate\n');
+          return makeAgentResult({
+            agent: invocation.agent,
+            workItemId: invocation.workItemId,
+            extensions: { outputFiles: [targetFile], outputParsed: true, structuredOutput: { status: 'completed' } },
+          });
+        }
+        if (invocation.agent === 'parity-verifier') {
+          parityCalls++;
+          const severity = parityCalls === 1 ? 'minor' : 'major';
+          return makeAgentResult({
+            agent: invocation.agent,
+            workItemId: invocation.workItemId,
+            extensions: {
+              outputParsed: true,
+              structuredOutput: {
+                status: 'completed', parity: 'partial',
+                issues: [{
+                  severity,
+                  description: `${severity} issue`,
+                  details: 'details',
+                  sourceLocation: 'src/auth.py:1',
+                  targetLocation: 'src/auth.ts:1',
+                }],
+              },
+            },
+          });
+        }
+        return makeAgentResult({ agent: invocation.agent, workItemId: invocation.workItemId });
+      };
+      env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
+      targetFile = join(env.ctx.config.target.outputPath, 'src', 'auth.ts');
+
+      const result = await runPhase4(env);
+
+      expect(result.status).toBe('completed');
+      expect(await readFile(targetFile, 'utf-8')).toBe('accepted candidate\n');
+      expect(env.ctx.parityResults.get('task-001')?.issues).toEqual([
+        expect.objectContaining({ severity: 'minor' }),
+      ]);
     });
   });
 

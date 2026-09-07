@@ -26,6 +26,8 @@ import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToP
 import { MigrationError } from '../flow/steps/shared.js';
 import type { MigrationFlowContext } from '../flow/index.js';
 import { getAgentsForPhase } from '../agents/registry.js';
+import { clearFreshRunArtifacts } from './run-provenance.js';
+import { TargetChangeSetManager } from './target-change-set.js';
 
 export interface RuntimeOptions {
   configPath: string;
@@ -36,6 +38,21 @@ export interface RuntimeOptions {
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
   /** Initialize only checkpoint inspection/reset services; never launch or generate agents. */
   stateOnly?: boolean;
+}
+
+export interface RuntimeAgentLauncher {
+  init(): Promise<void>;
+  launchAgent: AgentLauncher['launchAgent'];
+  getResolvedPath: AgentLauncher['getResolvedPath'];
+}
+
+export interface RuntimeDependencies {
+  createAgentLauncher?: (
+    config: MigrationConfig,
+    projectRoot: string,
+    logger: Logger,
+  ) => RuntimeAgentLauncher;
+  terminateActiveProcesses?: () => Promise<void>;
 }
 
 /**
@@ -85,7 +102,7 @@ export class MigrationRuntime {
   private logger!: Logger;
   private checkpoint!: CheckpointManager;
   private progress!: ProgressWriter;
-  private launcher!: AgentLauncher;
+  private launcher!: RuntimeAgentLauncher;
   private progressDir!: string;
   private paths!: ReturnType<typeof buildRuntimePaths>;
   private projectRoot!: string;
@@ -96,6 +113,11 @@ export class MigrationRuntime {
   private flowContext?: MigrationFlowContext;
   private abortController?: AbortController;
   private runLock?: MigrationRunLock;
+  private shutdownListeners: Array<{ event: NodeJS.Signals | 'exit'; listener: (...args: any[]) => void }> = [];
+  private shutdownInProgress = false;
+  private resourcesCleaned = false;
+
+  constructor(private readonly dependencies: RuntimeDependencies = {}) {}
 
   private getActiveRuntimeSettings(): {
     agentDir: string;
@@ -106,7 +128,7 @@ export class MigrationRuntime {
     if (this.config.agentBackend.runtime === 'claude-code') {
       return {
         agentDir: this.config.agentBackend.agentDir,
-        model: this.config.models?.default ?? this.config.agentBackend.model,
+        model: this.config.models?.default,
         agentFileSuffix: '.md',
         validateSchemaContract: false,
       };
@@ -114,7 +136,7 @@ export class MigrationRuntime {
 
     return {
       agentDir: this.config.agentBackend.agentDir,
-      model: this.config.models?.default ?? this.config.agentBackend.model,
+      model: this.config.models?.default,
       agentFileSuffix: '.agent.md',
       validateSchemaContract: true,
     };
@@ -177,7 +199,11 @@ export class MigrationRuntime {
     this.progress = new ProgressWriter(this.paths.progressReportFile, this.config.projectName);
 
     // 6. Create agent launcher
-    this.launcher = new AgentLauncher(this.config, this.projectRoot, this.logger);
+    this.launcher = this.dependencies.createAgentLauncher?.(
+      this.config,
+      this.projectRoot,
+      this.logger,
+    ) ?? new AgentLauncher(this.config, this.projectRoot, this.logger);
     await this.launcher.init();
 
     // 7. Generate agent definition files from shared templates
@@ -196,18 +222,21 @@ export class MigrationRuntime {
     this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName} (runId=${this.runId})`);
     this.logger.info(`Source: ${this.config.source.language} → Target: ${this.config.target.language}`);
 
-    // 9. Setup graceful shutdown
-    this.setupShutdownHandlers();
   }
 
   async run(): Promise<MigrationResult> {
     await this.acquireRunLock();
+    this.resourcesCleaned = false;
+    this.setupShutdownHandlers();
 
     try {
     // Load or create checkpoint.
     //   --from-phase implies resume for earlier phases (load existing checkpoint).
     //   resume=false (without --from-phase) forces a fresh start.
     const impliedResume = this.fromPhase !== undefined;
+    if (!this.config.options.dryRun && !this.config.options.resume && !impliedResume) {
+      await clearFreshRunArtifacts(this.paths);
+    }
     await this.checkpoint.load(this.config.projectName, {
       fresh: !this.config.options.resume && !impliedResume,
       reuseKb: this.config.options.reuseKb,
@@ -233,6 +262,7 @@ export class MigrationRuntime {
       await this.progress.appendEvent('Dry run — validation only');
       return {
         success: true,
+        status: 'completed',
         projectName: this.config.projectName,
         phases: [],
         totalDuration: 0,
@@ -261,6 +291,19 @@ export class MigrationRuntime {
 
     // Target codebase indexer
     const targetIndexer = new TargetIndexer(this.paths.kbTargetDbFile, this.config.target.outputPath, this.logger);
+    const targetChanges = new TargetChangeSetManager(
+      this.config.target.outputPath,
+      this.paths.stateDir ?? join(this.paths.root, 'state'),
+      this.logger,
+    );
+
+    const recoveredChangeSet = await targetChanges.recoverPending();
+    if (recoveredChangeSet) {
+      await targetIndexer.invalidate();
+      await this.invalidateRecoveredChangeSet(recoveredChangeSet);
+      this.progress.reconstructFromCheckpoint(this.checkpoint.getState());
+      this.logger.warn(`Invalidated target index after recovering ${recoveredChangeSet}`);
+    }
 
     // If the target DB already exists (resume), mark the indexer as built.
     if (await fileExists(this.paths.kbTargetDbFile)) {
@@ -284,6 +327,7 @@ export class MigrationRuntime {
       contextBuilder,
       buildLimiter,
       gitLimiter,
+      targetChanges,
       targetIndexer,
       peakConcurrency: 0,
       parityResults: new Map(),
@@ -318,6 +362,7 @@ export class MigrationRuntime {
     const startTime = Date.now();
     const phaseResults: PhaseResult[] = [];
     let aborted = false;
+    let flowTerminalStatus: 'completed' | 'failed' | 'cancelled' | 'timed-out' = 'completed';
 
     // Select the flow definition — truncate if --phase was specified
     const flow = this.phase != null
@@ -335,6 +380,7 @@ export class MigrationRuntime {
     try {
       const runnerOptions: FlowRunnerOptions<MigrationFlowContext> = {
         checkpoint: checkpointAdapter,
+        signal: this.abortController.signal,
       };
 
       const flowResult = await runner.run(flow, flowContext, runnerOptions);
@@ -356,6 +402,7 @@ export class MigrationRuntime {
       // Status may be 'failed', 'cancelled', or 'timed-out' in newer framework versions
       const status = flowResult.status as string;
       aborted = status === 'failed' || status === 'cancelled' || status === 'timed-out';
+      if (aborted) flowTerminalStatus = status as typeof flowTerminalStatus;
     } catch (err) {
       // Record the failed phase result if this was a MigrationError
       if (err instanceof MigrationError) {
@@ -369,20 +416,9 @@ export class MigrationRuntime {
         this.logger.error(`Flow execution failed: ${err instanceof Error ? err.message : String(err)}`);
       }
       aborted = true;
+      flowTerminalStatus = this.abortController.signal.aborted ? 'cancelled' : 'failed';
     } finally {
-      // Always clean up
-      if (flowContext.kbServer) {
-        try { await flowContext.kbServer.stop(); this.logger.info('KB server stopped'); } catch { /* ignore */ }
-        flowContext.kbServer = undefined;
-      }
-      if (flowContext.targetKbServer) {
-        try { await flowContext.targetKbServer.stop(); this.logger.info('Target KB server stopped'); } catch { /* ignore */ }
-        flowContext.targetKbServer = undefined;
-      }
-      if (flowContext.embedder) {
-        try { await flowContext.embedder.dispose(); } catch { /* ignore */ }
-        flowContext.embedder = undefined;
-      }
+      // Run-scoped resources are released by the outer lifecycle guard.
     }
 
     const totalDuration = Date.now() - startTime;
@@ -398,6 +434,7 @@ export class MigrationRuntime {
 
     const migrationResult: MigrationResult = {
       success: !aborted && phaseResults.every(r => r.success),
+      status: flowTerminalStatus,
       projectName: this.config.projectName,
       phases: phaseResults,
       totalDuration,
@@ -423,14 +460,33 @@ export class MigrationRuntime {
       this.logger.warn(`Failed to write observability report: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    this.flowContext = undefined;
-    this.abortController = undefined;
     await this.logger.flush();
     this.printSummary(migrationResult);
     return migrationResult;
     } finally {
+      await this.cleanupRuntimeResources();
+      this.flowContext = undefined;
+      this.abortController = undefined;
+      this.disposeShutdownHandlers();
+      try { await this.logger.flush(); } catch { /* best effort */ }
       await this.releaseRunLock();
     }
+  }
+
+  /** Request cancellation of the active Cadre run without sending a process signal. */
+  cancel(): void {
+    this.abortController?.abort();
+  }
+
+  /** Release any resources owned by this runtime instance. Safe to call repeatedly. */
+  async dispose(): Promise<void> {
+    this.abortController?.abort();
+    await this.cleanupRuntimeResources();
+    this.flowContext = undefined;
+    this.abortController = undefined;
+    this.disposeShutdownHandlers();
+    await this.releaseRunLock();
+    try { await this.logger?.flush(); } catch { /* best effort */ }
   }
 
   async getStatus(): Promise<string> {
@@ -630,7 +686,11 @@ export class MigrationRuntime {
   }
 
   private setupShutdownHandlers(): void {
+    this.disposeShutdownHandlers();
+    this.shutdownInProgress = false;
     const handler = async (signal: string) => {
+      if (this.shutdownInProgress) return;
+      this.shutdownInProgress = true;
       this.logger.warn(`Received ${signal} — shutting down gracefully`);
 
       // Kill child processes FIRST — the orchestrator holds references to
@@ -647,36 +707,10 @@ export class MigrationRuntime {
       shutdownTimeout.unref(); // don't prevent exit
 
       try {
-        if (this.flowContext) {
-          const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | void> =>
-            Promise.race([p, new Promise<void>(r => setTimeout(r, ms))]);
-          if (this.flowContext.kbServer) {
-            await withTimeout(this.flowContext.kbServer.stop(), 3_000);
-            this.flowContext.kbServer = undefined;
-          }
-          if (this.flowContext.targetKbServer) {
-            await withTimeout(this.flowContext.targetKbServer.stop(), 3_000);
-            this.flowContext.targetKbServer = undefined;
-          }
-          if (this.flowContext.embedder) {
-            try { await withTimeout(this.flowContext.embedder.dispose(), 3_000); } catch { /* ignore */ }
-            this.flowContext.embedder = undefined;
-          }
-        }
-        // Signal the flow runner to cancel
-        if (this.abortController) {
-          this.abortController.abort();
-        }
+        this.abortController?.abort();
+        await this.cleanupRuntimeResources(3_000);
       } catch {
         // Best-effort child process cleanup
-      }
-      // Kill any in-flight agent processes spawned via spawnWithTimeout.
-      // These are detached (own process group) so they survive parent exit
-      // unless explicitly killed.
-      try {
-        await killAllActiveProcesses();
-      } catch {
-        // Best-effort
       }
       try {
         await this.logger.flush();
@@ -686,15 +720,83 @@ export class MigrationRuntime {
         // Best-effort save
       }
       await this.releaseRunLock();
+      this.disposeShutdownHandlers();
       clearTimeout(shutdownTimeout);
       process.exit(signal === 'SIGINT' ? 130 : 143);
     };
-    
-    process.on('SIGINT', () => void handler('SIGINT'));
-    process.on('SIGTERM', () => void handler('SIGTERM'));
-    process.on('SIGHUP', () => void handler('SIGHUP'));
-    process.on('exit', () => {
+
+    const register = (event: NodeJS.Signals | 'exit', listener: (...args: any[]) => void): void => {
+      process.on(event, listener);
+      this.shutdownListeners.push({ event, listener });
+    };
+    register('SIGINT', () => void handler('SIGINT'));
+    register('SIGTERM', () => void handler('SIGTERM'));
+    register('SIGHUP', () => void handler('SIGHUP'));
+    register('exit', () => {
       this.releaseRunLockSync();
+    });
+  }
+
+  private disposeShutdownHandlers(): void {
+    for (const { event, listener } of this.shutdownListeners) {
+      process.off(event, listener);
+    }
+    this.shutdownListeners = [];
+  }
+
+  private async cleanupRuntimeResources(timeoutMs?: number): Promise<void> {
+    if (this.resourcesCleaned || !this.flowContext) return;
+    this.resourcesCleaned = true;
+    const settle = async (operation: () => void | Promise<void>): Promise<void> => {
+      try {
+        if (timeoutMs === undefined) {
+          await operation();
+        } else {
+          await Promise.race([
+            Promise.resolve(operation()),
+            new Promise<void>(resolve => setTimeout(resolve, timeoutMs)),
+          ]);
+        }
+      } catch {
+        // Cleanup is best-effort and continues in reverse acquisition order.
+      }
+    };
+
+    // Agent/command processes must stop mutating files before servers or
+    // embedders begin teardown.
+    await settle(this.dependencies.terminateActiveProcesses ?? killAllActiveProcesses);
+
+    const context = this.flowContext;
+
+    const targetServer = context.targetKbServer;
+    context.targetKbServer = undefined;
+    if (targetServer) await settle(() => targetServer.stop());
+
+    const sourceServer = context.kbServer;
+    context.kbServer = undefined;
+    if (sourceServer) await settle(() => sourceServer.stop());
+
+    const embedder = context.embedder;
+    context.embedder = undefined;
+    if (embedder) await settle(() => embedder.dispose());
+
+    const recoveredChangeSet = await context.targetChanges?.recoverPending().catch(() => undefined);
+    if (recoveredChangeSet && context.targetIndexer) {
+      await settle(() => context.targetIndexer!.invalidate());
+      await settle(() => this.invalidateRecoveredChangeSet(recoveredChangeSet));
+    }
+  }
+
+  private async invalidateRecoveredChangeSet(scopeId: string): Promise<void> {
+    const phase = scopeId.startsWith('phase-7-') ? 7
+      : scopeId.startsWith('phase-6-') ? 6
+        : scopeId.startsWith('phase-5-') ? 5
+          : scopeId.startsWith('phase-4-') ? 4
+            : scopeId.startsWith('phase-3-') ? 3
+              : 4;
+    await this.checkpoint.resetFromPhase(phase, nodeIdToPhase, {
+      requirePrerequisites: false,
+      maxPhase: MAX_PHASE,
     });
   }
 }

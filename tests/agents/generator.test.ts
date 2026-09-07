@@ -146,8 +146,8 @@ describe('Registry JSON schemas', () => {
         expect(schema.type).toBe('object');
         expect(Array.isArray(schema.required)).toBe(true);
         expect((schema.required as string[]).length).toBeGreaterThan(0);
-        // All agents require the base context fields
-        for (const field of ['contextFile', 'projectRoot', 'progressDir', 'phase']) {
+        // All agents receive the exact serialized context document.
+        for (const field of ['agent', 'projectName', 'phase', 'config', 'inputFiles', 'outputPath']) {
           expect(schema.required, `Missing base required field "${field}"`).toContain(field);
         }
       });
@@ -158,7 +158,7 @@ describe('Registry JSON schemas', () => {
         expect(Array.isArray(schema.required)).toBe(true);
         expect(schema.required).not.toContain('agent');
         expect(schema.required).toContain('status');
-        expect(schema.required).toContain('outputFiles');
+        expect(schema.required).not.toContain('outputFiles');
       });
     });
   }
@@ -340,6 +340,22 @@ describe('generateAgentDefinitions()', () => {
       const content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
       expect(content, `Unresolved {{#if}} in "${agentName}"`).not.toMatch(/\{\{#if\s+[\w-]+\}\}/);
       expect(content, `Unresolved {{/if}} in "${agentName}"`).not.toContain('{{/if}}');
+    }
+  });
+
+  it('should register only agents assigned to at least one Cadre phase', () => {
+    for (const agentName of ALL_AGENT_NAMES) {
+      expect(AGENT_REGISTRY[agentName].phases.length, `${agentName} has no runtime phase`).toBeGreaterThan(0);
+    }
+  });
+
+  it('should keep every generated agent single-purpose and runtime-owned', async () => {
+    for (const agentName of ALL_AGENT_NAMES) {
+      const content = await readFile(join(copilotDir, `${agentName}.agent.md`), 'utf-8');
+      expect(content, `${agentName} must not contain a peer CLI invocation`).not.toMatch(/\b(?:copilot|claude)\s+--agent\b/i);
+      expect(content, `${agentName} must not own Git commits`).not.toMatch(/git\s+commit\s+-m/i);
+      expect(content, `${agentName} must not update runtime progress`).not.toMatch(/Update\s+`?\.aamf\//i);
+      expect(content, `${agentName} must not describe launched sub-agents`).not.toContain('Sub-Agents (launched via CLI)');
     }
   });
 });

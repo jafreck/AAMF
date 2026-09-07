@@ -34,11 +34,13 @@ import { buildPhase4Subflow, computePhase4RunnerOptions } from './steps/migratio
 import {
   runFinalParityIteration,
   noFixesNeeded,
+  finalParityConverged,
 } from './steps/final-parity.js';
 import {
   launchE2eTestCrafter,
   launchE2eSuiteWriters,
   launchDocWriter,
+  promotePhase6Changes,
 } from './steps/finalization.js';
 import {
   runIdiomaticRefactorPipeline,
@@ -155,11 +157,16 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       ],
       until: noFixesNeeded,
     }),
+    gate<MigrationFlowContext>({
+      id: 'final-parity-convergence-gate',
+      dependsOn: ['final-parity-loop'],
+      evaluate: finalParityConverged,
+    }),
 
     // ── Phase 6 — E2E Testing & Documentation (parallel) ──
     step<MigrationFlowContext>({
       id: 'e2e-test-plan',
-      dependsOn: ['final-parity-loop'],
+      dependsOn: ['final-parity-convergence-gate'],
       run: launchE2eTestCrafter,
     }),
     parallel<MigrationFlowContext>({
@@ -180,11 +187,16 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
         ],
       },
     }),
+    step<MigrationFlowContext>({
+      id: 'phase-6-promote',
+      dependsOn: ['finalization'],
+      run: promotePhase6Changes,
+    }),
 
     // ── Phase 7 — Idiomatic Refactor (optional, task-graph approach) ──
     conditional<MigrationFlowContext>({
       id: 'idiomatic-refactor-gate',
-      dependsOn: ['finalization'],
+      dependsOn: ['phase-6-promote'],
       when: (ctx) => ctx.context.config.options.idiomaticRefactor?.enabled === true,
       then: [
         step<MigrationFlowContext>({
@@ -220,10 +232,12 @@ export function nodeIdToPhase(nodeId: string): number {
     'budget-check-4': 4,
     'final-parity-loop': 5,
     'final-parity-iteration': 5,
+    'final-parity-convergence-gate': 5,
     'e2e-test-plan': 6,
     'finalization': 6,
     'e2e-suite-writers': 6,
     'documentation-writer': 6,
+    'phase-6-promote': 6,
     'idiomatic-refactor-gate': 7,
     'idiomatic-refactor-pipeline': 7,
     'completion': 8,
@@ -241,8 +255,8 @@ export const PHASE_BOUNDARY_NODE_IDS: readonly string[] = [
   'budget-check-2',         // Phase 2
   'budget-check-3',         // Phase 3
   'budget-check-4',         // Phase 4
-  'final-parity-loop',      // Phase 5
-  'finalization',           // Phase 6
+  'final-parity-convergence-gate', // Phase 5
+  'phase-6-promote',        // Phase 6
   'idiomatic-refactor-gate', // Phase 7
   'completion',             // Phase 8
 ];

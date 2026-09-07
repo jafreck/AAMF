@@ -105,6 +105,28 @@ describe('runFinalParityIteration — failure paths', () => {
 
     await expect(runFinalParityIteration(env.flowCtx)).rejects.toThrow(/Phase 5.*failed/);
   });
+
+  it('fails and checkpoints evidence when a required fix fails', async () => {
+    const launcherFn = createMockLauncher((inv) => {
+      if (inv.agent === 'final-parity-checker') {
+        return {
+          extensions: { outputParsed: true, structuredOutput: {
+            fixes: [{ description: 'fix me', sourceFile: 'src/a.py', targetFile: 'src/a.ts' }],
+          } },
+        };
+      }
+      if (inv.agent === 'code-migrator') {
+        return { exitCode: 1, success: false, error: 'fix failed' };
+      }
+      return {};
+    });
+    env = await setupFlowTestWithTasks(launcherFn);
+
+    await expect(runFinalParityIteration(env.flowCtx)).rejects.toThrow(/Phase 5.*failed/);
+    expect(env.checkpoint.getState().phaseCursors?.['5']?.failedFixes).toEqual([
+      expect.objectContaining({ taskId: 'fix-0-0', error: 'fix failed' }),
+    ]);
+  });
 });
 
 // ─── Phase 6 — Finalization: suite retry & budget ────────────────────────────
@@ -148,7 +170,7 @@ describe('launchE2eSuiteWriters — budget and retry', () => {
     await expect(launchE2eSuiteWriters(env.flowCtx)).rejects.toThrow(/Phase 6.*failed/);
   });
 
-  it('should report suites: 0 when plan contains empty suites', async () => {
+  it('should fail required Phase 6 work when the plan contains no suites', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn, {
       target: { language: 'typescript', outputPath: env?.tempDir ?? '/tmp/target' },
@@ -160,8 +182,7 @@ describe('launchE2eSuiteWriters — budget and retry', () => {
     await mkdir(e2eDir, { recursive: true });
     await writeFile(join(e2eDir, 'e2e-test-plan.md'), '# E2E Test Plan\n\nNo suites here.\n');
 
-    const result = await launchE2eSuiteWriters(env.flowCtx);
-    expect((result as any).suites).toBe(0);
+    await expect(launchE2eSuiteWriters(env.flowCtx)).rejects.toThrow(/Phase 6.*failed/);
   });
 
   it('should skip completed suites when all are complete', async () => {
@@ -214,6 +235,15 @@ describe('launchDocWriter — failure path', () => {
 import { launchMigrationPlanner } from '../../../src/flow/steps/planning.js';
 
 describe('launchMigrationPlanner — extended', () => {
+  it('fails planning when requested adjudication fails', async () => {
+    const launcherFn = createFailingLauncher(['adjudicator']);
+    env = await setupFlowTest(launcherFn);
+    await writeFile(env.ctx.paths.competingStrategiesFile, '# Competing strategies');
+
+    await expect(launchMigrationPlanner(env.flowCtx)).rejects.toThrow(/Phase 3.*failed/);
+    expect(env.checkpoint.getState().phase3aComplete).toBe(false);
+  });
+
   it('should detect strategy-* variant artifacts and log warning', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
@@ -247,7 +277,7 @@ describe('launchMigrationPlanner — extended', () => {
     expect(scaffoldSkipLog).toBeDefined();
   });
 
-  it('should handle scaffold generation failure gracefully', async () => {
+  it('should fail required scaffold generation', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn);
 
@@ -256,14 +286,10 @@ describe('launchMigrationPlanner — extended', () => {
     await mkdir(planningDir, { recursive: true });
     await writeFile(join(planningDir, 'compilation-units.json'), 'not json');
 
-    const warnSpy = vi.spyOn(env.logger, 'warn');
-    const result = await launchMigrationPlanner(env.flowCtx);
-    expect(result.success).toBe(true);
-
-    const failWarning = warnSpy.mock.calls.find(
-      c => typeof c[0] === 'string' && c[0].includes('Failed to generate scaffold'),
+    await expect(launchMigrationPlanner(env.flowCtx)).rejects.toThrow(
+      /Failed to generate required scaffold/,
     );
-    expect(failWarning).toBeDefined();
+    expect(env.checkpoint.getState().scaffoldComplete).toBe(false);
   });
 
   it('should verify scaffold builds when buildCommand is configured', async () => {
@@ -344,7 +370,7 @@ describe('launchMigrationPlanner — extended', () => {
       const result = await launchMigrationPlanner(env.flowCtx);
       expect(result.success).toBe(true);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Scaffold build verification failed'),
+        expect.stringContaining('[advisory:scaffold-verification]'),
       );
     } finally {
       spawnSpy.mockRestore();
@@ -357,15 +383,14 @@ describe('launchMigrationPlanner — extended', () => {
 import { runIdiomaticRefactorPipeline } from '../../../src/flow/steps/idiomatic-refactor.js';
 
 describe('runIdiomaticRefactorPipeline — failure paths', () => {
-  it('should return 0 tasks when all reviewer chunks fail', async () => {
+  it('should fail when a required reviewer chunk fails', async () => {
     const launcherFn = createFailingLauncher(['idiomatic-reviewer']);
     env = await setupFlowTest(launcherFn);
 
-    const result = await runIdiomaticRefactorPipeline(env.flowCtx);
-    expect(result).toEqual({ tasksCompleted: 0 });
+    await expect(runIdiomaticRefactorPipeline(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
   });
 
-  it('should return 0 tasks when structured output has no issues array', async () => {
+  it('should fail when a required reviewer omits structured issues', async () => {
     const launcherFn = createMockLauncher((inv) => {
       if (inv.agent === 'idiomatic-reviewer') {
         return {
@@ -376,8 +401,7 @@ describe('runIdiomaticRefactorPipeline — failure paths', () => {
     });
     env = await setupFlowTest(launcherFn);
 
-    const result = await runIdiomaticRefactorPipeline(env.flowCtx);
-    expect(result).toEqual({ tasksCompleted: 0 });
+    await expect(runIdiomaticRefactorPipeline(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
   });
 
   it('should throw when idiomatic-planner fails', async () => {
@@ -443,5 +467,36 @@ describe('runIdiomaticRefactorPipeline — failure paths', () => {
     } finally {
       spawnSpy.mockRestore();
     }
+  });
+
+  it('should not checkpoint a failed refactor task as completed', async () => {
+    const launcherFn = createMockLauncher((inv) => {
+      if (inv.agent === 'idiomatic-reviewer') {
+        return {
+          extensions: { outputParsed: true, structuredOutput: {
+            issues: [{ file: 'src/a.ts', location: '1', issue: 'test', suggestion: 'fix', details: 'details' }],
+          } },
+        };
+      }
+      if (inv.agent === 'idiomatic-planner') {
+        return {
+          extensions: { outputParsed: true, structuredOutput: {
+            tasks: [{
+              id: 'idiomatic-1', name: 'Fix style', description: 'Fix style', files: ['src/a.ts'],
+              issues: [{ file: 'src/a.ts', location: '1', issue: 'test', suggestion: 'fix' }],
+              dependencies: [],
+            }],
+          } },
+        };
+      }
+      if (inv.agent === 'idiomatic-refactorer') {
+        return { exitCode: 1, success: false, error: 'refactor failed' };
+      }
+      return {};
+    });
+    env = await setupFlowTest(launcherFn);
+
+    await expect(runIdiomaticRefactorPipeline(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
+    expect(env.checkpoint.getState().phaseCursors?.['7']?.completedTaskIds ?? []).not.toContain('idiomatic-1');
   });
 });

@@ -17,11 +17,13 @@ import { RetryExecutor } from '../../execution/retry.js';
 import { fileExists } from '../../util/fs.js';
 import {
   buildInvocation, launchAgentWithEvents, recordTokens,
-  commitForAgent, isGitAutomationEnabled,
+  commitForAgent, commitForPhase, isGitAutomationEnabled,
   getPhase6Cursor, savePhase6Cursor,
   assertPhaseSuccess,
 } from './shared.js';
 import { PHASE } from '../phases.js';
+
+const PHASE6_CHANGE_SCOPE = 'phase-6-finalization';
 
 // ─── Stage 1: E2E Test Plan ──────────────────────────────────────────
 
@@ -31,6 +33,8 @@ export async function launchE2eTestCrafter(
   const ctx = flowCtx.context;
   const phase6Cursor = getPhase6Cursor(ctx);
   const completedAgents = new Set(phase6Cursor.completedAgents);
+
+  await ctx.targetChanges.begin(PHASE6_CHANGE_SCOPE);
 
   if (completedAgents.has('e2e-test-crafter')) {
     return { agent: 'e2e-test-crafter', workItemId: '', exitCode: 0, success: true, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, extensions: {} };
@@ -74,13 +78,17 @@ export async function launchE2eSuiteWriters(
   if (await fileExists(planPath)) {
     suites = await parseE2eTestPlan(planPath);
   } else {
-    ctx.logger.warn('No e2e-test-plan.md; skipping suite fan-out');
-    return { suites: 0 };
+    assertPhaseSuccess({
+      phase: 6, name: 'E2E Testing & Documentation', success: false,
+      duration: 0, error: 'Required e2e-test-plan.md was not produced',
+    });
   }
 
   if (suites.length === 0) {
-    ctx.logger.warn('E2E plan contains zero suites');
-    return { suites: 0 };
+    assertPhaseSuccess({
+      phase: 6, name: 'E2E Testing & Documentation', success: false,
+      duration: 0, error: 'E2E plan contains zero suites',
+    });
   }
 
   const pendingSuites = suites.filter(s => !completedSuites.has(s.id));
@@ -145,6 +153,15 @@ export async function launchDocWriter(
   }
 
   return docResult;
+}
+
+/** Promote Phase 6 artifacts only after suite and documentation branches pass. */
+export async function promotePhase6Changes(
+  flowCtx: FlowExecutionContext<MigrationFlowContext>,
+): Promise<void> {
+  const ctx = flowCtx.context;
+  await commitForPhase(ctx, PHASE.FINALIZATION, 'validated E2E suites and documentation');
+  await ctx.targetChanges.accept(PHASE6_CHANGE_SCOPE);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
