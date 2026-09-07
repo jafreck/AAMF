@@ -67,6 +67,19 @@ beforeAll(async () => {
       }
     }
   }
+
+  // Lore 0.4 reads complexity data from symbol_metrics rather than deriving
+  // it from symbols, so seed one deterministic row for the metrics handler.
+  const metricSymbol = rwDb.prepare('SELECT id FROM symbols ORDER BY id LIMIT 1').get() as
+    | { id: number }
+    | undefined;
+  if (metricSymbol) {
+    rwDb.prepare(
+      `INSERT OR IGNORE INTO symbol_metrics
+         (symbol_id, line_count, param_count, cyclomatic, max_nesting)
+       VALUES (?, 20, 0, 1, 0)`,
+    ).run(metricSymbol.id);
+  }
   rwDb.close();
 
   db = openReadOnly(dbPath);
