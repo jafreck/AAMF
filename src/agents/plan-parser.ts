@@ -95,6 +95,7 @@ export function parseMigrationPlanContent(
     if (missing.length > 0) {
       logger.warn(`Task ${task.id} references non-existent dependencies: ${missing.join(', ')}`);
       danglingDeps.push({ taskId: task.id, missingDeps: missing });
+      task.dependencies = task.dependencies.filter(dep => dep === 'none' || validIds.has(dep));
     }
   }
 

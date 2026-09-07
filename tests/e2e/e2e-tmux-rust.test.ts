@@ -5,6 +5,7 @@ import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
+import { e2eRuntimePaths, keepE2eArtifacts, validateE2ePreflight } from '../helpers/e2e.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -27,7 +28,7 @@ const downloadDir = join(fixtureDir, 'tmux-src');
 const sourceRoot = join(downloadDir, TMUX_DIR);
 const configPath = join(fixtureDir, 'migration.config.json');
 const aamfRoot = join(fixtureDir, '.aamf');
-const progressDir = join(aamfRoot, 'migration', 'tmux-to-rust');
+const runtimePaths = e2eRuntimePaths(fixtureDir, 'tmux-to-rust');
 const tmpRoot = join(fixtureDir, 'tmp');
 const outputDir = join(tmpRoot, 'tmux-rust-output');
 
@@ -96,7 +97,6 @@ async function ensureTmuxSource(): Promise<void> {
  *   AAMF_E2E=1 npx vitest run tests/e2e/e2e-tmux-rust.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
-const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E tmux C → Rust Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -106,6 +106,7 @@ describe.skipIf(!runE2E)('E2E tmux C → Rust Migration', () => {
 
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
+    await validateE2ePreflight({ configPath, fixtureRoot: fixtureDir, expectedProjectName: 'tmux-to-rust' });
 
     const runtime = new MigrationRuntime();
     await runtime.initialize({
@@ -116,7 +117,7 @@ describe.skipIf(!runE2E)('E2E tmux C → Rust Migration', () => {
   }, 86_400_000); // 24-hour timeout — tmux is a large multi-module C codebase
 
   afterAll(async () => {
-    if (keepArtifacts) return;
+    if (keepE2eArtifacts) return;
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
   });
@@ -246,7 +247,7 @@ describe.skipIf(!runE2E)('E2E tmux C → Rust Migration', () => {
   // ── Progress & checkpoint artefacts ──────────────────────────────────────
 
   it('should create a checkpoint recording all phases complete', async () => {
-    const checkpointPath = join(progressDir, 'checkpoint.json');
+    const checkpointPath = runtimePaths.checkpointFile;
     expect(await fileExists(checkpointPath)).toBe(true);
 
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
@@ -257,12 +258,12 @@ describe.skipIf(!runE2E)('E2E tmux C → Rust Migration', () => {
   });
 
   it('should create a KB database file for Phase 0', async () => {
-    const kbDbPath = join(progressDir, 'kb.db');
+    const kbDbPath = runtimePaths.kbDbFile;
     expect(await fileExists(kbDbPath)).toBe(true);
   });
 
   it('should create progress.md covering every phase', async () => {
-    const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+    const progressMd = await readFile(runtimePaths.progressReportFile, 'utf-8');
     expect(progressMd).toContain('tmux-to-rust');
     expect(progressMd).toContain('KB Indexing');
     expect(progressMd).toContain('Iterative Migration');
@@ -270,7 +271,7 @@ describe.skipIf(!runE2E)('E2E tmux C → Rust Migration', () => {
   });
 
   it('should record wave-barrier execution in metrics output', async () => {
-    const summaryPath = join(progressDir, 'metrics', 'summary.json');
+    const summaryPath = runtimePaths.metricsSummaryFile;
     expect(await fileExists(summaryPath)).toBe(true);
 
     const summary = JSON.parse(await readFile(summaryPath, 'utf-8'));
@@ -280,7 +281,7 @@ describe.skipIf(!runE2E)('E2E tmux C → Rust Migration', () => {
   });
 
   it('should produce log files', async () => {
-    const logsDir = join(progressDir, 'logs');
+    const logsDir = runtimePaths.logsRuntimeDir;
     expect(await fileExists(logsDir)).toBe(true);
     const logs = await readdir(logsDir);
     expect(logs.length).toBeGreaterThan(0);
@@ -301,7 +302,7 @@ describe.skipIf(!runE2E)('E2E tmux C → Rust Migration', () => {
     const cargoFiles = outputFiles.filter(f => f.endsWith('Cargo.toml'));
     expect(cargoFiles.length).toBeGreaterThan(0);
 
-    const cargoContent = await readFile(join(outputDir, cargoFiles[0]), 'utf-8');
+    const cargoContent = await readFile(join(outputDir, cargoFiles[0]!), 'utf-8');
     expect(cargoContent).toMatch(/\[package\]/);
     expect(cargoContent).toMatch(/name\s*=/);
   });

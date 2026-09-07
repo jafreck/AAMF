@@ -46,7 +46,7 @@
   "target": {
     "language": "rust",
     "framework": "stable",
-    "outputPath": ".aamf/zstd-rust-output",
+    "outputPath": "tmp/zstd-rust-output",
     "buildCommand": "cargo build",
     "testCommand": "cargo test"
   },
@@ -63,13 +63,11 @@
     },
     "dryRun": false,
     "resume": false,
-    "keepArtifacts": true,
     "git": {
       "enabled": true,
       "autoInit": true
     },
     "kbIndex": {
-      "enabled": true,
       "embeddings": {
         "enabled": false
       },

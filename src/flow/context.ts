@@ -95,7 +95,7 @@ export interface MigrationFlowContext {
 
   // ── Infrastructure services ──
   readonly checkpoint: CheckpointManager;
-  readonly launcher: AgentLauncher;
+  readonly launcher: Pick<AgentLauncher, 'launchAgent' | 'getResolvedPath'>;
   readonly progress: ProgressWriter;
   readonly logger: Logger;
   readonly tokenTracker: TokenTracker;

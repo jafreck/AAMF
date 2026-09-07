@@ -11,7 +11,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { openDb, createVec0Tables, type Database, Qwen3EmbeddingProvider, type EmbeddingProvider } from '@jafreck/lore';
+import {
+  createVec0Tables,
+  DEFAULT_EMBEDDING_MODEL,
+  openDb,
+  TransformersJsProvider,
+  type Database,
+  type EmbeddingProvider,
+} from '@jafreck/lore';
 
 const ENABLED = process.env.AAMF_EMBEDDER === '1';
 
@@ -88,11 +95,11 @@ describe.skipIf(!ENABLED)('structural search (BM25)', () => {
     // BM25 scores from FTS5 are negative; more-relevant rows have a lower (more-negative) score.
     // After ORDER BY bm25(...) the results are most-relevant-first.
     for (let i = 1; i < results.length; i++) {
-      expect(results[i].score).toBeGreaterThanOrEqual(results[i - 1].score);
+      expect(results[i]!.score).toBeGreaterThanOrEqual(results[i - 1]!.score);
     }
 
     // The top result should contain 'calculate' in its name or signature.
-    const top = results[0];
+    const top = results[0]!;
     const seed = SEEDS.find(s => s.name === top.name)!;
     expect(seed.name.toLowerCase() + seed.signature.toLowerCase()).toContain('calculate');
   });
@@ -135,7 +142,8 @@ describe.skipIf(!ENABLED)('fused search (RRF k=60)', () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'aamf-search-rrf-'));
     db = openDb(join(tempDir, 'kb.db'));
-    embedder = Qwen3EmbeddingProvider('0.6B');
+    embedder = new TransformersJsProvider(DEFAULT_EMBEDDING_MODEL);
+    await embedder.init();
 
     createVec0Tables(db, embedder.dims);
 
@@ -199,7 +207,7 @@ describe.skipIf(!ENABLED)('fused search (RRF k=60)', () => {
     expect(fusedResults.length).toBeGreaterThan(0);
 
     // The top fused result must appear in at least one of the two layers.
-    const topId = fusedResults[0][0];
+    const topId = fusedResults[0]![0];
     const inStruct = structResults.some(r => r.id === topId);
     const inSem = semResults.some(r => r.id === topId);
     expect(inStruct || inSem).toBe(true);
@@ -207,7 +215,7 @@ describe.skipIf(!ENABLED)('fused search (RRF k=60)', () => {
     // Fused results should score better (or equal) to any single-layer result.
     // Verify RRF scores are sorted descending.
     for (let i = 1; i < fusedResults.length; i++) {
-      expect(fusedResults[i][1]).toBeLessThanOrEqual(fusedResults[i - 1][1]);
+      expect(fusedResults[i]![1]).toBeLessThanOrEqual(fusedResults[i - 1]![1]);
     }
   }, 120_000);
 });

@@ -38,8 +38,16 @@ import {
   selectModelForInvocation, applyRoutingCaps, getDefaultRoutingModel,
   storeParityResult, checkParityResult, hasNonMinorParityIssues,
   getParityIssueSummary, resolverReducedScope,
+  markPhase4Substep, markPhase4TaskStarted, getPhase4TaskDuration,
+  registerPhase4TaskScope,
   assertPhaseSuccess,
 } from './shared.js';
+import type { Phase4TaskSubstep } from '../phase4-substeps.js';
+import { PHASE } from '../phases.js';
+
+const PER_TASK_FLOW_ID = 'phase-4-per-task';
+const WAVE_BARRIER_FLOW_ID = 'phase-4-wave-barrier';
+const SYNC_EPOCH_FLOW_ID = 'phase-4-sync-epoch';
 
 type RoutingConfig = NonNullable<MigrationFlowContext['config']['models']['routing']>
   | NonNullable<MigrationFlowContext['config']['options']['modelRouting']>;
@@ -64,34 +72,79 @@ function buildWaveTaskBranch(
   const branchSteps: FlowNode<MigrationFlowContext>[] = [
     step<MigrationFlowContext>({
       id: `${task.id}/migrate`,
-      run: (c) => runMigrateSubstep(c.context, task, retryExec),
+      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'migrate', () =>
+        runMigrateSubstep(c.context, task, retryExec)),
     }),
     step<MigrationFlowContext>({
       id: `${task.id}/commit`,
-      run: (c) => runCommitSubstep(c.context, task),
+      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'commit', () =>
+        runCommitSubstep(c.context, task)),
     }),
     step<MigrationFlowContext>({
       id: `${task.id}/target-index`,
-      run: (c) => runTargetIndexSubstep(c.context, task),
+      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'target-index', () =>
+        runTargetIndexSubstep(c.context, task)),
     }),
     step<MigrationFlowContext>({
       id: `${task.id}/parity`,
-      run: (c) => runParitySubstep(c.context, task),
+      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'parity', () =>
+        runParitySubstep(c.context, task)),
     }),
   ];
   if (gateMode !== 'skip') {
     branchSteps.push(
       step<MigrationFlowContext>({
         id: `${task.id}/parity-gate`,
-        run: (c) => runParityGateSubstep(c.context, task),
+        run: (c) => runTrackedPhase4TaskSubstep(c, task, 'parity-gate', () =>
+          runParityGateSubstep(c.context, task)),
       }),
       step<MigrationFlowContext>({
         id: `${task.id}/minor-repass`,
-        run: (c) => runMinorRepassSubstep(c.context, task),
+        run: (c) => runTrackedPhase4TaskSubstep(c, task, 'minor-repass', () =>
+          runMinorRepassSubstep(c.context, task)),
       }),
     );
   }
   return branchSteps;
+}
+
+async function runTrackedPhase4TaskSubstep<T>(
+  flowCtx: FlowExecutionContext<MigrationFlowContext>,
+  task: MigrationTask,
+  substep: Phase4TaskSubstep,
+  action: () => Promise<T>,
+): Promise<T> {
+  if (flowCtx.context.checkpoint.getState().completedTasks.includes(task.id)) {
+    return undefined as T;
+  }
+  if (substep === 'migrate') await markPhase4TaskStarted(flowCtx.context, task.id);
+  const result = await action();
+  await markPhase4Substep(flowCtx.context, task.id, substep, flowCtx.executionPath.join('/'));
+  return result;
+}
+
+async function completePhase4Tasks(
+  ctx: MigrationFlowContext,
+  tasks: MigrationTask[],
+  executionId?: string,
+): Promise<void> {
+  const alreadyCompleted = new Set(ctx.checkpoint.getState().completedTasks);
+  const newlyCompleted = tasks.filter(task => !alreadyCompleted.has(task.id));
+  await ctx.checkpoint.completeTasks(tasks.map(task => ({
+    taskId: task.id,
+    durationMs: getPhase4TaskDuration(ctx, task.id),
+    ...(tasks.length === 1 && executionId ? { executionId } : {}),
+  })));
+
+  for (const task of newlyCompleted) {
+    const duration = getPhase4TaskDuration(ctx, task.id) ?? 0;
+    await ctx.progress.updateTask(task.id, 'completed', {
+      sourceFiles: task.sourceFiles,
+      targetFiles: task.targetFiles,
+    });
+    ctx.logger.event({ type: 'task-completed', taskId: task.id, name: task.name, duration });
+  }
+  if (ctx.phase4Snapshot) ctx.phase4Snapshot.completedTaskCount += newlyCompleted.length;
 }
 
 function computeTargetOverlapPredecessors(tasks: MigrationTask[]): Map<string, string[]> {
@@ -142,12 +195,12 @@ async function runMigrateSubstep(
   ctx: MigrationFlowContext, task: MigrationTask, retryExec: RetryExecutor,
   remediationContext?: import('../../agents/types.js').RemediationContext,
 ): Promise<{ durationMs: number }> {
-  const migratorCtx = await ctx.contextBuilder.buildContext('code-migrator', 5, task.id, {
+  const migratorCtx = await ctx.contextBuilder.buildContext('code-migrator', PHASE.MIGRATION, task.id, {
     sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
     kbEntry: task.knowledgeBaseRef, ...taskScopePayload(task),
     ...(remediationContext ? { remediationContext: toAgentRemediationContext(remediationContext) } : {}),
   });
-  const migratorInv = buildInvocation(ctx, 'code-migrator', migratorCtx, 5, task.id, task);
+  const migratorInv = buildInvocation(ctx, 'code-migrator', migratorCtx, PHASE.MIGRATION, task.id, task);
   const fallbackModel = getFailureRecoveryModel(ctx);
   const routing = ctx.config.models?.routing ?? ctx.config.options.modelRouting;
   const initialRoutingDecision = routing?.enabled
@@ -208,23 +261,23 @@ async function runMigrateSubstep(
         artifactPaths: [...task.sourceFiles, ...task.targetFiles],
         expectedSuccessCondition: `code-migrator succeeds for ${taskId}`,
       });
-      const retryContext = await ctx.contextBuilder.buildContext('code-migrator', 5, task.id, {
+      const retryContext = await ctx.contextBuilder.buildContext('code-migrator', PHASE.MIGRATION, task.id, {
         sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
         kbEntry: task.knowledgeBaseRef, ...taskScopePayload(task),
         remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
       });
       migratorInv.contextPath = retryContext.contextPath;
       migratorInv.outputPath = retryContext.outputPath;
-      const recoveryCtx = await ctx.contextBuilder.buildContext('parity-failure-resolver', 5, taskId, {
-        failureReport: lastError, sourceFile: task.sourceFiles[0], targetFile: task.targetFiles[0],
+      const recoveryCtx = await ctx.contextBuilder.buildContext('parity-failure-resolver', PHASE.MIGRATION, taskId, {
+        failureReport: lastError, sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
         kbEntry: task.knowledgeBaseRef, attemptNumber: ctx.config.options.maxRetriesPerTask,
         ...taskScopePayload(task), remediationContext: toAgentRemediationContext(retryExhaustionRemediation),
       });
-      return buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, 5, taskId);
+      return buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, PHASE.MIGRATION, taskId);
     },
   });
 
-  recordTokens(ctx, migratorResult, 5);
+  recordTokens(ctx, migratorResult, PHASE.MIGRATION);
   if (!migratorResult.success) {
     await raiseTerminalExhaustion(ctx, {
       reasonCode: 'task-retries-exhausted', taskId: task.id,
@@ -239,7 +292,7 @@ async function runMigrateSubstep(
 async function runCommitSubstep(
   ctx: MigrationFlowContext, task: MigrationTask,
 ): Promise<void> {
-  await commitForAgent(ctx, 'code-migrator', 5, task.id, task.name);
+  await commitForAgent(ctx, 'code-migrator', PHASE.MIGRATION, task.id, task.name);
 }
 
 async function runTargetIndexSubstep(
@@ -260,22 +313,22 @@ async function runTargetIndexSubstep(
 async function runParitySubstep(
   ctx: MigrationFlowContext, task: MigrationTask,
 ): Promise<void> {
-  const parityCtx = await ctx.contextBuilder.buildContext('parity-verifier', 5, task.id, {
-    sourceFile: task.sourceFiles[0], targetFile: task.targetFiles[0], ...taskScopePayload(task),
+  const parityCtx = await ctx.contextBuilder.buildContext('parity-verifier', PHASE.MIGRATION, task.id, {
+    sourceFiles: task.sourceFiles, targetFiles: task.targetFiles, ...taskScopePayload(task),
   });
-  const testCtx = await ctx.contextBuilder.buildContext('test-writer', 5, task.id, {
-    targetFile: task.targetFiles[0], kbEntry: task.knowledgeBaseRef,
+  const testCtx = await ctx.contextBuilder.buildContext('test-writer', PHASE.MIGRATION, task.id, {
+    sourceFiles: task.sourceFiles, targetFiles: task.targetFiles, kbEntry: task.knowledgeBaseRef,
     testType: 'unit', ...taskScopePayload(task),
   });
   const parallelExec = new ParallelExecutor(2, (inv) => launchAgentWithEvents(ctx, inv), ctx.logger);
   const [parityResult, testResult] = await parallelExec.executeAll([
-    buildInvocation(ctx, 'parity-verifier', parityCtx, 5, task.id),
-    buildInvocation(ctx, 'test-writer', testCtx, 5, task.id),
+    buildInvocation(ctx, 'parity-verifier', parityCtx, PHASE.MIGRATION, task.id),
+    buildInvocation(ctx, 'test-writer', testCtx, PHASE.MIGRATION, task.id),
   ]);
   ctx.peakConcurrency = Math.max(ctx.peakConcurrency, parallelExec.peakConcurrency);
-  if (parityResult) { recordTokens(ctx, parityResult, 5); storeParityResult(ctx, parityResult, task.id); }
-  if (testResult) recordTokens(ctx, testResult, 5);
-  if (testResult?.success) await commitForAgent(ctx, 'test-writer', 5, task.id, task.name);
+  if (parityResult) { recordTokens(ctx, parityResult, PHASE.MIGRATION); storeParityResult(ctx, parityResult, task.id); }
+  if (testResult) recordTokens(ctx, testResult, PHASE.MIGRATION);
+  if (testResult?.success) await commitForAgent(ctx, 'test-writer', PHASE.MIGRATION, task.id, task.name);
 }
 
 async function runParityGateSubstep(
@@ -309,26 +362,26 @@ async function runParityGateSubstep(
         taskId: task.id, check: 'parity-verifier', summary: enrichedSummary,
       });
 
-      const recoveryCtx = await ctx.contextBuilder.buildContext('parity-failure-resolver', 5, task.id, {
-        failureReport: enrichedSummary, sourceFile: task.sourceFiles[0], targetFile: task.targetFiles[0],
+      const recoveryCtx = await ctx.contextBuilder.buildContext('parity-failure-resolver', PHASE.MIGRATION, task.id, {
+        failureReport: enrichedSummary, sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
         kbEntry: task.knowledgeBaseRef, attemptNumber: attempt,
         ...taskScopePayload(task), remediationContext: toAgentRemediationContext(parityRemediation),
       });
-      const recoveryInv = buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, 5, task.id);
+      const recoveryInv = buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, PHASE.MIGRATION, task.id);
       const recoveryResult = await launchAgentWithEvents(ctx, recoveryInv);
-      recordTokens(ctx, recoveryResult, 5);
+      recordTokens(ctx, recoveryResult, PHASE.MIGRATION);
       if (!recoveryResult.success) { ctx.logger.warn(`Parity-failure-resolver failed for ${task.id} on attempt ${attempt}`); continue; }
       if (resolverReducedScope(recoveryResult)) {
         ctx.logger.info(`Resolver adjudicated remaining issues as out-of-scope for ${task.id}`);
         parityPassed = true; break;
       }
-      await commitForAgent(ctx, 'parity-failure-resolver', 5, task.id, task.name);
+      await commitForAgent(ctx, 'parity-failure-resolver', PHASE.MIGRATION, task.id, task.name);
 
-      const reParityCtx = await ctx.contextBuilder.buildContext('parity-verifier', 5, task.id, {
-        sourceFile: task.sourceFiles[0], targetFile: task.targetFiles[0], ...taskScopePayload(task),
+      const reParityCtx = await ctx.contextBuilder.buildContext('parity-verifier', PHASE.MIGRATION, task.id, {
+        sourceFiles: task.sourceFiles, targetFiles: task.targetFiles, ...taskScopePayload(task),
       });
-      const reParityResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'parity-verifier', reParityCtx, 5, task.id));
-      recordTokens(ctx, reParityResult, 5);
+      const reParityResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'parity-verifier', reParityCtx, PHASE.MIGRATION, task.id));
+      recordTokens(ctx, reParityResult, PHASE.MIGRATION);
       storeParityResult(ctx, reParityResult, task.id);
       parityPassed = checkParityResult(ctx, task.id);
       if (parityPassed) { ctx.logger.info(`Parity recovered for ${task.id} on attempt ${attempt}`); break; }
@@ -367,20 +420,20 @@ async function runMinorRepassSubstep(
       artifactPaths: [...task.sourceFiles, ...task.targetFiles],
       expectedSuccessCondition: `All minor parity issues resolved for ${task.id}`,
     });
-    const repassCtx = await ctx.contextBuilder.buildContext('code-migrator', 5, task.id, {
+    const repassCtx = await ctx.contextBuilder.buildContext('code-migrator', PHASE.MIGRATION, task.id, {
       sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
       kbEntry: task.knowledgeBaseRef, ...taskScopePayload(task),
       remediationContext: toAgentRemediationContext(minorRemediation),
     });
-    const repassResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'code-migrator', repassCtx, 5, task.id));
-    recordTokens(ctx, repassResult, 5);
+    const repassResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'code-migrator', repassCtx, PHASE.MIGRATION, task.id));
+    recordTokens(ctx, repassResult, PHASE.MIGRATION);
     if (repassResult.success) {
-      await commitForAgent(ctx, 'code-migrator', 5, task.id, task.name);
-      const reParityCtx = await ctx.contextBuilder.buildContext('parity-verifier', 5, task.id, {
-        sourceFile: task.sourceFiles[0], targetFile: task.targetFiles[0], ...taskScopePayload(task),
+      await commitForAgent(ctx, 'code-migrator', PHASE.MIGRATION, task.id, task.name);
+      const reParityCtx = await ctx.contextBuilder.buildContext('parity-verifier', PHASE.MIGRATION, task.id, {
+        sourceFiles: task.sourceFiles, targetFiles: task.targetFiles, ...taskScopePayload(task),
       });
-      const reParityResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'parity-verifier', reParityCtx, 5, task.id));
-      recordTokens(ctx, reParityResult, 5);
+      const reParityResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'parity-verifier', reParityCtx, PHASE.MIGRATION, task.id));
+      recordTokens(ctx, reParityResult, PHASE.MIGRATION);
       storeParityResult(ctx, reParityResult, task.id);
       const repassParity = ctx.parityResults.get(task.id);
       if (repassParity?.parity === 'pass' || (repassParity && repassParity.issues.length === 0)) {
@@ -460,7 +513,8 @@ function buildPerTaskFlow(
     nodes.push(step<MigrationFlowContext>({
       id: migrateId,
       dependsOn: deps.size > 0 ? [...deps].map(d => `${d}/complete`) : undefined,
-      run: (c) => runMigrateSubstep(c.context, task, retryExec),
+      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'migrate', () =>
+        runMigrateSubstep(c.context, task, retryExec)),
     }));
     substepIds.push(migrateId);
 
@@ -469,7 +523,8 @@ function buildPerTaskFlow(
     nodes.push(step<MigrationFlowContext>({
       id: commitId,
       dependsOn: [migrateId],
-      run: (c) => runCommitSubstep(c.context, task),
+      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'commit', () =>
+        runCommitSubstep(c.context, task)),
     }));
     substepIds.push(commitId);
 
@@ -478,7 +533,8 @@ function buildPerTaskFlow(
     nodes.push(step<MigrationFlowContext>({
       id: targetIndexId,
       dependsOn: [commitId],
-      run: (c) => runTargetIndexSubstep(c.context, task),
+      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'target-index', () =>
+        runTargetIndexSubstep(c.context, task)),
     }));
     substepIds.push(targetIndexId);
 
@@ -487,7 +543,8 @@ function buildPerTaskFlow(
     nodes.push(step<MigrationFlowContext>({
       id: parityId,
       dependsOn: [targetIndexId],
-      run: (c) => runParitySubstep(c.context, task),
+      run: (c) => runTrackedPhase4TaskSubstep(c, task, 'parity', () =>
+        runParitySubstep(c.context, task)),
     }));
     substepIds.push(parityId);
 
@@ -498,7 +555,8 @@ function buildPerTaskFlow(
       nodes.push(step<MigrationFlowContext>({
         id: parityGateId,
         dependsOn: [parityId],
-        run: (c) => runParityGateSubstep(c.context, task),
+        run: (c) => runTrackedPhase4TaskSubstep(c, task, 'parity-gate', () =>
+          runParityGateSubstep(c.context, task)),
       }));
       substepIds.push(parityGateId);
 
@@ -506,7 +564,8 @@ function buildPerTaskFlow(
       nodes.push(step<MigrationFlowContext>({
         id: repassId,
         dependsOn: [parityGateId],
-        run: (c) => runMinorRepassSubstep(c.context, task),
+        run: (c) => runTrackedPhase4TaskSubstep(c, task, 'minor-repass', () =>
+          runMinorRepassSubstep(c.context, task)),
       }));
       substepIds.push(repassId);
       lastId = repassId;
@@ -517,7 +576,8 @@ function buildPerTaskFlow(
       nodes.push(step<MigrationFlowContext>({
         id: fmtId,
         dependsOn: [lastId],
-        run: (c) => runFormatSubstep(c.context, task),
+        run: (c) => runTrackedPhase4TaskSubstep(c, task, 'format', () =>
+          runFormatSubstep(c.context, task)),
       }));
       substepIds.push(fmtId);
       lastId = fmtId;
@@ -527,7 +587,8 @@ function buildPerTaskFlow(
       nodes.push(step<MigrationFlowContext>({
         id: buildId,
         dependsOn: [lastId],
-        run: (c) => runBuildSubstep(c.context, task),
+        run: (c) => runTrackedPhase4TaskSubstep(c, task, 'build', () =>
+          runBuildSubstep(c.context, task)),
       }));
       substepIds.push(buildId);
       lastId = buildId;
@@ -537,7 +598,8 @@ function buildPerTaskFlow(
       nodes.push(step<MigrationFlowContext>({
         id: testId,
         dependsOn: [lastId],
-        run: (c) => runTestSubstep(c.context, task),
+        run: (c) => runTrackedPhase4TaskSubstep(c, task, 'test', () =>
+          runTestSubstep(c.context, task)),
       }));
       substepIds.push(testId);
       lastId = testId;
@@ -549,14 +611,14 @@ function buildPerTaskFlow(
       id: completeId,
       dependsOn: [lastId],
       run: async (c) => {
-        await ctx.progress.updateTask(task.id, 'completed', { sourceFiles: task.sourceFiles, targetFiles: task.targetFiles });
-        ctx.logger.event({ type: 'task-completed', taskId: task.id, name: task.name, duration: 0 });
+        if (c.context.checkpoint.getState().completedTasks.includes(task.id)) return;
         await commitForTask(c.context, task);
+        await completePhase4Tasks(c.context, [task], c.executionPath.join('/'));
       },
     }));
   }
 
-  return defineFlow('phase-4-per-task', nodes);
+  return defineFlow(PER_TASK_FLOW_ID, nodes);
 }
 
 /**
@@ -704,6 +766,7 @@ function buildWaveBarrierFlow(
       run: async (c) => {
         c.context.deferGitCommits = false;
         await commitForWave(c.context, w, waveTasksCopy.map(t => t.id));
+        await completePhase4Tasks(c.context, waveTasksCopy);
         c.context.deferGitCommits = true;
         c.context.logger.event({ type: 'wave-barrier-released', wave: w, duration: 0 });
         await c.context.progress.appendWaveLifecycle({ wave: w, milestone: 'barrier-released' });
@@ -711,7 +774,7 @@ function buildWaveBarrierFlow(
     }));
   }
 
-  return defineFlow('phase-4-wave-barrier', nodes);
+  return defineFlow(WAVE_BARRIER_FLOW_ID, nodes);
 }
 
 /**
@@ -867,6 +930,7 @@ function buildSyncEpochFlow(
       run: async (c) => {
         c.context.deferGitCommits = false;
         await commitForWave(c.context, e, epochTaskIds);
+        await completePhase4Tasks(c.context, epochTasks);
         c.context.deferGitCommits = true;
         c.context.logger.event({ type: 'epoch-sync-released', epoch: e, duration: 0 });
         await c.context.progress.appendWaveLifecycle({ wave: e, milestone: 'barrier-released' });
@@ -874,7 +938,7 @@ function buildSyncEpochFlow(
     }));
   }
 
-  return defineFlow('phase-4-sync-epoch', nodes);
+  return defineFlow(SYNC_EPOCH_FLOW_ID, nodes);
 }
 
 /**
@@ -1100,21 +1164,40 @@ async function discoverTasks(
   ctx: MigrationFlowContext,
   input?: TaskGraphOutput,
 ): Promise<MigrationTask[] | null> {
-  if (input?.tasks && Array.isArray(input.tasks)) return input.tasks;
+  if (input?.tasks && Array.isArray(input.tasks)) return normalizeTaskDependencies(ctx, input.tasks);
   if (ctx.phase1TaskGraphResult?.extensions.outputParsed && Array.isArray(ctx.phase1TaskGraphResult.extensions.structuredOutput?.['tasks'])) {
-    return ctx.phase1TaskGraphResult.extensions.structuredOutput['tasks'] as MigrationTask[];
+    return normalizeTaskDependencies(
+      ctx,
+      ctx.phase1TaskGraphResult.extensions.structuredOutput['tasks'] as MigrationTask[],
+    );
   }
   const planPath = ctx.paths.migrationPlanFile;
   if (!(await fileExists(planPath))) {
     const mergedPlanPath = join(ctx.paths.artifactsPlanningDir, 'tasks-merged.json');
     if (await fileExists(mergedPlanPath)) {
       ctx.logger.warn('Task graph step output unavailable — falling back to tasks-merged.json');
-      return readJson<MigrationTask[]>(mergedPlanPath);
+      return normalizeTaskDependencies(ctx, await readJson<MigrationTask[]>(mergedPlanPath));
     }
     return null; // No plan found
   }
   ctx.logger.warn('Task graph step output unavailable — falling back to parseMigrationPlan');
   return parseMigrationPlan(planPath);
+}
+
+function normalizeTaskDependencies(
+  ctx: MigrationFlowContext,
+  tasks: MigrationTask[],
+): MigrationTask[] {
+  const taskIds = new Set(tasks.map(task => task.id));
+  return tasks.map(task => {
+    const dependencies = task.dependencies.filter(dependency => taskIds.has(dependency));
+    if (dependencies.length !== task.dependencies.length) {
+      const removed = task.dependencies.filter(dependency => !taskIds.has(dependency));
+      ctx.logger.warn(`Task ${task.id} references non-existent dependencies: ${removed.join(', ')}; dropping them`);
+      return { ...task, dependencies };
+    }
+    return task;
+  });
 }
 
 /**
@@ -1256,8 +1339,28 @@ export async function buildPhase4Subflow(
       )
     : [];
 
+  if (executionMode === 'wave-barrier') {
+    for (let waveIndex = 0; waveIndex < plannedWaves.length; waveIndex++) {
+      for (const task of plannedWaves[waveIndex]!) {
+        registerPhase4TaskScope(ctx, task.id, `${WAVE_BARRIER_FLOW_ID}/wave-${waveIndex}-`);
+      }
+    }
+  } else if (executionMode === 'sync-epoch') {
+    for (let epochIndex = 0; epochIndex < plannedEpochs.length; epochIndex++) {
+      for (const task of plannedEpochs[epochIndex]!.tasks) {
+        registerPhase4TaskScope(ctx, task.id, `${SYNC_EPOCH_FLOW_ID}/epoch-${epochIndex}-`);
+      }
+    }
+  } else {
+    for (const task of sortedTasks) {
+      registerPhase4TaskScope(ctx, task.id, `${PER_TASK_FLOW_ID}/${task.id}/`);
+    }
+  }
+  await ctx.checkpoint.save(ctx.checkpoint.getState());
+
   ctx.phase4Snapshot = {
-    executionMode, phase4DurationMs: 0, completedTaskCount: 0,
+    executionMode, phase4DurationMs: 0,
+    completedTaskCount: sortedTasks.filter(task => ctx.checkpoint.getState().completedTasks.includes(task.id)).length,
     plannedWaveCount: plannedWaves.length || plannedEpochs.length,
     waveCount: 0, waveValidationRuns: 0, waveConvergenceIterations: 0,
     waveConvergenceFailures: 0, waveConvergenceLimitHits: 0,
@@ -1417,29 +1520,29 @@ async function runWaveEndQualityGates(
         });
         parityRemediation.parityIssues = storedParityResult?.issues ?? [];
 
-        const recoveryCtx = await ctx.contextBuilder.buildContext('parity-failure-resolver', 5, task.id, {
-          failureReport: enrichedSummary, sourceFile: task.sourceFiles[0], targetFile: task.targetFiles[0],
+        const recoveryCtx = await ctx.contextBuilder.buildContext('parity-failure-resolver', PHASE.MIGRATION, task.id, {
+          failureReport: enrichedSummary, sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef, attemptNumber: attempt,
           ...taskScopePayload(task), remediationContext: toAgentRemediationContext(parityRemediation),
         });
-        const recoveryResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, 5, task.id));
-        recordTokens(ctx, recoveryResult, 5);
+        const recoveryResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, PHASE.MIGRATION, task.id));
+        recordTokens(ctx, recoveryResult, PHASE.MIGRATION);
         if (!recoveryResult.success) return;
 
-        const reMigrateCtx = await ctx.contextBuilder.buildContext('code-migrator', 5, task.id, {
+        const reMigrateCtx = await ctx.contextBuilder.buildContext('code-migrator', PHASE.MIGRATION, task.id, {
           sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
           kbEntry: task.knowledgeBaseRef, ...taskScopePayload(task),
           remediationContext: toAgentRemediationContext(parityRemediation),
         });
-        const reMigrateResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'code-migrator', reMigrateCtx, 5, task.id));
-        recordTokens(ctx, reMigrateResult, 5);
+        const reMigrateResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'code-migrator', reMigrateCtx, PHASE.MIGRATION, task.id));
+        recordTokens(ctx, reMigrateResult, PHASE.MIGRATION);
         if (!reMigrateResult.success) return;
 
-        const reParityCtx = await ctx.contextBuilder.buildContext('parity-verifier', 5, task.id, {
-          sourceFile: task.sourceFiles[0], targetFile: task.targetFiles[0], ...taskScopePayload(task),
+        const reParityCtx = await ctx.contextBuilder.buildContext('parity-verifier', PHASE.MIGRATION, task.id, {
+          sourceFiles: task.sourceFiles, targetFiles: task.targetFiles, ...taskScopePayload(task),
         });
-        const reParityResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'parity-verifier', reParityCtx, 5, task.id));
-        recordTokens(ctx, reParityResult, 5);
+        const reParityResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'parity-verifier', reParityCtx, PHASE.MIGRATION, task.id));
+        recordTokens(ctx, reParityResult, PHASE.MIGRATION);
         storeParityResult(ctx, reParityResult, task.id);
       }));
 

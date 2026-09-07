@@ -18,7 +18,7 @@ import {
 import { FlowRunner } from '@cadre-dev/framework/flow';
 import { Phase4CheckpointAdapter } from '../../../src/flow/checkpoint-adapter.js';
 import type { MigrationFlowContext } from '../../../src/flow/context.js';
-import type { MigrationTask } from '../../../src/agents/types.js';
+import type { AgentInvocation, MigrationTask } from '../../../src/agents/types.js';
 import {
   setupFlowTestWithTasks,
   createMockLauncher,
@@ -181,7 +181,7 @@ describe('buildPhase4Subflow — sync-epoch mode', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -190,6 +190,40 @@ describe('buildPhase4Subflow — sync-epoch mode', () => {
 
       const codeMigratorInvs = env.mockLauncher.invocations.filter(i => i.agent === 'code-migrator');
       expect(codeMigratorInvs.length).toBeGreaterThanOrEqual(2);
+      expect(env.checkpoint.getState().completedTasks).toEqual(['task-001', 'task-002']);
+      expect(env.checkpoint.getState().completedTaskDurationsMs).toHaveLength(2);
+      expect(env.ctx.phase4Snapshot?.completedTaskCount).toBe(2);
+      const taskState = env.checkpoint.getState().phaseCursors?.['4']?.tasks['task-001'];
+      expect(taskState?.scopeExecutionPrefix).toBe('phase-4-sync-epoch/epoch-0-');
+      expect(Object.values(taskState?.executionIds ?? {}).length).toBeGreaterThan(0);
+      expect(Object.values(taskState?.executionIds ?? {}).every(id =>
+        id?.startsWith('phase-4-sync-epoch/epoch-0-'),
+      )).toBe(true);
+    } finally {
+      spawnSpy.mockRestore();
+    }
+  });
+
+  it('should skip completed epoch tasks after checkpoint reload', async () => {
+    env = await setupFlowTestWithTasks(createMockLauncher(), DEFAULT_PLANNING_TASKS, {
+      options: {
+        executionMode: 'sync-epoch',
+        epochControl: { levelsPerSync: 2, testEveryNEpochs: 1, maxConvergenceIterations: 1 },
+        qualityPolicy: 'balanced',
+      },
+    });
+    const spawnMod = await import('../../../src/util/process.js');
+    const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
+    });
+
+    try {
+      await runPhase4(env);
+      env.mockLauncher.invocations.length = 0;
+      await env.checkpoint.load(env.ctx.config.projectName);
+      await runPhase4(env);
+      expect(env.mockLauncher.invocations).toHaveLength(0);
+      expect(env.checkpoint.getState().completedTasks).toEqual(['task-001', 'task-002']);
     } finally {
       spawnSpy.mockRestore();
     }
@@ -210,7 +244,7 @@ describe('buildPhase4Subflow — sync-epoch mode', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -263,14 +297,14 @@ describe('buildPhase4Subflow — sync-epoch mode', () => {
     });
 
     const origFn = env.mockLauncher.fn;
-    (env.mockLauncher as any).fn = async (inv: any) => {
+    env.mockLauncher.fn = async (inv: AgentInvocation) => {
       deferStates.push(env.ctx.deferGitCommits);
       return origFn(inv);
     };
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -329,7 +363,7 @@ describe('buildPhase4Subflow — sync-epoch mode', () => {
       const cmdStr = [cmd, ...(args ?? [])].join(' ');
       if (cmdStr.includes('build')) buildCalls.push(cmdStr);
       if (cmdStr.includes('test')) testCalls.push(cmdStr);
-      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false };
+      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0 };
     });
 
     try {
@@ -367,9 +401,9 @@ describe('buildPhase4Subflow — sync-epoch mode', () => {
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockImplementation(async () => {
       buildCallCount++;
       if (buildCallCount === 1) {
-        return { exitCode: 1, stdout: '', stderr: 'build failed', killed: false };
+        return { exitCode: 1, stdout: '', stderr: 'build failed', killed: false, duration: 0 };
       }
-      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false };
+      return { exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0 };
     });
 
     try {
@@ -399,7 +433,7 @@ describe('buildPhase4Subflow — sync-epoch mode', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 1, stdout: '', stderr: 'build always fails', killed: false,
+      exitCode: 1, stdout: '', stderr: 'build always fails', killed: false, duration: 0,
     });
 
     try {

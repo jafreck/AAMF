@@ -132,6 +132,8 @@ export interface AgentResultExtensions {
   queueDelay?: number;
   /** Time in milliseconds from process spawn to the first output file being detected. */
   spawnToFirstOutput?: number;
+  /** Source used for the authoritative token count. */
+  tokenUsageSource?: 'backend' | 'copilot-jsonl' | 'cli-parsed' | 'agent-reported' | 'estimated';
 }
 
 /**
@@ -668,6 +670,8 @@ export interface InvocationMetric {
   routingReason?: string;
   /** Incremental cost (USD) attributed to model escalation. */
   escalationCostUsd?: number;
+  /** Source used for the authoritative token count. */
+  tokenUsageSource?: AgentResultExtensions['tokenUsageSource'];
 }
 
 // ─── Model Routing ───────────────────────────────────────────────────────────

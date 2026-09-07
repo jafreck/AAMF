@@ -5,6 +5,7 @@ import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
+import { e2eRuntimePaths, keepE2eArtifacts, validateE2ePreflight } from '../helpers/e2e.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -30,7 +31,7 @@ const sourceRoot  = join(downloadDir, PROTOBUF_DIR);
 const upbDir      = join(sourceRoot, 'upb', 'upb');
 const configPath  = join(fixtureDir, 'migration.config.json');
 const aamfRoot    = join(fixtureDir, '.aamf');
-const progressDir = join(aamfRoot, 'migration', 'protobuf-upb-to-rust');
+const runtimePaths = e2eRuntimePaths(fixtureDir, 'protobuf-upb-to-rust');
 const tmpRoot     = join(fixtureDir, 'tmp');
 const outputDir   = join(tmpRoot, 'protobuf-upb-rust-output');
 
@@ -80,7 +81,6 @@ async function ensureUpbSource(): Promise<void> {
  * Run:  AAMF_E2E=1 npx vitest run tests/e2e-protobuf-upb-rust.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
-const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -89,6 +89,7 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
     await ensureUpbSource();
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
+    await validateE2ePreflight({ configPath, fixtureRoot: fixtureDir, expectedProjectName: 'protobuf-upb-to-rust' });
 
     const runtime = new MigrationRuntime();
     await runtime.initialize({ configPath, logLevel: 'info' });
@@ -96,7 +97,7 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
   }, 43_200_000); // 12-hour timeout -- ~40-50 K lines of C with complex interdependencies
 
   afterAll(async () => {
-    if (keepArtifacts) return;
+    if (keepE2eArtifacts) return;
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
   });
@@ -209,7 +210,7 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
   // -- Progress and checkpoint artefacts --
 
   it('should create a checkpoint recording all phases complete', async () => {
-    const checkpointPath = join(progressDir, 'checkpoint.json');
+    const checkpointPath = runtimePaths.checkpointFile;
     expect(await fileExists(checkpointPath)).toBe(true);
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
     expect(checkpoint.projectName).toBe('protobuf-upb-to-rust');
@@ -217,14 +218,14 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
   });
 
   it('should create progress.md covering every phase', async () => {
-    const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+    const progressMd = await readFile(runtimePaths.progressReportFile, 'utf-8');
     expect(progressMd).toContain('protobuf-upb-to-rust');
     expect(progressMd).toContain('Iterative Migration');
     expect(progressMd).toContain('Completion');
   });
 
   it('should produce log files', async () => {
-    const logsDir = join(progressDir, 'logs');
+    const logsDir = runtimePaths.logsRuntimeDir;
     expect(await fileExists(logsDir)).toBe(true);
     const logs = await readdir(logsDir);
     expect(logs.length).toBeGreaterThan(0);
@@ -243,7 +244,7 @@ describe.skipIf(!runE2E)('E2E protobuf upb C -> Rust Migration', () => {
     const outputFiles = (await readdir(outputDir, { recursive: true })) as string[];
     const cargoFiles = outputFiles.filter(f => f.endsWith('Cargo.toml'));
     expect(cargoFiles.length).toBeGreaterThan(0);
-    const cargoContent = await readFile(join(outputDir, cargoFiles[0]), 'utf-8');
+    const cargoContent = await readFile(join(outputDir, cargoFiles[0]!), 'utf-8');
     expect(cargoContent).toMatch(/\[package\]/);
     expect(cargoContent).toMatch(/name\s*=/);
   });

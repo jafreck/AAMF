@@ -13,9 +13,12 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit",
-    "ci:prepush": "tsc --noEmit",
-    "ci:local": "tsc --noEmit && vitest run --coverage",
+    "typecheck:prod": "tsc --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
+    "typecheck": "npm run typecheck:prod && npm run typecheck:test",
+    "lint": "npm run typecheck",
+    "ci:prepush": "npm run typecheck",
+    "ci:local": "npm run typecheck && vitest run --coverage",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "dependencies": {

@@ -3,6 +3,8 @@ import { atomicWrite, ensureDir, fileExists, readJson, writeJson } from '../util
 import { Logger } from '../logging/logger.js';
 import type { FlowCheckpointSnapshot } from '@cadre-dev/framework/flow';
 import type { TerminalReasonCode } from '../agents/types.js';
+import type { Phase4TaskSubstep } from '../flow/phase4-substeps.js';
+import { MAX_PHASE } from '../flow/phases.js';
 
 export interface TerminalExhaustionState {
   reasonCode: TerminalReasonCode;
@@ -13,8 +15,14 @@ export interface TerminalExhaustionState {
 }
 
 export interface Phase4TaskSubstepState {
-  completedSubsteps: string[];
-  lastSuccessfulStep?: string;
+  completedSubsteps: Phase4TaskSubstep[];
+  lastSuccessfulStep?: Phase4TaskSubstep;
+  /** Exact Cadre execution IDs keyed by task substep. */
+  executionIds?: Partial<Record<Phase4TaskSubstep, string>>;
+  /** Exact execution-ID prefix for the task's scheduling scope. */
+  scopeExecutionPrefix?: string;
+  /** Start of the current task attempt, reset when an incomplete task resumes. */
+  startedAtMs?: number;
 }
 
 export interface Phase4Cursor {
@@ -39,6 +47,12 @@ export interface Phase7Cursor {
   issueIndex: number;
   currentFile?: string;
   lastSuccessfulStep?: string;
+  /** Sidecar containing aggregated idiomatic-review findings. */
+  reviewArtifact?: string;
+  /** Sidecar containing the dependency-ordered idiomatic task graph. */
+  taskArtifact?: string;
+  /** Idiomatic task IDs completed before the latest checkpoint. */
+  completedTaskIds?: string[];
 }
 
 export interface PhaseCursorMap {
@@ -133,8 +147,17 @@ export class CheckpointManager {
     this.backupPath = `${this.stateDir}/checkpoint.backup.json`;
   }
 
-  /** Read the current checkpoint, or create initial state */
-  async load(projectName: string, options: { fresh?: boolean; reuseKb?: boolean } = {}): Promise<CheckpointState> {
+  /** Read the current checkpoint, or create initial state. */
+  async load(
+    projectName: string,
+    options: { fresh?: boolean; reuseKb?: boolean; readOnly?: boolean } = {},
+  ): Promise<CheckpointState> {
+    if (options.readOnly) {
+      const stored = await this.readStoredState();
+      this.state = stored ?? this.buildInitialState(projectName);
+      return this.state;
+    }
+
     await ensureDir(this.stateDir);
 
     if (options.fresh) {
@@ -226,6 +249,14 @@ export class CheckpointManager {
     return this.state;
   }
 
+  /**
+   * Inspect the persisted checkpoint without preparing it for resume, updating
+   * manager state, creating directories, rotating backups, or writing bytes.
+   */
+  async peek(): Promise<CheckpointState | undefined> {
+    return this.readStoredState();
+  }
+
   /** Get current state (throws if not loaded) */
   getState(): CheckpointState {
     if (!this.state) throw new Error('Checkpoint not loaded. Call load() first.');
@@ -267,27 +298,37 @@ export class CheckpointManager {
     await this.save(state);
   }
 
-  /** Mark a task as complete and checkpoint */
-  async completeTask(taskId: string, durationMs?: number): Promise<void> {
+  /** Mark a task as complete and checkpoint. */
+  async completeTask(taskId: string, durationMs?: number, executionId?: string): Promise<void> {
+    await this.completeTasks([{ taskId, durationMs, executionId }]);
+  }
+
+  /** Atomically mark a scheduling scope's tasks complete. */
+  async completeTasks(
+    tasks: Array<{ taskId: string; durationMs?: number; executionId?: string }>,
+  ): Promise<void> {
     const state = this.getState();
-    if (!state.completedTasks.includes(taskId)) {
-      state.completedTasks.push(taskId);
-    }
-    if (durationMs !== undefined) {
-      state.completedTaskDurationsMs.push(durationMs);
-    }
-    state.currentTask = null;
-    // Remove from failed if it was there
-    state.failedTasks = state.failedTasks.filter(f => f.taskId !== taskId);
-    // Remove from blocked if it was there
-    state.blockedTasks = state.blockedTasks.filter(id => id !== taskId);
     state.phaseCursors ??= {};
     state.phaseCursors['4'] ??= { tasks: {} };
-    state.phaseCursors['4'].tasks[taskId] ??= { completedSubsteps: [] };
-    if (!state.phaseCursors['4'].tasks[taskId].completedSubsteps.includes('completed')) {
-      state.phaseCursors['4'].tasks[taskId].completedSubsteps.push('completed');
+
+    for (const { taskId, durationMs, executionId } of tasks) {
+      const newlyCompleted = !state.completedTasks.includes(taskId);
+      if (newlyCompleted) {
+        state.completedTasks.push(taskId);
+        if (durationMs !== undefined) state.completedTaskDurationsMs.push(durationMs);
+      }
+      state.failedTasks = state.failedTasks.filter(f => f.taskId !== taskId);
+      state.blockedTasks = state.blockedTasks.filter(id => id !== taskId);
+
+      const taskState = state.phaseCursors['4'].tasks[taskId] ??= { completedSubsteps: [] };
+      if (!taskState.completedSubsteps.includes('complete')) taskState.completedSubsteps.push('complete');
+      taskState.lastSuccessfulStep = 'complete';
+      if (executionId) {
+        taskState.executionIds ??= {};
+        taskState.executionIds.complete = executionId;
+      }
     }
-    state.phaseCursors['4'].tasks[taskId].lastSuccessfulStep = 'completed';
+    state.currentTask = null;
     await this.save(state);
   }
 
@@ -407,11 +448,24 @@ export class CheckpointManager {
    * Requires that all phases 0..fromPhase-1 are already completed (or fromPhase === 0).
    * Throws if the prerequisite phases are missing.
    */
-  async resetFromPhase(fromPhase: number, nodeIdToPhase: (id: string) => number): Promise<void> {
+  async resetFromPhase(
+    fromPhase: number,
+    nodeIdToPhase: (id: string) => number,
+    options: { requirePrerequisites?: boolean; maxPhase?: number } = {},
+  ): Promise<void> {
     const state = this.getState();
+    const maxPhase = options.maxPhase ?? MAX_PHASE;
+    if (!Number.isInteger(fromPhase) || fromPhase < 0 || fromPhase > maxPhase) {
+      throw new Error(`Phase must be an integer from 0 through ${maxPhase}; received ${fromPhase}`);
+    }
+
+    if (fromPhase === 0) {
+      await this.resetAll(state.projectName);
+      return;
+    }
 
     // Validate prerequisites: all phases before fromPhase must be completed
-    if (fromPhase > 0) {
+    if (options.requirePrerequisites !== false) {
       const missing: number[] = [];
       for (let p = 0; p < fromPhase; p++) {
         if (!state.completedPhases.includes(p)) {
@@ -443,9 +497,6 @@ export class CheckpointManager {
     }
 
     // 5. Phase-specific state
-    if (fromPhase <= 0) {
-      state.phase0Fingerprint = undefined;
-    }
     if (fromPhase <= 2) {
       state.completedPhase2Groups = [];
     }
@@ -478,22 +529,46 @@ export class CheckpointManager {
       state.phaseCursors['7'] = { iteration: 0, issueIndex: 0 };
     }
 
+    // Explicit reset starts a new accounting window. Per-agent totals cannot
+    // be safely partitioned by phase, so reset all aggregate accounting.
+    state.tokenUsage = { total: 0, byPhase: {}, byAgent: {} };
+    state.metricsCount = 0;
+    state.cumulativeDurationMs = 0;
+
     // 6. Flow checkpoint — remove completedExecutionIds for phases >= fromPhase
     //    and reset status so the runner re-enters from the correct point.
     if (state.__flowCheckpoint && typeof state.__flowCheckpoint === 'object') {
       const fc = state.__flowCheckpoint as FlowCheckpointSnapshot<unknown> & { error?: unknown };
+      const getExecutionPhase = (executionId: string): number => {
+        for (const segment of executionId.split('/')) {
+          const phase = nodeIdToPhase(segment);
+          if (phase !== -1) return phase;
+        }
+        return -1;
+      };
       if (Array.isArray(fc.completedExecutionIds)) {
-        fc.completedExecutionIds = fc.completedExecutionIds.filter((id: string) => {
-          // Execution IDs are namespaced: "<flowId>/<nodeId>".
-          // Strip the prefix to get the bare node ID for phase lookup.
-          const slashIdx = id.indexOf('/');
-          const bareId = slashIdx >= 0 ? id.slice(slashIdx + 1) : id;
-          const phase = nodeIdToPhase(bareId);
+        const retainedExecutionIds = fc.completedExecutionIds.filter((id: string) => {
+          const phase = getExecutionPhase(id);
           // Keep nodes that belong to phases before fromPhase.
           // Keep unknown nodes (phase === -1) to be safe — they may be
           // internal framework nodes not mapped to any phase.
           return phase === -1 || phase < fromPhase;
         });
+        const retained = new Set(retainedExecutionIds);
+        fc.completedExecutionIds = retainedExecutionIds;
+        if (fc.executionOutputs && typeof fc.executionOutputs === 'object') {
+          const executionOutputs = fc.executionOutputs as Record<string, unknown>;
+          for (const id of Object.keys(executionOutputs)) {
+            if (!retained.has(id)) delete executionOutputs[id];
+          }
+        }
+      }
+      if (fc.outputs && typeof fc.outputs === 'object') {
+        const outputs = fc.outputs as Record<string, unknown>;
+        for (const nodeId of Object.keys(outputs)) {
+          const phase = getExecutionPhase(nodeId);
+          if (phase >= fromPhase) delete outputs[nodeId];
+        }
       }
       // Reset status so the Cadre runner re-enters from the correct point.
       if (fc.status === 'failed' || fc.status === 'completed') {
@@ -504,6 +579,15 @@ export class CheckpointManager {
 
     this.logger.info(`Reset checkpoint from phase ${fromPhase} onward — preserving phases [${state.completedPhases.join(', ')}]`);
     await this.save(state);
+    await this.syncBackupToCurrent();
+  }
+
+  /** Replace all executable state with the same state shape as a fresh run. */
+  async resetAll(projectName = this.getState().projectName): Promise<void> {
+    this.state = this.buildInitialState(projectName);
+    this.logger.info('Reset all migration state');
+    await this.save(this.state);
+    await this.syncBackupToCurrent();
   }
 
   /** Add token usage */
@@ -622,9 +706,8 @@ export class CheckpointManager {
    * Filter `__phase4FlowCheckpoint.completedExecutionIds` to only retain
    * entries for tasks listed in `completedTasks`.
    *
-   * Execution IDs for task substeps follow the pattern:
-   *   `{flowId}/.../{taskId}/{taskId}/{substep}`
-   * Non-task entries (epoch starts, sync points) are always kept.
+  * Exact execution IDs and scheduling-scope prefixes are registered while
+  * the Phase 4 flow is built and executed. No path-segment parsing is used.
    */
   private filterPhase4CompletedExecutionIds(state: CheckpointState): void {
     const fc = state.__phase4FlowCheckpoint;
@@ -635,25 +718,35 @@ export class CheckpointManager {
     if (!Array.isArray(ids) || ids.length === 0) return;
 
     const completedSet = new Set(state.completedTasks);
-    if (completedSet.size === ids.length) return; // all tasks completed, nothing to filter
+    const taskStates = state.phaseCursors?.['4']?.tasks ?? {};
+    const incompleteStates = Object.entries(taskStates)
+      .filter(([taskId]) => !completedSet.has(taskId))
+      .map(([, taskState]) => taskState);
+    if (incompleteStates.length === 0) return;
 
-    const filtered = ids.filter((id: string) => {
-      // Task substep IDs contain the task ID as a path segment.
-      // Detect by checking for known substep suffixes.
-      const lastSlash = id.lastIndexOf('/');
-      const substep = lastSlash >= 0 ? id.slice(lastSlash + 1) : id;
-      const TASK_SUBSTEPS = ['migrate', 'commit', 'target-index', 'parity', 'parity-gate', 'minor-repass'];
-      if (!TASK_SUBSTEPS.includes(substep)) return true; // not a task substep, keep
+    const exactIdsToRemove = new Set(
+      incompleteStates.flatMap(taskState => Object.values(taskState.executionIds ?? {}))
+        .filter((id): id is string => typeof id === 'string'),
+    );
+    const scopePrefixesToRemove = Array.from(new Set(
+      incompleteStates.map(taskState => taskState.scopeExecutionPrefix)
+        .filter((prefix): prefix is string => typeof prefix === 'string' && prefix.length > 0),
+    ));
 
-      // Extract the task ID: it's the segment before the substep's parent.
-      // Pattern: .../{taskId}/{taskId}/{substep}
-      const segments = id.split('/');
-      // The task ID is at segments[segments.length - 3] (branch key)
-      const taskId = segments.length >= 3 ? segments[segments.length - 3] : undefined;
-      if (!taskId) return true; // can't extract task ID, keep to be safe
+    // A pre-contract checkpoint cannot safely identify unfinished task nodes.
+    // Replaying the nested flow is safer than retaining ambiguous completions.
+    const hasUntrackedIncompleteState = incompleteStates.some(taskState =>
+      !taskState.scopeExecutionPrefix && Object.keys(taskState.executionIds ?? {}).length === 0,
+    );
+    if (hasUntrackedIncompleteState) {
+      state.__phase4FlowCheckpoint = undefined;
+      this.logger.info('Discarded legacy Phase 4 flow checkpoint with untracked incomplete task state');
+      return;
+    }
 
-      return completedSet.has(taskId);
-    });
+    const shouldRemove = (id: string): boolean =>
+      exactIdsToRemove.has(id) || scopePrefixesToRemove.some(prefix => id.startsWith(prefix));
+    const filtered = ids.filter((id): id is string => typeof id === 'string' && !shouldRemove(id));
 
     const removed = ids.length - filtered.length;
     if (removed > 0) {
@@ -662,17 +755,14 @@ export class CheckpointManager {
       if (snapshot.executionOutputs && typeof snapshot.executionOutputs === 'object') {
         const outputs = snapshot.executionOutputs as Record<string, unknown>;
         for (const key of Object.keys(outputs)) {
-          const lastSlash = key.lastIndexOf('/');
-          const substep = lastSlash >= 0 ? key.slice(lastSlash + 1) : key;
-          const TASK_SUBSTEPS = ['migrate', 'commit', 'target-index', 'parity', 'parity-gate', 'minor-repass'];
-          if (!TASK_SUBSTEPS.includes(substep)) continue;
-          const segments = key.split('/');
-          const taskId = segments.length >= 3 ? segments[segments.length - 3] : undefined;
-          if (taskId && !completedSet.has(taskId)) {
-            delete outputs[key];
-          }
+          if (shouldRemove(key)) delete outputs[key];
         }
       }
+      // Loop/conditional outputs are addressed by local node ID and can retain
+      // stale validation data. They are cheap to recompute on an incomplete scope.
+      snapshot.outputs = {};
+      snapshot.status = 'running';
+      snapshot.error = undefined;
       this.logger.info(
         `Removed ${removed} Phase 4 execution ID(s) for non-completed tasks ` +
         `(keeping ${filtered.length} for ${completedSet.size} completed task(s))`,
@@ -726,6 +816,27 @@ export class CheckpointManager {
       return this.backupPath;
     }
     return undefined;
+  }
+
+  /** Read primary or backup state and apply in-memory defaults without writing. */
+  private async readStoredState(): Promise<CheckpointState | undefined> {
+    const paths = [await this.resolveCheckpointReadPath(), await this.resolveBackupReadPath()]
+      .filter((path): path is string => !!path);
+    for (const path of paths) {
+      try {
+        const state = await readJson<CheckpointState>(path);
+        this.applyBackwardCompatibleDefaults(state);
+        return state;
+      } catch (err) {
+        this.logger.warn(`Failed to inspect checkpoint ${path}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return undefined;
+  }
+
+  private async syncBackupToCurrent(): Promise<void> {
+    const current = await readFile(this.checkpointPath, 'utf-8');
+    await atomicWrite(this.backupPath, current);
   }
 
   /** Attempt to load the prior checkpoint state without modifying this.state. */

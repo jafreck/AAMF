@@ -249,8 +249,8 @@ AAMF defines 16 specialized agent roles. Each corresponds to a `.agent.md` file 
 | `final-parity-checker` | 5 | Full-codebase parity sweep with loop-back fix capability |
 | `e2e-test-crafter` | 6 | Creates end-to-end integration tests |
 | `documentation-writer` | 6 | Produces migration documentation and guides |
-| `idiomatic-reviewer` | 8 | Reviews migrated code for target-language idiom violations |
-| `idiomatic-refactorer` | 8 | Refactors flagged non-idiomatic code patterns |
+| `idiomatic-reviewer` | 7 | Reviews migrated code for target-language idiom violations |
+| `idiomatic-refactorer` | 7 | Refactors flagged non-idiomatic code patterns |
 
 ---
 
@@ -258,7 +258,7 @@ AAMF defines 16 specialized agent roles. Each corresponds to a `.agent.md` file 
 
 ### Phase 0: KB Indexing
 
-When `options.kbIndex.enabled` is set (or `AAMF_USE_KB_INDEX=1`), the runtime uses `@jafreck/lore` to build a SQLite knowledge-base index from the source codebase. This phase:
+The runtime always uses `@jafreck/lore` in Phase 0 to build a SQLite knowledge-base index from the source codebase. This phase:
 
 1. Computes a source fingerprint and skips rebuilding if the hash matches a previous run.
 2. Walks the source tree with tree-sitter parsing (C, C++, C#, Go, Java, JavaScript, Python, Rust, TypeScript).
@@ -285,10 +285,11 @@ Phase 3 is a multi-step flow:
 
 ### Phase 4: Iterative Migration
 
-This is the core phase. The runtime supports two scheduler behaviors:
+This is the core phase. The runtime supports three scheduler behaviors:
 
 - **`per-task` (default):** migrate a batch of non-overlapping tasks, then run validation for each.
 - **`wave-barrier`:** run migration waves, then validate at a barrier with optional fix-wave convergence loops.
+- **`sync-epoch`:** merge dependency levels into epochs and run configurable build/test synchronization points.
 
 Both modes start from the same Lore-derived task graph, but they differ in where they place the "must still build here" checkpoints.
 
@@ -299,18 +300,14 @@ In both modes, the runtime:
 3. Uses a dependency-aware `TaskQueue` to select only ready tasks and adds target-overlap ordering where multiple tasks would otherwise write the same output file
 4. Executes migration work:
     - Spawns `code-migrator` with retry (up to `maxRetriesPerTask` attempts)
-    - On exhaustion, escalates to `failure-adjudicator` for decision-driven adjudication
-    - Applies adjudication outcomes:
-      - `fixed`: reruns targeted verification after applying the adjudicated fix path
-      - `false_positive`: records a waiver/fingerprint and unblocks without re-running the identical parity failure
-      - `real_gap`: forces remediation work before task completion can continue
-      - `inconclusive`: keeps strict retry/block behavior
+          - On exhaustion, invokes `parity-failure-resolver` with the full source and target file scope
+          - Applies the resolver's repair and reruns the targeted verification signal
 5. Classifies infrastructure errors (file-lock, OOM, disk-full, network, timeout, permission) separately from agent failures, retrying infra errors independently (up to `maxInfraRetries`)
 6. In `wave-barrier`, enforces a quiescent barrier before validation:
      - Computes topological waves from the task graph and splits each wave into non-overlapping target-file batches
      - Runs build/test once per wave
     - If validation fails, runs targeted fix waves and retries until convergence or `waveControl.maxConvergenceIterations`
-7. Tasks that fail all retries/adjudication or exceed convergence policy are marked **blocked** (with `continueOnBlocked`/`maxBlockedTasks` policy enforcement)
+7. Tasks that fail all retries/recovery or exceed convergence policy are marked **blocked** (with `continueOnBlocked`/`maxBlockedTasks` policy enforcement)
 8. Optionally commits migrated code per-task or per-wave via the git automation subsystem
 9. Emits wave lifecycle and convergence telemetry
 
@@ -372,16 +369,14 @@ npx aamf migrate -c migration.config.json --resume
 
 The orchestrator skips completed phases and resumes each phase from its saved cursor. A backup checkpoint (`state/checkpoint.backup.json`) is maintained for corruption recovery.
 
-### Retry & Failure Adjudication
+### Retry & Failure Recovery
 
 Failed agent invocations are retried up to `maxRetriesPerTask` times (default: 3). Infrastructure errors (file-lock, OOM, network, etc.) are retried separately up to `maxInfraRetries` without consuming agent-level retries.
 
-When all retries are exhausted, the `failure-adjudicator` agent returns a decision and runtime applies it:
-
-1. `fixed` → apply fix path and rerun targeted verifier checks
-2. `false_positive` → persist waiver/fingerprint evidence and unblock the task without repeating the same parity retry loop
-3. `real_gap` → force remediation/replanning before progressing
-4. `inconclusive` → preserve strict retry semantics; task is blocked if it still cannot be validated
+When retries are exhausted, `parity-failure-resolver` receives the complete
+task file arrays, failure artifacts, and prior-attempt context. A successful
+repair is followed by the relevant parity/build/test signal; unresolved work
+terminates according to the configured strictness and convergence limits.
 
 ### Graceful Shutdown
 
@@ -492,17 +487,12 @@ The `reports/progress.md` file is updated in real-time with a phase table, task-
 
 ## Artifact Retention
 
-By default, AAMF removes the `.aamf` checkpoint directory and the target output directory after a migration completes. To keep these artifacts for debugging or inspection:
-
-- **Config:** set `"keepArtifacts": true` in `options`.
-- **Environment variable:** set `AAMF_KEEP_ARTIFACTS=1` (takes precedence over config).
-
-```bash
-# Keep artifacts via env var
-AAMF_KEEP_ARTIFACTS=1 npx aamf migrate -c migration.config.json
-```
-
-See [runtime/README.md](runtime/README.md#artifact-retention) for full details on which directories are affected and precedence rules.
+AAMF always retains both `.aamf/migration/{projectName}/` and
+`target.outputPath`. The runtime never deletes migration state, logs, reports,
+knowledge-base files, or migrated output automatically. This preserves the
+checkpoint required by `--resume` and keeps the migration deliverable
+available for inspection. Cleanup is an explicit user operation; `aamf reset`
+resets checkpoint state but does not delete migrated output.
 
 ---
 
@@ -542,7 +532,7 @@ npm run build
 
 ### Configuration
 
-Create a `migration.config.json` in your project root. See [runtime/README.md](runtime/README.md#configuration) for the full field reference.
+Create a `migration.config.json` in your project root. See [docs/configuration.md](docs/configuration.md) for the full field reference.
 
 ### Usage
 

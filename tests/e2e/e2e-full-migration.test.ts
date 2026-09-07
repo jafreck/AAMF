@@ -4,12 +4,13 @@ import { fileURLToPath } from 'node:url';
 import { rm, readdir, readFile } from 'node:fs/promises';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
+import { e2eRuntimePaths, keepE2eArtifacts, validateE2ePreflight } from '../helpers/e2e.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const fixtureDir = join(__dirname, '..', 'fixtures', 'tiny-python-project');
 const configPath = join(fixtureDir, 'migration.config.json');
 const aamfRoot = join(fixtureDir, '.aamf');
-const progressDir = join(aamfRoot, 'migration', 'tiny-calc-migration');
+const runtimePaths = e2eRuntimePaths(fixtureDir, 'tiny-calc-migration');
 const tmpRoot = join(fixtureDir, 'tmp');
 const outputDir = join(tmpRoot, 'e2e-output');
 
@@ -26,7 +27,6 @@ const outputDir = join(tmpRoot, 'e2e-output');
  *   AAMF_E2E=1 npx vitest run tests/e2e-full-migration.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
-const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E Full Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -35,6 +35,7 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
     // Clean up any previous run artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(tmpRoot, { recursive: true, force: true });
+    await validateE2ePreflight({ configPath, fixtureRoot: fixtureDir, expectedProjectName: 'tiny-calc-migration' });
 
     // Run the full migration (all phases, no phase filter)
     const runtime = new MigrationRuntime();
@@ -46,7 +47,7 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
   }, 1_800_000); // 30-minute timeout for a full migration
 
   afterAll(async () => {
-    if (keepArtifacts) return;
+    if (keepE2eArtifacts) return;
     // Clean up artefacts created during the test (even after failures)
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(tmpRoot, { recursive: true, force: true });
@@ -133,7 +134,7 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
   // ── Progress & checkpoint artefacts ──────────────────────────────────────
 
   it('should create a checkpoint recording all phases complete', async () => {
-    const checkpointPath = join(progressDir, 'checkpoint.json');
+    const checkpointPath = runtimePaths.checkpointFile;
     expect(await fileExists(checkpointPath)).toBe(true);
 
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
@@ -142,14 +143,14 @@ describe.skipIf(!runE2E)('E2E Full Migration', () => {
   });
 
   it('should create progress.md covering every phase', async () => {
-    const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+    const progressMd = await readFile(runtimePaths.progressReportFile, 'utf-8');
     expect(progressMd).toContain('tiny-calc-migration');
     expect(progressMd).toContain('Iterative Migration');
     expect(progressMd).toContain('Completion');
   });
 
   it('should produce log files', async () => {
-    const logsDir = join(progressDir, 'logs');
+    const logsDir = runtimePaths.logsRuntimeDir;
     expect(await fileExists(logsDir)).toBe(true);
     const logs = await readdir(logsDir);
     expect(logs.length).toBeGreaterThan(0);

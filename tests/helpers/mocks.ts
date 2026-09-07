@@ -11,7 +11,44 @@ import {
 import { MigrationConfig, MigrationConfigSchema } from '../../src/config/schema.js';
 import { Logger } from '../../src/logging/logger.js';
 
+export type DeepPartial<T> = T extends readonly (infer Item)[]
+  ? DeepPartial<Item>[]
+  : T extends object
+    ? { [Key in keyof T]?: DeepPartial<T[Key]> }
+    : T;
+
+export type MockConfigOverrides = DeepPartial<MigrationConfig>;
+
 // ─── Mock Launcher Utilities ─────────────────────────────────────────────────
+
+export type AgentResultOverrides =
+  Partial<Omit<AgentResult, 'extensions'>> & {
+    extensions?: Partial<AgentResult['extensions']>;
+  };
+
+/** Create a complete AgentResult using the current runtime contract. */
+export function makeAgentResult(overrides: AgentResultOverrides = {}): AgentResult {
+  const { extensions, ...resultOverrides } = overrides;
+  return {
+    agent: 'code-migrator',
+    workItemId: 'task-001',
+    exitCode: 0,
+    success: true,
+    timedOut: false,
+    duration: 100,
+    stdout: '',
+    stderr: '',
+    tokenUsage: { input: 500, output: 200 },
+    outputPath: '',
+    outputExists: false,
+    ...resultOverrides,
+    extensions: {
+      outputFiles: [],
+      outputParsed: false,
+      ...extensions,
+    },
+  };
+}
 
 /** Create a mock launcher function that returns success by default. */
 export function createMockLauncher(
@@ -20,28 +57,21 @@ export function createMockLauncher(
     | ((inv: AgentInvocation) => Partial<AgentResult>),
 ): (inv: AgentInvocation) => Promise<AgentResult> {
   return async (inv: AgentInvocation): Promise<AgentResult> => {
-    const base: AgentResult = {
+    let invocationOverrides: Partial<AgentResult> = {};
+    if (typeof overrides === 'function') {
+      invocationOverrides = overrides(inv);
+    } else {
+      const agentOverrides = overrides?.[inv.agent];
+      if (agentOverrides) invocationOverrides = agentOverrides;
+    }
+
+    return makeAgentResult({
       agent: inv.agent,
       workItemId: inv.workItemId,
-      exitCode: 0,
-      success: true,
-      timedOut: false,
-      duration: 100,
-      stdout: '',
-      stderr: '',
-      tokenUsage: { input: 500, output: 200 },
       outputPath: inv.outputPath,
-      outputExists: false,
-      extensions: { outputParsed: false },
-    };
-
-    if (typeof overrides === 'function') {
-      return { ...base, ...overrides(inv) };
-    }
-    if (overrides && overrides[inv.agent]) {
-      return { ...base, ...overrides[inv.agent] };
-    }
-    return base;
+      ...invocationOverrides,
+      extensions: invocationOverrides.extensions,
+    });
   };
 }
 
@@ -62,7 +92,7 @@ export function createFailingLauncher(
 /** Minimal mock of AgentLauncher that delegates to a function. */
 export class MockAgentLauncher {
   public invocations: AgentInvocation[] = [];
-  constructor(private fn: (inv: AgentInvocation) => Promise<AgentResult>) {}
+  constructor(public fn: (inv: AgentInvocation) => Promise<AgentResult>) {}
   async launchAgent(inv: AgentInvocation): Promise<AgentResult> {
     this.invocations.push(inv);
     return this.fn(inv);
@@ -80,7 +110,7 @@ export class MockAgentLauncher {
  * Parses through MigrationConfigSchema to ensure runtime parity and
  * exercise all Zod defaults/transforms.
  */
-export function createMockConfig(overrides?: any): MigrationConfig {
+export function createMockConfig(overrides?: MockConfigOverrides): MigrationConfig {
   const raw = {
     projectName: overrides?.projectName ?? 'test-project',
     ...(overrides?.guidance !== undefined ? { guidance: overrides.guidance } : {}),
@@ -111,7 +141,6 @@ export function createMockConfig(overrides?: any): MigrationConfig {
       maxBlockedTasks: 0,
       qualityPolicy: 'strict',
       maxInfraRetries: 3,
-      keepArtifacts: false,
       git: {
         enabled: false,
         autoInit: true,

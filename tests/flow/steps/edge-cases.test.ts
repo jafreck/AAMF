@@ -294,7 +294,7 @@ describe('launchMigrationPlanner — extended', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {
@@ -335,7 +335,7 @@ describe('launchMigrationPlanner — extended', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 1, stdout: '', stderr: 'compile error', killed: false,
+      exitCode: 1, stdout: '', stderr: 'compile error', killed: false, duration: 0,
     });
 
     const warnSpy = vi.spyOn(env.logger, 'warn');
@@ -432,7 +432,7 @@ describe('runIdiomaticRefactorPipeline — failure paths', () => {
 
     const spawnMod = await import('../../../src/util/process.js');
     const spawnSpy = vi.spyOn(spawnMod, 'spawnWithTimeout').mockResolvedValue({
-      exitCode: 0, stdout: 'ok', stderr: '', killed: false,
+      exitCode: 0, stdout: 'ok', stderr: '', killed: false, duration: 0,
     });
 
     try {

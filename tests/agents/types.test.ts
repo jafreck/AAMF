@@ -18,106 +18,48 @@ import type {
   TerminalReasonCode,
 } from '../../src/agents/types.js';
 import { toAgentRemediationContext } from '../../src/agents/types.js';
+import { makeAgentResult } from '../helpers/mocks.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeBaseAgentResult(overrides?: Partial<AgentResult>): AgentResult {
-  return {
-    agent: 'code-migrator',
-    exitCode: 0,
-    success: true,
-    outputFiles: [],
-    duration: 100,
-    outputParsed: false,
+function makeBaseAgentResult(
+  overrides: Partial<Omit<AgentResult, 'extensions'>> & { extensions?: Partial<AgentResult['extensions']> } = {},
+): AgentResult {
+  return makeAgentResult({
+    tokenUsage: null,
+    outputPath: '/tmp/output',
+    outputExists: true,
     ...overrides,
-  };
+  });
 }
 
 // ─── AgentResult ──────────────────────────────────────────────────────────────
 
 describe('AgentResult', () => {
-  describe('outputParsed field', () => {
-    it('should be false when output was not parsed', () => {
-      const result = makeBaseAgentResult({ outputParsed: false });
-      expect(result.outputParsed).toBe(false);
+  it('stores parser and output metadata in extensions', () => {
+    const structured = { tasks: ['task-001'], count: 1 };
+    const result = makeBaseAgentResult({
+      extensions: { outputParsed: true, structuredOutput: structured, outputFiles: ['src/a.ts'] },
     });
-
-    it('should be true when output was successfully parsed', () => {
-      const result = makeBaseAgentResult({ outputParsed: true });
-      expect(result.outputParsed).toBe(true);
-    });
+    expect(result.extensions.outputParsed).toBe(true);
+    expect(result.extensions.structuredOutput).toEqual(structured);
+    expect(result.extensions.outputFiles).toEqual(['src/a.ts']);
+    expect(result.extensions.parseError).toBeUndefined();
   });
 
-  describe('structuredOutput field', () => {
-    it('should be undefined when not provided', () => {
-      const result = makeBaseAgentResult();
-      expect(result.structuredOutput).toBeUndefined();
+  it('stores parse failures in extensions', () => {
+    const result = makeBaseAgentResult({
+      extensions: { outputParsed: false, parseError: 'Malformed JSON' },
     });
-
-    it('should hold arbitrary key-value data when parsed successfully', () => {
-      const structured = { tasks: ['task-001', 'task-002'], count: 2 };
-      const result = makeBaseAgentResult({
-        outputParsed: true,
-        structuredOutput: structured,
-      });
-      expect(result.structuredOutput).toEqual(structured);
-      expect(result.structuredOutput?.['tasks']).toEqual(['task-001', 'task-002']);
-      expect(result.structuredOutput?.['count']).toBe(2);
-    });
-
-    it('should support nested objects', () => {
-      const nested = { meta: { version: '1.0', phase: 3 } };
-      const result = makeBaseAgentResult({
-        outputParsed: true,
-        structuredOutput: nested,
-      });
-      expect(result.structuredOutput?.['meta']).toEqual({ version: '1.0', phase: 3 });
-    });
-  });
-
-  describe('parseError field', () => {
-    it('should be undefined when not provided', () => {
-      const result = makeBaseAgentResult();
-      expect(result.parseError).toBeUndefined();
-    });
-
-    it('should carry an error message when output parsing failed', () => {
-      const result = makeBaseAgentResult({
-        outputParsed: false,
-        parseError: 'No aamf-json block found in agent output',
-      });
-      expect(result.parseError).toBe('No aamf-json block found in agent output');
-    });
-  });
-
-  describe('combination: successful parse', () => {
-    it('should have outputParsed=true, structuredOutput set, and no parseError', () => {
-      const result = makeBaseAgentResult({
-        outputParsed: true,
-        structuredOutput: { key: 'value' },
-      });
-      expect(result.outputParsed).toBe(true);
-      expect(result.structuredOutput).toBeDefined();
-      expect(result.parseError).toBeUndefined();
-    });
-  });
-
-  describe('combination: failed parse', () => {
-    it('should have outputParsed=false, no structuredOutput, and parseError set', () => {
-      const result = makeBaseAgentResult({
-        outputParsed: false,
-        parseError: 'Malformed JSON in aamf-json block',
-      });
-      expect(result.outputParsed).toBe(false);
-      expect(result.structuredOutput).toBeUndefined();
-      expect(result.parseError).toBe('Malformed JSON in aamf-json block');
-    });
+    expect(result.extensions.outputParsed).toBe(false);
+    expect(result.extensions.structuredOutput).toBeUndefined();
+    expect(result.extensions.parseError).toBe('Malformed JSON');
   });
 
   describe('stderr field', () => {
-    it('should be undefined when not provided', () => {
+    it('should be empty when no stderr output was produced', () => {
       const result = makeBaseAgentResult();
-      expect(result.stderr).toBeUndefined();
+      expect(result.stderr).toBe('');
     });
 
     it('should carry raw stderr output when set', () => {
@@ -156,34 +98,34 @@ describe('AgentResult', () => {
   describe('queueDelay field', () => {
     it('should be undefined when not provided', () => {
       const result = makeBaseAgentResult();
-      expect(result.queueDelay).toBeUndefined();
+      expect(result.extensions.queueDelay).toBeUndefined();
     });
 
     it('should carry milliseconds spent in queue', () => {
-      const result = makeBaseAgentResult({ queueDelay: 250 });
-      expect(result.queueDelay).toBe(250);
+      const result = makeBaseAgentResult({ extensions: { queueDelay: 250 } });
+      expect(result.extensions.queueDelay).toBe(250);
     });
 
     it('should accept zero for immediate execution', () => {
-      const result = makeBaseAgentResult({ queueDelay: 0 });
-      expect(result.queueDelay).toBe(0);
+      const result = makeBaseAgentResult({ extensions: { queueDelay: 0 } });
+      expect(result.extensions.queueDelay).toBe(0);
     });
   });
 
   describe('spawnToFirstOutput field', () => {
     it('should be undefined when not provided', () => {
       const result = makeBaseAgentResult();
-      expect(result.spawnToFirstOutput).toBeUndefined();
+      expect(result.extensions.spawnToFirstOutput).toBeUndefined();
     });
 
     it('should carry milliseconds from spawn to first output', () => {
-      const result = makeBaseAgentResult({ spawnToFirstOutput: 1500 });
-      expect(result.spawnToFirstOutput).toBe(1500);
+      const result = makeBaseAgentResult({ extensions: { spawnToFirstOutput: 1500 } });
+      expect(result.extensions.spawnToFirstOutput).toBe(1500);
     });
 
     it('should accept zero for immediate output', () => {
-      const result = makeBaseAgentResult({ spawnToFirstOutput: 0 });
-      expect(result.spawnToFirstOutput).toBe(0);
+      const result = makeBaseAgentResult({ extensions: { spawnToFirstOutput: 0 } });
+      expect(result.extensions.spawnToFirstOutput).toBe(0);
     });
   });
 
@@ -191,13 +133,12 @@ describe('AgentResult', () => {
     it('should carry invocationId with queueDelay and spawnToFirstOutput', () => {
       const result = makeBaseAgentResult({
         invocationId: 'inv-full',
-        queueDelay: 50,
-        spawnToFirstOutput: 800,
+        extensions: { queueDelay: 50, spawnToFirstOutput: 800 },
         duration: 5000,
       });
       expect(result.invocationId).toBe('inv-full');
-      expect(result.queueDelay).toBe(50);
-      expect(result.spawnToFirstOutput).toBe(800);
+      expect(result.extensions.queueDelay).toBe(50);
+      expect(result.extensions.spawnToFirstOutput).toBe(800);
       expect(result.duration).toBe(5000);
     });
   });
@@ -208,18 +149,18 @@ describe('AgentResult', () => {
       expect(result.agent).toBe('code-migrator');
       expect(result.exitCode).toBe(0);
       expect(result.success).toBe(true);
-      expect(result.outputFiles).toEqual([]);
+      expect(result.extensions.outputFiles).toEqual([]);
       expect(result.duration).toBe(100);
     });
 
-    it('should support optional taskId, tokenUsage, and error fields', () => {
+    it('should support workItemId, tokenUsage, and error fields', () => {
       const result = makeBaseAgentResult({
-        taskId: 'task-001',
-        tokenUsage: { prompt: 100, completion: 50, total: 150 },
+        workItemId: 'task-001',
+        tokenUsage: { input: 100, output: 50 },
         error: 'agent stderr',
       });
-      expect(result.taskId).toBe('task-001');
-      expect(result.tokenUsage?.total).toBe(150);
+      expect(result.workItemId).toBe('task-001');
+      expect((result.tokenUsage?.input ?? 0) + (result.tokenUsage?.output ?? 0)).toBe(150);
       expect(result.error).toBe('agent stderr');
     });
   });
@@ -231,86 +172,58 @@ describe('AgentInvocation', () => {
   it('should construct with required fields only', () => {
     const inv: AgentInvocation = {
       agent: 'knowledge-builder',
-      contextFile: '/tmp/context.json',
-      progressDir: '/tmp/progress',
+      contextPath: '/tmp/context.json',
+      outputPath: '/tmp/output',
+      phase: 2,
+      workItemId: '',
     };
     expect(inv.agent).toBe('knowledge-builder');
-    expect(inv.contextFile).toBe('/tmp/context.json');
-    expect(inv.progressDir).toBe('/tmp/progress');
-    expect(inv.phase).toBeUndefined();
-    expect(inv.taskId).toBeUndefined();
+    expect(inv.contextPath).toBe('/tmp/context.json');
+    expect(inv.outputPath).toBe('/tmp/output');
+    expect(inv.phase).toBe(2);
+    expect(inv.workItemId).toBe('');
     expect(inv.timeout).toBeUndefined();
   });
 
-  it('should support all optional fields', () => {
+  it('should support nested AAMF extension fields', () => {
+    const mcpConfig: McpServerConfig = { url: 'http://localhost:4321/mcp' };
     const inv: AgentInvocation = {
       agent: 'code-migrator',
-      contextFile: '/tmp/context.json',
-      progressDir: '/tmp/progress',
-      phase: 3,
-      taskId: 'task-001',
-      additionalArgs: { '--dry-run': 'true' },
+      contextPath: '/tmp/context.json',
+      outputPath: '/tmp/output',
+      phase: 4,
+      workItemId: 'task-001',
       timeout: 60_000,
+      modelOverride: 'gpt-4.1',
+      invocationId: 'inv-123',
+      extensions: {
+        progressDir: '/tmp/progress',
+        additionalArgs: { '--dry-run': 'true' },
+        mcpConfig,
+        kbDbPath: '/tmp/progress/kb.sqlite',
+        routingTier: 'critical',
+        routingReason: 'retry escalation at attempt 2',
+        attemptNumber: 2,
+        maxAttempts: 3,
+      },
     };
-    expect(inv.phase).toBe(3);
-    expect(inv.taskId).toBe('task-001');
-    expect(inv.additionalArgs?.['--dry-run']).toBe('true');
+    expect(inv.workItemId).toBe('task-001');
+    expect(inv.extensions?.additionalArgs?.['--dry-run']).toBe('true');
+    expect(inv.extensions?.mcpConfig?.url).toBe('http://localhost:4321/mcp');
+    expect(inv.extensions?.kbDbPath).toBe('/tmp/progress/kb.sqlite');
+    expect(inv.extensions?.routingTier).toBe('critical');
+    expect(inv.extensions?.attemptNumber).toBe(2);
     expect(inv.timeout).toBe(60_000);
   });
 
   it('should accept parity-failure-resolver as a valid agent name', () => {
     const inv: AgentInvocation = {
       agent: 'parity-failure-resolver',
-      contextFile: '/tmp/context.json',
-      progressDir: '/tmp/progress',
+      contextPath: '/tmp/context.json', outputPath: '/tmp/output', phase: 4, workItemId: 'task',
     };
     expect(inv.agent).toBe('parity-failure-resolver');
   });
 
-  it('should support optional mcpConfig field', () => {
-    const mcpConfig: McpServerConfig = {
-      url: 'http://localhost:4321/mcp',
-    };
-    const inv: AgentInvocation = {
-      agent: 'knowledge-builder',
-      contextFile: '/tmp/context.json',
-      progressDir: '/tmp/progress',
-      mcpConfig,
-    };
-    expect(inv.mcpConfig).toBeDefined();
-    expect(inv.mcpConfig?.url).toBe('http://localhost:4321/mcp');
-  });
-
-  it('should omit mcpConfig when not provided', () => {
-    const inv: AgentInvocation = {
-      agent: 'knowledge-builder',
-      contextFile: '/tmp/ctx.json',
-      progressDir: '/tmp/progress',
-    };
-    expect(inv.mcpConfig).toBeUndefined();
-  });
-
-  it('should support optional routing, retry, and correlation fields', () => {
-    const inv: AgentInvocation = {
-      agent: 'code-migrator',
-      contextFile: '/tmp/context.json',
-      progressDir: '/tmp/progress',
-      modelOverride: 'gpt-4.1',
-      kbDbPath: '/tmp/progress/kb.sqlite',
-      invocationId: 'inv-123',
-      routingTier: 'critical',
-      routingReason: 'retry escalation at attempt 2',
-      attemptNumber: 2,
-      maxAttempts: 3,
-    };
-    expect(inv.modelOverride).toBe('gpt-4.1');
-    expect(inv.kbDbPath).toBe('/tmp/progress/kb.sqlite');
-    expect(inv.invocationId).toBe('inv-123');
-    expect(inv.routingTier).toBe('critical');
-    expect(inv.routingReason).toContain('escalation');
-    expect(inv.attemptNumber).toBe(2);
-    expect(inv.maxAttempts).toBe(3);
-  });
 });
 
 // ─── McpServerConfig ──────────────────────────────────────────────────────────
@@ -672,7 +585,7 @@ describe('toAgentRemediationContext', () => {
     expect(agentCtx.expectedSuccessCondition).toBe('Parity passes');
     expect(agentCtx.adjudicationReportPath).toBe('/tmp/adjudication/task-001.md');
     expect(agentCtx.priorAttempts).toHaveLength(1);
-    expect((agentCtx as Record<string, unknown>).failureSummary).toBeUndefined();
+    expect((agentCtx as unknown as Record<string, unknown>).failureSummary).toBeUndefined();
   });
 });
 

@@ -35,7 +35,6 @@
     "dryRun": false,
     "resume": true,
     "kbIndex": {
-      "enabled": true,
       "embeddings": {
         "enabled": true
       }

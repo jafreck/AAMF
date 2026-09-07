@@ -36,6 +36,9 @@ import type {
   TerminalExhaustionDetails,
 } from '../context.js';
 import { formatDuration } from '../../util/format.js';
+import type { Phase4TaskSubstepState } from '../../core/checkpoint.js';
+import type { Phase4TaskSubstep } from '../phase4-substeps.js';
+import { assertAgentPhase, PHASE, type PhaseId } from '../phases.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -111,14 +114,14 @@ export function assertPhaseSuccess(result: import('../../agents/types.js').Phase
 // ─── Helper Functions ──────────────────────────────────────────────────
 
 export function getConfiguredRuntimeModel(ctx: MigrationFlowContext): string {
-  return ctx.config.models?.default ?? ctx.config.agentBackend.model ?? 'claude-sonnet-4';
+  return ctx.config.models?.default ?? ctx.config.agentBackend.model ?? 'cli-default';
 }
 
 export function getRuntimeTimeout(ctx: MigrationFlowContext): number {
   return ctx.config.agentBackend.timeout;
 }
 
-export function getPhaseTimeout(ctx: MigrationFlowContext, phase: number): number {
+export function getPhaseTimeout(ctx: MigrationFlowContext, phase: PhaseId): number {
   return ctx.config.agentBackend.phaseTimeouts?.[phase] ?? getRuntimeTimeout(ctx);
 }
 
@@ -193,10 +196,11 @@ export function buildInvocation(
   ctx: MigrationFlowContext,
   agent: AgentName,
   contextInfo: { contextPath: string; outputPath: string },
-  phase: number,
+  phase: PhaseId,
   taskId?: string,
   task?: MigrationTask,
 ): AgentInvocation {
+  assertAgentPhase(agent, phase);
   const timeout = getPhaseTimeout(ctx, phase);
   const mcpConfig = (KB_AWARE_AGENTS.includes(agent) && ctx.kbServer)
     ? ctx.kbServer.mcpConfig : undefined;
@@ -414,6 +418,7 @@ export async function launchAgentWithEvents(
     ...(result.extensions?.premiumRequests != null ? { premiumRequests: result.extensions.premiumRequests } : {}),
     ...(routingTier ? { routingTier, routingReason } : {}),
     ...(routingDecision ? { escalationCostUsd: routingDecision.incrementalCost } : {}),
+    ...(result.extensions.tokenUsageSource ? { tokenUsageSource: result.extensions.tokenUsageSource } : {}),
   };
 
   ctx.metricsCollector.record(metric);
@@ -429,7 +434,7 @@ export async function launchAgentWithEvents(
   return result;
 }
 
-export function recordTokens(ctx: MigrationFlowContext, result: AgentResult, phase: number): void {
+export function recordTokens(ctx: MigrationFlowContext, result: AgentResult, phase: PhaseId): void {
   if (result.tokenUsage) {
     const total = result.tokenUsage.input + result.tokenUsage.output;
     ctx.tokenTracker.record(result.agent, phase, total, result.tokenUsage.cachedInput, result.workItemId || undefined);
@@ -561,7 +566,7 @@ export async function ensureGitRepositoryReady(ctx: MigrationFlowContext): Promi
 
 export async function commitForAgent(
   ctx: MigrationFlowContext,
-  agent: AgentName, phase: number, taskId?: string, detail?: string,
+  agent: AgentName, phase: PhaseId, taskId?: string, detail?: string,
 ): Promise<void> {
   if (!isGitAutomationEnabled(ctx) || !ctx.config.options.git?.commitByAgent) return;
   if (ctx.deferGitCommits) return;
@@ -703,27 +708,27 @@ export async function runCommandWithRecovery(
     });
 
     const recoveryCtx = await ctx.contextBuilder.buildContext(
-      'parity-failure-resolver', 5, task.id,
+      'parity-failure-resolver', PHASE.MIGRATION, task.id,
       {
         failureReport: cmdResult.logPath ?? cmdResult.rawError ?? cmdResult.error,
         failureType: label,
-        sourceFile: task.sourceFiles[0], targetFile: task.targetFiles[0],
+        sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
         kbEntry: task.knowledgeBaseRef,
         attemptNumber: attempt,
         ...taskScopePayload(task),
         remediationContext: toAgentRemediationContext(remediationContext),
       },
     );
-    const recoveryInv = buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, 5, task.id);
+    const recoveryInv = buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, PHASE.MIGRATION, task.id);
     const recoveryResult = await launchAgentWithEvents(ctx, recoveryInv);
-    recordTokens(ctx, recoveryResult, 5);
+    recordTokens(ctx, recoveryResult, PHASE.MIGRATION);
     if (!recoveryResult.success) {
       ctx.logger.warn(`Parity-failure-resolver failed for ${task.id} on attempt ${attempt}`);
       continue;
     }
 
     const reMigrateCtx = await ctx.contextBuilder.buildContext(
-      'code-migrator', 5, task.id,
+      'code-migrator', PHASE.MIGRATION, task.id,
       {
         sourceFiles: task.sourceFiles, targetFiles: task.targetFiles,
         kbEntry: task.knowledgeBaseRef,
@@ -731,14 +736,14 @@ export async function runCommandWithRecovery(
         remediationContext: toAgentRemediationContext(remediationContext),
       },
     );
-    const reMigrateInv = buildInvocation(ctx, 'code-migrator', reMigrateCtx, 5, task.id);
+    const reMigrateInv = buildInvocation(ctx, 'code-migrator', reMigrateCtx, PHASE.MIGRATION, task.id);
     const reMigrateResult = await launchAgentWithEvents(ctx, reMigrateInv);
-    recordTokens(ctx, reMigrateResult, 5);
+    recordTokens(ctx, reMigrateResult, PHASE.MIGRATION);
     if (!reMigrateResult.success) {
       ctx.logger.warn(`Re-migration failed for ${task.id} on ${label} recovery attempt ${attempt}`);
       continue;
     }
-    await commitForAgent(ctx, 'code-migrator', 5, task.id, task.name);
+    await commitForAgent(ctx, 'code-migrator', PHASE.MIGRATION, task.id, task.name);
 
     cmdResult = await runCommand(ctx, label, command, task.id);
     if (cmdResult.success) {
@@ -908,7 +913,7 @@ function getPhaseCursors(ctx: MigrationFlowContext) {
   return state.phaseCursors;
 }
 
-export function getPhase4TaskState(ctx: MigrationFlowContext, taskId: string): { completedSubsteps: string[]; lastSuccessfulStep?: string } {
+export function getPhase4TaskState(ctx: MigrationFlowContext, taskId: string): Phase4TaskSubstepState {
   const phaseCursors = getPhaseCursors(ctx);
   phaseCursors['4'] ??= { tasks: {} };
   phaseCursors['4'].tasks ??= {};
@@ -916,14 +921,42 @@ export function getPhase4TaskState(ctx: MigrationFlowContext, taskId: string): {
   return phaseCursors['4'].tasks[taskId];
 }
 
-export function hasPhase4Substep(ctx: MigrationFlowContext, taskId: string, substep: string): boolean {
+export function hasPhase4Substep(ctx: MigrationFlowContext, taskId: string, substep: Phase4TaskSubstep): boolean {
   return getPhase4TaskState(ctx, taskId).completedSubsteps.includes(substep);
 }
 
-export async function markPhase4Substep(ctx: MigrationFlowContext, taskId: string, substep: string): Promise<void> {
+export function registerPhase4TaskScope(
+  ctx: MigrationFlowContext,
+  taskId: string,
+  scopeExecutionPrefix: string,
+): void {
+  getPhase4TaskState(ctx, taskId).scopeExecutionPrefix = scopeExecutionPrefix;
+}
+
+export async function markPhase4TaskStarted(ctx: MigrationFlowContext, taskId: string): Promise<void> {
+  const taskState = getPhase4TaskState(ctx, taskId);
+  taskState.startedAtMs = Date.now();
+  await ctx.checkpoint.save(ctx.checkpoint.getState());
+}
+
+export function getPhase4TaskDuration(ctx: MigrationFlowContext, taskId: string): number | undefined {
+  const startedAtMs = getPhase4TaskState(ctx, taskId).startedAtMs;
+  return startedAtMs === undefined ? undefined : Math.max(0, Date.now() - startedAtMs);
+}
+
+export async function markPhase4Substep(
+  ctx: MigrationFlowContext,
+  taskId: string,
+  substep: Phase4TaskSubstep,
+  executionId?: string,
+): Promise<void> {
   const taskState = getPhase4TaskState(ctx, taskId);
   if (!taskState.completedSubsteps.includes(substep)) taskState.completedSubsteps.push(substep);
   taskState.lastSuccessfulStep = substep;
+  if (executionId) {
+    taskState.executionIds ??= {};
+    taskState.executionIds[substep] = executionId;
+  }
   await ctx.checkpoint.save(ctx.checkpoint.getState());
 }
 

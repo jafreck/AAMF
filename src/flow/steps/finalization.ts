@@ -21,6 +21,7 @@ import {
   getPhase6Cursor, savePhase6Cursor,
   assertPhaseSuccess,
 } from './shared.js';
+import { PHASE } from '../phases.js';
 
 // ─── Stage 1: E2E Test Plan ──────────────────────────────────────────
 
@@ -35,12 +36,12 @@ export async function launchE2eTestCrafter(
     return { agent: 'e2e-test-crafter', workItemId: '', exitCode: 0, success: true, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, extensions: {} };
   }
 
-  const e2eCtx = await ctx.contextBuilder.buildContext('e2e-test-crafter', 6, undefined, { planOnly: true });
-  const crafterResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'e2e-test-crafter', e2eCtx, 6));
-    recordTokens(ctx, crafterResult, 6);
+  const e2eCtx = await ctx.contextBuilder.buildContext('e2e-test-crafter', PHASE.FINALIZATION, undefined, { planOnly: true });
+  const crafterResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'e2e-test-crafter', e2eCtx, PHASE.FINALIZATION));
+    recordTokens(ctx, crafterResult, PHASE.FINALIZATION);
 
   if (crafterResult.success) {
-    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'e2e-test-crafter', 6);
+    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'e2e-test-crafter', PHASE.FINALIZATION);
     completedAgents.add('e2e-test-crafter');
     await savePhase6Cursor(ctx, {
       completedAgents: Array.from(completedAgents),
@@ -124,12 +125,12 @@ export async function launchDocWriter(
     return { agent: 'documentation-writer', workItemId: '', exitCode: 0, success: true, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, extensions: {} };
   }
 
-  const docCtx = await ctx.contextBuilder.buildContext('documentation-writer', 6);
-  const docResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'documentation-writer', docCtx, 6));
-  recordTokens(ctx, docResult, 6);
+  const docCtx = await ctx.contextBuilder.buildContext('documentation-writer', PHASE.FINALIZATION);
+  const docResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'documentation-writer', docCtx, PHASE.FINALIZATION));
+  recordTokens(ctx, docResult, PHASE.FINALIZATION);
 
   if (docResult.success) {
-    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'documentation-writer', 6);
+    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'documentation-writer', PHASE.FINALIZATION);
     completedAgents.add('documentation-writer');
     await savePhase6Cursor(ctx, {
       completedAgents: Array.from(completedAgents),
@@ -155,15 +156,15 @@ async function executeSuiteWithRetry(
   if (isSuiteBudgetExceeded(ctx, suite.id)) {
     return { agent: 'test-writer', workItemId: suite.id, exitCode: 1, success: false, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, error: `Budget exceeded before suite ${suite.id}`, extensions: {} };
   }
-  const suiteCtx = await ctx.contextBuilder.buildContext('test-writer', 6, suite.id, { e2eSuiteBrief: suite });
+  const suiteCtx = await ctx.contextBuilder.buildContext('test-writer', PHASE.FINALIZATION, suite.id, { e2eSuiteBrief: suite });
   const retryExec = new RetryExecutor(inv => launchAgentWithEvents(ctx, inv), ctx.logger);
   const suiteResult = await retryExec.executeWithRetry(
-    buildInvocation(ctx, 'test-writer', suiteCtx, 6, suite.id),
+    buildInvocation(ctx, 'test-writer', suiteCtx, PHASE.FINALIZATION, suite.id),
     { maxAttempts: ctx.config.options.maxRetriesPerTask },
   );
-  recordTokens(ctx, suiteResult, 6);
+  recordTokens(ctx, suiteResult, PHASE.FINALIZATION);
   if (suiteResult.success) {
-    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'test-writer', 6, suite.id, suite.name);
+    if (isGitAutomationEnabled(ctx)) await commitForAgent(ctx, 'test-writer', PHASE.FINALIZATION, suite.id, suite.name);
     completedSuites.add(suite.id);
     await savePhase6Cursor(ctx, {
       completedAgents: Array.from(completedAgents),
@@ -193,8 +194,8 @@ async function executeParallelSuiteFanOut(
   if (budgetFiltered.length === 0) return;
   const invocations = [];
   for (const suite of budgetFiltered) {
-    const suiteCtx = await ctx.contextBuilder.buildContext('test-writer', 6, suite.id, { e2eSuiteBrief: suite });
-    invocations.push(buildInvocation(ctx, 'test-writer', suiteCtx, 6, suite.id));
+    const suiteCtx = await ctx.contextBuilder.buildContext('test-writer', PHASE.FINALIZATION, suite.id, { e2eSuiteBrief: suite });
+    invocations.push(buildInvocation(ctx, 'test-writer', suiteCtx, PHASE.FINALIZATION, suite.id));
   }
   const retryExec = new RetryExecutor(inv => launchAgentWithEvents(ctx, inv), ctx.logger);
   const parallel = new ParallelExecutor(
@@ -208,7 +209,7 @@ async function executeParallelSuiteFanOut(
     const suite = budgetFiltered[i]!;
     const result = parallelResults[i]!;
     results.push(result);
-    recordTokens(ctx, result, 6);
+    recordTokens(ctx, result, PHASE.FINALIZATION);
     if (result.success) completedSuites.add(suite.id);
   }
   await savePhase6Cursor(ctx, {

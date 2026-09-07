@@ -128,9 +128,9 @@ describe('graph handler', () => {
     expect(Array.isArray(result.edges)).toBe(true);
   });
 
-  it('respects the limit option', () => {
-    const result = graphHandler(db, { kind: 'import', limit: 1 });
-    expect(result.edges.length).toBeLessThanOrEqual(1);
+  it('respects the source_id filter', () => {
+    const result = graphHandler(db, { kind: 'import', source_id: -1 });
+    expect(result.edges).toHaveLength(0);
   });
 });
 

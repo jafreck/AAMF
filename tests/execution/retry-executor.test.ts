@@ -8,6 +8,7 @@ import {
   createMockLauncher,
   createFailingLauncher,
   createSilentLogger,
+  makeAgentResult,
 } from '../helpers/mocks.js';
 
 describe('RetryExecutor', () => {
@@ -55,22 +56,24 @@ describe('RetryExecutor', () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
         attempt++;
         if (attempt < 3) {
-          return {
+          return makeAgentResult({
             agent: inv.agent,
             workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
             duration: 100,
+            outputPath: inv.outputPath,
             error: `Attempt ${attempt} failed`,
-          };
+          });
         }
-        return {
+        return makeAgentResult({
           agent: inv.agent,
           workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
           duration: 100,
-        };
+          outputPath: inv.outputPath,
+        });
       };
 
       const logger = createSilentLogger(tempDir);
@@ -145,16 +148,18 @@ describe('RetryExecutor', () => {
         launchCount++;
         // Succeed on 3rd call to verify fast-retry happens
         if (launchCount >= 3) {
-          return {
+          return makeAgentResult({
             agent: inv.agent, workItemId: inv.workItemId,
-            exitCode: 0, success: true, outputFiles: [], duration: 100, extensions: { outputParsed: false },
-          };
+            exitCode: 0, success: true, duration: 100, outputPath: inv.outputPath,
+            extensions: { outputFiles: [], outputParsed: false },
+          });
         }
-        return {
+        return makeAgentResult({
           agent: inv.agent, workItemId: inv.workItemId,
-          exitCode: 1, success: false, outputFiles: [], duration: 100, extensions: { outputParsed: false },
+          exitCode: 1, success: false, duration: 100, outputPath: inv.outputPath,
+          extensions: { outputFiles: [], outputParsed: false },
           error: 'Execution failed: CAPIError: 503 {"error":{"message":"HTTP/2 GOAWAY connection terminated","type":"connection_error"}}',
-        };
+        });
       };
 
       const logger = createSilentLogger(tempDir);
@@ -249,32 +254,35 @@ describe('RetryExecutor', () => {
         callCount++;
         // Original attempts 1-2 fail, recovery succeeds, then original retry succeeds
         if (inv.agent === 'parity-failure-resolver') {
-          return {
+          return makeAgentResult({
             agent: inv.agent,
             workItemId: inv.workItemId,
             exitCode: 0,
             success: true,
             duration: 100,
-          };
+            outputPath: inv.outputPath,
+          });
         }
         // code-migrator: fail first 2 (retries), succeed on the post-recovery attempt
         if (callCount <= 2) {
-          return {
+          return makeAgentResult({
             agent: inv.agent,
             workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
             duration: 100,
+            outputPath: inv.outputPath,
             error: 'Failed',
-          };
+          });
         }
-        return {
+        return makeAgentResult({
           agent: inv.agent,
           workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
           duration: 100,
-        };
+          outputPath: inv.outputPath,
+        });
       };
 
       const logger = createSilentLogger(tempDir);
@@ -300,12 +308,13 @@ describe('RetryExecutor', () => {
 
     it('should return failure when recovery also fails', async () => {
       // Both code-migrator and parity-failure-resolver always fail
-      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => makeAgentResult({
         agent: inv.agent,
         workItemId: inv.workItemId,
         exitCode: 1,
         success: false,
         duration: 100,
+        outputPath: inv.outputPath,
         error: 'Failed',
       });
 
@@ -392,22 +401,24 @@ describe('RetryExecutor', () => {
       const launcher = async (inv: AgentInvocation): Promise<AgentResult> => {
         attempt++;
         if (attempt < 2) {
-          return {
+          return makeAgentResult({
             agent: inv.agent,
             workItemId: inv.workItemId,
             exitCode: 1,
             success: false,
             duration: 100,
+            outputPath: inv.outputPath,
             error: 'Failed',
-          };
+          });
         }
-        return {
+        return makeAgentResult({
           agent: inv.agent,
           workItemId: inv.workItemId,
           exitCode: 0,
           success: true,
           duration: 100,
-        };
+          outputPath: inv.outputPath,
+        });
       };
 
       const logger = createSilentLogger(tempDir);
@@ -452,12 +463,13 @@ describe('RetryExecutor', () => {
     });
 
     it('should set wasRetry to true on recovery path', async () => {
-      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => ({
+      const launcher = async (inv: AgentInvocation): Promise<AgentResult> => makeAgentResult({
         agent: inv.agent,
         workItemId: inv.workItemId,
         exitCode: inv.agent === 'parity-failure-resolver' ? 0 : 1,
         success: inv.agent === 'parity-failure-resolver',
         duration: 100,
+        outputPath: inv.outputPath,
         error: inv.agent === 'parity-failure-resolver' ? undefined : 'Failed',
       });
 

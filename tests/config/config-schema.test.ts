@@ -302,9 +302,11 @@ describe('MigrationConfigSchema', () => {
       expect(result.agentBackend.phaseTimeouts).toBeUndefined();
     });
 
-    it('should default keepArtifacts to false when omitted', () => {
-      const result = MigrationConfigSchema.parse(validConfig);
-      expect(result.options.keepArtifacts).toBe(false);
+    it('should reject the removed keepArtifacts option', () => {
+      expect(() => MigrationConfigSchema.parse({
+        ...validConfig,
+        options: { keepArtifacts: false },
+      })).toThrow();
     });
 
     describe('idiomaticRefactor option', () => {
@@ -501,6 +503,13 @@ describe('MigrationConfigSchema', () => {
         expect(result.options.kbIndex).toBeUndefined();
       });
 
+      it('should reject obsolete kbIndex.enabled configuration', () => {
+        expect(() => MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { kbIndex: { enabled: true } },
+        })).toThrow();
+      });
+
       it('should default kbIndex logLevel to debug when kbIndex is {}', () => {
         const result = MigrationConfigSchema.parse({
           ...validConfig,
@@ -515,6 +524,27 @@ describe('MigrationConfigSchema', () => {
           options: { kbIndex: {} },
         });
         expect(result.options.kbIndex?.embeddings).toBeUndefined();
+      });
+
+      it('should apply bounded KB server defaults when configured', () => {
+        const result = MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { kbIndex: { server: {} } },
+        });
+        expect(result.options.kbIndex?.server).toEqual({
+          maxRequestBytes: 4 * 1024 * 1024,
+          sessionIdleTimeoutMs: 30 * 60_000,
+          sessionSweepIntervalMs: 60_000,
+          maxSessions: 64,
+          stopTimeoutMs: 5_000,
+        });
+      });
+
+      it('should reject unsafe KB server bounds', () => {
+        expect(() => MigrationConfigSchema.parse({
+          ...validConfig,
+          options: { kbIndex: { server: { maxRequestBytes: 0, maxSessions: 0, stopTimeoutMs: 0 } } },
+        })).toThrow();
       });
 
       it('should default embeddings.enabled to false when embeddings is {}', () => {

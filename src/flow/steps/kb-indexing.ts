@@ -21,6 +21,52 @@ type LoreModule = Awaited<ReturnType<typeof loadLore>>;
 
 const DEFAULT_INDEX_TIMEOUT_MS = 5 * 60_000;
 
+export class KbIndexTimeoutError extends Error {
+  constructor(timeoutMs: number, lspEnabled: boolean) {
+    super(lspEnabled
+      ? `KB index timed out after ${Math.round(timeoutMs / 1000)}s — LSP may be stalled.`
+      : `KB index timed out after ${Math.round(timeoutMs / 1000)}s`);
+    this.name = 'KbIndexTimeoutError';
+  }
+}
+
+/**
+ * Run one non-cancellable Lore build with a diagnostic deadline. If the
+ * deadline wins, wait for the build to settle before returning the timeout so
+ * callers can safely delete/recreate SQLite files for a retry.
+ */
+export async function runKbBuildAttempt(
+  build: () => Promise<void>,
+  timeoutMs: number,
+  lspEnabled: boolean,
+  onHeartbeat: () => void,
+): Promise<void> {
+  let settled = false;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let heartbeatHandle: ReturnType<typeof setTimeout> | undefined;
+  const buildPromise = build().then(
+    () => { settled = true; },
+    (error) => { settled = true; throw error; },
+  );
+
+  try {
+    heartbeatHandle = setTimeout(onHeartbeat, Math.max(1, Math.round(timeoutMs / 2)));
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new KbIndexTimeoutError(timeoutMs, lspEnabled)),
+        timeoutMs,
+      );
+    });
+    await Promise.race([buildPromise, timeoutPromise]);
+  } catch (error) {
+    if (!settled) await Promise.allSettled([buildPromise]);
+    throw error;
+  } finally {
+    if (heartbeatHandle) clearTimeout(heartbeatHandle);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
 function computeSourceFingerprintCompat(
   lore: LoreModule, rootDir: string,
   walkerConfig: { includeGlobs?: string[]; excludeGlobs?: string[] },
@@ -135,8 +181,6 @@ export async function buildKbIndex(
     logFile: ctx.paths.loreLogFile,
   });
 
-  const builder = new lore.IndexBuilder(kbDbPath, walkerConfig, ctx.embedder, { lsp: lspSettings });
-
   // ── Retry loop ──
   const maxAttempts = ctx.config.options.maxRetriesPerTask;
   const timeout = ctx.config.agentBackend.phaseTimeouts?.[0] ?? DEFAULT_INDEX_TIMEOUT_MS;
@@ -154,32 +198,22 @@ export async function buildKbIndex(
       }
     }
 
-    const heartbeatTimers: ReturnType<typeof setTimeout>[] = [];
     const halfTimeout = Math.round(timeout / 2);
-    heartbeatTimers.push(
-      setTimeout(() => {
+    const builder = new lore.IndexBuilder(kbDbPath, walkerConfig, ctx.embedder, { lsp: lspSettings });
+
+    try {
+      await runKbBuildAttempt(
+        () => builder.build(),
+        timeout,
+        !!lspSettings,
+        () => {
         ctx.logger.warn(
           `KB index build still running after ${Math.round(halfTimeout / 1000)}s ` +
           `(timeout: ${Math.round(timeout / 1000)}s)` +
           (lspSettings ? ' — LSP server may still be indexing.' : ''),
         );
-      }, halfTimeout),
-    );
-    const clearHeartbeat = () => heartbeatTimers.forEach(t => clearTimeout(t));
-
-    try {
-      await Promise.race([
-        builder.build().finally(clearHeartbeat),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => {
-            clearHeartbeat();
-            const msg = lspSettings
-              ? `KB index timed out after ${Math.round(timeout / 1000)}s — LSP may be stalled.`
-              : `KB index timed out after ${Math.round(timeout / 1000)}s`;
-            reject(new Error(msg));
-          }, timeout),
-        ),
-      ]);
+        },
+      );
       const checkpointState = ctx.checkpoint.getState();
       checkpointState.phase0Fingerprint = currentFingerprint;
       await ctx.checkpoint.save(checkpointState);

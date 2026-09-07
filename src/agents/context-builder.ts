@@ -1,15 +1,16 @@
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { AgentName, AgentContext } from './types.js';
 import { MigrationConfig } from '../config/schema.js';
 import { writeJson, ensureDir } from '../util/fs.js';
 import type { RuntimePaths } from '../core/runtime-paths.js';
+import type { PhaseId } from '../flow/phases.js';
 
 /** Options for building an agent context file. */
 export interface ContextBuildOptions {
   config: MigrationConfig;
   /** Progress directory, e.g. .aamf/migration/{projectName} */
   progressDir: string;
-  phase: number;
+  phase: PhaseId;
   taskId?: string;
   payload?: Record<string, unknown>;
 }
@@ -38,7 +39,7 @@ export class ContextBuilder {
    */
   async buildContext(
     agent: AgentName,
-    phase: number,
+    phase: PhaseId,
     taskId?: string,
     payload?: Record<string, unknown>,
   ): Promise<{ contextPath: string; outputPath: string }> {
@@ -105,7 +106,7 @@ export class ContextBuilder {
   /** Assemble an {@link AgentContext} object for the given agent and phase. */
   private createContext(
     agent: AgentName,
-    phase: number,
+    phase: PhaseId,
     taskId?: string,
     payload?: Record<string, unknown>,
   ): AgentContext {
@@ -130,7 +131,10 @@ export class ContextBuilder {
     };
 
     const { inputFiles, outputPath, agentPayload } = this.getAgentFiles(agent, taskId, payload);
-    return { ...base, inputFiles, outputPath, payload: agentPayload ?? payload };
+    const mergedPayload = payload || agentPayload
+      ? { ...(payload ?? {}), ...(agentPayload ?? {}) }
+      : undefined;
+    return { ...base, inputFiles: Array.from(new Set(inputFiles)), outputPath, payload: mergedPayload };
   }
 
   /**
@@ -179,36 +183,45 @@ export class ContextBuilder {
         };
 
       case 'code-migrator': {
+        const sourceFiles = this.getStringArray(payload?.sourceFiles);
+        const targetFiles = this.getStringArray(payload?.targetFiles);
         // kbEntry is a structured reference string (e.g. "kb/file#L10-L50"),
         // not a file path — pass it in the payload, not inputFiles.
         return {
           inputFiles: [
+            ...sourceFiles,
+            ...targetFiles,
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
           ],
           outputPath: out,
           agentPayload: {
             taskId,
-            sourceFiles: payload?.sourceFiles ?? [],
-            targetFiles: payload?.targetFiles ?? [],
+            sourceFiles,
+            targetFiles,
             ...(taskScope ? { taskScope } : {}),
-            ...(remediationContext ? { remediationContext } : {}),
+            remediationContext,
           },
         };
       }
 
-      case 'parity-verifier':
+      case 'parity-verifier': {
+        const sourceFiles = this.getStringArray(payload?.sourceFiles);
+        const targetFiles = this.getStringArray(payload?.targetFiles);
         return {
           inputFiles: [
-            ...(payload?.sourceFile ? [String(payload.sourceFile)] : []),
-            ...(payload?.targetFile ? [String(payload.targetFile)] : []),
+            ...sourceFiles,
+            ...targetFiles,
             ...(payload?.taskPlanSlice ? [String(payload.taskPlanSlice)] : [migrationPlan]),
           ],
           outputPath: out,
           agentPayload: {
             taskId,
+            sourceFiles,
+            targetFiles,
             ...(taskScope ? { taskScope } : {}),
           },
         };
+      }
 
       case 'test-writer': {
         // Phase 6 per-suite E2E path: payload carries a full suite brief
@@ -222,17 +235,21 @@ export class ContextBuilder {
             agentPayload: { taskId, testType: 'e2e', e2eSuiteBrief: brief },
           };
         }
-        // Phase 4 unit-test path (unchanged)
+        const sourceFiles = this.getStringArray(payload?.sourceFiles);
+        const targetFiles = this.getStringArray(payload?.targetFiles);
         return {
           inputFiles: [
-            ...(payload?.targetFile ? [String(payload.targetFile)] : []),
-            ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
+            ...sourceFiles,
+            ...targetFiles,
             ...(payload?.parityReport ? [String(payload.parityReport)] : []),
           ],
           outputPath: out,
           agentPayload: {
             taskId,
+            sourceFiles,
+            targetFiles,
             testType: payload?.testType ?? 'unit',
+            e2eSuiteBrief: undefined,
             ...(this.config.target.testCommand ? { testCommand: this.config.target.testCommand } : {}),
             ...(taskScope ? { taskScope } : {}),
           },
@@ -241,20 +258,23 @@ export class ContextBuilder {
 
       case 'parity-failure-resolver':
         {
+        const sourceFiles = this.getStringArray(payload?.sourceFiles);
+        const targetFiles = this.getStringArray(payload?.targetFiles);
         return {
           inputFiles: [
-            ...(payload?.sourceFile ? [String(payload.sourceFile)] : []),
-            ...(payload?.targetFile ? [String(payload.targetFile)] : []),
-            ...(payload?.kbEntry ? [String(payload.kbEntry)] : []),
+            ...sourceFiles,
+            ...targetFiles,
           ],
           outputPath: out,
           agentPayload: {
             taskId,
+            sourceFiles,
+            targetFiles,
             failureType: payload?.failureType,
             failureReport: payload?.failureReport,
             attemptNumber: payload?.attemptNumber ?? 1,
             ...(taskScope ? { taskScope } : {}),
-            ...(remediationContext ? { remediationContext } : {}),
+            remediationContext,
           },
         };
       }
@@ -282,30 +302,51 @@ export class ContextBuilder {
         };
 
       case 'idiomatic-reviewer':
+        {
+        const scope = this.isRecord(payload?.scope) ? payload.scope : undefined;
+        const targetPath = typeof scope?.targetPath === 'string' ? scope.targetPath : undefined;
         return {
-          inputFiles: [out],
+          inputFiles: [targetPath ? this.resolveTargetPath(targetPath) : out],
           outputPath: out,
         };
+        }
 
-      case 'idiomatic-refactorer':
+      case 'idiomatic-planner':
         return {
-          inputFiles: [
-            ...(payload?.targetFile ? [String(payload.targetFile)] : []),
-          ],
-          outputPath: out,
-          agentPayload: {
-            targetFile: payload?.targetFile,
-            issue: payload?.issue,
-          },
+          inputFiles: [this.paths.artifactsPlanningDir],
+          outputPath: this.paths.artifactsPlanningDir,
         };
 
-      default:
-        // migration-orchestrator, migration-runner, etc.
+      case 'idiomatic-refactorer': {
+        const task = this.isRecord(payload?.task) ? payload.task : undefined;
+        const files = this.getStringArray(task?.files).map(file => this.resolveTargetPath(file));
+        return {
+          inputFiles: files,
+          outputPath: out,
+          agentPayload: task ? { task } : {},
+        };
+      }
+
+      case 'migration-orchestrator':
+      case 'migration-runner':
         return {
           inputFiles: [src],
           outputPath: this.progressDir,
         };
+
+      default: {
+        const exhaustive: never = agent;
+        throw new Error(`Unhandled agent context mapping: ${exhaustive}`);
+      }
     }
+  }
+
+  private getStringArray(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  }
+
+  private resolveTargetPath(path: string): string {
+    return isAbsolute(path) ? path : join(this.config.target.outputPath, path);
   }
 
   /**

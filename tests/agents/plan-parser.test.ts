@@ -129,6 +129,8 @@ describe('ResultParser', () => {
       expect(tasks).toHaveLength(2);
       expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('task-999'));
       expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('task-888'));
+      expect(tasks[0]?.dependencies).toEqual([]);
+      expect(tasks[1]?.dependencies).toEqual(['task-001']);
     });
 
     it('should return empty array for empty plan file', () => {

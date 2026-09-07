@@ -17,6 +17,7 @@ import {
   getPhase5Cursor, savePhase5Cursor,
   assertPhaseSuccess,
 } from './shared.js';
+import { PHASE } from '../phases.js';
 
 /**
  * Run a single iteration of the final-parity-checker → code-migrator fix loop.
@@ -29,10 +30,10 @@ export async function runFinalParityIteration(
   const phase5Cursor = getPhase5Cursor(ctx);
 
   // Run final-parity-checker
-  const ctxFile = await ctx.contextBuilder.buildContext('final-parity-checker', 5);
-  const inv = buildInvocation(ctx, 'final-parity-checker', ctxFile, 5);
+  const ctxFile = await ctx.contextBuilder.buildContext('final-parity-checker', PHASE.FINAL_PARITY);
+  const inv = buildInvocation(ctx, 'final-parity-checker', ctxFile, PHASE.FINAL_PARITY);
   const result = await launchAgentWithEvents(ctx, inv);
-  recordTokens(ctx, result, 5);
+  recordTokens(ctx, result, PHASE.FINAL_PARITY);
 
   if (!result.success) {
     const failResult: PhaseResult = {
@@ -87,7 +88,7 @@ export async function runFinalParityIteration(
       expectedSuccessCondition: `Parity issue resolved: ${fix.description}`,
     });
 
-    const fixCtx = await ctx.contextBuilder.buildContext('code-migrator', 4, fixTaskId, {
+    const fixCtx = await ctx.contextBuilder.buildContext('code-migrator', PHASE.FINAL_PARITY, fixTaskId, {
       sourceFiles: fix.sourceFile ? [fix.sourceFile] : [],
       targetFiles: fix.targetFile ? [fix.targetFile] : [],
       taskScope: {
@@ -97,12 +98,12 @@ export async function runFinalParityIteration(
       },
       remediationContext: toAgentRemediationContext(fixRemediation),
     });
-    const fixInv = buildInvocation(ctx, 'code-migrator', fixCtx, 5, fixTaskId);
+    const fixInv = buildInvocation(ctx, 'code-migrator', fixCtx, PHASE.FINAL_PARITY, fixTaskId);
     const fixResult = await launchAgentWithEvents(ctx, fixInv);
-    recordTokens(ctx, fixResult, 5);
+    recordTokens(ctx, fixResult, PHASE.FINAL_PARITY);
 
     if (fixResult.success) {
-      await commitForAgent(ctx, 'code-migrator', 5, fixTaskId);
+      await commitForAgent(ctx, 'code-migrator', PHASE.FINAL_PARITY, fixTaskId);
       await savePhase5Cursor(ctx, {
         iteration: phase5Cursor.iteration, fixIndex: fixIndex + 1,
         lastSuccessfulStep: 'fix-applied',

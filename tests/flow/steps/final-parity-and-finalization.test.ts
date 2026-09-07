@@ -6,11 +6,13 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
-import { writeFile, mkdir, readFile } from 'node:fs/promises';
+import { writeFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { runFinalParityIteration, noFixesNeeded } from '../../../src/flow/steps/final-parity.js';
 import { launchE2eTestCrafter, launchE2eSuiteWriters, launchDocWriter } from '../../../src/flow/steps/finalization.js';
 import { runIdiomaticRefactorPipeline } from '../../../src/flow/steps/idiomatic-refactor.js';
 import { finalizeAndReport } from '../../../src/flow/steps/completion.js';
+import { fileExists } from '../../../src/util/fs.js';
 import {
   setupFlowTest,
   setupFlowTestWithTasks,
@@ -360,5 +362,29 @@ describe('finalizeAndReport', () => {
     expect(result.phase).toBe(8);
     expect(result.name).toBe('Completion');
     expect(result.success).toBe(true);
+  });
+
+  it('should retain output, runtime artifacts, and unrelated files', async () => {
+    const retentionRoot = await mkdtemp(join(tmpdir(), 'aamf-retention-'));
+    try {
+      const outputPath = join(retentionRoot, 'target');
+      env = await setupFlowTest(createMockLauncher(), { target: { outputPath } });
+      const outputFile = join(outputPath, 'generated.ts');
+      const artifactFile = join(env.ctx.paths.artifactsDir, 'retained.txt');
+      const unrelatedFile = join(retentionRoot, 'unrelated.txt');
+      await mkdir(outputPath, { recursive: true });
+      await mkdir(env.ctx.paths.artifactsDir, { recursive: true });
+      await writeFile(outputFile, 'export const generated = true;\n');
+      await writeFile(artifactFile, 'artifact\n');
+      await writeFile(unrelatedFile, 'unrelated\n');
+
+      await finalizeAndReport(env.flowCtx);
+
+      expect(await fileExists(outputFile)).toBe(true);
+      expect(await fileExists(artifactFile)).toBe(true);
+      expect(await fileExists(unrelatedFile)).toBe(true);
+    } finally {
+      await rm(retentionRoot, { recursive: true, force: true });
+    }
   });
 });

@@ -19,6 +19,16 @@ Resolve the failing task quickly and safely by:
 3. Applying the best strategy,
 4. Reporting the outcome in a machine-parseable `aamf-json` block.
 
+## Input File Contract
+
+- `payload.sourceFiles`: every source file in the failed task or wave.
+- `payload.targetFiles`: every target file in the failed task or wave.
+- `inputFiles`: the union of both complete arrays.
+
+Diagnose and repair the full file scope. Never assume index zero represents a
+multi-file task, and do not declare recovery complete while another task file
+remains unexamined.
+
 ## Idiomatic Target Code
 
 When fixing parity issues, produce idiomatic target-language code — do NOT revert to source-language patterns to satisfy the verifier. If a parity issue stems from the verifier misidentifying an idiomatic target-language pattern as a gap (e.g., flagging `Result<T>` as not matching a C return code), set `scopeReduced: true` and explain in `notes` that the behavior is equivalent despite the structural difference. The goal is behavioral equivalence, not structural mimicry.

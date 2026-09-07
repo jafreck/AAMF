@@ -5,6 +5,7 @@ import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
+import { e2eRuntimePaths, keepE2eArtifacts, validateE2ePreflight } from '../helpers/e2e.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -28,7 +29,7 @@ const sourceRoot  = join(downloadDir, LZ4_DIR);         // top-level repo checko
 const libDir      = join(sourceRoot, 'lib');             // core library .c/.h files
 const configPath  = join(fixtureDir, 'migration.config.json');
 const aamfRoot    = join(fixtureDir, '.aamf');
-const progressDir = join(aamfRoot, 'migration', 'lz4-to-rust');
+const runtimePaths = e2eRuntimePaths(fixtureDir, 'lz4-to-rust');
 const tmpRoot     = join(fixtureDir, 'tmp');
 const outputDir   = join(tmpRoot, 'lz4-rust-output');
 
@@ -102,7 +103,6 @@ async function ensureLz4Source(): Promise<void> {
  *   AAMF_E2E=1 npx vitest run tests/e2e-lz4-rust.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
-const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -114,6 +114,7 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
     // 2. Clean up any previous migration artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
+    await validateE2ePreflight({ configPath, fixtureRoot: fixtureDir, expectedProjectName: 'lz4-to-rust' });
 
     // 3. Run the full migration using the checked-in fixture config
     const runtime = new MigrationRuntime();
@@ -125,7 +126,7 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
   }, 10_800_000); // 3-hour timeout — ~5–7 K lines of C, 7 phases × many LLM round-trips
 
   afterAll(async () => {
-    if (keepArtifacts) return;
+    if (keepE2eArtifacts) return;
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
   });
@@ -239,7 +240,7 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
   // ── Progress & checkpoint artefacts ──────────────────────────────────────
 
   it('should create a checkpoint recording all phases complete', async () => {
-    const checkpointPath = join(progressDir, 'checkpoint.json');
+    const checkpointPath = runtimePaths.checkpointFile;
     expect(await fileExists(checkpointPath)).toBe(true);
 
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
@@ -250,14 +251,14 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
   });
 
   it('should create progress.md covering every phase', async () => {
-    const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+    const progressMd = await readFile(runtimePaths.progressReportFile, 'utf-8');
     expect(progressMd).toContain('lz4-to-rust');
     expect(progressMd).toContain('Iterative Migration');
     expect(progressMd).toContain('Completion');
   });
 
   it('should produce log files', async () => {
-    const logsDir = join(progressDir, 'logs');
+    const logsDir = runtimePaths.logsRuntimeDir;
     expect(await fileExists(logsDir)).toBe(true);
     const logs = await readdir(logsDir);
     expect(logs.length).toBeGreaterThan(0);
@@ -279,7 +280,7 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
     const cargoFiles = outputFiles.filter(f => f.endsWith('Cargo.toml'));
     expect(cargoFiles.length).toBeGreaterThan(0);
 
-    const cargoContent = await readFile(join(outputDir, cargoFiles[0]), 'utf-8');
+    const cargoContent = await readFile(join(outputDir, cargoFiles[0]!), 'utf-8');
     // Should declare a package name
     expect(cargoContent).toMatch(/\[package\]/);
     expect(cargoContent).toMatch(/name\s*=/);
@@ -403,8 +404,8 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration', () => {
 
 describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration with KB Index', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
-  const kbProgressDir = join(fixtureDir, '.aamf-kb', 'migration', 'lz4-to-rust-kb');
-  const kbAamfRoot = join(fixtureDir, '.aamf-kb');
+  const kbRuntimePaths = e2eRuntimePaths(fixtureDir, 'lz4-to-rust-kb');
+  const kbAamfRoot = join(fixtureDir, '.aamf');
   const kbOutputDir = join(fixtureDir, 'tmp', 'lz4-rust-kb-output');
   const kbConfigPath = join(fixtureDir, 'migration-kb.config.json');
 
@@ -415,6 +416,7 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration with KB Index', () => {
     // Clean up previous artefacts
     await rm(kbAamfRoot, { recursive: true, force: true });
     await rm(kbOutputDir, { recursive: true, force: true });
+    await validateE2ePreflight({ configPath: kbConfigPath, fixtureRoot: fixtureDir, expectedProjectName: 'lz4-to-rust-kb' });
 
     const runtime = new MigrationRuntime();
     await runtime.initialize({ configPath: kbConfigPath, logLevel: 'info' });
@@ -437,13 +439,13 @@ describe.skipIf(!runE2E)('E2E lz4 C → Rust Migration with KB Index', () => {
   });
 
   it('Phase 0 should create a KB database file', async () => {
-    const kbDb = join(kbProgressDir, 'kb.db');
+    const kbDb = kbRuntimePaths.kbDbFile;
     expect(await fileExists(kbDb)).toBe(true);
   });
 
   it('Phase 0 KB database should have at least one row in kb_meta', async () => {
     // Dynamically import better-sqlite3 to avoid hard dependency at test collection time
-    const kbDb = join(kbProgressDir, 'kb.db');
+    const kbDb = kbRuntimePaths.kbDbFile;
     try {
       const { default: Database } = await import('better-sqlite3');
       const db = new Database(kbDb, { readonly: true });

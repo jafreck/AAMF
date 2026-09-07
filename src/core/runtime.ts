@@ -22,7 +22,7 @@ import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
 import { TargetIndexer } from './target-indexer.js';
 import { FlowRunner, type FlowRunnerOptions } from '@cadre-dev/framework/flow';
-import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToPhase } from '../flow/index.js';
+import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToPhase, MAX_PHASE } from '../flow/index.js';
 import { MigrationError } from '../flow/steps/shared.js';
 import type { MigrationFlowContext } from '../flow/index.js';
 import { getAgentsForPhase } from '../agents/registry.js';
@@ -34,6 +34,8 @@ export interface RuntimeOptions {
   phase?: number;      // run up to and including this phase
   fromPhase?: number;  // restart from this phase, preserving earlier phases
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
+  /** Initialize only checkpoint inspection/reset services; never launch or generate agents. */
+  stateOnly?: boolean;
 }
 
 /**
@@ -131,6 +133,12 @@ export class MigrationRuntime {
     this.phase = options.phase;
     this.fromPhase = options.fromPhase;
 
+    for (const [name, phase] of [['--phase', this.phase], ['--from-phase', this.fromPhase]] as const) {
+      if (phase !== undefined && (!Number.isInteger(phase) || phase < 0 || phase > MAX_PHASE)) {
+        throw new Error(`${name} must be an integer from 0 through ${MAX_PHASE}; received ${phase}`);
+      }
+    }
+
     // Validate --from-phase / --phase compatibility
     if (this.fromPhase !== undefined && this.phase !== undefined && this.fromPhase > this.phase) {
       throw new Error(
@@ -138,8 +146,8 @@ export class MigrationRuntime {
       );
     }
 
-    // Fail fast if source tree or configured entry points are missing.
-    await validateSourceAvailability(this.config);
+    // Fail fast if source tree or configured entry points are missing for runs.
+    if (!options.stateOnly) await validateSourceAvailability(this.config);
 
     // 2. Setup directories
     this.paths = buildRuntimePaths(this.projectRoot, this.config.projectName);
@@ -159,6 +167,11 @@ export class MigrationRuntime {
 
     // 4. Create checkpoint manager
     this.checkpoint = new CheckpointManager(this.progressDir, this.logger);
+
+    if (options.stateOnly) {
+      this.logger.info(`AAMF checkpoint services initialized for project: ${this.config.projectName}`);
+      return;
+    }
 
     // 5. Create progress writer
     this.progress = new ProgressWriter(this.paths.progressReportFile, this.config.projectName);
@@ -421,10 +434,11 @@ export class MigrationRuntime {
   }
 
   async getStatus(): Promise<string> {
-    const state = await this.checkpoint.load(this.config.projectName);
+    const state = await this.checkpoint.peek();
+    if (!state) return `\nNo checkpoint found for project: ${this.config.projectName}\n`;
     // Format status from checkpoint state
     let status = `\nProject: ${state.projectName}\n`;
-    status += `Phase: ${state.currentPhase}/7\n`;
+    status += `Phase: ${state.currentPhase}/${MAX_PHASE}\n`;
     status += `Completed Phases: ${state.completedPhases.join(', ') || 'none'}\n`;
     status += `Completed Tasks: ${state.completedTasks.length}\n`;
     status += `Failed Tasks: ${state.failedTasks.length}\n`;
@@ -437,30 +451,19 @@ export class MigrationRuntime {
   }
 
   async reset(fromPhase?: number): Promise<void> {
-    // Implementation: if fromPhase specified, reset that phase and later.
-    // Otherwise reset everything.
-    const state = await this.checkpoint.load(this.config.projectName);
-    if (fromPhase) {
-      state.completedPhases = state.completedPhases.filter(p => p < fromPhase);
-      state.currentPhase = fromPhase;
-      state.currentTask = null;
-      // Remove phase outputs for reset phases
-      for (let p = fromPhase; p <= 7; p++) {
-        delete state.phaseOutputs[p];
-      }
-      this.logger.info(`Reset migration from Phase ${fromPhase} onward`);
-    } else {
-      state.currentPhase = 1;
-      state.currentTask = null;
-      state.completedPhases = [];
-      state.completedTasks = [];
-      state.failedTasks = [];
-      state.blockedTasks = [];
-      state.phaseOutputs = {};
-      state.tokenUsage = { total: 0, byPhase: {}, byAgent: {} };
-      this.logger.info('Reset all migration state');
+    if (!await this.checkpoint.peek()) {
+      this.logger.info(`No migration checkpoint exists for project ${this.config.projectName}; nothing to reset`);
+      return;
     }
-    await this.checkpoint.save(state);
+    await this.checkpoint.load(this.config.projectName, { readOnly: true });
+    if (fromPhase !== undefined) {
+      await this.checkpoint.resetFromPhase(fromPhase, nodeIdToPhase, {
+        requirePrerequisites: false,
+        maxPhase: MAX_PHASE,
+      });
+    } else {
+      await this.checkpoint.resetAll(this.config.projectName);
+    }
   }
 
   private async acquireRunLock(): Promise<void> {

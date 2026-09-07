@@ -13,6 +13,7 @@ import {
 } from './shared.js';
 import { ensureDir, fileExists, readJson } from '../../util/fs.js';
 import { generateScaffold } from '../../core/scaffold.js';
+import { PHASE } from '../phases.js';
 
 export async function launchMigrationPlanner(
   flowCtx: FlowExecutionContext<MigrationFlowContext>,
@@ -26,10 +27,10 @@ export async function launchMigrationPlanner(
 
   // Step 4a: migration-planner + optional adjudicator
   if (!checkpointState.phase3aComplete) {
-    const planContext = await ctx.contextBuilder.buildContext('migration-planner', 3);
-    const planInv = buildInvocation(ctx, 'migration-planner', planContext, 3);
+    const planContext = await ctx.contextBuilder.buildContext('migration-planner', PHASE.PLANNING);
+    const planInv = buildInvocation(ctx, 'migration-planner', planContext, PHASE.PLANNING);
     const planResult = await launchAgentWithEvents(ctx, planInv);
-    recordTokens(ctx, planResult, 3);
+    recordTokens(ctx, planResult, PHASE.PLANNING);
 
     if (!planResult.success) {
       const failResult: PhaseResult = {
@@ -42,12 +43,12 @@ export async function launchMigrationPlanner(
     // Adjudicator
     const adjudicationFile = ctx.paths.competingStrategiesFile;
     if (await fileExists(adjudicationFile)) {
-      const adjCtx = await ctx.contextBuilder.buildContext('adjudicator', 3, undefined, {
+      const adjCtx = await ctx.contextBuilder.buildContext('adjudicator', PHASE.PLANNING, undefined, {
         competingStrategiesFile: adjudicationFile, decisionType: 'migration-strategy',
       });
-      const adjInv = buildInvocation(ctx, 'adjudicator', adjCtx, 3);
+      const adjInv = buildInvocation(ctx, 'adjudicator', adjCtx, PHASE.PLANNING);
       const adjResult = await launchAgentWithEvents(ctx, adjInv);
-      recordTokens(ctx, adjResult, 3);
+      recordTokens(ctx, adjResult, PHASE.PLANNING);
     } else {
       try {
         const planningEntries = await readdir(planningDir);

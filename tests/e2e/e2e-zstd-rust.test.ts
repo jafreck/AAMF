@@ -5,6 +5,7 @@ import { rm, readdir, readFile, mkdir, stat } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { MigrationRuntime } from '../../src/core/runtime.js';
 import { fileExists } from '../../src/util/fs.js';
+import { e2eRuntimePaths, keepE2eArtifacts, validateE2ePreflight } from '../helpers/e2e.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -28,8 +29,8 @@ const sourceRoot   = join(downloadDir, ZSTD_DIR);          // top-level repo che
 const libDir       = join(sourceRoot, 'lib');               // core library C files
 const configPath   = join(fixtureDir, 'migration.config.json');
 const aamfRoot     = join(fixtureDir, '.aamf');
-const progressDir  = join(aamfRoot, 'migration', 'zstd-to-rust');
-const outputDir    = join(aamfRoot, 'zstd-rust-output');
+const runtimePaths = e2eRuntimePaths(fixtureDir, 'zstd-to-rust');
+const outputDir    = join(fixtureDir, 'tmp', 'zstd-rust-output');
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
@@ -109,7 +110,6 @@ async function ensureZstdSource(): Promise<void> {
  *   AAMF_E2E=1 npx vitest run tests/e2e-zstd-rust.test.ts
  */
 const runE2E = process.env.AAMF_E2E === '1';
-const keepArtifacts = process.env.AAMF_KEEP_ARTIFACTS === '1';
 
 describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
   let result: Awaited<ReturnType<MigrationRuntime['run']>>;
@@ -121,6 +121,7 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
     // 2. Clean up any previous migration artefacts
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
+    await validateE2ePreflight({ configPath, fixtureRoot: fixtureDir, expectedProjectName: 'zstd-to-rust' });
 
     // 3. Run the full migration using the checked-in fixture config
     const runtime = new MigrationRuntime();
@@ -132,7 +133,7 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
   }, 57_600_000); // 16-hour timeout — ~50 K lines of C, larger than lz4
 
   afterAll(async () => {
-    if (keepArtifacts) return;
+    if (keepE2eArtifacts) return;
     await rm(aamfRoot, { recursive: true, force: true });
     await rm(outputDir, { recursive: true, force: true });
   });
@@ -263,7 +264,7 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
   // ── Progress & checkpoint artefacts ──────────────────────────────────────
 
   it('should create a checkpoint recording all phases complete', async () => {
-    const checkpointPath = join(progressDir, 'checkpoint.json');
+    const checkpointPath = runtimePaths.checkpointFile;
     expect(await fileExists(checkpointPath)).toBe(true);
 
     const checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'));
@@ -274,14 +275,14 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
   });
 
   it('should create progress.md covering every phase', async () => {
-    const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+    const progressMd = await readFile(runtimePaths.progressReportFile, 'utf-8');
     expect(progressMd).toContain('zstd-to-rust');
     expect(progressMd).toContain('Iterative Migration');
     expect(progressMd).toContain('Completion');
   });
 
   it('should enforce wave barrier ordering in progress lifecycle output', async () => {
-    const progressMd = await readFile(join(progressDir, 'progress.md'), 'utf-8');
+    const progressMd = await readFile(runtimePaths.progressReportFile, 'utf-8');
     const section = progressMd.match(/## Wave Lifecycle\s+([\s\S]*?)(?:\n## |\n$)/);
     expect(section).toBeTruthy();
 
@@ -324,7 +325,7 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
   });
 
   it('should record stable wave-mode completion and retry/block signals', async () => {
-    const summaryPath = join(progressDir, 'metrics', 'summary.json');
+    const summaryPath = runtimePaths.metricsSummaryFile;
     expect(await fileExists(summaryPath)).toBe(true);
     const summary = JSON.parse(await readFile(summaryPath, 'utf-8'));
 
@@ -338,7 +339,7 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
   });
 
   it('should produce log files', async () => {
-    const logsDir = join(progressDir, 'logs');
+    const logsDir = runtimePaths.logsRuntimeDir;
     expect(await fileExists(logsDir)).toBe(true);
     const logs = await readdir(logsDir);
     expect(logs.length).toBeGreaterThan(0);
@@ -360,7 +361,7 @@ describe.skipIf(!runE2E)('E2E zstd C → Rust Migration', () => {
     const cargoFiles = outputFiles.filter(f => f.endsWith('Cargo.toml'));
     expect(cargoFiles.length).toBeGreaterThan(0);
 
-    const cargoContent = await readFile(join(outputDir, cargoFiles[0]), 'utf-8');
+    const cargoContent = await readFile(join(outputDir, cargoFiles[0]!), 'utf-8');
     expect(cargoContent).toMatch(/\[package\]/);
     expect(cargoContent).toMatch(/name\s*=/);
   });
