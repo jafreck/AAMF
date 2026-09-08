@@ -52,10 +52,10 @@
   },
   "options": {
     "qualityPolicy": "strict",
-    "maxParallelAgents": 8,
+    "maxParallelAgents": 12,
     "maxRetriesPerTask": 7,
     "reuseKb": false,
-    "maxLinesPerTask": 1000,
+    "maxLinesPerTask": 2000,
     "tokenBudget": 400000000,
     "executionMode": "wave-barrier",
     "waveControl": {
