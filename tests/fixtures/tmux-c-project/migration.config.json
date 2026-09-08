@@ -72,13 +72,13 @@
     }
   },
   "models": {
-    "default": "gpt-5.4",
-    "failureRecovery": "gpt-5.4"
+    "default": "gpt-6-astra",
+    "failureRecovery": "gpt-6-astra"
   },
   "agentBackend": {
     "runtime": "copilot",
     "cliCommand": "copilot",
-    "effort": "xhigh",
+    "effort": "max",
     "timeout": 3600000
   }
 }
