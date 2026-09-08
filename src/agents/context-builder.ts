@@ -327,13 +327,6 @@ export class ContextBuilder {
         };
       }
 
-      case 'migration-orchestrator':
-      case 'migration-runner':
-        return {
-          inputFiles: [src],
-          outputPath: this.progressDir,
-        };
-
       default: {
         const exhaustive: never = agent;
         throw new Error(`Unhandled agent context mapping: ${exhaustive}`);

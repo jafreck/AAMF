@@ -803,13 +803,6 @@ describe('ContextBuilder', () => {
       expect(context.payload?.callerMarker).toBe(agent);
     });
 
-    it('should use default routing for unknown/orchestrator agents', async () => {
-      const { contextPath } = await builder.buildContext('migration-orchestrator', 1);
-      const context = await readJson<AgentContext>(contextPath);
-
-      expect(context.inputFiles).toContain('/tmp/source');
-      expect(context.outputPath).toBe(progressDir);
-    });
   });
 
   // ─── Guidance Propagation ──────────────────────────────────────────

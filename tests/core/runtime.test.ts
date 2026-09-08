@@ -7,8 +7,7 @@ import type { MigrationResult } from '../../src/agents/types.js';
 import type { FlowRunResult } from '@cadre-dev/framework/flow';
 import { Logger } from '../../src/logging/logger.js';
 import { CheckpointManager } from '../../src/core/checkpoint.js';
-import { getAgentsForPhase } from '../../src/agents/registry.js';
-// MigrationOrchestrator replaced by flow runner
+import { ACTIVE_AGENT_NAMES } from '../../src/agents/registry.js';
 import { formatDuration } from '../../src/util/format.js';
 
 /** Build a minimal MigrationResult for printSummary tests. */
@@ -158,6 +157,32 @@ describe('MigrationRuntime', () => {
       expect(runtime.launcher).toBeUndefined();
       expect(runtime.progress).toBeUndefined();
       await expect(runtime.getStatus()).resolves.toContain('No checkpoint found');
+      await runtime.logger.flush();
+      await rm(root, { recursive: true, force: true });
+    });
+  });
+
+  describe('scenario prompt initialization', () => {
+    it('validates bundled prompts during dry-run startup without creating CLI agent directories', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'aamf-prompt-runtime-'));
+      await mkdir(join(root, 'source'), { recursive: true });
+      const configPath = join(root, 'migration.config.json');
+      await writeFile(configPath, JSON.stringify({
+        projectName: 'prompt-runtime',
+        source: { path: './source', language: 'python' },
+        target: { language: 'typescript', outputPath: './target' },
+        agentBackend: { runtime: 'copilot', cliCommand: 'unused-fake-cli' },
+      }));
+      const runtime = new MigrationRuntime() as any;
+      runtime.setupShutdownHandlers = vi.fn();
+
+      await runtime.initialize({ configPath, dryRun: true, logLevel: 'error' });
+
+      expect(runtime.promptCatalog.size).toBe(ACTIVE_AGENT_NAMES.length);
+      expect(runtime.promptCatalog.ids()).toEqual(ACTIVE_AGENT_NAMES);
+      await expect(stat(join(root, '.github', 'agents'))).rejects.toThrow();
+      await expect(stat(join(root, '.claude', 'agents'))).rejects.toThrow();
+      expect(runtime.setupShutdownHandlers).toHaveBeenCalledOnce();
       await runtime.logger.flush();
       await rm(root, { recursive: true, force: true });
     });
@@ -443,7 +468,6 @@ describe('MigrationRuntime', () => {
           runtime: 'copilot',
           model: 'claude-sonnet-4',
           timeout: 300_000,
-          agentDir: '.github/agents',
         },
         source: { path: '/tmp/source', language: 'python' },
         target: { language: 'typescript', outputPath: '/tmp/target' },
@@ -805,89 +829,6 @@ describe('MigrationRuntime', () => {
       expect(formatDuration(5_000)).toBe('5s');
       expect(formatDuration(65_000)).toBe('1m 5s');
       expect(formatDuration(3_723_000)).toBe('1h 2m 3s');
-    });
-
-    it('validateAgentFiles succeeds when all phase agents exist', async () => {
-      const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-'));
-      const runtime = new MigrationRuntime() as any;
-      runtime.config = { agentBackend: { runtime: 'copilot', agentDir: root } };
-
-      const allAgents = [...new Set(Array.from({ length: 10 }, (_, i) => i).flatMap(p => getAgentsForPhase(p)))];
-      await Promise.all(
-          allAgents.map(agent => writeFile(join(root, `${agent}.agent.md`), VALID_AGENT_CONTRACT, 'utf-8')),
-      );
-
-      await expect(runtime.validateAgentFiles()).resolves.toBeUndefined();
-      await rm(root, { recursive: true, force: true });
-    });
-
-      it('validateAgentFiles throws when schema sections are missing', async () => {
-        const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-invalid-'));
-        const runtime = new MigrationRuntime() as any;
-        runtime.config = { agentBackend: { runtime: 'copilot', agentDir: root } };
-
-        const allAgents = [...new Set(Array.from({ length: 10 }, (_, i) => i).flatMap(p => getAgentsForPhase(p)))];
-        await Promise.all(
-          allAgents.map(agent => writeFile(join(root, `${agent}.agent.md`), '# agent\n', 'utf-8')),
-        );
-
-        await expect(runtime.validateAgentFiles()).rejects.toThrow('Invalid agent schema contract(s)');
-        await rm(root, { recursive: true, force: true });
-      });
-
-  const VALID_AGENT_CONTRACT = `# Agent Definition
-
-## Input Schema (Required)
-
-\`\`\`json
-{
-  "type": "object",
-  "required": ["contextFile"],
-  "properties": {
-    "contextFile": { "type": "string" }
-  }
-}
-\`\`\`
-
-## Output Schema (Required)
-
-\`\`\`json
-{
-  "type": "object",
-  "required": ["agent"],
-  "properties": {
-    "agent": { "type": "string" }
-  }
-}
-\`\`\`
-`;
-
-    it('validateAgentFiles throws with missing file list', async () => {
-      const root = await mkdtemp(join(tmpdir(), 'aamf-agent-files-missing-'));
-      const runtime = new MigrationRuntime() as any;
-      runtime.config = { agentBackend: { runtime: 'copilot', agentDir: root } };
-
-      await expect(runtime.validateAgentFiles()).rejects.toThrow('Missing agent file(s)');
-      await rm(root, { recursive: true, force: true });
-    });
-
-    it('validateAgentFiles succeeds for claude-code runtime using .md agent files', async () => {
-      const root = await mkdtemp(join(tmpdir(), 'aamf-claude-agent-files-'));
-      const runtime = new MigrationRuntime() as any;
-      runtime.config = {
-        agentBackend: {
-          runtime: 'claude-code',
-          agentDir: root,
-        },
-      };
-
-      const allAgents = [...new Set(Array.from({ length: 10 }, (_, i) => i).flatMap(p => getAgentsForPhase(p)))];
-      await Promise.all(
-        allAgents.map(agent => writeFile(join(root, `${agent}.md`), '# Claude agent\n', 'utf-8')),
-      );
-
-      await expect(runtime.validateAgentFiles()).resolves.toBeUndefined();
-      await rm(root, { recursive: true, force: true });
     });
 
     it('setupShutdownHandlers registers SIGINT/SIGTERM/SIGHUP handlers that flush and save state', async () => {

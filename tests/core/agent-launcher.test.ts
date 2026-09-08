@@ -8,15 +8,16 @@
  *   - Post-processing (aamf-json parsing, copilot events, output detection)
  *   - Invocation delay logic
  */
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { AgentLauncher, buildBackendRuntimeConfig, toFrameworkInvocation, registerAamfCopilotBackend } from '../../src/core/agent-launcher.js';
+import { AgentLauncher, buildBackendRuntimeConfig, toFrameworkInvocation, registerAamfAgentBackends } from '../../src/core/agent-launcher.js';
 import { createMockConfig, createSilentLogger } from '../helpers/mocks.js';
 import type { AgentInvocation } from '../../src/agents/types.js';
 import { TokenTracker } from '../../src/budget/token-tracker.js';
 import { CostEstimator } from '../../src/budget/cost-estimator.js';
+import { ScenarioPromptCatalog } from '../../src/agents/prompt-catalog.js';
 
 describe('buildBackendRuntimeConfig', () => {
   it('should map copilot runtime to "copilot" backend', () => {
@@ -41,11 +42,10 @@ describe('buildBackendRuntimeConfig', () => {
 
   it('should include copilot cliCommand for copilot backend', () => {
     const config = createMockConfig({
-      agentBackend: { runtime: 'copilot', cliCommand: '/usr/local/bin/copilot', agentDir: '.github/agents', timeout: 300_000 },
+      agentBackend: { runtime: 'copilot', cliCommand: '/usr/local/bin/copilot', timeout: 300_000 },
     });
     const rtConfig = buildBackendRuntimeConfig(config);
     expect(rtConfig.agent.copilot?.cliCommand).toBe('/usr/local/bin/copilot');
-    expect(rtConfig.agent.copilot?.agentDir).toBe('.github/agents');
     expect(rtConfig.agent.copilot?.allowAllPaths).toBe(true);
     expect(rtConfig.agent.copilot?.allowAllTools).toBe(true);
   });
@@ -124,6 +124,29 @@ describe('toFrameworkInvocation', () => {
     });
   });
 
+  it('should filter MCP servers using scenario KB capabilities', () => {
+    const extensions = {
+      mcpConfig: { url: 'http://localhost:3000/mcp' },
+      targetMcpConfig: { url: 'http://localhost:3001/mcp' },
+    };
+
+    const sourceOnly = toFrameworkInvocation(baseInvocation({
+      agent: 'migration-planner',
+      extensions,
+    }));
+    expect(sourceOnly.mcpServers).toEqual({
+      'aamf-kb': { type: 'http', url: 'http://localhost:3000/mcp' },
+    });
+
+    const targetOnly = toFrameworkInvocation(baseInvocation({
+      agent: 'idiomatic-reviewer',
+      extensions,
+    }));
+    expect(targetOnly.mcpServers).toEqual({
+      'aamf-kb-target': { type: 'http', url: 'http://localhost:3001/mcp' },
+    });
+  });
+
   it('should default workItemId to empty string when undefined', () => {
     const inv = baseInvocation({ workItemId: undefined });
     const fw = toFrameworkInvocation(inv);
@@ -149,7 +172,8 @@ describe('AgentLauncher token usage post-processing', () => {
       ...configOverrides,
     });
     const logger = createSilentLogger(tempDir);
-    const launcher = new AgentLauncher(config, tempDir, logger);
+    const catalog = await ScenarioPromptCatalog.load();
+    const launcher = new AgentLauncher(config, tempDir, logger, catalog);
 
     return {
       contextPath,
@@ -191,7 +215,7 @@ describe('AgentLauncher token usage post-processing', () => {
   });
 
   it('should extract token usage from Copilot JSONL result events', async () => {
-    const { launcher, contextPath } = await createHarness();
+    const { launcher, contextPath, tempDir } = await createHarness();
     const stdout = [
       JSON.stringify({
         type: 'assistant.message',
@@ -229,11 +253,19 @@ describe('AgentLauncher token usage post-processing', () => {
       outputPath: '',
       phase: 3,
       workItemId: '',
+      invocationId: 'copilot-jsonl-test',
     });
 
     expect(result.tokenUsage).toEqual({ input: 1200, output: 300, cachedInput: 100 });
     expect(result.extensions.tokenUsageSource).toBe('copilot-jsonl');
     expect(result.extensions.premiumRequests).toBe(2);
+    expect(result.extensions.promptDeliveryMode).toBe('copilot-user-prompt');
+    expect(result.extensions.scenarioPromptSha256).toMatch(/^[a-f0-9]{64}$/);
+    const logDirectory = join(
+      tempDir, '.aamf', 'migration', 'launcher-test', 'logs', 'agents', 'migration-planner', 'main',
+    );
+    const [logFile] = (await readdir(logDirectory)).filter(file => file.endsWith('.log'));
+    expect(await readFile(join(logDirectory, logFile!), 'utf-8')).toContain(stdout);
   });
 
   it('should use structured token usage only when no measured usage exists', async () => {
@@ -367,6 +399,57 @@ describe('AgentLauncher token usage post-processing', () => {
 
     expect(result.tokenUsage).toEqual({ input: 321, output: 45, cachedInput: 12 });
     expect(result.extensions.tokenUsageSource).toBe('cli-parsed');
+  });
+
+  it('should unwrap Claude JSON results for validation while preserving the raw envelope in results and logs', async () => {
+    const { launcher, contextPath, tempDir } = await createHarness({
+      agentBackend: { runtime: 'claude-code', cliCommand: 'claude' },
+    });
+    const assistantText = 'Completed\n```aamf-json\n{"status":"completed","outputFiles":[]}\n```';
+    const rawEnvelope = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: assistantText,
+      usage: { input_tokens: 876, output_tokens: 54, cache_read_input_tokens: 21 },
+    });
+    const launchAgent = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      success: true,
+      timedOut: false,
+      duration: 100,
+      stdout: rawEnvelope,
+      stderr: '',
+      tokenUsage: null,
+      outputPath: '',
+      outputExists: false,
+    });
+    (launcher as any).frameworkLauncher = { init: vi.fn(), launchAgent };
+
+    const result = await launcher.launchAgent({
+      agent: 'knowledge-builder',
+      contextPath,
+      outputPath: '',
+      phase: 2,
+      workItemId: '',
+      invocationId: 'claude-envelope-test',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.stdout).toBe(rawEnvelope);
+    expect(result.extensions.outputParsed).toBe(true);
+    expect(result.extensions.structuredOutput).toMatchObject({ status: 'completed' });
+    expect(result.tokenUsage).toEqual({ input: 876, output: 54, cachedInput: 21 });
+    expect(result.extensions.promptDeliveryMode).toBe('claude-appended-system');
+    expect(result.extensions.scenarioPromptSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.extensions.scenarioPromptByteLength).toBeGreaterThan(0);
+
+    const logDirectory = join(
+      tempDir, '.aamf', 'migration', 'launcher-test', 'logs', 'agents', 'knowledge-builder', 'main',
+    );
+    const [logFile] = (await readdir(logDirectory)).filter(file => file.endsWith('.log'));
+    expect(logFile).toBeDefined();
+    expect(await readFile(join(logDirectory, logFile!), 'utf-8')).toContain(rawEnvelope);
   });
 
   it('should parse Copilot CLI --output-format json usage with top-level usage fields', async () => {
@@ -661,9 +744,11 @@ describe('AgentLauncher token usage post-processing', () => {
   });
 });
 
-describe('registerAamfCopilotBackend', () => {
+describe('registerAamfAgentBackends', () => {
   it('should not throw when registering', () => {
-    expect(() => registerAamfCopilotBackend()).not.toThrow();
+    return ScenarioPromptCatalog.load().then(catalog => {
+      expect(() => registerAamfAgentBackends(catalog)).not.toThrow();
+    });
   });
 
   afterEach(async () => {
@@ -676,6 +761,7 @@ describe('registerAamfCopilotBackend', () => {
     delete process.env.ELECTRON_AAMF_TEST;
     delete process.env.TERM_PROGRAM_VERSION;
     delete process.env.ORIGINAL_XDG_CURRENT_DESKTOP;
+    delete process.env.AAMF_FAKE_ARGV_PATH;
   });
 
   it('should invoke the registered copilot backend with json output, effort, and stripped VS Code env', async () => {
@@ -766,10 +852,11 @@ describe('registerAamfCopilotBackend', () => {
 
     const {
       buildBackendRuntimeConfig: freshBuildBackendRuntimeConfig,
-      registerAamfCopilotBackend: freshRegisterAamfCopilotBackend,
+      registerAamfAgentBackends: freshRegisterAamfAgentBackends,
     } = await import('../../src/core/agent-launcher.js');
 
-    freshRegisterAamfCopilotBackend();
+    const catalog = await ScenarioPromptCatalog.load();
+    freshRegisterAamfAgentBackends(catalog);
 
     process.env.VSCODE_AAMF_TEST = 'present';
     process.env.ELECTRON_AAMF_TEST = 'present';
@@ -853,9 +940,9 @@ describe('registerAamfCopilotBackend', () => {
     } as any, backendLogger);
     await minimalBackend.init();
     const minimalResult = await minimalBackend.invoke({
-      agent: 'knowledge-builder',
+      agent: 'idiomatic-reviewer',
       workItemId: 'task-minimal',
-      phase: 2,
+      phase: 7,
       contextPath,
       outputPath: join(tempDir, 'minimal-missing-output.json'),
     }, tempDir);
@@ -883,21 +970,31 @@ describe('registerAamfCopilotBackend', () => {
     });
     expect(minimalResult).toMatchObject({ success: true, outputExists: false });
     expect(backendLogger.debug).toHaveBeenCalledWith(
-      'AamfCopilotBackend initialized (cli: copilot-cli, outputFormat: json)',
+      'AamfCopilotBackend initialized (cli: copilot-cli, promptDelivery: user, outputFormat: json)',
     );
     expect(backendLogger.error).toHaveBeenCalledTimes(3);
 
     const [command, args, options] = spawnMock.mock.calls[0]!;
     expect(command).toBe('copilot-cli');
     expect(args).toEqual(expect.arrayContaining([
-      '--agent', 'code-migrator',
       '--no-ask-user',
+      '--no-custom-instructions',
+      '--disable-builtin-mcps',
       '--output-format', 'json',
       '--allow-all-tools',
       '--allow-all-paths',
+      '--excluded-tools=task,list_agents,read_agent,write_agent',
       '--model', 'gpt-5.6',
       '--effort', 'xhigh',
     ]));
+    expect(args).not.toContain('--agent');
+    expect(args).not.toContain('--available-tools');
+    const prompt = args[args.indexOf('-p') + 1];
+    expect(prompt).toContain('# AAMF Scenario Contract');
+    expect(prompt).toContain('# Code Migrator');
+    expect(prompt).toContain(`Execute the AAMF scenario "code-migrator"`);
+    expect(prompt).toContain(contextPath);
+    expect(prompt).toContain(`Expected output: ${outputPath}`);
     expect(args).toContain('--additional-mcp-config');
     expect(args).toContain(JSON.stringify({
       mcpServers: {
@@ -926,15 +1023,117 @@ describe('registerAamfCopilotBackend', () => {
     const minimalArgs = spawnMock.mock.calls[5]![1];
     expect(spawnMock.mock.calls[5]![0]).toBe('copilot');
     expect(minimalArgs).toEqual(expect.arrayContaining([
-      '--agent', 'knowledge-builder',
       '--no-ask-user',
+      '--no-custom-instructions',
       '--output-format', 'json',
+      '--excluded-tools=task,list_agents,read_agent,write_agent,apply_patch,create,edit,shell,shell_session',
+      '--deny-tool=write',
+      '--deny-tool=shell',
     ]));
+    expect(minimalArgs).not.toContain('--agent');
     expect(minimalArgs).not.toContain('--allow-all-tools');
     expect(minimalArgs).not.toContain('--allow-all-paths');
     expect(minimalArgs).not.toContain('--model');
     expect(minimalArgs).not.toContain('--effort');
     expect(minimalArgs).not.toContain('--additional-mcp-config');
+  });
+
+  it('should invoke a fake Claude CLI with separated prompts, strict tools and MCP, model override, and JSON usage', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'aamf-claude-backend-'));
+    const fakeCli = join(tempDir, 'fake-claude.cjs');
+    await writeFile(fakeCli, [
+      '#!/usr/bin/env node',
+      "const fs = require('node:fs');",
+      "fs.writeFileSync(process.env.AAMF_FAKE_ARGV_PATH, JSON.stringify(process.argv.slice(2)));",
+      'process.stdout.write(JSON.stringify({',
+      "  type: 'result', subtype: 'success', is_error: false,",
+      "  result: '```aamf-json\\n{\"status\":\"completed\",\"outputFiles\":[]}\\n```',",
+      '  usage: { input_tokens: 321, output_tokens: 45, cache_read_input_tokens: 12 }',
+      '}));',
+    ].join('\n'));
+    await chmod(fakeCli, 0o755);
+
+    const { resetAgentBackendFactories, createAgentBackend } = await import('@cadre-dev/framework/runtime');
+    resetAgentBackendFactories();
+    const {
+      buildBackendRuntimeConfig: freshBuildBackendRuntimeConfig,
+      registerAamfAgentBackends: freshRegisterAamfAgentBackends,
+    } = await import('../../src/core/agent-launcher.js');
+    const catalog = await ScenarioPromptCatalog.load();
+    freshRegisterAamfAgentBackends(catalog);
+
+    const backendLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const config = createMockConfig({
+      models: { default: 'claude-default' },
+      agentBackend: { runtime: 'claude-code', cliCommand: fakeCli, timeout: 300_000 },
+    });
+    const backend = createAgentBackend(freshBuildBackendRuntimeConfig(config), backendLogger);
+    await backend.init();
+
+    const contextPath = join(tempDir, 'context.json');
+    const outputPath = join(tempDir, 'target');
+    await writeFile(contextPath, JSON.stringify({ outputPath }));
+    const codeArgsPath = join(tempDir, 'code-args.json');
+    process.env.AAMF_FAKE_ARGV_PATH = codeArgsPath;
+
+    const codeResult = await backend.invoke({
+      agent: 'code-migrator',
+      workItemId: 'task-claude',
+      phase: 4,
+      contextPath,
+      outputPath,
+      modelOverride: 'claude-override',
+      mcpServers: {
+        'aamf-kb': { type: 'http', url: 'http://localhost:3000/mcp' },
+        'aamf-kb-target': { type: 'http', url: 'http://localhost:3001/mcp' },
+        unrelated: { type: 'http', url: 'http://localhost:9999/mcp' },
+      },
+    }, tempDir);
+    const codeArgs = JSON.parse(await readFile(codeArgsPath, 'utf-8')) as string[];
+
+    expect(codeArgs).not.toContain('--agent');
+    expect(codeArgs).not.toContain('--system-prompt');
+    expect(codeArgs).not.toContain('--bare');
+    expect(codeArgs).not.toContain('--append-system-prompt-file');
+    const dynamicRequest = codeArgs[codeArgs.indexOf('-p') + 1]!;
+    const stableInstructions = codeArgs[codeArgs.indexOf('--append-system-prompt') + 1]!;
+    expect(dynamicRequest).toContain(`Execute the AAMF scenario "code-migrator"`);
+    expect(dynamicRequest).toContain(contextPath);
+    expect(dynamicRequest).toContain('Phase: 4');
+    expect(dynamicRequest).toContain('Work item: task-claude');
+    expect(dynamicRequest).not.toContain('# Code Migrator');
+    expect(stableInstructions).toContain('# AAMF Scenario Contract');
+    expect(stableInstructions).toContain('# Code Migrator');
+    expect(codeArgs[codeArgs.indexOf('--tools') + 1]).toBe('Read,Glob,Grep,Edit,Write,Bash');
+    expect(codeArgs[codeArgs.indexOf('--allowedTools') + 1]).toContain('mcp__aamf-kb__*');
+    expect(codeArgs[codeArgs.indexOf('--allowedTools') + 1]).toContain('mcp__aamf-kb-target__*');
+    expect(codeArgs[codeArgs.indexOf('--disallowedTools') + 1]).toBe('Task,TaskOutput,Agent');
+    expect(codeArgs).toContain('--strict-mcp-config');
+    expect(codeArgs).toEqual(expect.arrayContaining(['--model', 'claude-override']));
+    const mcpConfig = JSON.parse(codeArgs[codeArgs.indexOf('--mcp-config') + 1]!) as { mcpServers: Record<string, unknown> };
+    expect(Object.keys(mcpConfig.mcpServers)).toEqual(['aamf-kb', 'aamf-kb-target']);
+    expect(codeResult.tokenUsage).toEqual({ input: 321, output: 45, cachedInput: 12, model: 'claude-override' });
+    expect(codeResult.stdout).toContain('"result"');
+
+    const readArgsPath = join(tempDir, 'read-args.json');
+    process.env.AAMF_FAKE_ARGV_PATH = readArgsPath;
+    await backend.invoke({
+      agent: 'idiomatic-reviewer',
+      workItemId: 'review',
+      phase: 7,
+      contextPath,
+      outputPath,
+      mcpServers: {
+        'aamf-kb': { type: 'http', url: 'http://localhost:3000/mcp' },
+        'aamf-kb-target': { type: 'http', url: 'http://localhost:3001/mcp' },
+      },
+    }, tempDir);
+    const readArgs = JSON.parse(await readFile(readArgsPath, 'utf-8')) as string[];
+    expect(readArgs[readArgs.indexOf('--tools') + 1]).toBe('Read,Glob,Grep');
+    expect(readArgs[readArgs.indexOf('--allowedTools') + 1]).toBe('Read,Glob,Grep,mcp__aamf-kb-target__*');
+    const readMcpConfig = JSON.parse(readArgs[readArgs.indexOf('--mcp-config') + 1]!) as { mcpServers: Record<string, unknown> };
+    expect(Object.keys(readMcpConfig.mcpServers)).toEqual(['aamf-kb-target']);
+    expect(readArgs).toEqual(expect.arrayContaining(['--model', 'claude-default']));
   });
 });
 

@@ -52,8 +52,9 @@ When `taskScope` is absent, migrate the full source file scope as described belo
    - Run any available linter or type-checker on the output
 
 5. **Report Results**
-   - Update the task status in progress tracking
+   - Report the task outcome only in the final `aamf-json` block
    - Note any concerns, assumptions, or deviations from the plan
+   - Do not update AAMF checkpoints or progress files; the runtime owns them
 
 ## Migration Guidelines
 
@@ -100,33 +101,6 @@ If you encounter something you cannot migrate correctly:
    - What needs human review or a different approach
 4. The orchestrator will route this to `parity-failure-resolver` if needed
 
-## Sub-Agents (launched via CLI)
-
-| Agent | Purpose |
-|-------|---------|
-| `parity-verifier` | Verify behavioral parity after writing code |
-| `test-writer` | Write tests for the migrated code |
-| `parity-failure-resolver` | Handle migration difficulties or failures |
-
-After writing migrated code:
-1. Launch `parity-verifier` to verify behavioral equivalence
-2. If parity passes, launch `test-writer` to create tests
-3. If parity fails, launch `parity-failure-resolver` to diagnose and fix
-
-## Output
-
-Update `.aamf/migration/{projectName}/reports/progress.md` with task result:
-
-```markdown
-### Task {id}: {name}
-- **Status**: Completed | Needs Review | Failed
-- **Source**: {source file(s) and line ranges}
-- **Target**: {target file(s) created/modified}
-- **Parity**: Passed | Failed | Partial
-- **Tests**: Written | Pending | N/A
-- **Notes**: {any migration decisions, concerns, or assumptions}
-```
-
 ## Context Window Management
 
 - **Only read the files specified in your task** — never browse the broader codebase.
@@ -141,6 +115,7 @@ Update `.aamf/migration/{projectName}/reports/progress.md` with task result:
 ## Constraints
 
 - You execute exactly ONE task. Do not batch or combine tasks.
+- Do not launch another AAMF scenario or invoke an agent CLI. The runtime performs parity verification, test writing, and recovery after this invocation.
 - Never modify source files.
 - Never skip behavior — if something is hard to migrate, attempt it and flag for review.
 - Bill of materials: you must account for every function, class, constant, and type in your source scope.

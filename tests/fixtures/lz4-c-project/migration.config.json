@@ -65,7 +65,6 @@
   "agentBackend": {
     "runtime": "copilot",
     "cliCommand": "copilot",
-    "agentDir": "../../../../.github/agents",
     "timeout": 1800000
   }
 }

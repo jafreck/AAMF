@@ -1,28 +1,17 @@
 /**
  * @module agents/registry
  *
- * Canonical single source of truth for all agent metadata in the AAMF system.
- * Combines agent names, output schemas, phase membership, and agent file
- * conventions into a single registry.
+ * Canonical single source of truth for all scenario metadata in the AAMF system.
+ * Combines scenario names, output schemas, phase membership, and backend-neutral
+ * capabilities into a single registry.
  */
 import { z } from 'zod';
 import {
   AamfOutputBase,
 } from './agent-output-schemas.js';
-import type { AgentName, JsonSchema } from './types.js';
+import type { AgentName, JsonSchema, ScenarioCapability } from './types.js';
 
 // ─── Shared base properties ──────────────────────────────────────────────────
-
-/** Properties common to every agent's input schema. */
-const BASE_INPUT_PROPERTIES: Record<string, JsonSchema> = {
-  contextFile: { type: 'string', minLength: 1 },
-  projectRoot: { type: 'string', minLength: 1 },
-  progressDir: { type: 'string', minLength: 1 },
-  phase:       { type: 'integer', minimum: 0 },
-};
-
-/** The minimum required keys for every agent input. */
-const BASE_INPUT_REQUIRED = ['contextFile', 'projectRoot', 'progressDir', 'phase'] as const;
 
 /** Properties common to every agent's output schema. */
 const BASE_OUTPUT_PROPERTIES: Record<string, JsonSchema> = {
@@ -32,24 +21,9 @@ const BASE_OUTPUT_PROPERTIES: Record<string, JsonSchema> = {
 };
 
 /**
- * Build an input JSON Schema, merging base properties with agent-specific extras.
- * Extra `required` entries are appended to the base required list.
- */
-function inputSchema(
-  opts: { extraRequired?: readonly string[]; extraProperties?: Record<string, JsonSchema> } = {},
-): JsonSchema {
-  return {
-    type: 'object',
-    required: [...BASE_INPUT_REQUIRED, ...(opts.extraRequired ?? [])],
-    properties: { ...BASE_INPUT_PROPERTIES, ...(opts.extraProperties ?? {}) },
-  };
-}
-
-/**
  * Build an output JSON Schema, merging base properties with agent-specific extras.
  */
 function outputSchema(
-  _agentName: string,
   opts: {
     extraRequired?: readonly string[];
     extraProperties?: Record<string, JsonSchema>;
@@ -75,26 +49,19 @@ export interface AgentRegistryEntry {
   name: AgentName;
   /** Human-readable description of the agent's purpose. */
   description: string;
-  /** Title-case display name used in Copilot front matter. */
-  displayName: string;
   /** Zod schema for validating the agent's aamf-json output block. */
   outputSchema: z.ZodTypeAny;
-  /** JSON Schema describing the agent's expected input (context) contract. */
-  inputJsonSchema: JsonSchema;
   /** JSON Schema describing the agent's expected aamf-json output contract. */
   outputJsonSchema: JsonSchema;
   /** Phase IDs where this agent participates. */
   phases: readonly number[];
-  /** Tool names for Copilot (GitHub) front matter. */
-  copilotTools: readonly string[];
-  /** Tool names for Claude Code front matter. */
-  claudeTools: readonly string[];
+  /** Backend-neutral operations available to this scenario. */
+  capabilities: readonly ScenarioCapability[];
 }
 
 // ─── Per-Agent Output Schema Extensions ──────────────────────────────────────
 // These extend AamfOutputBase with agent-specific fields.
 
-export const MigrationOrchestratorSchema = AamfOutputBase;
 export const KnowledgeBuilderSchema = AamfOutputBase;
 export const MigrationPlannerSchema = AamfOutputBase;
 export const AdjudicatorSchema = AamfOutputBase;
@@ -124,7 +91,6 @@ export const FinalParityCheckerSchema = AamfOutputBase.extend({
 });
 export const E2eTestCrafterSchema = AamfOutputBase;
 export const DocumentationWriterSchema = AamfOutputBase;
-export const MigrationRunnerSchema = AamfOutputBase;
 export const IdiomaticReviewerSchema = AamfOutputBase.extend({
   issues: z.array(z.object({
     file: z.string().min(1),
@@ -163,93 +129,54 @@ export const IdiomaticRefactorerSchema = AamfOutputBase;
  * - Derive per-phase agent lists: `getAgentsForPhase(phaseId)`
  * - Look up output schemas: `AGENT_REGISTRY['code-migrator'].outputSchema`
  */
-/** Default Claude Code tools shared by all agents. */
-const CLAUDE_TOOLS = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'] as const;
+function capabilities(...values: ScenarioCapability[]): readonly ScenarioCapability[] {
+  return Object.freeze(values);
+}
 
 export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
-  'migration-orchestrator': {
-    name: 'migration-orchestrator',
-    displayName: 'Migration Orchestrator',
-    description: 'Coordinates all phases of a large-scale legacy codebase migration with checkpointing and resume capability.',
-    outputSchema: MigrationOrchestratorSchema,
-    inputJsonSchema: inputSchema({ extraProperties: { resume: { type: 'boolean' } } }),
-    outputJsonSchema: outputSchema('migration-orchestrator', {
-      extraProperties: {
-        currentPhase:   { type: 'integer', minimum: 0 },
-        completedTasks: { type: 'array', items: { type: 'string' } },
-        failedTasks:    { type: 'array', items: { type: 'string' } },
-      },
-    }),
-    phases: [],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
-  },
   'knowledge-builder': {
     name: 'knowledge-builder',
-    displayName: 'Knowledge Builder',
     description: 'Investigates a legacy codebase and builds a structured knowledge base documenting its architecture, patterns, and behaviors.',
     outputSchema: KnowledgeBuilderSchema,
-    inputJsonSchema: inputSchema({ extraProperties: { moduleGroups: { type: 'array' } } }),
-    outputJsonSchema: outputSchema('knowledge-builder', {
+    outputJsonSchema: outputSchema({
       extraProperties: {
         modulesDocumented: { type: 'integer', minimum: 0 },
       },
     }),
     phases: [2],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'write', 'source-kb'),
   },
   'migration-planner': {
     name: 'migration-planner',
-    displayName: 'Migration Planner',
     description: 'Creates a detailed, ordered migration plan by analyzing the knowledge base and producing task breakdowns for code migration.',
     outputSchema: MigrationPlannerSchema,
-    inputJsonSchema: inputSchema({ extraProperties: { analysisFiles: { type: 'array' } } }),
-    outputJsonSchema: outputSchema('migration-planner', {
+    outputJsonSchema: outputSchema({
       extraProperties: {
         groupCount: { type: 'integer', minimum: 0 },
         strategy:   { type: 'string' },
       },
     }),
     phases: [3],
-    copilotTools: ['read', 'edit', 'search'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'write', 'source-kb'),
   },
   'adjudicator': {
     name: 'adjudicator',
-    displayName: 'Adjudicator',
     description: 'Evaluates competing implementation plans or design decisions and selects the best option.',
     outputSchema: AdjudicatorSchema,
-    inputJsonSchema: inputSchema({
-      extraProperties: {
-        taskId:  { type: 'string', minLength: 1 },
-        options: { type: 'object' },
-      },
-    }),
-    outputJsonSchema: outputSchema('adjudicator', {
+    outputJsonSchema: outputSchema({
       extraProperties: {
         taskId:   { type: 'string', minLength: 1 },
         decision: { type: 'string', minLength: 1 },
       },
     }),
     phases: [3],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'write', 'source-kb'),
   },
   'code-migrator': {
     name: 'code-migrator',
-    displayName: 'Code Migrator',
     description: 'Migrates source code from legacy to target platform according to a specific task in the migration plan.',
     outputSchema: CodeMigratorSchema,
-    inputJsonSchema: inputSchema({
-      extraRequired: ['taskId'],
-      extraProperties: {
-        taskId:      { type: 'string', minLength: 1 },
-        sourceFiles: { type: 'array', items: { type: 'string' } },
-        targetFiles: { type: 'array', items: { type: 'string' } },
-      },
-    }),
-    outputJsonSchema: outputSchema('code-migrator', {
+    outputJsonSchema: outputSchema({
       extraProperties: {
         taskId: { type: 'string', minLength: 1 },
         parity: { enum: ['pass', 'partial', 'fail'] },
@@ -257,23 +184,13 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
       },
     }),
     phases: [4, 5],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'write', 'execute', 'source-kb', 'target-kb'),
   },
   'parity-verifier': {
     name: 'parity-verifier',
-    displayName: 'Parity Verifier',
     description: 'Verifies behavioral parity between original source code and migrated target code.',
     outputSchema: ParityVerifierSchema,
-    inputJsonSchema: inputSchema({
-      extraRequired: ['taskId'],
-      extraProperties: {
-        taskId:      { type: 'string', minLength: 1 },
-        sourceFiles: { type: 'array', items: { type: 'string' } },
-        targetFiles: { type: 'array', items: { type: 'string' } },
-      },
-    }),
-    outputJsonSchema: outputSchema('parity-verifier', {
+    outputJsonSchema: outputSchema({
       extraRequired: ['taskId', 'parity', 'issues'],
       extraProperties: {
         taskId: { type: 'string', minLength: 1 },
@@ -296,48 +213,26 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
       },
     }),
     phases: [4],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'execute', 'source-kb', 'target-kb'),
   },
   'test-writer': {
     name: 'test-writer',
-    displayName: 'Test Writer',
-    description: 'Writes unit and integration tests for changes made by the code-writer.',
+    description: 'Writes unit and integration tests for changes made by the code-migrator.',
     outputSchema: TestWriterSchema,
-    inputJsonSchema: inputSchema({
-      extraRequired: ['taskId'],
-      extraProperties: {
-        taskId:      { type: 'string', minLength: 1 },
-        sourceFiles: { type: 'array', items: { type: 'string' } },
-        targetFiles: { type: 'array', items: { type: 'string' } },
-      },
-    }),
-    outputJsonSchema: outputSchema('test-writer', {
+    outputJsonSchema: outputSchema({
       extraRequired: ['taskId'],
       extraProperties: {
         taskId: { type: 'string', minLength: 1 },
       },
     }),
     phases: [4, 6],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'write', 'execute', 'source-kb', 'target-kb'),
   },
   'parity-failure-resolver': {
     name: 'parity-failure-resolver',
-    displayName: 'Parity Failure Resolver',
     description: 'Diagnoses migration failures, evaluates competing fix strategies, and selects/executes the best recovery path.',
     outputSchema: ParityFailureResolverSchema,
-    inputJsonSchema: inputSchema({
-      extraRequired: ['taskId', 'failureType'],
-      extraProperties: {
-        taskId:        { type: 'string', minLength: 1 },
-        failureType:   { enum: ['parity', 'build', 'test', 'blocked'] },
-        failureReport: { type: 'string' },
-        sourceFiles:   { type: 'array', items: { type: 'string' } },
-        targetFiles:   { type: 'array', items: { type: 'string' } },
-      },
-    }),
-    outputJsonSchema: outputSchema('failure-recovery', {
+    outputJsonSchema: outputSchema({
       extraRequired: ['taskId', 'failureType', 'attempts', 'scopeReduced'],
       extraProperties: {
         taskId:       { type: 'string', minLength: 1 },
@@ -347,16 +242,13 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
       },
     }),
     phases: [4],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'write', 'execute', 'source-kb', 'target-kb'),
   },
   'final-parity-checker': {
     name: 'final-parity-checker',
-    displayName: 'Final Parity Checker',
     description: 'Performs a comprehensive post-migration audit to ensure the entire migrated codebase is complete with no gaps, stubs, or behavioral differences.',
     outputSchema: FinalParityCheckerSchema,
-    inputJsonSchema: inputSchema({ extraProperties: { targetPath: { type: 'string' } } }),
-    outputJsonSchema: outputSchema('final-parity-checker', {
+    outputJsonSchema: outputSchema({
       extraProperties: {
         fixes: {
           type: 'array',
@@ -376,65 +268,38 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
       },
     }),
     phases: [5],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'execute', 'source-kb', 'target-kb'),
   },
   'e2e-test-crafter': {
     name: 'e2e-test-crafter',
-    displayName: 'E2E Test Crafter',
-    description: 'Plans and coordinates end-to-end test suites for the fully migrated codebase, delegating individual suite writing to test-writer agents.',
+    description: 'Plans end-to-end test suites for runtime-managed test-writer fan-out.',
     outputSchema: E2eTestCrafterSchema,
-    inputJsonSchema: inputSchema(),
-    outputJsonSchema: outputSchema('e2e-test-crafter', {
+    outputJsonSchema: outputSchema({
       extraProperties: {
         suitesPlanned:   { type: 'integer', minimum: 0 },
         suitesCompleted: { type: 'integer', minimum: 0 },
       },
     }),
     phases: [6],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'write', 'source-kb', 'target-kb'),
   },
   'documentation-writer': {
     name: 'documentation-writer',
-    displayName: 'Documentation Writer',
     description: 'Produces comprehensive documentation for the migrated codebase including architecture guides, API docs, and migration notes.',
     outputSchema: DocumentationWriterSchema,
-    inputJsonSchema: inputSchema({
-      extraProperties: { documentationPaths: { type: 'array', items: { type: 'string' } } },
-    }),
-    outputJsonSchema: outputSchema('documentation-writer', {
+    outputJsonSchema: outputSchema({
       extraProperties: {
         documentsWritten: { type: 'integer', minimum: 0 },
       },
     }),
     phases: [6],
-    copilotTools: ['read', 'edit', 'search'],
-    claudeTools: CLAUDE_TOOLS,
-  },
-  'migration-runner': {
-    name: 'migration-runner',
-    displayName: 'Migration Runner',
-    description: 'Top-level entry point that launches and manages the migration orchestrator for large-scale legacy codebase migrations.',
-    outputSchema: MigrationRunnerSchema,
-    inputJsonSchema: inputSchema({ extraProperties: { configPath: { type: 'string', minLength: 1 } } }),
-    outputJsonSchema: outputSchema('migration-runner', {
-      extraProperties: {
-        projectName:          { type: 'string' },
-        orchestratorLaunched: { type: 'boolean' },
-      },
-    }),
-    phases: [],
-    copilotTools: ['read', 'edit', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'write', 'source-kb', 'target-kb'),
   },
   'idiomatic-reviewer': {
     name: 'idiomatic-reviewer',
-    displayName: 'Idiomatic Reviewer',
     description: 'Reviews the migrated codebase for idiomatic patterns in the target language, producing a report of issues and suggestions.',
     outputSchema: IdiomaticReviewerSchema,
-    inputJsonSchema: inputSchema(),
-    outputJsonSchema: outputSchema('idiomatic-reviewer', {
+    outputJsonSchema: outputSchema({
       extraProperties: {
         issues: {
           type: 'array',
@@ -455,20 +320,13 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
       },
     }),
     phases: [7],
-    copilotTools: ['read', 'search'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'target-kb'),
   },
   'idiomatic-planner': {
     name: 'idiomatic-planner',
-    displayName: 'Idiomatic Planner',
     description: 'Analyzes holistic idiomatic review findings and constructs a dependency-ordered task graph for refactoring.',
     outputSchema: IdiomaticPlannerSchema,
-    inputJsonSchema: inputSchema({
-      extraProperties: {
-        reviewFindings: { type: 'object' },
-      },
-    }),
-    outputJsonSchema: outputSchema('idiomatic-planner', {
+    outputJsonSchema: outputSchema({
       extraProperties: {
         tasks: {
           type: 'array',
@@ -488,28 +346,25 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
       },
     }),
     phases: [7],
-    copilotTools: ['read', 'search', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'target-kb'),
   },
   'idiomatic-refactorer': {
     name: 'idiomatic-refactorer',
-    displayName: 'Idiomatic Refactorer',
     description: 'Applies idiomatic improvements from a refactoring task to one or more files in the migrated codebase.',
     outputSchema: IdiomaticRefactorerSchema,
-    inputJsonSchema: inputSchema({
-      extraProperties: {
-        task: { type: 'object' },
-      },
-    }),
-    outputJsonSchema: outputSchema('idiomatic-refactorer'),
+    outputJsonSchema: outputSchema(),
     phases: [7],
-    copilotTools: ['read', 'edit', 'execute'],
-    claudeTools: CLAUDE_TOOLS,
+    capabilities: capabilities('read', 'search', 'write', 'target-kb'),
   },
 };
 
 /** All registered agent names (derived from the registry). */
-export const ALL_AGENT_NAMES = Object.keys(AGENT_REGISTRY) as AgentName[];
+export const ALL_AGENT_NAMES = Object.freeze(Object.keys(AGENT_REGISTRY) as AgentName[]);
+
+/** Scenarios with live phase membership, used by startup prompt validation. */
+export const ACTIVE_AGENT_NAMES = Object.freeze(
+  ALL_AGENT_NAMES.filter(name => AGENT_REGISTRY[name].phases.length > 0),
+);
 
 /** Get agents that participate in a given phase. */
 export function getAgentsForPhase(phaseId: number): AgentName[] {
@@ -519,6 +374,16 @@ export function getAgentsForPhase(phaseId: number): AgentName[] {
 /** Get the output schema for a given agent. */
 export function getOutputSchema(agent: AgentName): z.ZodTypeAny {
   return AGENT_REGISTRY[agent].outputSchema;
+}
+
+/** Return the immutable capability set for a scenario. */
+export function getScenarioCapabilities(agent: AgentName): readonly ScenarioCapability[] {
+  return AGENT_REGISTRY[agent].capabilities;
+}
+
+/** Test whether a scenario has a backend-neutral capability. */
+export function hasScenarioCapability(agent: AgentName, capability: ScenarioCapability): boolean {
+  return AGENT_REGISTRY[agent].capabilities.includes(capability);
 }
 
 

@@ -155,7 +155,6 @@ export function createMockConfig(overrides?: MockConfigOverrides): MigrationConf
     agentBackend: {
       runtime: 'copilot',
       cliCommand: 'copilot',
-      agentDir: '.github/agents',
       timeout: 300_000,
       ...(overrides?.agentBackend ?? {}),
     },

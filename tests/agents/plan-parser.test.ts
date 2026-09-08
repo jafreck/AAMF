@@ -10,7 +10,6 @@ import {
   readTaskResultJson,
 } from '../../src/agents/agent-output-schemas.js';
 import {
-  MigrationOrchestratorSchema,
   KnowledgeBuilderSchema,
   MigrationPlannerSchema,
   AdjudicatorSchema,
@@ -21,7 +20,6 @@ import {
   FinalParityCheckerSchema,
   E2eTestCrafterSchema,
   DocumentationWriterSchema,
-  MigrationRunnerSchema,
 } from '../../src/agents/registry.js';
 import {
   parseMigrationPlanContent,
@@ -404,11 +402,6 @@ Here are the tasks:
   });
 
   describe('per-agent output schemas', () => {
-    it('should accept valid MigrationOrchestratorSchema output', () => {
-      const result = MigrationOrchestratorSchema.parse({ status: 'completed' });
-      expect(result.status).toBe('completed');
-    });
-
     it('should validate KnowledgeBuilderSchema', () => {
       expect(() => KnowledgeBuilderSchema.parse({ status: 'completed' })).not.toThrow();
     });
@@ -447,10 +440,6 @@ Here are the tasks:
 
     it('should validate DocumentationWriterSchema', () => {
       expect(() => DocumentationWriterSchema.parse({ status: 'completed' })).not.toThrow();
-    });
-
-    it('should validate MigrationRunnerSchema', () => {
-      expect(() => MigrationRunnerSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
     describe('KbIndexerOutput', () => {

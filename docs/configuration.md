@@ -5,8 +5,8 @@ The AAMF runtime is the execution harness for the Autonomous Agent Migration Fra
 ## Prerequisites
 
 - **Node.js 22+** (the repository pins Node 22 in `.nvmrc`)
-- An agent CLI installation — either Copilot CLI (`copilot --agent`) or Claude Code (`claude --agent`)
-- Agent definition files in the configured agent directory (`.github/agents/` or `.claude/agents/`)
+- An authenticated Copilot CLI or Claude Code installation on `PATH`
+- No custom-agent definitions or CLI agent directory are required; AAMF bundles its scenario templates
 
 ## Installation
 
@@ -85,7 +85,6 @@ Create a `migration.config.json` file in your project root. Below is a full refe
   "agentBackend": {
     "runtime": "copilot",
     "cliCommand": "copilot",
-    "agentDir": ".github/agents",
     "timeout": 300000
   }
 }
@@ -193,7 +192,6 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 |-------|------|---------|-------------|
 | `agentBackend.runtime` | `'copilot' \| 'claude-code'` | `'copilot'` | Which agent CLI to use for invocations. |
 | `agentBackend.cliCommand` | `string` | `'copilot'` or `'claude'` | Path or name of the selected CLI binary. |
-| `agentBackend.agentDir` | `string` | `'.github/agents'` or `'.claude/agents'` | Directory containing agent prompt files for the selected runtime. |
 | `agentBackend.timeout` | `integer` | `300000` | Per-agent invocation timeout in ms (5 minutes). |
 | `agentBackend.phaseTimeouts` | `Record<number, integer>` | — | Per-phase timeout overrides in ms, keyed by phase number. |
 | `agentBackend.effort` | `'low' \| 'medium' \| 'high' \| 'xhigh'` | — | Copilot reasoning effort level. |
@@ -268,7 +266,9 @@ Execution order is 0→1→2→3→4→5→6→7→8. Phase 7 requires `idiomati
 The runtime and agents have a strict separation of concerns:
 
 - **Runtime** manages process lifecycle, file I/O, checkpointing, token budget enforcement, parallel execution, retry logic, model routing, git automation, observability, and progress reporting.
-- **Agents** perform all reasoning — code analysis, planning decisions, code generation, and verification. Each agent is an `.agent.md` prompt file that the runtime invokes as a subprocess via either Copilot CLI or Claude Code.
+- **Scenarios** perform all reasoning — code analysis, planning decisions, code generation, and verification. AAMF compiles active bundled templates and canonical output schemas into an immutable in-memory prompt catalog at startup.
+- **Prompt delivery** is backend-specific: Copilot receives stable instructions plus the dynamic invocation request in `-p`; Claude Code receives stable instructions with `--append-system-prompt` and the dynamic request in `-p`.
+- **Capabilities** are backend-neutral registry values translated into CLI built-in tool availability, unattended permissions, delegation denials, and AAMF Lore MCP permissions.
 - **Communication** is file-based IPC only. The runtime writes context files to disk, launches an agent, and reads the agent's output files when it exits. Agent stdout/stderr is streamed live to `.live.log` files. There are no sockets, no shared memory, and no streaming protocols between runtime and agents.
 - **KB Access** uses the Model Context Protocol (MCP). When Phase 0 is enabled, the runtime runs an in-process HTTP MCP server that agents connect to for knowledge-base queries.
 
@@ -328,67 +328,22 @@ target codebase.
 | Problem | Solution |
 |---------|----------|
 | **Config validation errors** | Check field names and types against the schema reference above. Run with `--dry-run` to validate without executing. |
-| **Agent timeout** | Increase `copilot.timeout` (or `claudeCode.timeout`) in your config. Use `copilot.phaseTimeouts` for per-phase overrides. Large files may need 600000 ms or more. |
+| **Agent timeout** | Increase `agentBackend.timeout` in your config. Use `agentBackend.phaseTimeouts` for per-phase overrides. Large files may need 600000 ms or more. |
 | **Budget exceeded** | Raise `options.tokenBudget` or resume from the last checkpoint with `--resume` after increasing the budget. |
 | **Checkpoint corruption** | The runtime automatically falls back to the most recent backup checkpoint. If both are corrupted, use `npx aamf reset` and restart. |
-| **Agent not found** | Ensure `.agent.md` files exist in the directory specified by `copilot.agentDir` (or `claudeCode.agentDir`). |
+| **CLI argument failure** | Verify the selected CLI supports AAMF's documented prompt, JSON output, tool-policy, and MCP flags. |
 | **Infrastructure errors** | File-lock, OOM, network, and permission errors are classified as infrastructure failures and retried separately (up to `maxInfraRetries`). |
 | **KB index stale** | The runtime computes a source fingerprint and automatically rebuilds Phase 0 when sources change. Or run `npx aamf index build` manually. |
 
-## Structured JSON Agent Output (Sidecar)
+## Structured Scenario Output
 
-In addition to their markdown output, agents can (and should) write a structured JSON sidecar file alongside each task result. The runtime checks for the sidecar first; if it exists and validates, it is used in place of markdown parsing.
+Every scenario response must end with a fenced `aamf-json` block. The launcher extracts the last block from reconstructed assistant text, parses its JSON, and validates it with the scenario's canonical Zod schema. A malformed or schema-invalid block makes the invocation fail; raw Copilot JSONL or Claude JSON output remains in the invocation log for auditing.
 
-### Sidecar Location
+The base contract requires `status` (`completed`, `failed`, or `needs-review`) and supports task, output-file, notes, and token fields. Scenario-specific fields such as parity issues, final fixes, or idiomatic tasks are appended by `AGENT_REGISTRY` and included verbatim in the compiled instructions.
 
-```
-{progressDir}/artifacts/results/{agent}-{taskId}.result.json
-```
+### Scenario Template Authors
 
-For example: `.aamf/migration/my-project/artifacts/results/code-migrator-task-001.result.json`
-
-### JSON Schema
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `taskId` | `string` | **Yes** | Unique task identifier, e.g. `"task-001"`. |
-| `agent` | `string` | **Yes** | Name of the agent that produced this result. |
-| `status` | `"completed" \| "failed" \| "needs-review"` | **Yes** | Outcome of the task execution. |
-| `outputFiles` | `string[]` | No | Files created or modified by the agent. Defaults to `[]`. |
-| `parity` | `"pass" \| "partial" \| "fail"` | No | Parity verification result (set by parity-verifier). |
-| `issues` | `Issue[]` | No | List of issues found. Defaults to `[]`. |
-| `issues[].severity` | `"critical" \| "major" \| "minor"` | Yes (if issue) | Severity of the issue. |
-| `issues[].description` | `string` | Yes (if issue) | Description of the issue. |
-| `issues[].sourceLocation` | `string` | No | File and line in the source code. |
-| `issues[].targetLocation` | `string` | No | File and line in the target code. |
-| `metrics` | `object` | No | Optional execution metrics. |
-| `metrics.linesOfCode` | `number` | No | Lines of code produced. |
-| `metrics.tokensUsed` | `number` | No | Tokens consumed during execution. |
-| `metrics.durationMs` | `number` | No | Wall-clock duration in milliseconds. |
-| `notes` | `string` | No | Free-form notes about the task execution. |
-
-### Example
-
-```json
-{
-  "taskId": "task-001",
-  "agent": "code-migrator",
-  "status": "completed",
-  "outputFiles": ["src/auth/login.ts", "src/auth/session.ts"],
-  "parity": "pass",
-  "issues": [],
-  "metrics": {
-    "linesOfCode": 245,
-    "tokensUsed": 8500,
-    "durationMs": 42000
-  },
-  "notes": "Migrated login and session modules. Used express-session instead of Flask-Session."
-}
-```
-
-### Agent Prompt Authors
-
-When writing `.agent.md` prompts, instruct agents to write **both** their standard markdown output and a `.result.json` sidecar. The runtime validates the JSON against a Zod schema (`TaskResultSchema` in `result-parser.ts`). If the sidecar is missing or fails validation, the runtime falls back to markdown parsing.
+Templates under `agents/templates/` must end responses with a fenced `aamf-json` block. The prompt catalog appends the registry's canonical output JSON Schema, and the launcher validates the extracted value with the scenario's Zod schema. Templates must not contain provider front matter or instructions to launch another AAMF scenario.
 
 ## Project Structure
 
@@ -398,7 +353,7 @@ runtime/src/
 ├── agents/
 │   ├── context-builder.ts            # Assembles file-based context for agent invocations
 │   ├── result-parser.ts              # Parses structured output from agent responses
-│   └── types.ts                      # Agent-related type definitions (16 agent types)
+│   └── types.ts                      # Scenario and migration type definitions (13 live scenarios)
 ├── budget/
 │   ├── cost-estimator.ts             # USD cost estimation (48 models across Claude, Gemini, OpenAI)
 │   └── token-tracker.ts              # Tracks cumulative token usage against budget

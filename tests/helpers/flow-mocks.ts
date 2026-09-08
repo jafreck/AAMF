@@ -253,7 +253,11 @@ export async function setupFlowTest(
   const flowCtx: FlowExecutionContext<MigrationFlowContext> = {
     context: ctx,
     flowId: 'aamf-migration',
+    executionId: 'aamf-migration/test-node',
     executionPath: ['aamf-migration', 'test-node'],
+    attempt: 1,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    signal: new AbortController().signal,
     outputs: {},
     executionOutputs: {},
     getStepOutput: () => undefined,

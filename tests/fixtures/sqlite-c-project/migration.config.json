@@ -58,7 +58,6 @@
     "runtime": "copilot",
     "cliCommand": "copilot",
     "effort": "high",
-    "agentDir": "../../../.github/agents",
     "timeout": 1800000
   }
 }

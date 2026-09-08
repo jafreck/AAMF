@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MigrationOrchestratorSchema,
   KnowledgeBuilderSchema,
   MigrationPlannerSchema,
   AdjudicatorSchema,
@@ -11,20 +10,11 @@ import {
   FinalParityCheckerSchema,
   E2eTestCrafterSchema,
   DocumentationWriterSchema,
-  MigrationRunnerSchema,
 } from '../../src/agents/registry.js';
 
 const VALID_STATUS = 'completed' as const;
 
 describe('Per-agent output schemas', () => {
-  describe('MigrationOrchestratorSchema', () => {
-    it('accepts valid output', () => {
-      expect(() =>
-        MigrationOrchestratorSchema.parse({ status: VALID_STATUS }),
-      ).not.toThrow();
-    });
-  });
-
   describe('KnowledgeBuilderSchema', () => {
     it('accepts valid output', () => {
       expect(() =>
@@ -137,11 +127,4 @@ describe('Per-agent output schemas', () => {
     });
   });
 
-  describe('MigrationRunnerSchema', () => {
-    it('accepts valid output', () => {
-      expect(() =>
-        MigrationRunnerSchema.parse({ status: VALID_STATUS }),
-      ).not.toThrow();
-    });
-  });
 });

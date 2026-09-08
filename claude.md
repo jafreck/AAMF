@@ -26,10 +26,13 @@ migration.config.json → MigrationRuntime
             ┌───────────────┼───────────────┐
             ▼               ▼               ▼
       ContextBuilder   AgentLauncher   TaskGraphBuilder
-      (writes JSON)    (spawns CLI)    (SCC + greedy merge)
+      (writes JSON)    (injects prompt) (SCC + greedy merge)
             │               │
             ▼               ▼
-       context.json    Agent CLI processes
+       context.json    ScenarioPromptCatalog
+                            │
+                            ▼
+                      Agent CLI processes
                             │
             ┌───────────────┼───────────────┐
             ▼               ▼               ▼
@@ -42,9 +45,10 @@ migration.config.json → MigrationRuntime
 **Key components:**
 
 - `src/flow/` — Step definitions for each pipeline phase, wired together by `migration-flow.ts`.
-- `src/core/runtime.ts` — Loads config, generates agent files from templates, builds a `FlowContext`, and runs the flow.
+- `src/core/runtime.ts` — Loads config, validates bundled scenario prompts, builds a `FlowContext`, and runs the flow.
 - `src/core/task-graph-builder.ts` — Deterministic call-graph clustering: SCC contraction → greedy merge → topologically-sorted `MigrationTask[]`.
-- `src/agents/registry.ts` — Single authoritative registry of all 16 agent roles with Zod schemas, tool lists, and phase membership.
+- `src/agents/registry.ts` — Single authoritative registry of all 13 live scenarios with Zod schemas, backend-neutral capabilities, and phase membership.
+- `src/agents/prompt-catalog.ts` — Compiles templates and output schemas into immutable in-memory scenario instructions with SHA-256 metadata.
 - `src/core/agent-launcher.ts` — Spawns out-of-process agent CLIs (Copilot or Claude Code), streams output, collects metrics.
 - `src/execution/parallel-executor.ts` — p-limit concurrency control for parallel agent invocations.
 - `src/core/checkpoint.ts` — JSON-based checkpoint with per-phase cursors for deterministic resume.
@@ -61,21 +65,21 @@ migration.config.json → MigrationRuntime
 | 4 | Iterative Migration | `code-migrator`, `parity-verifier`, `test-writer`, `parity-failure-resolver` | Yes |
 | 5 | Final Parity Verification | `final-parity-checker` | Yes |
 | 6 | E2E Testing & Documentation | `e2e-test-crafter`, `documentation-writer` | Yes |
-| 7 | Idiomatic Refactor (optional) | `idiomatic-reviewer`, `idiomatic-refactorer` | Yes |
+| 7 | Idiomatic Refactor (optional) | `idiomatic-reviewer`, `idiomatic-planner`, `idiomatic-refactorer` | Yes |
 | 8 | Completion | *(summary only)* | Yes |
 
 Execution order: 0→1→2→3→4→5→6→7→8. All phases are critical — failure in any phase halts the flow.
 
 ## Agent Runtimes
 
-AAMF supports two agent backends, selected by `agentRuntime` in the config:
+AAMF supports two agent backends, selected by `agentBackend.runtime` in the config:
 
-| Runtime | CLI | Agent Dir |
-|---------|-----|-----------|
-| Copilot | `copilot --agent <name>` | `.github/agents/` |
-| Claude Code | `claude --agent <name>` | `.claude/agents/` |
+| Runtime | Stable instructions | Dynamic request |
+|---------|---------------------|-----------------|
+| Copilot | Combined into `-p` | Appended in the same `-p` value |
+| Claude Code | `--append-system-prompt` | `-p` |
 
-Agents run out-of-process. Context is passed as JSON files containing file paths (not contents). When KB indexing is enabled, an HTTP MCP server gives agents query access to the indexed codebase without saturating context windows.
+Scenarios run in fresh out-of-process CLI processes without custom-agent registration or generated CLI configuration files. Context is passed as JSON files containing file paths (not contents). Backend-neutral scenario capabilities are translated into CLI tool and MCP restrictions at launch time.
 
 ## Development
 

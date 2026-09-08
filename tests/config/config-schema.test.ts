@@ -114,7 +114,7 @@ describe('MigrationConfigSchema', () => {
       target: { ...validConfig.target, framework: 'express' },
       options: { maxParallelAgents: 5, tokenBudget: 1000000 },
       models: { default: 'gpt-4o' },
-      agentBackend: { runtime: 'copilot', cliCommand: 'copilot', agentDir: '.github/agents', timeout: 300000 },
+      agentBackend: { runtime: 'copilot', cliCommand: 'copilot', timeout: 300000 },
     };
     const result = MigrationConfigSchema.safeParse(full);
     expect(result.success).toBe(true);
@@ -367,7 +367,6 @@ describe('MigrationConfigSchema', () => {
       const result = MigrationConfigSchema.parse(validConfig);
       expect(result.agentBackend.runtime).toBe('copilot');
       expect(result.agentBackend.cliCommand).toBe('copilot');
-      expect(result.agentBackend.agentDir).toBe('.github/agents');
       expect(result.agentBackend.timeout).toBe(300000);
       expect(result.models.default).toBeUndefined();
       expect(result.agentBackend.model).toBeUndefined();
@@ -381,7 +380,6 @@ describe('MigrationConfigSchema', () => {
       });
       expect(result.agentBackend.runtime).toBe('claude-code');
       expect(result.agentBackend.cliCommand).toBe('claude');
-      expect(result.agentBackend.agentDir).toBe('.claude/agents');
       expect(result.agentBackend.timeout).toBe(300000);
     });
 
@@ -392,13 +390,20 @@ describe('MigrationConfigSchema', () => {
         agentBackend: {
           runtime: 'claude-code',
           cliCommand: 'claude',
-          agentDir: '.claude/agents',
           timeout: 600000,
           phaseTimeouts: { 4: 120000 },
         },
       });
       expect(result.models.default).toBe('claude-sonnet-4-5');
       expect(result.agentBackend.timeout).toBe(600000);
+    });
+
+    it('strips the removed agentBackend.agentDir key without a compatibility field', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        agentBackend: { runtime: 'copilot', agentDir: '.github/agents' },
+      });
+      expect('agentDir' in result.agentBackend).toBe(false);
     });
 
     it('should accept executionMode of wave-barrier', () => {
