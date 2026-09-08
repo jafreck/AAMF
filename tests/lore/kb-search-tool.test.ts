@@ -7,9 +7,21 @@ type Row = {
   kind: string;
   file_path: string;
   start_line: number;
+  start_character: number | null;
   end_line: number;
+  end_character: number | null;
+  selection_line: number | null;
+  selection_character: number | null;
   score: number;
 };
+
+function present(row: Row): Row {
+  return {
+    ...row,
+    start_line: row.start_line + 1,
+    end_line: row.end_line + 1,
+  };
+}
 
 function makeDb(opts: {
   structural?: Row[];
@@ -57,8 +69,12 @@ describe('kb search tool handler', () => {
     name: 'alpha',
     kind: 'function',
     file_path: 'a.ts',
-    start_line: 1,
-    end_line: 2,
+    start_line: 0,
+    start_character: null,
+    end_line: 1,
+    end_character: null,
+    selection_line: null,
+    selection_character: null,
     score: -1,
   };
   const s2: Row = {
@@ -66,8 +82,12 @@ describe('kb search tool handler', () => {
     name: 'beta',
     kind: 'function',
     file_path: 'b.ts',
-    start_line: 3,
-    end_line: 4,
+    start_line: 2,
+    start_character: null,
+    end_line: 3,
+    end_character: null,
+    selection_line: null,
+    selection_character: null,
     score: -0.8,
   };
   const s3: Row = {
@@ -75,8 +95,12 @@ describe('kb search tool handler', () => {
     name: 'gamma',
     kind: 'function',
     file_path: 'c.ts',
-    start_line: 5,
-    end_line: 6,
+    start_line: 4,
+    start_character: null,
+    end_line: 5,
+    end_character: null,
+    selection_line: null,
+    selection_character: null,
     score: -0.6,
   };
 
@@ -86,7 +110,7 @@ describe('kb search tool handler', () => {
     const result = await handler(db, { query: 'alpha' });
 
     expect(result.mode_used).toBe('structural');
-    expect(result.results).toEqual([s1, s2]);
+    expect(result.results).toEqual([present(s1), present(s2)]);
   });
 
   it('falls back to LIKE search when FTS query fails', async () => {
@@ -95,7 +119,7 @@ describe('kb search tool handler', () => {
     const result = await handler(db, { query: 'operator+*', mode: 'structural' });
 
     expect(result.mode_used).toBe('structural');
-    expect(result.results).toEqual([s2]);
+    expect(result.results).toEqual([present(s2)]);
   });
 
   it('returns semantic results when embedder succeeds', async () => {
@@ -117,7 +141,7 @@ describe('kb search tool handler', () => {
     const result = await handler(db, { query: 'concept', mode: 'semantic' }, embedder as any);
 
     expect(result.mode_used).toBe('structural (fallback: no embeddings)');
-    expect(result.results).toEqual([s1]);
+    expect(result.results).toEqual([present(s1)]);
   });
 
   it('fuses structural and semantic rankings with RRF and deduplicates by symbol id', async () => {
@@ -141,7 +165,7 @@ describe('kb search tool handler', () => {
     const result = await handler(db, { query: 'q', mode: 'fused' });
 
     expect(result.mode_used).toBe('structural (no query-time embedder)');
-    expect(result.results).toEqual([s1, s2]);
+    expect(result.results).toEqual([present(s1), present(s2)]);
   });
 });
 
@@ -153,8 +177,12 @@ describe('kb search tool – observer callback', () => {
     name: 'alpha',
     kind: 'function',
     file_path: 'a.ts',
-    start_line: 1,
-    end_line: 2,
+    start_line: 0,
+    start_character: null,
+    end_line: 1,
+    end_character: null,
+    selection_line: null,
+    selection_character: null,
     score: -1,
   };
 
@@ -207,7 +235,7 @@ describe('kb search tool – observer callback', () => {
     const result = await handler(db, { query: 'alpha', mode: 'structural' }, undefined, throwingObserver);
 
     expect(result.mode_used).toBe('structural');
-    expect(result.results).toEqual([s1]);
+    expect(result.results).toEqual([present(s1)]);
   });
 
   it('should report fused mode on successful fused search', async () => {

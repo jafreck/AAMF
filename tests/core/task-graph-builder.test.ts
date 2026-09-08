@@ -10,67 +10,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
+import { openDb, presentationLineToStorage, type Database } from '@jafreck/lore';
 import { buildTaskGraph, buildDependencySummary, findSCCs } from '../../src/core/task-graph-builder.js';
 import type { CompilationUnit } from '../../src/agents/types.js';
 
 // ─── DB Helpers ─────────────────────────────────────────────────────────────
 
 function createTestDb(dbPath: string): Database.Database {
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS files (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      path TEXT NOT NULL, branch TEXT NOT NULL DEFAULT '',
-      language TEXT NOT NULL, size_bytes INTEGER NOT NULL DEFAULT 0,
-      last_hash TEXT, source TEXT NOT NULL DEFAULT '',
-      indexed_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      UNIQUE(path, branch)
-    );
-    CREATE TABLE IF NOT EXISTS symbols (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-      name TEXT NOT NULL, kind TEXT NOT NULL,
-      start_line INTEGER NOT NULL, end_line INTEGER NOT NULL,
-      signature TEXT, doc_comment TEXT,
-      resolved_type_signature TEXT, resolved_return_type TEXT,
-      definition_uri TEXT, definition_path TEXT,
-      parent_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL
-    );
-    CREATE TABLE IF NOT EXISTS symbol_refs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      caller_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
-      callee_id INTEGER REFERENCES symbols(id),
-      callee_name TEXT NOT NULL, call_line INTEGER NOT NULL,
-      call_character INTEGER,
-      call_kind TEXT NOT NULL DEFAULT 'call',
-      resolution_method TEXT NOT NULL DEFAULT '',
-      file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
-      resolved_type_signature TEXT, resolved_return_type TEXT,
-      definition_uri TEXT, definition_path TEXT
-    );
-    CREATE TABLE IF NOT EXISTS type_refs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-      symbol_id INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
-      type_id INTEGER REFERENCES symbols(id),
-      type_name TEXT NOT NULL, type_name_bare TEXT NOT NULL,
-      ref_kind TEXT NOT NULL DEFAULT 'other',
-      ref_line INTEGER NOT NULL, ref_character INTEGER,
-      resolved_type_signature TEXT, definition_uri TEXT, definition_path TEXT
-    );
-    CREATE TABLE IF NOT EXISTS symbol_metrics (
-      symbol_id   INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
-      line_count  INTEGER NOT NULL,
-      param_count INTEGER NOT NULL,
-      cyclomatic  INTEGER NOT NULL,
-      max_nesting INTEGER NOT NULL,
-      layer       TEXT    NOT NULL DEFAULT 'baseline',
-      generation  INTEGER NOT NULL DEFAULT 0
-    );
-  `);
+  const db = openDb(dbPath);
+  db.prepare(
+    `INSERT OR IGNORE INTO baseline_generations (branch, generation) VALUES ('', 0)`,
+  ).run();
   return db;
 }
 
@@ -81,20 +31,45 @@ function insertFile(db: Database.Database, path: string, language = 'c'): number
 function insertSymbol(db: Database.Database, fileId: number, name: string, kind: string, startLine: number, endLine: number): number {
   return Number(db.prepare(
     'INSERT INTO symbols (file_id, name, kind, start_line, end_line) VALUES (?, ?, ?, ?, ?)',
-  ).run(fileId, name, kind, startLine, endLine).lastInsertRowid);
+  ).run(
+    fileId,
+    name,
+    kind,
+    presentationLineToStorage(startLine),
+    presentationLineToStorage(endLine),
+  ).lastInsertRowid);
 }
 
 function insertRef(db: Database.Database, callerId: number, calleeName: string, callLine: number, calleeId?: number): void {
   // Look up caller's file_id for the denormalized column
   const row = db.prepare('SELECT file_id FROM symbols WHERE id = ?').get(callerId) as { file_id: number } | undefined;
   const fileId = row?.file_id ?? null;
-  db.prepare('INSERT INTO symbol_refs (caller_id, callee_id, callee_name, call_line, file_id) VALUES (?, ?, ?, ?, ?)').run(callerId, calleeId ?? null, calleeName, callLine, fileId);
+  db.prepare(
+    `INSERT INTO symbol_refs
+       (caller_id, callee_id, callee_name, call_line, file_id, resolution_method)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    callerId,
+    calleeId ?? null,
+    calleeName,
+    presentationLineToStorage(callLine),
+    fileId,
+    calleeId === undefined ? 'unresolved' : 'name_unique',
+  );
 }
 
 function insertTypeRef(db: Database.Database, fileId: number, typeName: string, refLine: number, symbolId?: number, typeId?: number): void {
   db.prepare(
     'INSERT INTO type_refs (file_id, symbol_id, type_id, type_name, type_name_bare, ref_kind, ref_line) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).run(fileId, symbolId ?? null, typeId ?? null, typeName, typeName, 'usage', refLine);
+  ).run(
+    fileId,
+    symbolId ?? null,
+    typeId ?? null,
+    typeName,
+    typeName,
+    'usage',
+    presentationLineToStorage(refLine),
+  );
 }
 
 const DEFAULT_OPTIONS = {

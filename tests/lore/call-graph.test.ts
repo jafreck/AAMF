@@ -15,7 +15,11 @@ import { openDb, type Database, resolveSymbolEdges, topoSort, detectCycles, Inde
 
 /** Open an in-memory DB with the full schema. */
 function memDb(): Database.Database {
-  return openDb(':memory:');
+  const db = openDb(':memory:');
+  db.prepare(
+    `INSERT OR IGNORE INTO baseline_generations (branch, generation) VALUES ('', 0)`,
+  ).run();
+  return db;
 }
 
 /** Insert a file row and return its id. */
@@ -58,8 +62,8 @@ describe('resolveSymbolEdges', () => {
 
     // Insert an unresolved symbol_ref
     db.prepare(
-      `INSERT INTO symbol_refs (caller_id, callee_name, call_line) VALUES (?, ?, 1)`,
-    ).run(callerId, 'callee_fn');
+      `INSERT INTO symbol_refs (caller_id, file_id, callee_name, call_line) VALUES (?, ?, ?, 1)`,
+    ).run(callerId, fileId, 'callee_fn');
 
     resolveSymbolEdges(db);
 
@@ -78,8 +82,8 @@ describe('resolveSymbolEdges', () => {
     const callerId = insertSymbol(db, fileId, 'some_fn');
 
     db.prepare(
-      `INSERT INTO symbol_refs (caller_id, callee_name, call_line) VALUES (?, ?, 1)`,
-    ).run(callerId, 'nonexistent_fn');
+      `INSERT INTO symbol_refs (caller_id, file_id, callee_name, call_line) VALUES (?, ?, ?, 1)`,
+    ).run(callerId, fileId, 'nonexistent_fn');
 
     resolveSymbolEdges(db);
 
