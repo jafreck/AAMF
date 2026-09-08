@@ -23,6 +23,18 @@ export type JsonSchema = Record<string, unknown>;
 /** All recognized agent names in the AAMF system. */
 export type AgentName = ContractAgentName;
 
+/** Backend-neutral operations an AAMF scenario may perform. */
+export type ScenarioCapability =
+  | 'read'
+  | 'search'
+  | 'write'
+  | 'execute'
+  | 'source-kb'
+  | 'target-kb';
+
+/** Backend-specific channel used to deliver stable scenario instructions. */
+export type PromptDeliveryMode = 'copilot-user-prompt' | 'claude-appended-system';
+
 // ─── MCP Server Config ───────────────────────────────────────────────────────
 
 /**
@@ -134,6 +146,12 @@ export interface AgentResultExtensions {
   spawnToFirstOutput?: number;
   /** Source used for the authoritative token count. */
   tokenUsageSource?: 'backend' | 'copilot-jsonl' | 'cli-parsed' | 'agent-reported' | 'estimated';
+  /** SHA-256 digest of the stable scenario instructions. */
+  scenarioPromptSha256?: string;
+  /** UTF-8 byte length of the stable scenario instructions. */
+  scenarioPromptByteLength?: number;
+  /** Backend channel used to deliver stable scenario instructions. */
+  promptDeliveryMode?: PromptDeliveryMode;
 }
 
 /**
@@ -634,6 +652,12 @@ export interface InvocationMetric {
   escalationCostUsd?: number;
   /** Source used for the authoritative token count. */
   tokenUsageSource?: AgentResultExtensions['tokenUsageSource'];
+  /** SHA-256 digest of the stable scenario instructions. */
+  scenarioPromptSha256?: string;
+  /** UTF-8 byte length of the stable scenario instructions. */
+  scenarioPromptByteLength?: number;
+  /** Backend channel used to deliver stable scenario instructions. */
+  promptDeliveryMode?: PromptDeliveryMode;
 }
 
 // ─── Model Routing ───────────────────────────────────────────────────────────

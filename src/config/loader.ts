@@ -5,9 +5,8 @@ import { MigrationConfigSchema, type MigrationConfig } from './schema.js';
 /**
  * Load and validate a migration.config.json file.
  *
- * Relative paths in `source.path`, `target.outputPath`, `copilot.agentDir`,
- * and `claudeCode.agentDir` are resolved to absolute paths using the config
- * file's directory as the base.
+ * Relative paths in `source.path` and `target.outputPath` are resolved to
+ * absolute paths using the config file's directory as the base.
  *
  * @param configPath — path to the migration.config.json file
  * @returns a deeply-frozen {@link MigrationConfig} object
@@ -60,10 +59,6 @@ export async function loadConfig(configPath: string): Promise<MigrationConfig> {
       target: {
         ...result.data.target,
         outputPath: resolve(baseDir, result.data.target.outputPath),
-      },
-      agentBackend: {
-        ...result.data.agentBackend,
-        agentDir: resolve(baseDir, result.data.agentBackend.agentDir),
       },
     };
 

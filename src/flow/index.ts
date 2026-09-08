@@ -1,7 +1,7 @@
 /**
  * @module flow
  *
- * Declarative migration flow replacing MigrationOrchestrator.
+ * Declarative, runtime-owned migration flow.
  */
 
 export { createMigrationFlow, migrationFlow, buildFlowUpToPhase } from './migration-flow.js';

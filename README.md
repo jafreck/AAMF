@@ -22,7 +22,7 @@ AAMF is a legacy code base deleter: translate any code base of any size into any
 
 ## How It Works
 
-AAMF treats migration as a deterministic pipeline of **9 phases** (0-8). The flow itself is defined with Cadre's flow DSL, and each phase either runs deterministic runtime logic or launches purpose-built agents defined as `.agent.md` prompt files.
+AAMF treats migration as a deterministic pipeline of **9 phases** (0-8). The flow itself is defined with Cadre's flow DSL, and each phase either runs deterministic runtime logic or launches a purpose-built scenario compiled from AAMF's bundled Markdown templates.
 
 AAMF uses [Lore](#from-lore-graph-to-executable-tasks) to index the source code base entirely ahead of migration, construct a full call graph, and derive a dependency graph of tasks that enables progressive migration, determinsitic synchronization points (including builds, tests and lints mid migration). With the iterative task graph constructed, AAMF uses the [CADRE agent orchestration framework](#cadre-orchestrated-runtime) to coordinate a fleet of agents which progressively perform migration, verify parity, fix errors to converge on correctness, and provide an auditable migraiton history with checkpointing so that migrations can be resumed in the event of failure.
 
@@ -163,7 +163,7 @@ The practical effect is that AAMF does not just generate tasks in dependency ord
 | 4 | **Iterative Migration** | `code-migrator`, `parity-verifier`, `test-writer`, `parity-failure-resolver` | No | Yes |
 | 5 | **Final Parity Verification** | `final-parity-checker` | No | Yes |
 | 6 | **E2E Testing & Documentation** | `e2e-test-crafter`, `documentation-writer` | No | Yes |
-| 7 | **Idiomatic Refactor** | `idiomatic-reviewer`, `idiomatic-refactorer` | Yes | Yes |
+| 7 | **Idiomatic Refactor** | `idiomatic-reviewer`, `idiomatic-planner`, `idiomatic-refactorer` | Yes | Yes |
 | 8 | **Completion** | *(none - summary only)* | No | Yes |
 
 > Phase 7 requires `options.idiomaticRefactor.enabled`. Execution order is 0→1→2→3→4→5→6→7→8. All phases are critical; failure in any phase halts the flow.
@@ -172,14 +172,14 @@ The practical effect is that AAMF does not just generate tasks in dependency ord
 
 ### Agent Runtime Support
 
-AAMF supports two agent runtimes, selected by `agentRuntime` in the config:
+AAMF supports two agent runtimes, selected by `agentBackend.runtime` in the config:
 
-| Runtime | CLI Command | Agent Directory | MCP Config Flag |
-|---------|-------------|-----------------|-----------------|
-| **Copilot** (default) | `copilot --agent <name>` | `.github/agents/` | `--additional-mcp-config` |
-| **Claude Code** | `claude --agent <name>` | `.claude/agents/` | `--mcp-config` |
+| Runtime | Stable scenario instructions | Dynamic invocation request | MCP Config Flag |
+|---------|------------------------------|----------------------------|-----------------|
+| **Copilot** (default) | Combined into `-p` | Appended in the same `-p` value | `--additional-mcp-config` |
+| **Claude Code** | `--append-system-prompt` | `-p` | `--mcp-config` + `--strict-mcp-config` |
 
-Both runtimes follow the same lifecycle. `AgentLauncher` delegates backend-specific process handling to the Cadre runtime layer while preserving AAMF-specific output parsing, token tracking, and artifact management.
+Both runtimes follow the same lifecycle. AAMF compiles and validates every active scenario once into an immutable in-memory catalog, then registers AAMF-owned Cadre backends that inject those instructions directly. No CLI custom-agent definitions are generated, installed, or selected.
 
 ### Invocation Lifecycle
 
@@ -189,15 +189,14 @@ Both runtimes follow the same lifecycle. `AgentLauncher` delegates backend-speci
      └─ Phase 3 context includes ExecutionStrategy for planner awareness
 
 2. AgentLauncher spawns the agent
-     └─ <cli> --agent <name> -p <prompt> [--model <model>]
+     └─ Injects stable scenario instructions and a dynamic context-path request
+     └─ Never selects a CLI custom agent or writes provider agent configuration
      └─ MCP config injected for KB server access when available
+     └─ Scenario capabilities translated into built-in and MCP tool policy
      └─ VS Code environment variables stripped from child process
 
-3. Environment variables are injected:
-     AAMF_PROGRESS_DIR   → .aamf/migration/{projectName}
-     AAMF_CONTEXT_FILE   → path to the context JSON
-     AAMF_PHASE          → current phase number
-     AAMF_TASK_ID        → task identifier (Phase 4)
+3. Invocation metadata is delivered in the dynamic request:
+     context path, project root, phase, work item, and expected output path
 
 4. The agent reads its context, performs reasoning, writes output files
      └─ stdout/stderr streamed live to .live.log files
@@ -221,7 +220,7 @@ Context saturation is the primary constraint when migrating large codebases. AAM
 
 - **File paths, not contents.** Context files contain paths to source files, not their full text. Agents read only what they need.
 - **Per-agent scoping.** Each agent type receives a tailored context with only the inputs relevant to its task. The impact assessor sees the source tree, and the code migrator sees one task's files plus its knowledge-base entry.
-- **Single-purpose agents.** Each of the 16 agent types has a narrow responsibility, keeping its system prompt focused and its working set small.
+- **Single-purpose scenarios.** Each of the 13 live scenarios has one runtime-assigned responsibility, keeping its instructions and working set focused.
 
 ### Knowledge Base Access via MCP
 
@@ -233,12 +232,10 @@ Agent invocations receive the server's URL through MCP config injection, giving 
 
 ## Agent Catalog
 
-AAMF defines 16 specialized agent roles. Each corresponds to a `.agent.md` file in the configured agent directory (`.github/agents/` for Copilot, `.claude/agents/` for Claude Code).
+AAMF defines 13 specialized scenarios. Each is compiled from a bundled template into the immutable `ScenarioPromptCatalog`; canonical output schemas and backend-neutral capabilities come from the registry.
 
 | Agent | Phase | Purpose |
 |-------|-------|---------|
-| `migration-orchestrator` | n/a | Top-level coordination logic (mirrored by the runtime) |
-| `migration-runner` | n/a | Entry point agent |
 | `knowledge-builder` | 2 | Documents all modules, dependencies, and patterns |
 | `migration-planner` | 3 | Creates the task-level migration plan with dependency ordering |
 | `adjudicator` | 3 | Decides between competing migration strategies |
@@ -247,9 +244,10 @@ AAMF defines 16 specialized agent roles. Each corresponds to a `.agent.md` file 
 | `test-writer` | 4 | Generates unit tests for migrated code |
 | `parity-failure-resolver` | 4 | Decides whether exhausted retries are fixed, false positives, real gaps, or inconclusive |
 | `final-parity-checker` | 5 | Full-codebase parity sweep with loop-back fix capability |
-| `e2e-test-crafter` | 6 | Creates end-to-end integration tests |
+| `e2e-test-crafter` | 6 | Plans end-to-end suites for runtime-owned writer fan-out |
 | `documentation-writer` | 6 | Produces migration documentation and guides |
 | `idiomatic-reviewer` | 7 | Reviews migrated code for target-language idiom violations |
+| `idiomatic-planner` | 7 | Builds a dependency-ordered refactoring task graph from review findings |
 | `idiomatic-refactorer` | 7 | Refactors flagged non-idiomatic code patterns |
 
 ---
@@ -329,14 +327,15 @@ The `final-parity-checker` performs a codebase-wide parity sweep. If issues are 
 
 ### Phase 6: E2E Testing & Documentation
 
-`e2e-test-crafter` and `documentation-writer` run **in parallel** (serialized when git automation is enabled).
+`e2e-test-crafter` first writes a plan-only suite breakdown. The runtime parses that plan, fans suites out to `test-writer` invocations, and runs the suite-writer branch alongside `documentation-writer` (serialized when git automation is enabled).
 
 ### Phase 7: Idiomatic Refactor (Optional)
 
 When `options.idiomaticRefactor.enabled` is set, Phase 7 runs up to `maxIterations` (default: 2, `0` = unlimited) review-and-refactor cycles:
 
 1. `idiomatic-reviewer` scans the migrated codebase for non-idiomatic patterns.
-2. For each flagged issue, `idiomatic-refactorer` applies targeted fixes with git commits.
+2. `idiomatic-planner` converts findings into a dependency-ordered task graph.
+3. The runtime fans those tasks out to `idiomatic-refactorer` invocations and applies git commits.
 
 ### Phase 8: Completion
 
@@ -408,7 +407,7 @@ Cached tokens are billed at 50% of the input rate.
 
 ### Metrics Collection
 
-Every agent invocation is recorded as an `InvocationMetric` with 22 fields including agent type, phase, timing, token counts, cost, routing tier, cached tokens, and premium requests.
+Every scenario invocation is recorded as an `InvocationMetric` including scenario type, phase, timing, token counts, cost, routing tier, cached tokens, premium requests, prompt SHA-256, prompt byte length, and delivery mode.
 
 Metrics are persisted two ways:
 - **`metrics/invocations.jsonl`**: append-only JSONL log (one record per invocation, survives resume)
@@ -518,8 +517,8 @@ In `wave-barrier` mode, commits are created per-wave rather than per-task.
 ### Prerequisites
 
 - **Node.js 22+**
-- An agent CLI installation, either Copilot CLI (`copilot --agent`) or Claude Code (`claude --agent`)
-- Agent definition files (`.agent.md`) in the configured agent directory
+- An authenticated Copilot CLI or Claude Code installation on `PATH`
+- No custom-agent registration or agent prompt directory is required
 
 ### Installation
 

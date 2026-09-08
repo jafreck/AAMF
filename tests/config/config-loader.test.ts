@@ -64,34 +64,14 @@ describe('Config Loader', () => {
     expect(config.target.outputPath).toBe(join(tempDir, 'out'));
   });
 
-  it('should resolve agentBackend.agentDir relative to config file directory', async () => {
-    const configPath = join(tempDir, 'migration.config.json');
-    await writeFile(configPath, JSON.stringify(validConfig));
-
-    const config = await loadConfig(configPath);
-    expect(config.agentBackend.agentDir).toBe(join(tempDir, '.github', 'agents'));
-  });
-
-  it('should resolve agentBackend.agentDir for claude-code relative to config file directory', async () => {
-    const configPath = join(tempDir, 'migration.config.json');
-    await writeFile(configPath, JSON.stringify({
-      ...validConfig,
-      agentBackend: { runtime: 'claude-code' },
-    }));
-
-    const config = await loadConfig(configPath);
-    expect(config.agentBackend.agentDir).toBe(join(tempDir, '.claude', 'agents'));
-  });
-
-  it('should resolve explicit agentBackend.agentDir relative to config file directory', async () => {
+  it('should reject the removed agentBackend.agentDir key', async () => {
     const configPath = join(tempDir, 'migration.config.json');
     await writeFile(configPath, JSON.stringify({
       ...validConfig,
       agentBackend: { agentDir: './custom-agents' },
     }));
 
-    const config = await loadConfig(configPath);
-    expect(config.agentBackend.agentDir).toBe(join(tempDir, 'custom-agents'));
+    await expect(loadConfig(configPath)).rejects.toThrow(/agentDir/);
   });
 
   it('should merge overrides correctly with applyOverrides', async () => {

@@ -1,8 +1,8 @@
 /**
  * migration-flow.ts — The declarative migration pipeline.
  *
- * Replaces the imperative MigrationOrchestrator.run() with a single
- * defineFlow() declaration. Phase ordering, budget enforcement,
+ * Defines the complete runtime-owned pipeline in a single defineFlow()
+ * declaration. Phase ordering, budget enforcement,
  * conditional execution, convergence loops, and parallel fan-out are
  * expressed via the @cadre-dev/framework flow DSL.
  */

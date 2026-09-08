@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { resolve, join, dirname } from 'node:path';
-import { stat, readdir, readFile } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import pLimit from 'p-limit';
 import { loadConfig, applyOverrides } from '../config/loader.js';
 import { MigrationConfig } from '../config/schema.js';
@@ -16,7 +16,7 @@ import { formatDuration } from '../util/format.js';
 import { killAllActiveProcesses } from '../util/process.js';
 import { buildRuntimePaths } from './runtime-paths.js';
 import { MigrationRunLock } from './run-lock.js';
-import { generateAgentDefinitions } from '../agents/generator.js';
+import { ScenarioPromptCatalog } from '../agents/prompt-catalog.js';
 import { ContextBuilder } from '../agents/context-builder.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
@@ -33,7 +33,7 @@ import {
 } from '../flow/index.js';
 import { MigrationError } from '../flow/steps/shared.js';
 import type { MigrationFlowContext } from '../flow/index.js';
-import { getAgentsForPhase } from '../agents/registry.js';
+import { ACTIVE_AGENT_NAMES } from '../agents/registry.js';
 import { clearFreshRunArtifacts } from './run-provenance.js';
 import { TargetChangeSetManager } from './target-change-set.js';
 
@@ -44,7 +44,7 @@ export interface RuntimeOptions {
   phase?: number;      // run up to and including this phase
   fromPhase?: number;  // restart from this phase, preserving earlier phases
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
-  /** Initialize only checkpoint inspection/reset services; never launch or generate agents. */
+  /** Initialize only checkpoint inspection/reset services; never launch scenarios or compile prompts. */
   stateOnly?: boolean;
 }
 
@@ -59,6 +59,7 @@ export interface RuntimeDependencies {
     config: MigrationConfig,
     projectRoot: string,
     logger: Logger,
+    promptCatalog: ScenarioPromptCatalog,
   ) => RuntimeAgentLauncher;
   terminateActiveProcesses?: () => Promise<void>;
 }
@@ -130,6 +131,7 @@ export class MigrationRuntime {
   private phase?: number;
   private fromPhase?: number;
   private runId!: string;
+  private promptCatalog!: ScenarioPromptCatalog;
   /** Mutable flow context — populated during run(), used by shutdown handler. */
   private flowContext?: MigrationFlowContext;
   private abortController?: AbortController;
@@ -140,29 +142,6 @@ export class MigrationRuntime {
   private activeFlowRun?: Promise<unknown>;
 
   constructor(private readonly dependencies: RuntimeDependencies = {}) {}
-
-  private getActiveRuntimeSettings(): {
-    agentDir: string;
-    model?: string;
-    agentFileSuffix: '.agent.md' | '.md';
-    validateSchemaContract: boolean;
-  } {
-    if (this.config.agentBackend.runtime === 'claude-code') {
-      return {
-        agentDir: this.config.agentBackend.agentDir,
-        model: this.config.models?.default,
-        agentFileSuffix: '.md',
-        validateSchemaContract: false,
-      };
-    }
-
-    return {
-      agentDir: this.config.agentBackend.agentDir,
-      model: this.config.models?.default,
-      agentFileSuffix: '.agent.md',
-      validateSchemaContract: true,
-    };
-  }
 
   async initialize(options: RuntimeOptions): Promise<void> {
     // 1. Load config
@@ -220,26 +199,22 @@ export class MigrationRuntime {
     // 5. Create progress writer
     this.progress = new ProgressWriter(this.paths.progressReportFile, this.config.projectName);
 
-    // 6. Create agent launcher
+    // 6. Compile and validate bundled scenario instructions in memory.
+    // This also runs during dry-run initialization and performs no prompt writes.
+    this.promptCatalog = await ScenarioPromptCatalog.load({
+      vars: { loreEnabled: 'true' },
+    });
+    this.promptCatalog.validateRequired(ACTIVE_AGENT_NAMES);
+    this.logger.info(`Loaded ${this.promptCatalog.size} bundled scenario prompts`);
+
+    // 7. Create the selected backend with the immutable prompt catalog.
     this.launcher = this.dependencies.createAgentLauncher?.(
       this.config,
       this.projectRoot,
       this.logger,
-    ) ?? new AgentLauncher(this.config, this.projectRoot, this.logger);
+      this.promptCatalog,
+    ) ?? new AgentLauncher(this.config, this.projectRoot, this.logger, this.promptCatalog);
     await this.launcher.init();
-
-    // 7. Generate agent definition files from shared templates
-    const settings = this.getActiveRuntimeSettings();
-    const absAgentDir = resolve(this.projectRoot, settings.agentDir);
-    const generated = await generateAgentDefinitions({
-      backend: this.config.agentBackend.runtime,
-      outputDir: absAgentDir,
-      vars: { loreEnabled: 'true' },
-    });
-    this.logger.info(`Generated ${generated.length} agent definitions in ${settings.agentDir} (loreEnabled=true)`);
-
-    // 8. Validate agent files exist
-    await this.validateAgentFiles();
 
     this.logger.info(`AAMF Runtime initialized for project: ${this.config.projectName} (runId=${this.runId})`);
     this.logger.info(`Source: ${this.config.source.language} → Target: ${this.config.target.language}`);
@@ -678,8 +653,7 @@ export class MigrationRuntime {
     }
     console.log(`Token Usage: ${result.tokenUsage.total.toLocaleString()}`);
     
-    const runtimeSettings = this.getActiveRuntimeSettings();
-    const model = runtimeSettings.model ?? 'claude-sonnet-4';
+    const model = this.config.models?.default ?? 'claude-sonnet-4';
     const estimator = new CostEstimator();
     const cost = estimator.estimateFromTotal(model, result.tokenUsage.total);
     console.log(`Estimated Cost: ${CostEstimator.formatCost(cost.total)}`);
@@ -698,104 +672,6 @@ export class MigrationRuntime {
     }
     console.log('='.repeat(60) + '\n');
   }
-
-
-
-  private async validateAgentFiles(): Promise<void> {
-    const runtimeSettings = this.getActiveRuntimeSettings();
-    const { agentDir, agentFileSuffix, validateSchemaContract } = runtimeSettings;
-    const allAgents = [...new Set(Array.from({ length: 10 }, (_, i) => i).flatMap(p => getAgentsForPhase(p)))];
-    const missing: string[] = [];
-    const invalid: string[] = [];
-
-    for (const agent of allAgents) {
-      const agentPath = join(agentDir, `${agent}${agentFileSuffix}`);
-      if (!(await fileExists(agentPath))) {
-        missing.push(agentPath);
-      }
-    }
-
-    if (missing.length > 0) {
-      throw new Error(
-        `Missing agent file(s) — migration cannot proceed:\n${missing.map(p => `  - ${p}`).join('\n')}`,
-      );
-    }
-
-    if (validateSchemaContract) {
-      const entries = await readdir(agentDir, { withFileTypes: true });
-      const agentFiles = entries
-        .filter(e => e.isFile() && e.name.endsWith(agentFileSuffix))
-        .map(e => join(agentDir, e.name));
-
-      for (const agentPath of agentFiles) {
-        const content = await readFile(agentPath, 'utf-8');
-        const contractError = this.validateSchemaContract(content);
-        if (contractError) {
-          invalid.push(`${agentPath}: ${contractError}`);
-        }
-      }
-    }
-
-    if (invalid.length > 0) {
-      throw new Error(
-        `Invalid agent schema contract(s) — each ${agentFileSuffix} file must define required input/output schemas:\n${invalid.map(p => `  - ${p}`).join('\n')}`,
-      );
-    }
-  }
-
-  private validateSchemaContract(content: string): string | undefined {
-    const inputError = this.validateSchemaSection(content, 'Input Schema');
-    if (inputError) return `Input Schema ${inputError}`;
-
-    const outputError = this.validateSchemaSection(content, 'Output Schema');
-    if (outputError) return `Output Schema ${outputError}`;
-
-    return undefined;
-  }
-
-  private validateSchemaSection(content: string, sectionTitle: 'Input Schema' | 'Output Schema'): string | undefined {
-    const headingRegex = new RegExp(`^##\\s+${sectionTitle}(?:\\s*\\(Required\\))?\\s*$`, 'im');
-    const headingMatch = headingRegex.exec(content);
-    if (!headingMatch || headingMatch.index === undefined) {
-      return 'section is missing';
-    }
-
-    const afterHeading = content.slice(headingMatch.index + headingMatch[0].length);
-    const nextHeadingIndex = afterHeading.search(/^##\s+/m);
-    const sectionBody = nextHeadingIndex >= 0 ? afterHeading.slice(0, nextHeadingIndex) : afterHeading;
-
-    const jsonBlockMatch = sectionBody.match(/```json\r?\n([\s\S]*?)```/m);
-    if (!jsonBlockMatch) {
-      return 'must include a JSON schema code block (```json ... ```)';
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(jsonBlockMatch[1]!.trim());
-    } catch (err) {
-      return `contains invalid JSON (${err instanceof Error ? err.message : String(err)})`;
-    }
-
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return 'must be a JSON object schema';
-    }
-
-    const schema = parsed as { type?: unknown; required?: unknown };
-    if (schema.type !== 'object') {
-      return 'must declare "type": "object"';
-    }
-
-    if (!Array.isArray(schema.required) || schema.required.length === 0) {
-      return 'must declare a non-empty "required" array';
-    }
-
-    if (!schema.required.every((k) => typeof k === 'string' && k.length > 0)) {
-      return 'must declare "required" as an array of non-empty strings';
-    }
-
-    return undefined;
-  }
-
   private setupShutdownHandlers(): void {
     this.disposeShutdownHandlers();
     this.shutdownInProgress = false;

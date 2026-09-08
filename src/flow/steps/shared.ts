@@ -1,5 +1,5 @@
 /**
- * Shared step helpers — extracted from MigrationOrchestrator.
+ * Shared helpers for runtime-owned migration flow steps.
  *
  * These are utility functions used by multiple phase-step implementations:
  * agent invocation, token recording, git automation, command execution,
@@ -39,6 +39,7 @@ import { formatDuration } from '../../util/format.js';
 import type { Phase4TaskSubstepState } from '../../core/checkpoint.js';
 import type { Phase4TaskSubstep } from '../phase4-substeps.js';
 import { assertAgentPhase, PHASE, type PhaseId } from '../phases.js';
+import { hasScenarioCapability } from '../../agents/registry.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────
 
@@ -174,13 +175,6 @@ export function normalizeFailureSummary(summary: string): string {
 
 // ─── Agent Invocation Building ─────────────────────────────────────────
 
-const KB_AWARE_AGENTS: AgentName[] = [
-  'knowledge-builder', 'migration-planner', 'adjudicator',
-  'code-migrator', 'parity-verifier', 'test-writer', 'parity-failure-resolver',
-  'final-parity-checker', 'e2e-test-crafter', 'documentation-writer',
-  'idiomatic-reviewer', 'idiomatic-refactorer',
-];
-
 export function buildInvocation(
   ctx: MigrationFlowContext,
   agent: AgentName,
@@ -191,13 +185,13 @@ export function buildInvocation(
 ): AgentInvocation {
   assertAgentPhase(agent, phase);
   const timeout = getPhaseTimeout(ctx, phase);
-  const mcpConfig = (KB_AWARE_AGENTS.includes(agent) && ctx.kbServer)
+  const mcpConfig = (hasScenarioCapability(agent, 'source-kb') && ctx.kbServer)
     ? ctx.kbServer.mcpConfig : undefined;
-  const kbDbPath = (KB_AWARE_AGENTS.includes(agent) && ctx.kbServer)
+  const kbDbPath = (hasScenarioCapability(agent, 'source-kb') && ctx.kbServer)
     ? ctx.paths.kbDbFile : undefined;
-  const targetMcpConfig = (KB_AWARE_AGENTS.includes(agent) && ctx.targetKbServer)
+  const targetMcpConfig = (hasScenarioCapability(agent, 'target-kb') && ctx.targetKbServer)
     ? ctx.targetKbServer.mcpConfig : undefined;
-  const targetKbDbPath = (KB_AWARE_AGENTS.includes(agent) && ctx.targetKbServer)
+  const targetKbDbPath = (hasScenarioCapability(agent, 'target-kb') && ctx.targetKbServer)
     ? ctx.paths.kbTargetDbFile : undefined;
 
   const failureRecoveryOverride = agent === 'parity-failure-resolver'
@@ -423,6 +417,9 @@ export async function launchAgentWithEvents(
     ...(routingTier ? { routingTier, routingReason } : {}),
     ...(routingDecision ? { escalationCostUsd: routingDecision.incrementalCost } : {}),
     ...(result.extensions.tokenUsageSource ? { tokenUsageSource: result.extensions.tokenUsageSource } : {}),
+    ...(result.extensions.scenarioPromptSha256 ? { scenarioPromptSha256: result.extensions.scenarioPromptSha256 } : {}),
+    ...(result.extensions.scenarioPromptByteLength != null ? { scenarioPromptByteLength: result.extensions.scenarioPromptByteLength } : {}),
+    ...(result.extensions.promptDeliveryMode ? { promptDeliveryMode: result.extensions.promptDeliveryMode } : {}),
   };
 
   ctx.metricsCollector.record(metric);

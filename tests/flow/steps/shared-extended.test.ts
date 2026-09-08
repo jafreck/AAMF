@@ -396,6 +396,11 @@ describe('launchAgentWithEvents', () => {
   it('should record metrics and emit events', async () => {
     const launcherFn = createMockLauncher(() => ({
       tokenUsage: { input: 100, output: 50 },
+      extensions: {
+        scenarioPromptSha256: 'a'.repeat(64),
+        scenarioPromptByteLength: 4096,
+        promptDeliveryMode: 'copilot-user-prompt',
+      },
     }));
     env = await setupFlowTest(launcherFn);
 
@@ -415,7 +420,12 @@ describe('launchAgentWithEvents', () => {
     expect(result.success).toBe(true);
     expect(events.some(e => e.type === 'agent-launched')).toBe(true);
     expect(events.some(e => e.type === 'agent-completed')).toBe(true);
-    expect(env.ctx.metricsCollector.getMetrics()[0]?.model).toBe('gpt-5.6');
+    expect(env.ctx.metricsCollector.getMetrics()[0]).toMatchObject({
+      model: 'gpt-5.6',
+      scenarioPromptSha256: 'a'.repeat(64),
+      scenarioPromptByteLength: 4096,
+      promptDeliveryMode: 'copilot-user-prompt',
+    });
   });
 
   it('should emit agent-failed event on failure', async () => {

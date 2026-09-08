@@ -322,8 +322,7 @@ export const MigrationConfigSchema = z.object({
    * Agent backend configuration.
    *
    * `runtime` selects which CLI to use: `'copilot'` (default) or `'claude-code'`.
-   * The remaining fields (`cliCommand`, `agentDir`) default based on the
-   * selected runtime if not explicitly provided.
+  * `cliCommand` defaults based on the selected runtime if not explicitly provided.
    */
   agentBackend: z.object({
     /** Which CLI runtime to use. */
@@ -336,8 +335,6 @@ export const MigrationConfigSchema = z.object({
      * Only applies when `runtime` is `'copilot'`.
      */
     effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
-    /** Directory containing agent definition files. Defaults to `'.github/agents'` (copilot) or `'.claude/agents'` (claude-code). */
-    agentDir: z.string().optional(),
     /** Default timeout per agent invocation in milliseconds. */
     timeout: z.number().int().default(300_000),
     /** Per-phase timeout overrides in milliseconds, keyed by phase number. */
@@ -348,7 +345,6 @@ export const MigrationConfigSchema = z.object({
   }).transform((val) => ({
     ...val,
     cliCommand: val.cliCommand ?? (val.runtime === 'claude-code' ? 'claude' : 'copilot'),
-    agentDir: val.agentDir ?? (val.runtime === 'claude-code' ? '.claude/agents' : '.github/agents'),
   })),
   environment: z.object({
     /** Whether to resolve PATH from a login shell at startup (default: true). */

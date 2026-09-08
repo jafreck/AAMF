@@ -79,7 +79,6 @@ async function createFixture(options: { git?: boolean; executionMode?: 'per-task
     agentBackend: {
       runtime: 'copilot',
       cliCommand: 'must-not-run',
-      agentDir: './generated-agents',
       timeout: 5_000,
     },
     environment: { inheritShellPath: false, extraPath: [] },

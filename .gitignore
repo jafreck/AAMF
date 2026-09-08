@@ -51,6 +51,6 @@ lz4-src/
 .cache/
 .cadre/
 
-# Generated agent definitions (produced at runtime from templates)
-.github/agents/*.agent.md
-.claude/agents/*.md
+# Scenario prompts are compiled in memory; provider agent directories are not generated.
+# Bundled templates under agents/templates remain tracked source files.
+# No generated prompt artifacts need ignore rules.
