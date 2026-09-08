@@ -25,7 +25,7 @@ The Cadre flow assigns each planned suite to a separate `test-writer` node after
   - Scenarios to cover (preconditions, actions, expected outcomes)
   - Both happy paths and critical failure paths
   - Testing framework and conventions to use
-- Write all suite briefs to `.aamf/migration/{projectName}/e2e-test-plan.md`
+- Write all suite briefs to `e2e-test-plan.md` inside the context `outputPath`.
 
 ## Test Scenario Categories
 
@@ -43,7 +43,7 @@ The Cadre flow assigns each planned suite to a separate `test-writer` node after
 Each suite brief in the test plan should follow this template:
 
 ```markdown
-### Suite: {name}
+### Suite: suite-001 - {name}
 
 - **Purpose**: {what this suite validates}
 - **Target Files**: {paths to the migrated files under test}
@@ -64,7 +64,7 @@ Each suite brief in the test plan should follow this template:
 
 ## Output
 
-1. `.aamf/migration/{projectName}/e2e-test-plan.md` — the full test strategy and suite briefs
+1. `e2e-test-plan.md` inside the context `outputPath` — the full test strategy and suite briefs
 
 ## Context Window Management
 

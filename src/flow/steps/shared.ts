@@ -340,6 +340,7 @@ export function applyRoutingCaps(
 export async function launchAgentWithEvents(
   ctx: MigrationFlowContext,
   invocation: AgentInvocation,
+  signal: AbortSignal = ctx.signal,
 ): Promise<AgentResult> {
   const invocationId = randomUUID();
   const taggedInvocation = { ...invocation, invocationId };
@@ -351,7 +352,21 @@ export async function launchAgentWithEvents(
     taskId, phase: invocation.phase, invocationId,
   });
 
-  const result = await ctx.launcher.launchAgent(taggedInvocation);
+  const onAbort = (): void => {
+    void Promise.resolve(ctx.terminateActiveProcesses()).catch(() => undefined);
+  };
+  if (signal.aborted) {
+    await Promise.resolve(ctx.terminateActiveProcesses()).catch(() => undefined);
+    throw new Error(`Agent ${invocation.agent} cancelled before launch`);
+  }
+  signal.addEventListener('abort', onAbort, { once: true });
+
+  let result: AgentResult;
+  try {
+    result = await ctx.launcher.launchAgent(taggedInvocation);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
 
   if (result.success) {
     ctx.logger.event({
@@ -593,6 +608,7 @@ export async function runCommand(
   label: string,
   command: string,
   taskId: string,
+  signal: AbortSignal = ctx.signal,
 ): Promise<CommandExecutionResult> {
   if (ctx.phase4Snapshot) {
     if (label === 'build') ctx.phase4Snapshot.buildCommandRuns++;
@@ -609,6 +625,7 @@ export async function runCommand(
       const result = await spawnWithTimeout('sh', ['-c', command], {
         cwd: ctx.config.target.outputPath,
         timeout,
+        signal,
         env: { ...process.env, ...(resolvedPath ? { PATH: resolvedPath } : {}) },
       });
 
@@ -657,6 +674,7 @@ export async function runCommandWithRecovery(
     failureSummary?: string;
     expectedSuccessCondition?: string;
     suppressTerminalOnExhaustion?: boolean;
+    signal?: AbortSignal;
   },
 ): Promise<boolean> {
   const maxAttempts = ctx.config.options.maxRetriesPerTask;
@@ -665,7 +683,8 @@ export async function runCommandWithRecovery(
   const artifactPaths = options?.artifactPaths ?? [...task.sourceFiles, ...task.targetFiles];
   const expectedSuccessCondition = options?.expectedSuccessCondition ?? `${label} command succeeds for ${task.id}`;
 
-  let cmdResult = options?.initialFailure ?? await runCommand(ctx, label, command, task.id);
+  const signal = options?.signal ?? ctx.signal;
+  let cmdResult = options?.initialFailure ?? await runCommand(ctx, label, command, task.id, signal);
   if (cmdResult.success) return true;
   const recoveryLoopStartedAt = Date.now();
 
@@ -680,7 +699,7 @@ export async function runCommandWithRecovery(
       `infra retry ${infraAttempt}/${maxInfraRetries} (backoff ${backoffMs}ms)`,
     );
     await new Promise(resolve => setTimeout(resolve, backoffMs));
-    cmdResult = await runCommand(ctx, label, command, task.id);
+    cmdResult = await runCommand(ctx, label, command, task.id, signal);
     if (cmdResult.success) {
       if (ctx.phase4Snapshot) ctx.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
       ctx.logger.info(`${label} recovered for ${task.id} after infra retry ${infraAttempt}`);
@@ -718,7 +737,7 @@ export async function runCommandWithRecovery(
       },
     );
     const recoveryInv = buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, PHASE.MIGRATION, task.id);
-    const recoveryResult = await launchAgentWithEvents(ctx, recoveryInv);
+    const recoveryResult = await launchAgentWithEvents(ctx, recoveryInv, signal);
     recordTokens(ctx, recoveryResult, PHASE.MIGRATION);
     await ctx.targetChanges.trackFiles(
       ctx.targetChanges.scopeForTask(task.id),
@@ -739,15 +758,19 @@ export async function runCommandWithRecovery(
       },
     );
     const reMigrateInv = buildInvocation(ctx, 'code-migrator', reMigrateCtx, PHASE.MIGRATION, task.id);
-    const reMigrateResult = await launchAgentWithEvents(ctx, reMigrateInv);
+    const reMigrateResult = await launchAgentWithEvents(ctx, reMigrateInv, signal);
     recordTokens(ctx, reMigrateResult, PHASE.MIGRATION);
+    await ctx.targetChanges.trackFiles(
+      ctx.targetChanges.scopeForTask(task.id),
+      reMigrateResult.extensions.outputFiles ?? task.targetFiles,
+    );
     if (!reMigrateResult.success) {
       ctx.logger.warn(`Re-migration failed for ${task.id} on ${label} recovery attempt ${attempt}`);
       continue;
     }
     await commitForAgent(ctx, 'code-migrator', PHASE.MIGRATION, task.id, task.name);
 
-    cmdResult = await runCommand(ctx, label, command, task.id);
+    cmdResult = await runCommand(ctx, label, command, task.id, signal);
     if (cmdResult.success) {
       if (ctx.phase4Snapshot) ctx.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
       ctx.logger.info(`${label} recovered for ${task.id} on attempt ${attempt}`);

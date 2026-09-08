@@ -44,37 +44,40 @@ Implementation proceeded in the required sequence through Stage 0 and the local 
 - Consolidated agent context/result prompt schemas around Zod contracts, inferred agent/context/result types from those contracts, validated context before serialization, and generated JSON Schema from the same definitions.
 - Removed legacy model configuration aliases, rejected mixed old/new model settings, aligned `maxBlockedTasks` default to `0`, and deeply froze normalized configuration.
 
-### Cadre release blocker
+### Cadre 0.3.0 release and consumption
 
-Cadre framework `0.3.0` has been implemented and fully tested in its source repository with propagated node signals, cooperative timeout settlement, quiescent parallel/map/concurrent failure, rich lifecycle events, dynamic typed subflow options, non-erasing child-context typing, and explicit loop termination/exhaustion. Its framework build passes, and its standard suite passes with 200 files and 3,871 tests (25 skipped).
+Cadre framework `0.3.0` was implemented, reviewed, merged in [CADRE #464](https://github.com/jafreck/CADRE/pull/464), and published through npm trusted publishing with provenance. It provides propagated node signals, cooperative timeout settlement, quiescent parallel/map/concurrent failure, rich lifecycle events, dynamic typed subflow options, non-erasing child-context typing, serialized checkpoints, retry isolation, and explicit loop termination/exhaustion.
 
-The package cannot yet be consumed as the required real dependency update:
+AAMF now consumes the released `@cadre-dev/framework@0.3.0` package. The integration:
 
-- `npm view @cadre-dev/framework@0.3.0 version --json` returns `E404`; the version is not published.
-- `npm whoami` exits unsuccessfully; no npm publishing identity is available.
-- Repository rules prohibit creating the release commit/tag without explicit authorization.
+- builds a fresh flow for every run;
+- derives Phase 4 runner options per execution without mutable module state or unsafe casts;
+- uses Cadre's required-convergence loop semantics;
+- consumes rich lifecycle events for incremental phase progress, complete phase summaries, and Phase 4 metrics;
+- propagates cancellation to active agent processes and proves no later Cadre nodes start;
+- sources phase boundaries from an acyclic dependency-free registry.
 
-Accordingly AAMF remains on released Cadre `0.2.5`, `ParallelExecutor`/`RetryExecutor` and convergence guards remain in place, and Stage 1 stops before dependency upgrade. Stages 2 through 5 were not started out of order.
+Custom executors remain only where the corresponding phase has not yet been converted into named Cadre nodes.
 
 Validation at this boundary used Node 22.22.1:
 
-- `npm run ci:local`: passed; 55 files and 1,579 tests passed, 10 files and 211 tests skipped.
+- `npm run ci:local`: passed; 55 files and 1,599 tests passed, 10 files and 211 tests skipped.
 - Coverage: 89.87% statements, 77.09% branches, 92.51% functions, and 91.59% lines.
-- The required no-network full-flow matrix passed all six cases.
+- The required no-network full-flow matrix passed all eight cases.
 - No paid/live-agent test was run.
 
-### Finding status at blocker
+### Finding status after Cadre 0.3.0 integration
 
 | Finding | Status | Remaining acceptance work |
 |---------|--------|---------------------------|
 | AAMF-015 | Partial | Represent `needs-review` as an explicit Cadre branch after the framework upgrade. |
-| AAMF-016 | Partial | Consume Cadre 0.3.0 active-node cancellation after release. |
+| AAMF-016 | Complete | None. |
 | AAMF-017 | Complete | None. |
 | AAMF-018 | Partial | Implement Cadre-native blocked/dependant/threshold policy during Phase 4 conversion. |
-| AAMF-019 | Blocked | Requires released Cadre 0.3.0 before the per-run typed flow factory removes the cast. |
-| AAMF-020 | Blocked | Requires released Cadre 0.3.0; custom executors were intentionally retained. |
-| AAMF-021 | Blocked | Generic Cadre snapshot conversion follows the framework upgrade. |
-| AAMF-022 | Blocked | Rich lifecycle event consumption follows the framework upgrade. |
+| AAMF-019 | Complete | None. |
+| AAMF-020 | In progress | Convert remaining imperative Phase 3-7 agent fan-out/recovery bodies into stable Cadre nodes before deleting custom executors. |
+| AAMF-021 | In progress | Replace phase-specific cursor/snapshot fields with the generic Cadre snapshot store during phase conversion. |
+| AAMF-022 | Partial | Lifecycle-based phase reporting and Phase 4 metrics are active; typed contracts/data routing remain for converted phase nodes. |
 | AAMF-023 | Complete | Generated/reference documentation refresh remains tracked by AAMF-033. |
 | AAMF-024 | Not started | Stage 3 Lore identity release work. |
 | AAMF-025 | Not started | Stage 3 Lore graph API work. |
@@ -84,13 +87,13 @@ Validation at this boundary used Node 22.22.1:
 | AAMF-029 | Partial | Remove obsolete persisted cursor/sidecar fields with AAMF-021/AAMF-031. |
 | AAMF-030 | Not started | Stage 4, after ownership transitions. |
 | AAMF-031 | Not started | Stage 4, after ownership transitions. |
-| AAMF-032 | Partial | Add execution-ID crash cases for every Phase 3-7 child after lifecycle hooks are consumed, plus scheduled live-smoke ownership. |
+| AAMF-032 | Partial | Add execution-ID crash cases for every converted Phase 3-7 child plus scheduled live-smoke ownership. |
 | AAMF-033 | Not started | Stage 5 documentation regeneration. |
-| AAMF-034 | Complete | Cadre-native `requireConvergence` consumption waits for the dependency release; the required local gate already fails closed. |
+| AAMF-034 | Complete | None. |
 | AAMF-035 | Partial | Full manifest/artifact provenance and safe KB reuse require Lore identity. |
-| AAMF-036 | Source complete / release blocked | Publish and consume `@cadre-dev/framework@0.3.0`. |
+| AAMF-036 | Complete | None. |
 | AAMF-037 | Partial | Exclusion-driven identity invalidation requires AAMF-024. |
-| AAMF-038 | Partial | Consume Cadre quiescence/cancellation and finish every converted phase's promotion node after the release. |
+| AAMF-038 | Partial | Finish every converted phase's promotion node and wave transaction policy. |
 
 ## Validation Baseline
 

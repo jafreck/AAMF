@@ -94,6 +94,19 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       }
     });
 
+    it('registers fully qualified task scopes when built through the production subflow', async () => {
+      env = await setupFlowTestWithTasks(createMockLauncher(), [SINGLE_AUTH_TASK]);
+      (env.flowCtx as unknown as { executionPath: string[] }).executionPath = [
+        'aamf-migration', 'iterative-migration',
+      ];
+
+      await buildPhase4Subflow(env.flowCtx);
+
+      expect(
+        env.checkpoint.getState().phaseCursors?.['4']?.tasks['task-001']?.scopeExecutionPrefix,
+      ).toBe('aamf-migration/iterative-migration/phase-4-per-task/task-001/');
+    });
+
     it('should clear stale failure and blocked state when a task later succeeds', async () => {
       env = await setupFlowTestWithTasks(createMockLauncher(), [SINGLE_AUTH_TASK]);
       await env.checkpoint.failTask('task-001', 'prior attempt failed', 1, true);
@@ -158,7 +171,7 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       expect((task002Migrate as { dependsOn?: string[] }).dependsOn).toContain('task-001/complete');
     });
 
-    it('should not add overlap dependencies for distinct per-task targets', async () => {
+    it('should serialize distinct per-task targets at transaction boundaries', async () => {
       const tasks: MigrationTask[] = [
         { ...SINGLE_AUTH_TASK, id: 'task-001', targetFiles: ['src/one.ts'] },
         { ...makeTask('task-002'), targetFiles: ['src/two.ts'] },
@@ -171,7 +184,7 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       const task002Migrate = flow.nodes.find(node => node.id === 'task-002/migrate');
 
       expect(task002Migrate).toBeDefined();
-      expect((task002Migrate as { dependsOn?: string[] }).dependsOn ?? []).not.toContain('task-001/complete');
+      expect((task002Migrate as { dependsOn?: string[] }).dependsOn ?? []).toContain('task-001/complete');
     });
   });
 

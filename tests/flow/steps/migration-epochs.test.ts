@@ -292,7 +292,7 @@ describe('buildPhase4Subflow — sync-epoch mode', () => {
         executionMode: 'sync-epoch',
         epochControl: { levelsPerSync: 2, testEveryNEpochs: 1, maxConvergenceIterations: 1 },
         qualityPolicy: 'balanced',
-        git: { enabled: true, autoInit: false, commitByAgent: true, commitPerTask: true },
+        git: { enabled: true, autoInit: false, commitPerTask: true },
       },
     });
 

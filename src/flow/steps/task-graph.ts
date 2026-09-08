@@ -79,13 +79,13 @@ export async function buildTaskGraphStep(
 
     await atomicWrite(mergedTasksFile, JSON.stringify(allTasks, null, 2));
     const sccsFile = join(planningDir, 'sccs.json');
+    await atomicWrite(sccsFile, JSON.stringify(taskGraphSCCs, null, 2));
     if (taskGraphSCCs.length > 0) {
-      await atomicWrite(sccsFile, JSON.stringify(taskGraphSCCs, null, 2));
       ctx.logger.info(`Persisted ${taskGraphSCCs.length} SCC(s) → ${sccsFile}`);
     }
     const compilationUnitsFile = join(planningDir, 'compilation-units.json');
+    await atomicWrite(compilationUnitsFile, JSON.stringify(compilationUnits, null, 2));
     if (compilationUnits.length > 0) {
-      await atomicWrite(compilationUnitsFile, JSON.stringify(compilationUnits, null, 2));
       ctx.logger.info(`Persisted ${compilationUnits.length} compilation unit(s)`);
     }
 

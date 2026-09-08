@@ -18,6 +18,7 @@ import {
   assertPhaseSuccess,
 } from './shared.js';
 import { PHASE } from '../phases.js';
+import { nodeIdToPhase } from '../phase-registry.js';
 
 export interface FinalParityIterationResult {
   detected: number;
@@ -37,6 +38,7 @@ async function rollbackFinalParityCandidate(ctx: MigrationFlowContext): Promise<
   }
   await ctx.targetChanges.rollback(FINAL_PARITY_CHANGE_SCOPE);
   if (ctx.targetIndexer) await ctx.targetIndexer.invalidate();
+  await ctx.checkpoint.invalidateExecutionFromPhase(PHASE.FINAL_PARITY, nodeIdToPhase);
 }
 
 /**
@@ -52,7 +54,7 @@ export async function runFinalParityIteration(
   // Run final-parity-checker
   const ctxFile = await ctx.contextBuilder.buildContext('final-parity-checker', PHASE.FINAL_PARITY);
   const inv = buildInvocation(ctx, 'final-parity-checker', ctxFile, PHASE.FINAL_PARITY);
-  const result = await launchAgentWithEvents(ctx, inv);
+  const result = await launchAgentWithEvents(ctx, inv, flowCtx.signal);
   recordTokens(ctx, result, PHASE.FINAL_PARITY);
 
   if (!result.success) {
@@ -91,7 +93,7 @@ export async function runFinalParityIteration(
   }
 
   ctx.logger.info(`Final parity found ${fixes.length} issue(s), applying fixes`);
-  await ctx.targetChanges.begin(FINAL_PARITY_CHANGE_SCOPE);
+  await ctx.targetChanges.begin(FINAL_PARITY_CHANGE_SCOPE, { mode: 'full' });
 
   // Apply fixes
   const resumeFixIndex = Math.max(0, phase5Cursor.fixIndex);
@@ -125,7 +127,7 @@ export async function runFinalParityIteration(
       remediationContext: toAgentRemediationContext(fixRemediation),
     });
     const fixInv = buildInvocation(ctx, 'code-migrator', fixCtx, PHASE.FINAL_PARITY, fixTaskId);
-    const fixResult = await launchAgentWithEvents(ctx, fixInv);
+    const fixResult = await launchAgentWithEvents(ctx, fixInv, flowCtx.signal);
     recordTokens(ctx, fixResult, PHASE.FINAL_PARITY);
 
     if (!fixResult.success) {
@@ -142,6 +144,13 @@ export async function runFinalParityIteration(
         failedFixes,
       });
       await rollbackFinalParityCandidate(ctx);
+      await savePhase5Cursor(ctx, {
+        iteration: 0,
+        fixIndex: 0,
+        lastSuccessfulStep: `fix-failed:${fixTaskId}`,
+        hadUnresolvedFixes: true,
+        failedFixes,
+      });
       assertPhaseSuccess({
         phase: 5, name: 'Final Parity Verification', success: false,
         duration: 0, error,

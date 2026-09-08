@@ -631,6 +631,7 @@ describe('CheckpointManager', () => {
       'budget-check-4': 4,
       'final-parity-loop': 5,
       'final-parity-iteration': 5,
+      'final-parity-convergence-gate': 5,
       'e2e-test-plan': 6,
       'finalization': 6,
       'e2e-suite-writers': 6,
@@ -641,6 +642,84 @@ describe('CheckpointManager', () => {
     };
     return map[id] ?? -1;
   };
+
+  it('invalidates rolled-back phase execution while preserving accounting', async () => {
+    const state = await manager.load('test-project');
+    state.completedPhases = [0, 1, 2, 3, 4, 5, 6, 7];
+    state.currentPhase = 8;
+    state.tokenUsage.total = 123;
+    state.phaseCursors = {
+      '5': { iteration: 2, fixIndex: 3 },
+      '6': { completedAgents: ['documentation-writer'] },
+      '7': { iteration: 0, issueIndex: 1, completedTaskIds: ['idiomatic-1'] },
+    };
+    state.__flowCheckpoint = {
+      flowId: 'aamf-migration', status: 'failed',
+      startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      completedExecutionIds: [
+        'aamf-migration/budget-check-4',
+        'aamf-migration/final-parity-loop/iteration-1/final-parity-iteration',
+        'aamf-migration/final-parity-convergence-gate',
+        'aamf-migration/finalization',
+      ],
+      outputs: {}, executionOutputs: {},
+    };
+    await manager.save(state);
+
+    await manager.invalidateExecutionFromPhase(5, testNodeIdToPhase);
+
+    const invalidated = manager.getState();
+    expect(invalidated.completedPhases).toEqual([0, 1, 2, 3, 4]);
+    expect(invalidated.currentPhase).toBe(5);
+    expect(invalidated.phaseCursors?.['5']).toEqual({ iteration: 0, fixIndex: 0 });
+    expect(invalidated.phaseCursors?.['6']).toEqual({ completedAgents: [], completedSuites: [] });
+    expect(invalidated.phaseCursors?.['7']).toEqual({ iteration: 0, issueIndex: 0 });
+    expect(invalidated.tokenUsage.total).toBe(123);
+    expect(invalidated.invalidatedFromPhase).toBe(5);
+    expect((invalidated.__flowCheckpoint as { completedExecutionIds: string[] }).completedExecutionIds)
+      .toEqual(['aamf-migration/budget-check-4']);
+  });
+
+  it('selectively invalidates rolled-back Phase 4 tasks', async () => {
+    const state = await manager.load('test-project');
+    state.completedPhases = [0, 1, 2, 3, 4];
+    state.currentPhase = 5;
+    state.completedTasks = ['task-accepted', 'task-rolled-back'];
+    state.phaseCursors = {
+      '4': {
+        tasks: {
+          'task-accepted': {
+            completedSubsteps: ['complete'],
+            scopeExecutionPrefix: 'aamf-migration/iterative-migration/phase-4-per-task/task-accepted/',
+          },
+          'task-rolled-back': {
+            completedSubsteps: ['complete'],
+            scopeExecutionPrefix: 'aamf-migration/iterative-migration/phase-4-per-task/task-rolled-back/',
+          },
+        },
+      },
+    };
+    state.__phase4FlowCheckpoint = {
+      flowId: 'aamf-migration/iterative-migration/phase-4-per-task',
+      status: 'completed', startedAt: '', updatedAt: '',
+      completedExecutionIds: [
+        'aamf-migration/iterative-migration/phase-4-per-task/task-accepted/complete',
+        'aamf-migration/iterative-migration/phase-4-per-task/task-rolled-back/complete',
+      ],
+      outputs: {}, executionOutputs: {},
+    };
+    await manager.save(state);
+
+    await manager.invalidatePhase4Tasks(['task-rolled-back'], testNodeIdToPhase);
+
+    expect(manager.getState().completedTasks).toEqual(['task-accepted']);
+    expect(manager.getState().phaseCursors?.['4']?.tasks['task-accepted']).toBeDefined();
+    expect(manager.getState().phaseCursors?.['4']?.tasks['task-rolled-back']).toBeUndefined();
+    expect((manager.getState().__phase4FlowCheckpoint as { completedExecutionIds: string[] }).completedExecutionIds)
+      .toEqual([
+        'aamf-migration/iterative-migration/phase-4-per-task/task-accepted/complete',
+      ]);
+  });
 
   it('resetFromPhase should clear phases >= N and preserve earlier', async () => {
     const state = await manager.load('test-project');

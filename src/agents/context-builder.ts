@@ -1,4 +1,4 @@
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { AgentName, AgentContext, type AgentPayloadByName } from './types.js';
 import { AGENT_CONTEXT_SCHEMAS } from './contracts.js';
 import { MigrationConfig } from '../config/schema.js';
@@ -231,9 +231,12 @@ export class ContextBuilder {
           const brief = payload!.e2eSuiteBrief as Record<string, unknown>;
           const targetFiles = Array.isArray(brief.targetFiles) ? (brief.targetFiles as string[]) : [];
           const kbRefs = Array.isArray(brief.kbReferences) ? (brief.kbReferences as string[]) : [];
+          const outputPath = brief.outputLocation && typeof brief.outputLocation === 'string'
+            ? this.resolveInsideTarget(brief.outputLocation)
+            : out;
           return {
             inputFiles: [...targetFiles, ...kbRefs],
-            outputPath: brief.outputLocation && typeof brief.outputLocation === 'string' ? brief.outputLocation : out,
+            outputPath,
             agentPayload: { taskId, testType: 'e2e', e2eSuiteBrief: brief },
           };
         }
@@ -342,6 +345,20 @@ export class ContextBuilder {
 
   private resolveTargetPath(path: string): string {
     return isAbsolute(path) ? path : join(this.config.target.outputPath, path);
+  }
+
+  private resolveInsideTarget(path: string): string {
+    const targetRoot = resolve(this.config.target.outputPath);
+    const outputPath = resolve(targetRoot, path);
+    const relativePath = relative(targetRoot, outputPath);
+    if (
+      relativePath === '..' ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      throw new Error(`E2E suite outputLocation escapes target.outputPath: ${path}`);
+    }
+    return outputPath;
   }
 
   /**

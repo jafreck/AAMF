@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { TargetChangeSetManager } from '../../src/core/target-change-set.js';
 import { fileExists } from '../../src/util/fs.js';
 
@@ -57,13 +58,16 @@ describe('TargetChangeSetManager', () => {
 
   it('recovers the outermost persisted snapshot after a crash', async () => {
     const beforeCrash = manager();
+    beforeCrash.bindTask('task-1', 'task-1');
     await beforeCrash.begin('task-1');
     await writeFile(join(target, 'existing.ts'), 'partial attempt\n');
     await beforeCrash.begin('task-1/minor-repass');
     await writeFile(join(target, 'existing.ts'), 'regression\n');
 
     const afterCrash = manager();
-    await expect(afterCrash.recoverPending()).resolves.toBe('task-1');
+    await expect(afterCrash.recoverPending()).resolves.toEqual({
+      scopeId: 'task-1', taskIds: ['task-1'],
+    });
 
     expect(await readFile(join(target, 'existing.ts'), 'utf-8')).toBe('export const value = 1;\n');
     expect(await afterCrash.has('task-1')).toBe(false);
@@ -91,5 +95,31 @@ describe('TargetChangeSetManager', () => {
 
     await expect(manager().recoverPending()).rejects.toThrow('no valid manifest');
     expect(await readFile(join(target, 'existing.ts'), 'utf-8')).toContain('value = 1');
+  });
+
+  it('restores Git HEAD and index after a committed candidate is rejected', async () => {
+    await rm(join(target, '.git'), { recursive: true, force: true });
+    const git = (...args: string[]): string =>
+      execFileSync('git', args, { cwd: target, encoding: 'utf-8' }).trim();
+    git('init', '--quiet');
+    git('config', 'user.name', 'AAMF Test');
+    git('config', 'user.email', 'aamf-test@local.invalid');
+    git('add', '-A');
+    git('commit', '--quiet', '-m', 'baseline');
+    const baselineHead = git('rev-parse', 'HEAD');
+
+    const changes = manager();
+    await changes.begin('committed-candidate', { mode: 'full' });
+    await writeFile(join(target, 'existing.ts'), 'committed candidate\n');
+    await writeFile(join(target, 'created.ts'), 'created\n');
+    git('add', '-A');
+    git('commit', '--quiet', '-m', 'candidate');
+
+    await changes.rollback('committed-candidate');
+
+    expect(git('rev-parse', 'HEAD')).toBe(baselineHead);
+    expect(git('status', '--porcelain')).toBe('');
+    expect(await readFile(join(target, 'existing.ts'), 'utf-8')).toBe('export const value = 1;\n');
+    expect(await fileExists(join(target, 'created.ts'))).toBe(false);
   });
 });

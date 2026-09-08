@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { cp, mkdir, readFile, readdir, rm } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { execFile } from 'node:child_process';
+import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { atomicWrite } from '../util/fs.js';
 
 interface ChangeSetManifest {
@@ -9,6 +10,16 @@ interface ChangeSetManifest {
   createdAt: string;
   mode: 'full' | 'tracked';
   trackedFiles: string[];
+  taskIds: string[];
+  git?: {
+    head?: string;
+    indexExists: boolean;
+  };
+}
+
+export interface TargetChangeRecovery {
+  scopeId: string;
+  taskIds: string[];
 }
 
 export interface TargetChangeSetLogger {
@@ -92,6 +103,11 @@ export class TargetChangeSetManager {
       createdAt: new Date().toISOString(),
       mode: options.mode ?? 'full',
       trackedFiles: this.normalizeTrackedFiles(options.files ?? []),
+      taskIds: [...this.taskScopes.entries()]
+        .filter(([, boundScope]) => boundScope === scopeId)
+        .map(([taskId]) => taskId)
+        .sort(),
+      git: await this.captureGitState(directory),
     };
     await atomicWrite(this.manifestPath(scopeId), `${JSON.stringify(manifest, null, 2)}\n`);
     this.logger.info(`Captured target change set ${scopeId}`);
@@ -119,7 +135,8 @@ export class TargetChangeSetManager {
 
   async rollback(scopeId: string): Promise<void> {
     if (!(await this.has(scopeId))) return;
-    const tree = join(this.scopeDirectory(scopeId), 'tree');
+    const directory = this.scopeDirectory(scopeId);
+    const tree = join(directory, 'tree');
     const manifest = await this.readManifest(scopeId);
     await mkdir(this.targetRoot, { recursive: true });
 
@@ -155,6 +172,8 @@ export class TargetChangeSetManager {
       }
     }
 
+    await this.restoreGitState(directory, manifest.git);
+
     await rm(this.scopeDirectory(scopeId), { recursive: true, force: true });
     this.deleteBindings(scopeId);
     this.logger.warn(`Rolled back target change set ${scopeId}`);
@@ -168,7 +187,7 @@ export class TargetChangeSetManager {
   }
 
   /** Restore the oldest pending snapshot and discard nested snapshots. */
-  async recoverPending(): Promise<string | undefined> {
+  async recoverPending(): Promise<TargetChangeRecovery | undefined> {
     let directories: string[];
     try {
       directories = await readdir(this.storageDir);
@@ -186,6 +205,7 @@ export class TargetChangeSetManager {
           ...manifest,
           mode: manifest.mode ?? 'full',
           trackedFiles: manifest.trackedFiles ?? [],
+          taskIds: manifest.taskIds ?? [],
         });
       } catch {
         // Corrupt/partial snapshots fail closed: remove them only after a valid
@@ -215,7 +235,10 @@ export class TargetChangeSetManager {
     await rm(this.storageDir, { recursive: true, force: true });
     this.taskScopes.clear();
     this.logger.warn(`Recovered pending target change set ${outermost.scopeId}`);
-    return outermost.scopeId;
+    return {
+      scopeId: outermost.scopeId,
+      taskIds: [...new Set(manifests.flatMap(manifest => manifest.taskIds))].sort(),
+    };
   }
 
   private scopeDirectory(scopeId: string): string {
@@ -234,6 +257,7 @@ export class TargetChangeSetManager {
       ...manifest,
       mode: manifest.mode ?? 'full',
       trackedFiles: manifest.trackedFiles ?? [],
+      taskIds: manifest.taskIds ?? [],
     };
   }
 
@@ -246,6 +270,54 @@ export class TargetChangeSetManager {
       if (path === '.git' || path.startsWith('.git/') || path === '.aamf' || path.startsWith('.aamf/')) return [];
       return [path];
     }))].sort();
+  }
+
+  private async captureGitState(
+    directory: string,
+  ): Promise<ChangeSetManifest['git'] | undefined> {
+    const inside = await this.runGit(['rev-parse', '--is-inside-work-tree']).catch(() => '');
+    if (inside.trim() !== 'true') return undefined;
+    const head = await this.runGit(['rev-parse', '--verify', 'HEAD']).catch(() => undefined);
+    const indexPath = await this.gitIndexPath();
+    let indexExists = false;
+    try {
+      await cp(indexPath, join(directory, 'git-index'), { force: true });
+      indexExists = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    return { head: head?.trim() || undefined, indexExists };
+  }
+
+  private async restoreGitState(
+    directory: string,
+    git: ChangeSetManifest['git'] | undefined,
+  ): Promise<void> {
+    if (!git) return;
+    if (git.head) await this.runGit(['update-ref', 'HEAD', git.head]);
+    else await this.runGit(['update-ref', '-d', 'HEAD']);
+    const indexPath = await this.gitIndexPath();
+    await mkdir(dirname(indexPath), { recursive: true });
+    if (git.indexExists) {
+      const bytes = await readFile(join(directory, 'git-index'));
+      await writeFile(indexPath, bytes);
+    } else {
+      await rm(indexPath, { force: true });
+    }
+  }
+
+  private async gitIndexPath(): Promise<string> {
+    const path = (await this.runGit(['rev-parse', '--git-path', 'index'])).trim();
+    return isAbsolute(path) ? path : resolve(this.targetRoot, path);
+  }
+
+  private runGit(args: string[]): Promise<string> {
+    return new Promise((resolveCommand, rejectCommand) => {
+      execFile('git', args, { cwd: this.targetRoot, encoding: 'utf-8' }, (error, stdout) => {
+        if (error) rejectCommand(error);
+        else resolveCommand(stdout);
+      });
+    });
   }
 
   private deleteBindings(scopeId: string): void {

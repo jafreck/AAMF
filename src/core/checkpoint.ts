@@ -104,6 +104,8 @@ export interface CheckpointState {
   __flowCheckpoint?: unknown;
   /** Phase 4 nested flow checkpoint snapshot (managed by Phase4CheckpointAdapter). */
   __phase4FlowCheckpoint?: unknown;
+  /** Earliest phase whose executable snapshot must remain invalidated until the next load. */
+  invalidatedFromPhase?: number;
 }
 
 export interface CheckpointFailedTask {
@@ -543,6 +545,94 @@ export class CheckpointManager {
     await this.syncBackupToCurrent();
   }
 
+  /** Invalidate executable and derived phase state after a target rollback. */
+  async invalidateExecutionFromPhase(
+    fromPhase: number,
+    nodeIdToPhase: (id: string) => number,
+  ): Promise<void> {
+    const state = this.getState();
+    state.invalidatedFromPhase = Math.min(state.invalidatedFromPhase ?? fromPhase, fromPhase);
+    state.completedPhases = state.completedPhases.filter(phase => phase < fromPhase);
+    state.currentPhase = Math.min(state.currentPhase, fromPhase);
+    for (const key of Object.keys(state.phaseOutputs)) {
+      if (Number(key) >= fromPhase) delete state.phaseOutputs[Number(key)];
+    }
+    state.phaseCursors ??= {};
+    if (fromPhase <= 3) {
+      state.phase3aComplete = false;
+      state.scaffoldComplete = false;
+    }
+    if (fromPhase <= 4) {
+      state.completedTasks = [];
+      state.failedTasks = [];
+      state.blockedTasks = [];
+      state.completedTaskDurationsMs = [];
+      state.phaseCursors['4'] = { tasks: {} };
+      state.__phase4FlowCheckpoint = undefined;
+    }
+    if (fromPhase <= 5) state.phaseCursors['5'] = { iteration: 0, fixIndex: 0 };
+    if (fromPhase <= 6) state.phaseCursors['6'] = { completedAgents: [], completedSuites: [] };
+    if (fromPhase <= 7) state.phaseCursors['7'] = { iteration: 0, issueIndex: 0 };
+
+    if (state.__flowCheckpoint && typeof state.__flowCheckpoint === 'object') {
+      filterFlowCheckpointFromPhase(
+        state.__flowCheckpoint as Record<string, unknown>,
+        fromPhase,
+        nodeIdToPhase,
+      );
+    }
+    await this.save(state);
+  }
+
+  async invalidatePhase4Tasks(
+    taskIds: readonly string[],
+    nodeIdToPhase: (id: string) => number,
+  ): Promise<void> {
+    if (taskIds.length === 0) {
+      await this.invalidateExecutionFromPhase(4, nodeIdToPhase);
+      return;
+    }
+    const state = this.getState();
+    const affected = new Set(taskIds);
+    const taskStates = state.phaseCursors?.['4']?.tasks ?? {};
+    const prefixes = taskIds.flatMap(taskId => {
+      const taskState = taskStates[taskId];
+      return taskState?.scopeExecutionPrefix ? [taskState.scopeExecutionPrefix] : [];
+    });
+    state.completedTasks = state.completedTasks.filter(taskId => !affected.has(taskId));
+    state.failedTasks = state.failedTasks.filter(task => !affected.has(task.taskId));
+    state.blockedTasks = state.blockedTasks.filter(taskId => !affected.has(taskId));
+    for (const taskId of taskIds) delete taskStates[taskId];
+
+    if (state.__phase4FlowCheckpoint && typeof state.__phase4FlowCheckpoint === 'object') {
+      const snapshot = state.__phase4FlowCheckpoint as Record<string, unknown>;
+      const shouldRemove = (id: string): boolean => prefixes.some(prefix => id.startsWith(prefix));
+      if (Array.isArray(snapshot.completedExecutionIds)) {
+        snapshot.completedExecutionIds = snapshot.completedExecutionIds.filter(
+          (id): id is string => typeof id === 'string' && !shouldRemove(id),
+        );
+      }
+      if (snapshot.executionOutputs && typeof snapshot.executionOutputs === 'object') {
+        for (const id of Object.keys(snapshot.executionOutputs as Record<string, unknown>)) {
+          if (shouldRemove(id)) delete (snapshot.executionOutputs as Record<string, unknown>)[id];
+        }
+      }
+      snapshot.outputs = {};
+      snapshot.status = 'running';
+      snapshot.error = undefined;
+    }
+
+    state.completedPhases = state.completedPhases.filter(phase => phase < 4);
+    state.currentPhase = Math.min(state.currentPhase, 4);
+    state.invalidatedFromPhase = 4;
+    if (state.__flowCheckpoint && typeof state.__flowCheckpoint === 'object') {
+      filterFlowCheckpointFromPhase(
+        state.__flowCheckpoint as Record<string, unknown>, 4, nodeIdToPhase,
+      );
+    }
+    await this.save(state);
+  }
+
   /** Replace all executable state with the same state shape as a fresh run. */
   async resetAll(projectName = this.getState().projectName): Promise<void> {
     this.state = this.buildInitialState(projectName);
@@ -756,6 +846,7 @@ export class CheckpointManager {
     state.adjudicationWaivers ??= [];
     state.adjudicationEvents ??= [];
     state.phaseCursors ??= {};
+    state.invalidatedFromPhase ??= undefined;
     state.phaseCursors['4'] ??= { tasks: {} };
     state.phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };
     state.phaseCursors['6'] ??= { completedAgents: [] };
@@ -800,4 +891,36 @@ export class CheckpointManager {
     await atomicWrite(this.backupPath, current);
   }
 
+}
+
+export function filterFlowCheckpointFromPhase(
+  snapshot: Record<string, unknown>,
+  fromPhase: number,
+  nodeIdToPhase: (id: string) => number,
+): void {
+  const executionPhase = (executionId: string): number => {
+    for (const segment of executionId.split('/')) {
+      const phase = nodeIdToPhase(segment);
+      if (phase >= 0) return phase;
+    }
+    return -1;
+  };
+  const completed = Array.isArray(snapshot.completedExecutionIds)
+    ? snapshot.completedExecutionIds.filter((id): id is string =>
+        typeof id === 'string' && executionPhase(id) < fromPhase)
+    : [];
+  const retained = new Set(completed);
+  snapshot.completedExecutionIds = completed;
+  if (snapshot.executionOutputs && typeof snapshot.executionOutputs === 'object') {
+    for (const id of Object.keys(snapshot.executionOutputs as Record<string, unknown>)) {
+      if (!retained.has(id)) delete (snapshot.executionOutputs as Record<string, unknown>)[id];
+    }
+  }
+  if (snapshot.outputs && typeof snapshot.outputs === 'object') {
+    for (const id of Object.keys(snapshot.outputs as Record<string, unknown>)) {
+      if (nodeIdToPhase(id) >= fromPhase) delete (snapshot.outputs as Record<string, unknown>)[id];
+    }
+  }
+  snapshot.status = 'running';
+  snapshot.error = undefined;
 }

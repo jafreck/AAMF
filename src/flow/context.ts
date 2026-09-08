@@ -93,6 +93,7 @@ export interface MigrationFlowContext {
   readonly runId: string;
   readonly paths: RuntimePaths;
   readonly maxPhase?: number;
+  readonly signal: AbortSignal;
 
   // ── Infrastructure services ──
   readonly checkpoint: CheckpointManager;
@@ -107,6 +108,7 @@ export interface MigrationFlowContext {
   readonly buildLimiter: ReturnType<typeof pLimit>;
   readonly gitLimiter: ReturnType<typeof pLimit>;
   readonly targetChanges: TargetChangeSetManager;
+  readonly terminateActiveProcesses: () => void | Promise<void>;
 
   // ── Mutable run-time state ──
   /** KB server process - started during Phase 0 */

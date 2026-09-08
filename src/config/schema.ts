@@ -276,8 +276,6 @@ export const MigrationConfigSchema = z.object({
       enabled: z.boolean().default(true),
       /** Ensure `target.outputPath` is a git repository (initialise if needed). */
       autoInit: z.boolean().default(true),
-      /** Commit after successful code-modifying agent invocations. */
-      commitByAgent: z.boolean().default(true),
       /** Commit after each successfully completed Phase 4 task. */
       commitPerTask: z.boolean().default(true),
       /** Allow empty git commits for task-level markers when no files changed. */
@@ -314,7 +312,6 @@ export const MigrationConfigSchema = z.object({
     git: {
       enabled: true,
       autoInit: true,
-      commitByAgent: true,
       commitPerTask: true,
       allowEmptyTaskCommits: true,
       authorName: 'AAMF Migration Bot',

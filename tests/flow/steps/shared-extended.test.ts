@@ -593,7 +593,7 @@ describe('Git automation helpers', () => {
   it('commitForAgent should be no-op when deferGitCommits is true', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn, {
-      options: { git: { enabled: true, autoInit: false, commitByAgent: true, commitPerTask: true } },
+      options: { git: { enabled: true, autoInit: false, commitPerTask: true } },
     });
     env.ctx.deferGitCommits = true;
 

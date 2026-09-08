@@ -1,6 +1,25 @@
-import { spawn, execFile, type SpawnOptions } from 'node:child_process';
+import { spawn, execFile, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { platform, homedir } from 'node:os';
 import { trackProcess, killAllTrackedProcesses } from '@cadre-dev/framework/runtime';
+
+const activeChildren = new Set<ChildProcess>();
+const activeProcessGroups = new Set<number>();
+
+export function trackActiveProcess(child: ChildProcess): void {
+  pruneProcessGroups();
+  activeChildren.add(child);
+  if (child.pid !== undefined && platform() !== 'win32') {
+    activeProcessGroups.add(child.pid);
+  }
+  const remove = (): void => { activeChildren.delete(child); };
+  if (typeof child.once === 'function') {
+    child.once('exit', remove);
+    child.once('error', remove);
+  } else if (typeof child.on === 'function') {
+    child.on('exit', remove);
+    child.on('error', remove);
+  }
+}
 
 /** Result returned after a spawned child process completes. */
 export interface SpawnResult {
@@ -32,7 +51,7 @@ export async function spawnWithTimeout(
   args: string[],
   options: SpawnWithTimeoutOptions = {},
 ): Promise<SpawnResult> {
-  const { timeout, onStdoutData, onStderrData, ...spawnOpts } = options;
+  const { timeout, signal, onStdoutData, onStderrData, ...spawnOpts } = options;
   const start = performance.now();
 
   return new Promise<SpawnResult>((resolve, reject) => {
@@ -42,6 +61,7 @@ export async function spawnWithTimeout(
     const child = spawn(command, args, { ...spawnOpts, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 
     trackProcess(child);
+    trackActiveProcess(child);
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
@@ -50,6 +70,14 @@ export async function spawnWithTimeout(
     let closeFallbackTimer: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
     let exitCode: number | undefined;
+    const onAbort = (): void => {
+      killed = true;
+      if (child.pid != null) {
+        void killProcessTree(child.pid);
+      }
+    };
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
 
     const EXIT_CLOSE_GRACE_MS = 1200;
 
@@ -58,6 +86,7 @@ export async function spawnWithTimeout(
       settled = true;
       if (timer) clearTimeout(timer);
       if (closeFallbackTimer) clearTimeout(closeFallbackTimer);
+      signal?.removeEventListener('abort', onAbort);
 
       // Close read ends so inherited FDs in helper processes cannot keep
       // the parent event loop alive indefinitely.
@@ -102,6 +131,7 @@ export async function spawnWithTimeout(
     // helper descendants; when that happens, a short post-exit fallback timer
     // forces completion.
     child.on('exit', (code) => {
+      activeChildren.delete(child);
       exitCode = code ?? 1;
       if (!closeFallbackTimer) {
         closeFallbackTimer = setTimeout(() => {
@@ -115,8 +145,10 @@ export async function spawnWithTimeout(
     });
 
     child.on('error', (err) => {
+      activeChildren.delete(child);
       if (timer) clearTimeout(timer);
       if (closeFallbackTimer) clearTimeout(closeFallbackTimer);
+      signal?.removeEventListener('abort', onAbort);
       if (settled) return;
       settled = true;
       reject(err);
@@ -131,8 +163,73 @@ export async function spawnWithTimeout(
  * to each tracked process group. Used by the shutdown handler to prevent
  * orphaned agent processes when the runtime receives SIGINT/SIGTERM.
  */
-export function killAllActiveProcesses(): void {
+export async function killAllActiveProcesses(timeoutMs = 5_000): Promise<void> {
+  const children = [...activeChildren];
+  const processGroups = [...activeProcessGroups];
+  const exits = children.map(child => waitForChildExit(child, timeoutMs));
   killAllTrackedProcesses();
+  const escalation = setTimeout(() => {
+    for (const child of children) {
+      if (child.pid == null || child.exitCode !== null || child.signalCode !== null) continue;
+      void killProcessTree(child.pid);
+    }
+  }, Math.min(1_000, Math.max(1, Math.floor(timeoutMs / 2))));
+  const results = await Promise.allSettled(exits);
+  clearTimeout(escalation);
+  if (platform() !== 'win32') {
+    for (const processGroup of processGroups) {
+      if (!isProcessGroupAlive(processGroup)) continue;
+      try { process.kill(-processGroup, 'SIGKILL'); } catch { /* already exited */ }
+    }
+    const groupDeadline = Date.now() + timeoutMs;
+    while (
+      processGroups.some(isProcessGroupAlive) &&
+      Date.now() < groupDeadline
+    ) {
+      await new Promise<void>(resolve => setTimeout(resolve, 25));
+    }
+  }
+  const timedOut = results.filter(result => result.status === 'rejected').length;
+  const survivingGroups = platform() === 'win32'
+    ? 0
+    : processGroups.filter(isProcessGroupAlive).length;
+  if (timedOut > 0 || survivingGroups > 0) {
+    throw new Error(
+      `Timed out waiting for ${timedOut} child process(es) and ${survivingGroups} process group(s) to exit`,
+    );
+  }
+  processGroups.forEach(group => activeProcessGroups.delete(group));
+}
+
+function isProcessGroupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function pruneProcessGroups(): void {
+  if (platform() === 'win32') return;
+  for (const processGroup of activeProcessGroups) {
+    if (!isProcessGroupAlive(processGroup)) activeProcessGroups.delete(processGroup);
+  }
+}
+
+function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolveExit, rejectExit) => {
+    const timer = setTimeout(() => {
+      child.removeListener('exit', onExit);
+      rejectExit(new Error('Child process exit timeout'));
+    }, timeoutMs);
+    const onExit = (): void => {
+      clearTimeout(timer);
+      resolveExit();
+    };
+    child.once('exit', onExit);
+  });
 }
 
 /**

@@ -13,8 +13,8 @@ export function normalizeSourceExcludePatterns(patterns: readonly string[]): str
       .replace(/\/+$/, '');
     if (!clean) return [];
     if (GLOB_META.test(clean)) return [clean];
-    if (clean.includes('/')) return [`${clean}/**`];
-    return [`**/${clean}/**`];
+    if (clean.includes('/')) return [clean, `${clean}/**`];
+    return [`**/${clean}`, `**/${clean}/**`];
   });
   return [...new Set(normalized)].sort();
 }

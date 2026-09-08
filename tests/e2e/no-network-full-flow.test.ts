@@ -8,6 +8,9 @@ import { buildRuntimePaths } from '../../src/core/runtime-paths.js';
 import { fileExists } from '../../src/util/fs.js';
 import { ScriptedAgentLauncher } from '../helpers/scripted-agent-launcher.js';
 import { openReadOnly, listFiles } from '@jafreck/lore';
+import { makeAgentResult } from '../helpers/mocks.js';
+import type { AgentInvocation } from '../../src/agents/types.js';
+import { TargetChangeSetManager } from '../../src/core/target-change-set.js';
 
 const temporaryRoots: string[] = [];
 
@@ -63,7 +66,6 @@ async function createFixture(options: { git?: boolean; executionMode?: 'per-task
       git: {
         enabled: options.git ?? false,
         autoInit: true,
-        commitByAgent: true,
         commitPerTask: true,
         allowEmptyTaskCommits: false,
       },
@@ -117,6 +119,7 @@ describe('deterministic no-network full flow', () => {
     const result = await runtime.run();
 
     expect(result.success).toBe(true);
+    expect(result.phases.map(phase => phase.phase)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(launcher.invocations.length).toBeGreaterThan(0);
     expect(new Set(launcher.invocations.map(invocation => invocation.agent))).toEqual(expect.objectContaining({
@@ -196,6 +199,7 @@ describe('deterministic no-network full flow', () => {
     const failed = await firstRuntime.run();
 
     expect(failed.success).toBe(false);
+    expect(failed.phases).toContainEqual(expect.objectContaining({ phase: 4, success: false }));
     expect(git(fixture.targetDir, 'rev-parse', 'HEAD')).toBe(baselineHead);
     expect(git(fixture.targetDir, 'status', '--porcelain')).toBe('');
     expect(await readFile(join(fixture.targetDir, 'baseline.ts'), 'utf-8')).toBe('export const baseline = 1;\n');
@@ -250,5 +254,67 @@ describe('deterministic no-network full flow', () => {
     expect(finalParityChecks).toBe(expectedChecks);
     const phase6Invocations = launcher.invocations.filter(invocation => invocation.phase === 6);
     expect(phase6Invocations.length > 0).toBe(success);
+  }, 60_000);
+
+  it('cancels active agent work and prevents later Cadre nodes from starting', async () => {
+    const fixture = await createFixture();
+    const invocations: AgentInvocation[] = [];
+    let markStarted!: () => void;
+    let releaseAgent!: () => void;
+    const started = new Promise<void>(resolve => { markStarted = resolve; });
+    const released = new Promise<void>(resolve => { releaseAgent = resolve; });
+    const launcher = {
+      init: async () => undefined,
+      getResolvedPath: () => undefined,
+      launchAgent: async (invocation: AgentInvocation) => {
+        invocations.push(invocation);
+        markStarted();
+        await released;
+        return makeAgentResult({
+          agent: invocation.agent,
+          workItemId: invocation.workItemId,
+          success: false,
+          exitCode: 143,
+          error: 'cancelled',
+        });
+      },
+    };
+    const terminateActiveProcesses = vi.fn(async () => { releaseAgent(); });
+    const runtime = new MigrationRuntime({
+      createAgentLauncher: () => launcher,
+      terminateActiveProcesses,
+    });
+    await runtime.initialize({ configPath: fixture.configPath, logLevel: 'error' });
+
+    const running = runtime.run();
+    await started;
+    await runtime.cancel();
+    const result = await running;
+
+    expect(result.status).toBe('cancelled');
+    expect(result.success).toBe(false);
+    expect(terminateActiveProcesses).toHaveBeenCalled();
+    expect(invocations.map(invocation => invocation.agent)).toEqual(['knowledge-builder']);
+  }, 60_000);
+
+  it('restores a pending target transaction before fresh-run cleanup', async () => {
+    const fixture = await createFixture();
+    await mkdir(fixture.targetDir, { recursive: true });
+    await writeFile(join(fixture.targetDir, 'baseline.ts'), 'baseline\n');
+    const paths = buildRuntimePaths(fixture.root, 'no-network-flow');
+    const changes = new TargetChangeSetManager(fixture.targetDir, paths.stateDir, {
+      info: () => undefined,
+      warn: () => undefined,
+    });
+    await changes.begin('phase-6-finalization', { mode: 'full' });
+    await writeFile(join(fixture.targetDir, 'crash-only.ts'), 'unvalidated\n');
+
+    const launcher = new ScriptedAgentLauncher();
+    const runtime = new MigrationRuntime({ createAgentLauncher: () => launcher });
+    await runtime.initialize({ configPath: fixture.configPath, logLevel: 'error' });
+    const result = await runtime.run();
+
+    expect(result.success).toBe(true);
+    expect(await fileExists(join(fixture.targetDir, 'crash-only.ts'))).toBe(false);
   }, 60_000);
 });

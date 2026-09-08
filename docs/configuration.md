@@ -174,7 +174,6 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 |-------|------|---------|-------------|
 | `options.git.enabled` | `boolean` | `true` | Enable git commit automation. |
 | `options.git.autoInit` | `boolean` | `true` | Auto-initialize a git repo in `target.outputPath`. |
-| `options.git.commitByAgent` | `boolean` | `true` | Create a commit after each agent invocation that modifies files. |
 | `options.git.commitPerTask` | `boolean` | `true` | Create a commit after each Phase 4 task completes. |
 | `options.git.allowEmptyTaskCommits` | `boolean` | `true` | Allow empty commits for tasks that produce no file changes. |
 | `options.git.authorName` | `string` | `'AAMF Migration Bot'` | Git author name. |

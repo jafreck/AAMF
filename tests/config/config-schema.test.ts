@@ -41,7 +41,6 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.maxInfraRetries).toBe(3);
     expect(result.options.git?.enabled).toBe(true);
     expect(result.options.git?.autoInit).toBe(true);
-    expect(result.options.git?.commitByAgent).toBe(true);
     expect(result.options.git?.commitPerTask).toBe(true);
     expect(result.options.git?.allowEmptyTaskCommits).toBe(true);
     expect(result.models.default).toBeUndefined();
@@ -57,7 +56,6 @@ describe('MigrationConfigSchema', () => {
         git: {
           enabled: false,
           autoInit: false,
-          commitByAgent: false,
           commitPerTask: true,
           authorName: 'Custom Bot',
           authorEmail: 'custom@example.com',
@@ -67,7 +65,6 @@ describe('MigrationConfigSchema', () => {
 
     expect(result.options.git?.enabled).toBe(false);
     expect(result.options.git?.autoInit).toBe(false);
-    expect(result.options.git?.commitByAgent).toBe(false);
     expect(result.options.git?.commitPerTask).toBe(true);
     expect(result.options.git?.authorName).toBe('Custom Bot');
     expect(result.options.git?.authorEmail).toBe('custom@example.com');
@@ -143,8 +140,10 @@ describe('MigrationConfigSchema', () => {
     });
 
     expect(result.source.excludePatterns).toEqual([
+      '**/node_modules',
       '**/node_modules/**',
       'tests/**',
+      'vendor/generated',
       'vendor/generated/**',
     ]);
   });

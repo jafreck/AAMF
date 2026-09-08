@@ -21,8 +21,16 @@ import { ContextBuilder } from '../agents/context-builder.js';
 import { MetricsCollector } from '../observability/metrics-collector.js';
 import { ReportGenerator } from '../observability/report-generator.js';
 import { TargetIndexer } from './target-indexer.js';
-import { FlowRunner, type FlowRunnerOptions } from '@cadre-dev/framework/flow';
-import { migrationFlow, AamfFlowCheckpointAdapter, buildFlowUpToPhase, nodeIdToPhase, MAX_PHASE } from '../flow/index.js';
+import { FlowRunner, type FlowLifecycleEvent, type FlowRunnerOptions } from '@cadre-dev/framework/flow';
+import {
+  createMigrationFlow,
+  AamfFlowCheckpointAdapter,
+  buildFlowUpToPhase,
+  nodeIdToPhase,
+  PHASE_BOUNDARY_NODE_IDS,
+  PHASE_NAMES,
+  MAX_PHASE,
+} from '../flow/index.js';
 import { MigrationError } from '../flow/steps/shared.js';
 import type { MigrationFlowContext } from '../flow/index.js';
 import { getAgentsForPhase } from '../agents/registry.js';
@@ -97,6 +105,19 @@ export async function validateSourceAvailability(config: MigrationConfig): Promi
   }
 }
 
+function findMigrationError(error: unknown): MigrationError | undefined {
+  const visited = new Set<unknown>();
+  let current = error;
+  while (current && !visited.has(current)) {
+    if (current instanceof MigrationError) return current;
+    visited.add(current);
+    current = current instanceof Error
+      ? (current as Error & { cause?: unknown }).cause
+      : undefined;
+  }
+  return undefined;
+}
+
 export class MigrationRuntime {
   private config!: MigrationConfig;
   private logger!: Logger;
@@ -116,6 +137,7 @@ export class MigrationRuntime {
   private shutdownListeners: Array<{ event: NodeJS.Signals | 'exit'; listener: (...args: any[]) => void }> = [];
   private shutdownInProgress = false;
   private resourcesCleaned = false;
+  private activeFlowRun?: Promise<unknown>;
 
   constructor(private readonly dependencies: RuntimeDependencies = {}) {}
 
@@ -234,6 +256,26 @@ export class MigrationRuntime {
     //   --from-phase implies resume for earlier phases (load existing checkpoint).
     //   resume=false (without --from-phase) forces a fresh start.
     const impliedResume = this.fromPhase !== undefined;
+    let startupTargetChanges: TargetChangeSetManager | undefined;
+    let recoveredBeforeLoad: import('./target-change-set.js').TargetChangeRecovery | undefined;
+    if (!this.config.options.dryRun) {
+      startupTargetChanges = new TargetChangeSetManager(
+        this.config.target.outputPath,
+        this.paths.stateDir ?? join(this.paths.root, 'state'),
+        this.logger,
+      );
+      recoveredBeforeLoad = await startupTargetChanges.recoverPending();
+      if (recoveredBeforeLoad) {
+        await new TargetIndexer(
+          this.paths.kbTargetDbFile,
+          this.config.target.outputPath,
+          this.logger,
+        ).invalidate();
+        this.logger.warn(
+          `Recovered pending target change set ${recoveredBeforeLoad.scopeId} before startup`,
+        );
+      }
+    }
     if (!this.config.options.dryRun && !this.config.options.resume && !impliedResume) {
       await clearFreshRunArtifacts(this.paths);
     }
@@ -241,6 +283,9 @@ export class MigrationRuntime {
       fresh: !this.config.options.resume && !impliedResume,
       reuseKb: this.config.options.reuseKb,
     });
+    if (recoveredBeforeLoad && (this.config.options.resume || impliedResume)) {
+      await this.invalidateRecoveredChangeSet(recoveredBeforeLoad);
+    }
 
     // Apply --from-phase reset before anything else
     if (this.fromPhase !== undefined) {
@@ -288,21 +333,17 @@ export class MigrationRuntime {
     const bc = this.config.options.buildConcurrency ?? 1;
     const buildLimiter = pLimit(bc === 0 ? this.config.options.maxParallelAgents : bc);
     const gitLimiter = pLimit(1);
+    this.abortController = new AbortController();
+    const terminateActiveProcesses = this.dependencies.terminateActiveProcesses ?? killAllActiveProcesses;
 
     // Target codebase indexer
     const targetIndexer = new TargetIndexer(this.paths.kbTargetDbFile, this.config.target.outputPath, this.logger);
-    const targetChanges = new TargetChangeSetManager(
-      this.config.target.outputPath,
-      this.paths.stateDir ?? join(this.paths.root, 'state'),
-      this.logger,
-    );
-
-    const recoveredChangeSet = await targetChanges.recoverPending();
-    if (recoveredChangeSet) {
-      await targetIndexer.invalidate();
-      await this.invalidateRecoveredChangeSet(recoveredChangeSet);
+    const targetChanges = startupTargetChanges!;
+    if (recoveredBeforeLoad) {
       this.progress.reconstructFromCheckpoint(this.checkpoint.getState());
-      this.logger.warn(`Invalidated target index after recovering ${recoveredChangeSet}`);
+      this.logger.warn(
+        `Invalidated target index after recovering ${recoveredBeforeLoad.scopeId}`,
+      );
     }
 
     // If the target DB already exists (resume), mark the indexer as built.
@@ -316,6 +357,7 @@ export class MigrationRuntime {
       runId: this.runId,
       paths: this.paths,
       maxPhase: this.phase,
+      signal: this.abortController.signal,
       checkpoint: this.checkpoint,
       launcher: this.launcher,
       progress: this.progress,
@@ -328,6 +370,7 @@ export class MigrationRuntime {
       buildLimiter,
       gitLimiter,
       targetChanges,
+      terminateActiveProcesses,
       targetIndexer,
       peakConcurrency: 0,
       parityResults: new Map(),
@@ -360,20 +403,21 @@ export class MigrationRuntime {
     }
 
     const startTime = Date.now();
-    const phaseResults: PhaseResult[] = [];
+    const phaseResultsByPhase = new Map<number, PhaseResult>();
+    const phaseStartedAt = new Map<number, number>();
     let aborted = false;
     let flowTerminalStatus: 'completed' | 'failed' | 'cancelled' | 'timed-out' = 'completed';
 
     // Select the flow definition — truncate if --phase was specified
+    const fullFlow = createMigrationFlow();
     const flow = this.phase != null
-      ? buildFlowUpToPhase(this.phase)
-      : migrationFlow;
+      ? buildFlowUpToPhase(this.phase, fullFlow)
+      : fullFlow;
     if (this.phase != null) {
       this.logger.info(`Running phases 0–${this.phase} (--phase ${this.phase})`);
     }
 
     // Run the flow
-    this.abortController = new AbortController();
     const checkpointAdapter = new AamfFlowCheckpointAdapter(this.checkpoint);
     const runner = new FlowRunner<MigrationFlowContext>();
 
@@ -381,21 +425,82 @@ export class MigrationRuntime {
       const runnerOptions: FlowRunnerOptions<MigrationFlowContext> = {
         checkpoint: checkpointAdapter,
         signal: this.abortController.signal,
+        hooks: {
+          onEvent: async (event: FlowLifecycleEvent<MigrationFlowContext>) => {
+            const phase = nodeIdToPhase(event.nodeId);
+            if (phase < 0) return;
+            if (event.type === 'node-start') {
+              if (!phaseStartedAt.has(phase)) phaseStartedAt.set(phase, Date.parse(event.startedAt));
+              await this.progress.updatePhase(phase, 'in-progress');
+              return;
+            }
+            if (event.type === 'node-failed' || event.type === 'node-cancelled') {
+              const migrationError = findMigrationError(event.error);
+              const failedResult: PhaseResult = migrationError?.result ?? {
+                phase,
+                name: PHASE_NAMES[phase] ?? `Phase ${phase}`,
+                success: false,
+                duration: event.durationMs ?? 0,
+                error: event.error?.message ?? event.reason ?? 'Node failed',
+              };
+              phaseResultsByPhase.set(phase, failedResult);
+              await this.progress.updatePhase(
+                phase,
+                event.type === 'node-cancelled' ? 'pending' : 'failed',
+                event.error?.message,
+              );
+              return;
+            }
+            const boundaryPhase = PHASE_BOUNDARY_NODE_IDS.indexOf(event.nodeId);
+            if (boundaryPhase < 0) return;
+            if (event.type === 'node-skipped') {
+              phaseResultsByPhase.set(boundaryPhase, {
+                phase: boundaryPhase,
+                name: PHASE_NAMES[boundaryPhase] ?? `Phase ${boundaryPhase}`,
+                success: true,
+                duration: 0,
+                outputPath: this.checkpoint.getState().phaseOutputs[boundaryPhase],
+              });
+              return;
+            }
+            if (event.type !== 'node-complete') return;
+
+            const startedAtMs = phaseStartedAt.get(boundaryPhase) ?? Date.parse(event.startedAt);
+            const finishedAtMs = event.finishedAt ? Date.parse(event.finishedAt) : Date.now();
+            const phaseResult: PhaseResult = {
+              phase: boundaryPhase,
+              name: PHASE_NAMES[boundaryPhase] ?? `Phase ${boundaryPhase}`,
+              success: true,
+              duration: Math.max(0, finishedAtMs - startedAtMs),
+            };
+            phaseResultsByPhase.set(boundaryPhase, phaseResult);
+            await this.checkpoint.completePhase(boundaryPhase, '');
+            await this.progress.updatePhase(boundaryPhase, 'completed');
+            this.logger.event({
+              type: 'phase-completed', phase: boundaryPhase,
+              name: phaseResult.name, success: true, duration: phaseResult.duration,
+            });
+            if (boundaryPhase === 4 && flowContext.phase4Snapshot) {
+              flowContext.phase4Snapshot.phase4DurationMs = phaseResult.duration;
+              metricsCollector.setPhase4Snapshot(flowContext.phase4Snapshot);
+            }
+            this.progress.setTokenUsage(tokenTracker.toCheckpointData());
+          },
+        },
       };
 
-      const flowResult = await runner.run(flow, flowContext, runnerOptions);
+      const activeFlowRun = runner.run(flow, flowContext, runnerOptions);
+      this.activeFlowRun = activeFlowRun;
+      const flowResult = await activeFlowRun;
 
       // Process phase results from execution outputs
       for (const output of Object.values(flowResult.executionOutputs ?? {})) {
         const phaseResult = output as PhaseResult | undefined;
         if (phaseResult && typeof phaseResult === 'object' && 'phase' in phaseResult) {
-          phaseResults.push(phaseResult);
-
-          await this.checkpoint.completePhase(phaseResult.phase, phaseResult.outputPath ?? '');
-          await this.progress.updatePhase(phaseResult.phase, 'completed');
-          this.logger.event({ type: 'phase-completed', phase: phaseResult.phase, name: phaseResult.name, success: true, duration: phaseResult.duration });
-
-          this.progress.setTokenUsage(tokenTracker.toCheckpointData());
+          phaseResultsByPhase.set(phaseResult.phase, {
+            ...phaseResultsByPhase.get(phaseResult.phase),
+            ...phaseResult,
+          });
         }
       }
 
@@ -407,17 +512,22 @@ export class MigrationRuntime {
       // Record the failed phase result if this was a MigrationError
       if (err instanceof MigrationError) {
         const failedResult = err.result;
-        phaseResults.push(failedResult);
+        phaseResultsByPhase.set(failedResult.phase, failedResult);
         const truncatedStderr = failedResult.stderr ? failedResult.stderr.slice(0, 2000) : undefined;
         await this.progress.updatePhase(failedResult.phase, 'failed', failedResult.error, failedResult.exitCode, truncatedStderr);
         this.logger.event({ type: 'phase-failed', phase: failedResult.phase, name: failedResult.name, error: failedResult.error ?? 'unknown', exitCode: failedResult.exitCode, stderr: truncatedStderr });
         await this.progress.appendEvent(`Migration aborted: Phase ${failedResult.phase} (${failedResult.name}) failed`);
       } else {
         this.logger.error(`Flow execution failed: ${err instanceof Error ? err.message : String(err)}`);
+        const migrationError = findMigrationError(err);
+        if (migrationError) {
+          phaseResultsByPhase.set(migrationError.result.phase, migrationError.result);
+        }
       }
       aborted = true;
       flowTerminalStatus = this.abortController.signal.aborted ? 'cancelled' : 'failed';
     } finally {
+      this.activeFlowRun = undefined;
       // Run-scoped resources are released by the outer lifecycle guard.
     }
 
@@ -433,10 +543,10 @@ export class MigrationRuntime {
     const filteredBlocked = finalState.blockedTasks.filter(id => !completedSet.has(id));
 
     const migrationResult: MigrationResult = {
-      success: !aborted && phaseResults.every(r => r.success),
+      success: !aborted && [...phaseResultsByPhase.values()].every(r => r.success),
       status: flowTerminalStatus,
       projectName: this.config.projectName,
-      phases: phaseResults,
+      phases: [...phaseResultsByPhase.values()].sort((left, right) => left.phase - right.phase),
       totalDuration,
       cumulativeDuration: cumulativeDurationMs,
       tokenUsage: tokenTracker.toCheckpointData(),
@@ -474,8 +584,9 @@ export class MigrationRuntime {
   }
 
   /** Request cancellation of the active Cadre run without sending a process signal. */
-  cancel(): void {
+  async cancel(): Promise<void> {
     this.abortController?.abort();
+    await (this.dependencies.terminateActiveProcesses ?? killAllActiveProcesses)();
   }
 
   /** Release any resources owned by this runtime instance. Safe to call repeatedly. */
@@ -708,6 +819,13 @@ export class MigrationRuntime {
 
       try {
         this.abortController?.abort();
+        await (this.dependencies.terminateActiveProcesses ?? killAllActiveProcesses)();
+        if (this.activeFlowRun) {
+          await Promise.race([
+            this.activeFlowRun.then(() => undefined, () => undefined),
+            new Promise<void>(resolve => setTimeout(resolve, 3_000)),
+          ]);
+        }
         await this.cleanupRuntimeResources(3_000);
       } catch {
         // Best-effort child process cleanup
@@ -762,11 +880,15 @@ export class MigrationRuntime {
       }
     };
 
+    const context = this.flowContext;
+
     // Agent/command processes must stop mutating files before servers or
     // embedders begin teardown.
-    await settle(this.dependencies.terminateActiveProcesses ?? killAllActiveProcesses);
-
-    const context = this.flowContext;
+    await settle(
+      context.terminateActiveProcesses
+        ?? this.dependencies.terminateActiveProcesses
+        ?? killAllActiveProcesses,
+    );
 
     const targetServer = context.targetKbServer;
     context.targetKbServer = undefined;
@@ -781,22 +903,26 @@ export class MigrationRuntime {
     if (embedder) await settle(() => embedder.dispose());
 
     const recoveredChangeSet = await context.targetChanges?.recoverPending().catch(() => undefined);
-    if (recoveredChangeSet && context.targetIndexer) {
-      await settle(() => context.targetIndexer!.invalidate());
+    if (recoveredChangeSet) {
+      if (context.targetIndexer) await settle(() => context.targetIndexer!.invalidate());
       await settle(() => this.invalidateRecoveredChangeSet(recoveredChangeSet));
     }
   }
 
-  private async invalidateRecoveredChangeSet(scopeId: string): Promise<void> {
+  private async invalidateRecoveredChangeSet(
+    recovery: import('./target-change-set.js').TargetChangeRecovery,
+  ): Promise<void> {
+    const { scopeId } = recovery;
+    if (scopeId.startsWith('phase-4-') || recovery.taskIds.length > 0) {
+      await this.checkpoint.invalidatePhase4Tasks(recovery.taskIds, nodeIdToPhase);
+      return;
+    }
     const phase = scopeId.startsWith('phase-7-') ? 7
       : scopeId.startsWith('phase-6-') ? 6
         : scopeId.startsWith('phase-5-') ? 5
           : scopeId.startsWith('phase-4-') ? 4
             : scopeId.startsWith('phase-3-') ? 3
               : 4;
-    await this.checkpoint.resetFromPhase(phase, nodeIdToPhase, {
-      requirePrerequisites: false,
-      maxPhase: MAX_PHASE,
-    });
+    await this.checkpoint.invalidateExecutionFromPhase(phase, nodeIdToPhase);
   }
 }

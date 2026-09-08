@@ -54,6 +54,7 @@ import {
   setupFlowTestWithTasks,
   createMockLauncher,
   createFailingLauncher,
+  makeAgentResult,
   writeE2eTestPlan,
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
@@ -134,7 +135,7 @@ describe('runFinalParityIteration — failure paths', () => {
 import { launchE2eSuiteWriters, launchE2eTestCrafter, launchDocWriter } from '../../../src/flow/steps/finalization.js';
 
 describe('launchE2eSuiteWriters — budget and retry', () => {
-  it('should skip suites when token budget is exceeded', async () => {
+  it('should fail required suites when token budget is exceeded', async () => {
     const launcherFn = createMockLauncher();
     env = await setupFlowTest(launcherFn, {
       options: { tokenBudget: 100 },
@@ -149,7 +150,9 @@ describe('launchE2eSuiteWriters — budget and retry', () => {
       { id: 'suite-001', name: 'Auth E2E' },
     ]);
 
-    await launchE2eSuiteWriters(env.flowCtx);
+    await expect(launchE2eSuiteWriters(env.flowCtx)).rejects.toThrow(
+      /Budget exceeded before required suite/,
+    );
 
     // Suite writer should not have been invoked (budget exceeded)
     const testWriterInvocations = env.mockLauncher.invocations.filter(i => i.agent === 'test-writer');
@@ -498,5 +501,50 @@ describe('runIdiomaticRefactorPipeline — failure paths', () => {
 
     await expect(runIdiomaticRefactorPipeline(env.flowCtx)).rejects.toThrow(/Phase 7.*failed/);
     expect(env.checkpoint.getState().phaseCursors?.['7']?.completedTaskIds ?? []).not.toContain('idiomatic-1');
+    expect(env.checkpoint.getState().phaseCursors?.['7']).toEqual({ iteration: 0, issueIndex: 0 });
+  });
+
+  it('serializes otherwise-independent idiomatic tasks that edit the same file', async () => {
+    let active = 0;
+    let peak = 0;
+    const launcherFn = async (inv: import('../../../src/agents/types.js').AgentInvocation) => {
+      if (inv.agent === 'idiomatic-reviewer') {
+        return makeAgentResult({
+          agent: inv.agent,
+          workItemId: inv.workItemId,
+          extensions: { outputParsed: true, structuredOutput: {
+            issues: [
+              { file: 'src/a.ts', location: '1', issue: 'one', suggestion: 'fix', details: 'one' },
+              { file: 'src/a.ts', location: '2', issue: 'two', suggestion: 'fix', details: 'two' },
+            ],
+          } },
+        });
+      }
+      if (inv.agent === 'idiomatic-planner') {
+        const task = (id: string, issue: string) => ({
+          id, name: id, description: issue, files: ['src/a.ts'],
+          issues: [{ file: 'src/a.ts', location: '1', issue, suggestion: 'fix' }],
+          dependencies: [],
+        });
+        return makeAgentResult({
+          agent: inv.agent,
+          extensions: { outputParsed: true, structuredOutput: {
+            tasks: [task('idiomatic-1', 'one'), task('idiomatic-2', 'two')],
+          } },
+        });
+      }
+      if (inv.agent === 'idiomatic-refactorer') {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        active--;
+      }
+      return makeAgentResult({ agent: inv.agent, workItemId: inv.workItemId });
+    };
+    env = await setupFlowTest(launcherFn, { options: { maxParallelAgents: 2 } });
+
+    await runIdiomaticRefactorPipeline(env.flowCtx);
+
+    expect(peak).toBe(1);
   });
 });

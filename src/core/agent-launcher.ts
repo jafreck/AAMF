@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import {
@@ -23,6 +23,7 @@ import { AGENT_REGISTRY, getOutputSchema } from '../agents/registry.js';
 import { Logger } from '../logging/logger.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { buildRuntimePaths } from './runtime-paths.js';
+import { trackActiveProcess } from '../util/process.js';
 
 // ─── Copilot JSONL event parsing ──────────────────────────────────────────────
 
@@ -221,6 +222,15 @@ function summarizeToolCalls(toolCalls: Array<{ name: string; status: string }>):
   return [...counts.entries()].map(([name, count]) => `${name}(${count})`).join(', ');
 }
 
+function extractClaudeResultText(stdout: string): string {
+  try {
+    const parsed = JSON.parse(stdout) as { result?: unknown };
+    return typeof parsed.result === 'string' ? parsed.result : stdout;
+  } catch {
+    return stdout;
+  }
+}
+
 /** Shared helper: write stdout/stderr to a per-agent log file. */
 async function writeAgentLog(logDir: string, agent: string, taskId: string, stdout: string, stderr: string, invocationId?: string, events?: CopilotEvent[]): Promise<void> {
   const targetDir = join(logDir, agent, taskId);
@@ -237,35 +247,136 @@ async function writeAgentLog(logDir: string, agent: string, taskId: string, stdo
   }
 }
 
-/** Shared helper: detect output files created by the agent in the progress directory. */
-async function detectOutputFiles(contextPath: string): Promise<string[]> {
-  try {
-    const context = JSON.parse(await readFile(contextPath, 'utf-8')) as { outputPath?: string };
-    if (context.outputPath && await fileExists(context.outputPath)) {
-      const s = await stat(context.outputPath);
-      if (s.isDirectory()) {
-        return listFilesRecursively(context.outputPath);
-      }
-      return s.isFile() ? [context.outputPath] : [];
-    }
-  } catch {
-    // Context parsing failed, return empty
-  }
-  return [];
+type OutputSnapshot = Map<string, string>;
+
+interface ArtifactContext {
+  agent?: AgentName;
+  outputPath?: string;
+  config?: { target?: { outputPath?: string } };
+  payload?: {
+    targetFiles?: unknown;
+    task?: { files?: unknown };
+  };
 }
 
-async function listFilesRecursively(directory: string): Promise<string[]> {
-  const files: string[] = [];
+async function readArtifactContext(contextPath: string): Promise<ArtifactContext | undefined> {
+  try {
+    return JSON.parse(await readFile(contextPath, 'utf-8')) as ArtifactContext;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeInsideRoot(root: string, path: string): string | undefined {
+  const absoluteRoot = resolve(root);
+  const absolutePath = isAbsolute(path) ? resolve(path) : resolve(absoluteRoot, path);
+  const relativePath = relative(absoluteRoot, absolutePath);
+  if (
+    relativePath === '..' ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    return undefined;
+  }
+  return absolutePath;
+}
+
+async function resolveContextOutputScope(contextPath: string): Promise<string[]> {
+  const context = await readArtifactContext(contextPath);
+  if (!context) return [];
+
+  const targetRoot = context.config?.target?.outputPath;
+  if (context.agent === 'test-writer') {
+    return targetRoot ? [resolve(targetRoot)] : [];
+  }
+  if (context.agent === 'idiomatic-refactorer') {
+    const files = Array.isArray(context.payload?.task?.files)
+      ? context.payload.task.files.filter((path): path is string => typeof path === 'string')
+      : [];
+    return targetRoot
+      ? files.flatMap(path => normalizeInsideRoot(targetRoot, path) ?? [])
+      : [];
+  }
+
+  const targetFiles = Array.isArray(context.payload?.targetFiles)
+    ? context.payload.targetFiles.filter((path): path is string => typeof path === 'string')
+    : [];
+  if (targetFiles.length === 0) return context.outputPath ? [context.outputPath] : [];
+  if (!targetRoot) return [];
+  return targetFiles.flatMap(path => normalizeInsideRoot(targetRoot, path) ?? []);
+}
+
+async function snapshotOutputFiles(contextPath: string): Promise<OutputSnapshot> {
+  const files = new Map<string, string>();
+  for (const outputPath of await resolveContextOutputScope(contextPath)) {
+    if (!(await fileExists(outputPath))) continue;
+    const metadata = await stat(outputPath);
+    if (metadata.isFile()) files.set(outputPath, await fileSignature(outputPath));
+    if (metadata.isDirectory()) {
+      for (const [path, signature] of await listFilesRecursively(outputPath)) {
+        files.set(path, signature);
+      }
+    }
+  }
+  return files;
+}
+
+/** Detect only files created or modified by this invocation. */
+async function detectOutputFiles(
+  contextPath: string,
+  baseline: OutputSnapshot,
+): Promise<string[]> {
+  const current = await snapshotOutputFiles(contextPath);
+  return [...current.entries()]
+    .filter(([path, signature]) => baseline.get(path) !== signature)
+    .map(([path]) => path)
+    .sort();
+}
+
+async function attributeDeclaredTestOutputs(
+  contextPath: string,
+  agent: AgentName,
+  stdout: string,
+  changedFiles: string[],
+): Promise<string[]> {
+  if (agent !== 'test-writer') return changedFiles;
+
+  const context = await readArtifactContext(contextPath);
+  const targetRoot = context?.config?.target?.outputPath;
+  if (!targetRoot) return [];
+
+  const parsed = parseAamfOutput(stdout, getOutputSchema(agent));
+  if (!parsed.parsed) return [];
+  const outputFiles = (parsed.data as Record<string, unknown>).outputFiles;
+  if (!Array.isArray(outputFiles)) return [];
+
+  const declaredFiles = new Set(
+    outputFiles
+      .filter((path): path is string => typeof path === 'string')
+      .flatMap(path => normalizeInsideRoot(targetRoot, path) ?? []),
+  );
+  return changedFiles.filter(path => declaredFiles.has(resolve(path)));
+}
+
+async function listFilesRecursively(directory: string): Promise<OutputSnapshot> {
+  const files = new Map<string, string>();
   const entries = await readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
-      files.push(...await listFilesRecursively(path));
+      for (const [nestedPath, signature] of await listFilesRecursively(path)) {
+        files.set(nestedPath, signature);
+      }
     } else if (entry.isFile()) {
-      files.push(path);
+      files.set(path, await fileSignature(path));
     }
   }
-  return files.sort();
+  return files;
+}
+
+async function fileSignature(path: string): Promise<string> {
+  const metadata = await stat(path, { bigint: true });
+  return `${metadata.size}:${metadata.mtimeNs}`;
 }
 
 // ─── Custom Copilot backend (--output-format json) ───────────────────────────
@@ -300,6 +411,7 @@ function spawnAgent(command: string, args: string[], opts: { cwd: string; env: R
       detached: true,
     });
     trackProcess(child);
+    trackActiveProcess(child);
     child.unref();
 
     const stdoutChunks: Buffer[] = [];
@@ -438,22 +550,95 @@ class AamfCopilotBackend implements AgentBackend {
   }
 
   private buildEnv(invocation: FrameworkInvocation, worktreePath: string): Record<string, string | undefined> {
-    let env = stripVSCodeEnv({ ...process.env });
-    env['CADRE_WORK_ITEM_ID'] = invocation.workItemId;
-    env['CADRE_WORKTREE_PATH'] = worktreePath;
-    env['CADRE_PHASE'] = String(invocation.phase);
-    if (invocation.sessionId) env['CADRE_SESSION_ID'] = invocation.sessionId;
-    if (this.extraPath.length > 0) {
-      const sep = process.platform === 'win32' ? ';' : ':';
-      env['PATH'] = [...this.extraPath, env['PATH'] ?? ''].join(sep);
-    }
-    return env;
+    return buildBackendEnv(invocation, worktreePath, this.extraPath);
   }
+}
+
+class AamfClaudeBackend implements AgentBackend {
+  readonly name = 'claude';
+  private readonly cliCommand: string;
+  private readonly defaultTimeout: number;
+  private readonly defaultModel: string | undefined;
+  private readonly allowedTools: string | undefined;
+  private readonly extraPath: string[];
+
+  constructor(
+    config: BackendRuntimeConfig,
+    private readonly logger: BackendLoggerLike,
+  ) {
+    const options = config.agent.claude as Record<string, unknown> | undefined;
+    this.cliCommand = (typeof options?.cliCommand === 'string' && options.cliCommand.trim()) || 'claude';
+    this.defaultTimeout = config.agent.timeout ?? 120_000;
+    this.defaultModel = config.agent.model;
+    this.allowedTools = typeof options?.allowedTools === 'string' ? options.allowedTools : undefined;
+    this.extraPath = config.environment.extraPath ?? [];
+  }
+
+  async init(): Promise<void> {
+    this.logger.debug(`AamfClaudeBackend initialized (cli: ${this.cliCommand})`);
+  }
+
+  async invoke(invocation: FrameworkInvocation, worktreePath: string): Promise<FrameworkResult> {
+    const startTime = Date.now();
+    const args = [
+      '--agent', invocation.agent,
+      '-p', `Read your context file at: ${invocation.contextPath}`,
+    ];
+    if (this.allowedTools) args.push('--allowedTools', this.allowedTools);
+    args.push('--output-format', 'json');
+    const model = invocation.modelOverride ?? this.defaultModel;
+    if (model) args.push('--model', model);
+    if (invocation.mcpServers) {
+      for (const [name, config] of Object.entries(invocation.mcpServers)) {
+        args.push('--mcp-config', JSON.stringify({ [name]: config }));
+      }
+    }
+    const result = await spawnAgent(this.cliCommand, args, {
+      cwd: worktreePath,
+      env: buildBackendEnv(invocation, worktreePath, this.extraPath),
+      timeout: invocation.timeout ?? this.defaultTimeout,
+    });
+    const success = result.exitCode === 0 && !result.timedOut;
+    return {
+      agent: invocation.agent,
+      success,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      duration: Date.now() - startTime,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      tokenUsage: null,
+      outputPath: invocation.outputPath,
+      outputExists: await fileExists(invocation.outputPath),
+      error: success ? undefined : (result.stderr.trim() || `Exit code: ${result.exitCode}`),
+    };
+  }
+}
+
+function buildBackendEnv(
+  invocation: FrameworkInvocation,
+  worktreePath: string,
+  extraPath: string[],
+): Record<string, string | undefined> {
+  const env = stripVSCodeEnv({ ...process.env });
+  env['CADRE_WORK_ITEM_ID'] = invocation.workItemId;
+  env['CADRE_WORKTREE_PATH'] = worktreePath;
+  env['CADRE_PHASE'] = String(invocation.phase);
+  if (invocation.sessionId) env['CADRE_SESSION_ID'] = invocation.sessionId;
+  if (extraPath.length > 0) {
+    const separator = process.platform === 'win32' ? ';' : ':';
+    env['PATH'] = [...extraPath, env['PATH'] ?? ''].join(separator);
+  }
+  return env;
 }
 
 /** Register the AAMF copilot backend so the framework uses --output-format json. */
 export function registerAamfCopilotBackend(): void {
   registerAgentBackendFactory('copilot', (config, logger) => new AamfCopilotBackend(config, logger));
+}
+
+export function registerAamfClaudeBackend(): void {
+  registerAgentBackendFactory('claude', (config, logger) => new AamfClaudeBackend(config, logger));
 }
 
 // ─── AAMF ↔ Framework type mapping ───────────────────────────────────────────
@@ -475,6 +660,7 @@ export function buildBackendRuntimeConfig(config: MigrationConfig): BackendRunti
       },
       claude: {
         cliCommand: backendName === 'claude' ? config.agentBackend.cliCommand : undefined,
+        allowedTools: 'Bash,Read,Write,Edit,Glob,Grep',
       },
     },
     environment: {
@@ -601,8 +787,16 @@ function finaliseResult(
     agentResult.extensions.outputParsed = false;
     agentResult.extensions.parseError = parseResult.error;
     agentResult.success = false;
-    agentResult.extensions.failureKind = 'structured-output';
-    agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
+    if (agentResult.exitCode !== 0 || agentResult.timedOut || agentResult.extensions.failureKind === 'process') {
+      agentResult.extensions.failureKind = 'process';
+      const processError = agentResult.error ?? stderr.trim();
+      agentResult.error = processError
+        ? `${processError}; aamf-json parse failed: ${parseResult.error}`
+        : `Agent process failed; aamf-json parse failed: ${parseResult.error}`;
+    } else {
+      agentResult.extensions.failureKind = 'structured-output';
+      agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
+    }
     if (parseResult.error === MISSING_BLOCK_ERROR) {
       logger.warn(`Agent ${agentResult.agent} did not emit an aamf-json block`);
     }
@@ -664,6 +858,8 @@ export class AgentLauncher {
     // before the framework creates its launcher — must happen before FrameworkAgentLauncher ctor.
     if (config.agentBackend.runtime === 'copilot') {
       registerAamfCopilotBackend();
+    } else {
+      registerAamfClaudeBackend();
     }
     const runtimeConfig = buildBackendRuntimeConfig(config);
     this.frameworkLauncher = new FrameworkAgentLauncher(runtimeConfig, adaptLogger(logger));
@@ -707,6 +903,8 @@ export class AgentLauncher {
     if (invocation.workItemId) invLogger.setTaskId(invocation.workItemId);
     invLogger.setPhase(invocation.phase);
 
+    const outputBaseline = await snapshotOutputFiles(invocation.contextPath);
+
     // Delegate to framework launcher
     const fwInvocation = toFrameworkInvocation(invocation);
     const fwResult = await this.frameworkLauncher.launchAgent(fwInvocation, this.projectRoot);
@@ -724,7 +922,9 @@ export class AgentLauncher {
 
     // Parse copilot JSONL events
     const parsed = parseCopilotJsonl(stdout);
-    const stdoutForParsing = parsed.textContent || stdout;
+    const stdoutForParsing = this.config.agentBackend.runtime === 'claude-code'
+      ? extractClaudeResultText(stdout)
+      : (parsed.textContent || stdout);
 
     // Write agent log
     await writeAgentLog(this.logDir, invocation.agent, taskId, stdout, fwResult.stderr, invocation.invocationId, parsed.events);
@@ -739,7 +939,16 @@ export class AgentLauncher {
     }
 
     // Detect output files
-    agentResult.extensions.outputFiles = await detectOutputFiles(invocation.contextPath);
+    const detectedOutputFiles = await detectOutputFiles(
+      invocation.contextPath,
+      outputBaseline,
+    );
+    agentResult.extensions.outputFiles = await attributeDeclaredTestOutputs(
+      invocation.contextPath,
+      invocation.agent,
+      stdoutForParsing,
+      detectedOutputFiles,
+    );
 
     // Copilot event summary
     if (parsed.events.length > 0) {

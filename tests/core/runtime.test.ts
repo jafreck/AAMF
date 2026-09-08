@@ -834,6 +834,30 @@ describe('MigrationRuntime', () => {
   });
 
   describe('internal helpers', () => {
+    it('preserves accumulated accounting when automatic recovery invalidates Phase 6', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'aamf-recovery-accounting-'));
+      const logger = new Logger({ logDir: join(root, 'logs'), level: 'error', console: false });
+      const checkpoint = new CheckpointManager(root, logger);
+      const state = await checkpoint.load('demo');
+      state.completedPhases = [0, 1, 2, 3, 4, 5, 6];
+      state.currentPhase = 6;
+      state.tokenUsage = { total: 321, byPhase: { 4: 321 }, byAgent: { 'code-migrator': 321 } };
+      state.metricsCount = 12;
+      state.cumulativeDurationMs = 45_000;
+      await checkpoint.save(state);
+      const runtime = new MigrationRuntime() as any;
+      runtime.checkpoint = checkpoint;
+
+      await runtime.invalidateRecoveredChangeSet({ scopeId: 'phase-6-finalization', taskIds: [] });
+
+      const recovered = checkpoint.getState();
+      expect(recovered.completedPhases).toEqual([0, 1, 2, 3, 4, 5]);
+      expect(recovered.tokenUsage).toEqual(state.tokenUsage);
+      expect(recovered.metricsCount).toBe(12);
+      expect(recovered.cumulativeDurationMs).toBe(45_000);
+      await rm(root, { recursive: true, force: true });
+    });
+
     it('formats durations across seconds, minutes, and hours', () => {
       expect(formatDuration(5_000)).toBe('5s');
       expect(formatDuration(65_000)).toBe('1m 5s');

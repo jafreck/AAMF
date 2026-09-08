@@ -173,7 +173,7 @@ describe('ContextBuilder', () => {
           qualityPolicy: 'strict' as const,
           executionMode: 'wave-barrier' as const,
           waveControl: { maxConvergenceIterations: 5 },
-          git: { enabled: false, autoInit: true, commitByAgent: true, commitPerTask: true, authorName: 'AAMF Migration Bot', authorEmail: 'aamf@local.invalid' },
+          git: { enabled: false, autoInit: true, commitPerTask: true, authorName: 'AAMF Migration Bot', authorEmail: 'aamf@local.invalid' },
         },
       });
       const b = new ContextBuilder(config, progressDir, paths);
@@ -488,6 +488,26 @@ describe('ContextBuilder', () => {
 
       // Empty outputLocation falls back to target outputPath
       expect(context.outputPath).toBe('/tmp/target');
+    });
+
+    it('should resolve relative E2E output locations inside target.outputPath', async () => {
+      const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-relative', {
+        e2eSuiteBrief: {
+          id: 'suite-relative', name: 'Relative', targetFiles: [], kbReferences: [],
+          outputLocation: 'tests/e2e/relative.ts', scenarios: [],
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      expect(context.outputPath).toBe('/tmp/target/tests/e2e/relative.ts');
+    });
+
+    it('should reject E2E output locations outside target.outputPath', async () => {
+      await expect(builder.buildContext('test-writer', 6, 'suite-escape', {
+        e2eSuiteBrief: {
+          id: 'suite-escape', name: 'Escape', targetFiles: [], kbReferences: [],
+          outputLocation: '../outside.ts', scenarios: [],
+        },
+      })).rejects.toThrow('escapes target.outputPath');
     });
 
     it('should not change Phase 4 test-writer context when e2eSuiteBrief is absent', async () => {

@@ -479,6 +479,30 @@ describe('AgentLauncher token usage post-processing', () => {
     });
   });
 
+  it('parses structured output from the Claude JSON result envelope', async () => {
+    const { launcher, contextPath } = await createHarness({
+      agentBackend: { runtime: 'claude-code', cliCommand: 'claude' },
+    });
+    const stdout = JSON.stringify({
+      result: '```aamf-json\n{"status":"completed","fixes":[]}\n```',
+    });
+    (launcher as any).frameworkLauncher = {
+      init: vi.fn(),
+      launchAgent: vi.fn().mockResolvedValue({
+        exitCode: 0, success: true, timedOut: false, duration: 1,
+        stdout, stderr: '', tokenUsage: null, outputPath: '', outputExists: false,
+      }),
+    };
+
+    const result = await launcher.launchAgent({
+      agent: 'final-parity-checker', contextPath, outputPath: '', phase: 5, workItemId: '',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.extensions.outputParsed).toBe(true);
+    expect(result.extensions.structuredOutput?.fixes).toEqual([]);
+  });
+
   it('should fall back to accumulated assistant output tokens in JSONL', async () => {
     const { launcher, contextPath } = await createHarness();
     const stdout = [
@@ -555,6 +579,34 @@ describe('AgentLauncher token usage post-processing', () => {
     expect(invalid.error).toContain('aamf-json parse failed');
   });
 
+  it('preserves transient process diagnostics when structured output is missing', async () => {
+    const { launcher, contextPath } = await createHarness();
+    (launcher as any).frameworkLauncher = {
+      init: vi.fn(),
+      launchAgent: vi.fn().mockResolvedValue({
+        exitCode: 1,
+        success: false,
+        timedOut: false,
+        duration: 1,
+        stdout: '',
+        stderr: '503 service unavailable',
+        tokenUsage: { input: 1, output: 1 },
+        outputPath: '',
+        outputExists: false,
+        error: '503 service unavailable',
+      }),
+    };
+
+    const result = await launcher.launchAgent({
+      agent: 'code-migrator', contextPath, outputPath: '', phase: 4, workItemId: 'task-001',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.extensions.failureKind).toBe('process');
+    expect(result.error).toContain('503 service unavailable');
+    expect(result.error).toContain('aamf-json parse failed');
+  });
+
   it.each([
     {
       name: 'accepts exit zero plus completed output and a required artifact',
@@ -616,6 +668,26 @@ describe('AgentLauncher token usage post-processing', () => {
       expectedSuccess: true,
       expectedFailureKind: undefined,
     },
+    {
+      name: 'accepts an adjudicator decision without a filesystem artifact',
+      agent: 'adjudicator' as const,
+      exitCode: 0,
+      processSuccess: true,
+      stdout: '```aamf-json\n{"status":"completed","outputFiles":[]}\n```',
+      removeArtifact: true,
+      expectedSuccess: true,
+      expectedFailureKind: undefined,
+    },
+    {
+      name: 'accepts parity scope reduction without a filesystem artifact',
+      agent: 'parity-failure-resolver' as const,
+      exitCode: 0,
+      processSuccess: true,
+      stdout: '```aamf-json\n{"status":"completed","scopeReduced":true,"outputFiles":[]}\n```',
+      removeArtifact: true,
+      expectedSuccess: true,
+      expectedFailureKind: undefined,
+    },
   ])('$name', async ({
     agent, exitCode, processSuccess, stdout, removeArtifact,
     expectedSuccess, expectedFailureKind,
@@ -626,7 +698,11 @@ describe('AgentLauncher token usage post-processing', () => {
     }
     (launcher as any).frameworkLauncher = {
       init: vi.fn(),
-      launchAgent: vi.fn().mockResolvedValue({
+      launchAgent: vi.fn().mockImplementation(async () => {
+        if (!removeArtifact) {
+          await writeFile(join(tempDir, 'out', 'artifact.txt'), `invocation-${Date.now()}`);
+        }
+        return {
         exitCode,
         success: processSuccess,
         timedOut: false,
@@ -636,6 +712,7 @@ describe('AgentLauncher token usage post-processing', () => {
         tokenUsage: { input: 1, output: 1 },
         outputPath: '',
         outputExists: !removeArtifact,
+        };
       }),
     };
 
@@ -657,11 +734,19 @@ describe('AgentLauncher token usage post-processing', () => {
   it('should discover directory and file outputs declared by the context', async () => {
     const { launcher, contextPath, tempDir } = await createHarness();
     const outputDir = join(tempDir, 'out');
-    await Promise.all([
-      writeFile(join(outputDir, 'a.json'), '{}'),
-      writeFile(join(outputDir, 'b.json'), '{}'),
-    ]);
-    const launchAgent = vi.fn().mockResolvedValue({
+    const outputFile = join(tempDir, 'single-output.json');
+    let callCount = 0;
+    const launchAgent = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        await Promise.all([
+          writeFile(join(outputDir, 'a.json'), '{}'),
+          writeFile(join(outputDir, 'b.json'), '{}'),
+        ]);
+      } else {
+        await writeFile(outputFile, '{}');
+      }
+      return {
       exitCode: 0,
       success: true,
       timedOut: false,
@@ -671,6 +756,7 @@ describe('AgentLauncher token usage post-processing', () => {
       tokenUsage: { input: 1, output: 1 },
       outputPath: '',
       outputExists: true,
+      };
     });
     (launcher as any).frameworkLauncher = { init: vi.fn(), launchAgent };
     const invocation: AgentInvocation = {
@@ -683,11 +769,122 @@ describe('AgentLauncher token usage post-processing', () => {
       join(outputDir, 'b.json'),
     ]));
 
-    const outputFile = join(tempDir, 'single-output.json');
-    await writeFile(outputFile, '{}');
     await writeFile(contextPath, JSON.stringify({ outputPath: outputFile }));
     const fileResult = await launcher.launchAgent(invocation);
     expect(fileResult.extensions.outputFiles).toEqual([outputFile]);
+  });
+
+  it('attributes a test-writer file outside targetFiles when the agent declares it', async () => {
+    const { launcher, contextPath, tempDir } = await createHarness();
+    const targetRoot = join(tempDir, 'target');
+    const applicationFile = join(targetRoot, 'src', 'auth.ts');
+    const testFile = join(targetRoot, 'tests', 'auth.test.ts');
+    const concurrentFile = join(targetRoot, 'tests', 'concurrent.test.ts');
+    await mkdir(join(targetRoot, 'src'), { recursive: true });
+    await mkdir(join(targetRoot, 'tests'), { recursive: true });
+    await writeFile(applicationFile, 'export const auth = true;\n');
+    await writeFile(contextPath, JSON.stringify({
+      agent: 'test-writer',
+      outputPath: targetRoot,
+      config: { target: { outputPath: targetRoot } },
+      payload: { targetFiles: ['src/auth.ts'] },
+    }));
+    (launcher as any).frameworkLauncher = {
+      init: vi.fn(),
+      launchAgent: vi.fn().mockImplementation(async () => {
+        await Promise.all([
+          writeFile(testFile, 'test auth\n'),
+          writeFile(concurrentFile, 'unrelated concurrent output\n'),
+        ]);
+        return {
+          exitCode: 0,
+          success: true,
+          timedOut: false,
+          duration: 1,
+          stdout: '```aamf-json\n{"status":"completed","outputFiles":["tests/auth.test.ts"]}\n```',
+          stderr: '',
+          tokenUsage: { input: 1, output: 1 },
+          outputPath: targetRoot,
+          outputExists: true,
+        };
+      }),
+    };
+
+    const result = await launcher.launchAgent({
+      agent: 'test-writer', contextPath, outputPath: targetRoot, phase: 4, workItemId: 'task-001',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.extensions.outputFiles).toEqual([testFile]);
+  });
+
+  it('does not attribute another idiomatic task file to an unchanged refactor task', async () => {
+    const { launcher, contextPath, tempDir } = await createHarness();
+    const targetRoot = join(tempDir, 'target');
+    const taskFile = join(targetRoot, 'src', 'task.ts');
+    const siblingFile = join(targetRoot, 'src', 'sibling.ts');
+    await mkdir(join(targetRoot, 'src'), { recursive: true });
+    await Promise.all([
+      writeFile(taskFile, 'export const task = 1;\n'),
+      writeFile(siblingFile, 'export const sibling = 1;\n'),
+    ]);
+    await writeFile(contextPath, JSON.stringify({
+      agent: 'idiomatic-refactorer',
+      outputPath: targetRoot,
+      config: { target: { outputPath: targetRoot } },
+      payload: { task: { files: ['src/task.ts'] } },
+    }));
+    (launcher as any).frameworkLauncher = {
+      init: vi.fn(),
+      launchAgent: vi.fn().mockImplementation(async () => {
+        await writeFile(siblingFile, 'export const sibling = 200;\n');
+        return {
+          exitCode: 0,
+          success: true,
+          timedOut: false,
+          duration: 1,
+          stdout: '```aamf-json\n{"status":"completed","outputFiles":["src/sibling.ts"]}\n```',
+          stderr: '',
+          tokenUsage: { input: 1, output: 1 },
+          outputPath: targetRoot,
+          outputExists: true,
+        };
+      }),
+    };
+
+    const result = await launcher.launchAgent({
+      agent: 'idiomatic-refactorer', contextPath, outputPath: targetRoot, phase: 7, workItemId: 'idiom-001',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.extensions.failureKind).toBe('required-artifact');
+    expect(result.extensions.outputFiles).toEqual([]);
+  });
+
+  it('does not accept pre-existing scaffold files as invocation artifacts', async () => {
+    const { launcher, contextPath } = await createHarness();
+    (launcher as any).frameworkLauncher = {
+      init: vi.fn(),
+      launchAgent: vi.fn().mockResolvedValue({
+        exitCode: 0,
+        success: true,
+        timedOut: false,
+        duration: 1,
+        stdout: '```aamf-json\n{"status":"completed"}\n```',
+        stderr: '',
+        tokenUsage: { input: 1, output: 1 },
+        outputPath: '',
+        outputExists: true,
+      }),
+    };
+
+    const result = await launcher.launchAgent({
+      agent: 'knowledge-builder', contextPath, outputPath: '', phase: 2, workItemId: '',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.extensions.failureKind).toBe('required-artifact');
+    expect(result.extensions.outputFiles).toEqual([]);
   });
 
   it('should tolerate an unreadable context while detecting output files', async () => {

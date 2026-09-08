@@ -80,7 +80,7 @@ export const FinalParityCheckerSchema = AamfOutputBase.extend({
     targetFile: z.string().min(1),
     sourceLocation: z.string(),
     targetLocation: z.string().optional(),
-  })).optional(),
+  })).default([]),
 });
 export const E2eTestCrafterSchema = AamfOutputBase;
 export const DocumentationWriterSchema = AamfOutputBase;
@@ -93,7 +93,7 @@ export const IdiomaticReviewerSchema = AamfOutputBase.extend({
     suggestion: z.string().min(1),
     details: z.string(),
     relatedFiles: z.array(z.string()).optional(),
-  })).optional(),
+  })).default([]),
 });
 export const IdiomaticPlannerSchema = AamfOutputBase.extend({
   tasks: z.array(z.object({
@@ -108,7 +108,7 @@ export const IdiomaticPlannerSchema = AamfOutputBase.extend({
       suggestion: z.string().min(1),
     })),
     dependencies: z.array(z.string()).default([]),
-  })).optional(),
+  })).default([]),
 });
 export const IdiomaticRefactorerSchema = AamfOutputBase;
 
@@ -171,7 +171,7 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
     displayName: 'Adjudicator',
     description: 'Evaluates competing implementation plans or design decisions and selects the best option.',
     ...contractFields('adjudicator', AdjudicatorSchema),
-    artifactPolicy: 'required',
+    artifactPolicy: 'structured-only',
     phases: [3],
     copilotTools: ['read', 'edit', 'search', 'execute'],
     claudeTools: CLAUDE_TOOLS,
@@ -211,7 +211,7 @@ export const AGENT_REGISTRY: Record<AgentName, AgentRegistryEntry> = {
     displayName: 'Parity Failure Resolver',
     description: 'Diagnoses migration failures, evaluates competing fix strategies, and selects/executes the best recovery path.',
     ...contractFields('parity-failure-resolver', ParityFailureResolverSchema),
-    artifactPolicy: 'required',
+    artifactPolicy: 'structured-only',
     phases: [4],
     copilotTools: ['read', 'edit', 'search', 'execute'],
     claudeTools: CLAUDE_TOOLS,

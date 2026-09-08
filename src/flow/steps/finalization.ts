@@ -34,14 +34,18 @@ export async function launchE2eTestCrafter(
   const phase6Cursor = getPhase6Cursor(ctx);
   const completedAgents = new Set(phase6Cursor.completedAgents);
 
-  await ctx.targetChanges.begin(PHASE6_CHANGE_SCOPE);
+  await ctx.targetChanges.begin(PHASE6_CHANGE_SCOPE, { mode: 'full' });
 
   if (completedAgents.has('e2e-test-crafter')) {
     return { agent: 'e2e-test-crafter', workItemId: '', exitCode: 0, success: true, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, extensions: {} };
   }
 
   const e2eCtx = await ctx.contextBuilder.buildContext('e2e-test-crafter', PHASE.FINALIZATION, undefined, { planOnly: true });
-  const crafterResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'e2e-test-crafter', e2eCtx, PHASE.FINALIZATION));
+  const crafterResult = await launchAgentWithEvents(
+    ctx,
+    buildInvocation(ctx, 'e2e-test-crafter', e2eCtx, PHASE.FINALIZATION),
+    flowCtx.signal,
+  );
     recordTokens(ctx, crafterResult, PHASE.FINALIZATION);
 
   if (crafterResult.success) {
@@ -100,12 +104,16 @@ export async function launchE2eSuiteWriters(
   // When git is enabled, run suites sequentially to avoid concurrent git ops
   if (isGitAutomationEnabled(ctx) || suites.length === 1) {
     for (const suite of pendingSuites) {
-      if (isSuiteBudgetExceeded(ctx, suite.id)) break;
-      const result = await executeSuiteWithRetry(ctx, suite, completedAgents, completedSuites);
+      assertSuiteBudgetAvailable(ctx, suite.id);
+      const result = await executeSuiteWithRetry(
+        ctx, suite, completedAgents, completedSuites, flowCtx.signal,
+      );
       results.push(result);
     }
   } else {
-    await executeParallelSuiteFanOut(ctx, pendingSuites, suites, results, completedAgents, completedSuites);
+    await executeParallelSuiteFanOut(
+      ctx, pendingSuites, suites, results, completedAgents, completedSuites, flowCtx.signal,
+    );
   }
 
   const allSuccess = results.every(r => r.success);
@@ -134,7 +142,11 @@ export async function launchDocWriter(
   }
 
   const docCtx = await ctx.contextBuilder.buildContext('documentation-writer', PHASE.FINALIZATION);
-  const docResult = await launchAgentWithEvents(ctx, buildInvocation(ctx, 'documentation-writer', docCtx, PHASE.FINALIZATION));
+  const docResult = await launchAgentWithEvents(
+    ctx,
+    buildInvocation(ctx, 'documentation-writer', docCtx, PHASE.FINALIZATION),
+    flowCtx.signal,
+  );
   recordTokens(ctx, docResult, PHASE.FINALIZATION);
 
   if (docResult.success) {
@@ -169,12 +181,11 @@ export async function promotePhase6Changes(
 async function executeSuiteWithRetry(
   ctx: MigrationFlowContext, suite: E2eSuiteBrief,
   completedAgents: Set<string>, completedSuites: Set<string>,
+  signal: AbortSignal,
 ): Promise<AgentResult> {
-  if (isSuiteBudgetExceeded(ctx, suite.id)) {
-    return { agent: 'test-writer', workItemId: suite.id, exitCode: 1, success: false, timedOut: false, duration: 0, stdout: '', stderr: '', tokenUsage: null, outputPath: '', outputExists: false, error: `Budget exceeded before suite ${suite.id}`, extensions: {} };
-  }
+  assertSuiteBudgetAvailable(ctx, suite.id);
   const suiteCtx = await ctx.contextBuilder.buildContext('test-writer', PHASE.FINALIZATION, suite.id, { e2eSuiteBrief: suite });
-  const retryExec = new RetryExecutor(inv => launchAgentWithEvents(ctx, inv), ctx.logger);
+  const retryExec = new RetryExecutor(inv => launchAgentWithEvents(ctx, inv, signal), ctx.logger);
   const suiteResult = await retryExec.executeWithRetry(
     buildInvocation(ctx, 'test-writer', suiteCtx, PHASE.FINALIZATION, suite.id),
     { maxAttempts: ctx.config.options.maxRetriesPerTask },
@@ -192,29 +203,34 @@ async function executeSuiteWithRetry(
   return suiteResult;
 }
 
-function isSuiteBudgetExceeded(ctx: MigrationFlowContext, suiteId: string): boolean {
-  if (!ctx.config.options.tokenBudget) return false;
+function assertSuiteBudgetAvailable(ctx: MigrationFlowContext, suiteId: string): void {
+  if (!ctx.config.options.tokenBudget) return;
   const threshold = ctx.tokenTracker.checkThreshold(ctx.config.options.tokenBudget);
   if (threshold === 'exceeded') {
-    ctx.logger.warn(`Budget exceeded before suite ${suiteId}`);
-    return true;
+    assertPhaseSuccess({
+      phase: 6,
+      name: 'E2E Testing & Documentation',
+      success: false,
+      duration: 0,
+      error: `Budget exceeded before required suite ${suiteId}`,
+    });
   }
-  return false;
 }
 
 async function executeParallelSuiteFanOut(
   ctx: MigrationFlowContext, pendingSuites: E2eSuiteBrief[],
   allSuites: E2eSuiteBrief[], results: AgentResult[],
   completedAgents: Set<string>, completedSuites: Set<string>,
+  signal: AbortSignal,
 ): Promise<void> {
-  const budgetFiltered = pendingSuites.filter(s => !isSuiteBudgetExceeded(ctx, s.id));
-  if (budgetFiltered.length === 0) return;
+  pendingSuites.forEach(suite => assertSuiteBudgetAvailable(ctx, suite.id));
+  const budgetFiltered = pendingSuites;
   const invocations = [];
   for (const suite of budgetFiltered) {
     const suiteCtx = await ctx.contextBuilder.buildContext('test-writer', PHASE.FINALIZATION, suite.id, { e2eSuiteBrief: suite });
     invocations.push(buildInvocation(ctx, 'test-writer', suiteCtx, PHASE.FINALIZATION, suite.id));
   }
-  const retryExec = new RetryExecutor(inv => launchAgentWithEvents(ctx, inv), ctx.logger);
+  const retryExec = new RetryExecutor(inv => launchAgentWithEvents(ctx, inv, signal), ctx.logger);
   const parallel = new ParallelExecutor(
     Math.min(ctx.config.options.maxE2eSuiteConcurrency ?? ctx.config.options.maxParallelAgents, budgetFiltered.length),
     inv => retryExec.executeWithRetry(inv, { maxAttempts: ctx.config.options.maxRetriesPerTask }),
