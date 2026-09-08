@@ -1,4 +1,4 @@
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import {
@@ -34,6 +34,7 @@ import { ScenarioPromptCatalog, type ScenarioPrompt } from '../agents/prompt-cat
 import { Logger } from '../logging/logger.js';
 import { TokenTracker } from '../budget/token-tracker.js';
 import { buildRuntimePaths } from './runtime-paths.js';
+import { trackActiveProcess } from '../util/process.js';
 
 // ─── Copilot JSONL event parsing ──────────────────────────────────────────────
 
@@ -232,8 +233,6 @@ function summarizeToolCalls(toolCalls: Array<{ name: string; status: string }>):
   return [...counts.entries()].map(([name, count]) => `${name}(${count})`).join(', ');
 }
 
-// ─── Claude JSON envelope parsing ───────────────────────────────────────────
-
 interface ClaudeJsonEnvelope {
   textContent: string;
   tokenUsage: AgentResult['tokenUsage'];
@@ -299,22 +298,136 @@ async function writeAgentLog(logDir: string, agent: string, taskId: string, stdo
   }
 }
 
-/** Shared helper: detect output files created by the agent in the progress directory. */
-async function detectOutputFiles(contextPath: string): Promise<string[]> {
+type OutputSnapshot = Map<string, string>;
+
+interface ArtifactContext {
+  agent?: AgentName;
+  outputPath?: string;
+  config?: { target?: { outputPath?: string } };
+  payload?: {
+    targetFiles?: unknown;
+    task?: { files?: unknown };
+  };
+}
+
+async function readArtifactContext(contextPath: string): Promise<ArtifactContext | undefined> {
   try {
-    const context = JSON.parse(await readFile(contextPath, 'utf-8')) as { outputPath?: string };
-    if (context.outputPath && await fileExists(context.outputPath)) {
-      const s = await stat(context.outputPath);
-      if (s.isDirectory()) {
-        const files = await readdir(context.outputPath);
-        return files.map(f => join(context.outputPath!, f));
-      }
-      return [context.outputPath];
-    }
+    return JSON.parse(await readFile(contextPath, 'utf-8')) as ArtifactContext;
   } catch {
-    // Context parsing failed, return empty
+    return undefined;
   }
-  return [];
+}
+
+function normalizeInsideRoot(root: string, path: string): string | undefined {
+  const absoluteRoot = resolve(root);
+  const absolutePath = isAbsolute(path) ? resolve(path) : resolve(absoluteRoot, path);
+  const relativePath = relative(absoluteRoot, absolutePath);
+  if (
+    relativePath === '..' ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    return undefined;
+  }
+  return absolutePath;
+}
+
+async function resolveContextOutputScope(contextPath: string): Promise<string[]> {
+  const context = await readArtifactContext(contextPath);
+  if (!context) return [];
+
+  const targetRoot = context.config?.target?.outputPath;
+  if (context.agent === 'test-writer') {
+    return targetRoot ? [resolve(targetRoot)] : [];
+  }
+  if (context.agent === 'idiomatic-refactorer') {
+    const files = Array.isArray(context.payload?.task?.files)
+      ? context.payload.task.files.filter((path): path is string => typeof path === 'string')
+      : [];
+    return targetRoot
+      ? files.flatMap(path => normalizeInsideRoot(targetRoot, path) ?? [])
+      : [];
+  }
+
+  const targetFiles = Array.isArray(context.payload?.targetFiles)
+    ? context.payload.targetFiles.filter((path): path is string => typeof path === 'string')
+    : [];
+  if (targetFiles.length === 0) return context.outputPath ? [context.outputPath] : [];
+  if (!targetRoot) return [];
+  return targetFiles.flatMap(path => normalizeInsideRoot(targetRoot, path) ?? []);
+}
+
+async function snapshotOutputFiles(contextPath: string): Promise<OutputSnapshot> {
+  const files = new Map<string, string>();
+  for (const outputPath of await resolveContextOutputScope(contextPath)) {
+    if (!(await fileExists(outputPath))) continue;
+    const metadata = await stat(outputPath);
+    if (metadata.isFile()) files.set(outputPath, await fileSignature(outputPath));
+    if (metadata.isDirectory()) {
+      for (const [path, signature] of await listFilesRecursively(outputPath)) {
+        files.set(path, signature);
+      }
+    }
+  }
+  return files;
+}
+
+/** Detect only files created or modified by this invocation. */
+async function detectOutputFiles(
+  contextPath: string,
+  baseline: OutputSnapshot,
+): Promise<string[]> {
+  const current = await snapshotOutputFiles(contextPath);
+  return [...current.entries()]
+    .filter(([path, signature]) => baseline.get(path) !== signature)
+    .map(([path]) => path)
+    .sort();
+}
+
+async function attributeDeclaredTestOutputs(
+  contextPath: string,
+  agent: AgentName,
+  stdout: string,
+  changedFiles: string[],
+): Promise<string[]> {
+  if (agent !== 'test-writer') return changedFiles;
+
+  const context = await readArtifactContext(contextPath);
+  const targetRoot = context?.config?.target?.outputPath;
+  if (!targetRoot) return [];
+
+  const parsed = parseAamfOutput(stdout, getOutputSchema(agent));
+  if (!parsed.parsed) return [];
+  const outputFiles = (parsed.data as Record<string, unknown>).outputFiles;
+  if (!Array.isArray(outputFiles)) return [];
+
+  const declaredFiles = new Set(
+    outputFiles
+      .filter((path): path is string => typeof path === 'string')
+      .flatMap(path => normalizeInsideRoot(targetRoot, path) ?? []),
+  );
+  return changedFiles.filter(path => declaredFiles.has(resolve(path)));
+}
+
+async function listFilesRecursively(directory: string): Promise<OutputSnapshot> {
+  const files = new Map<string, string>();
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      for (const [nestedPath, signature] of await listFilesRecursively(path)) {
+        files.set(nestedPath, signature);
+      }
+    } else if (entry.isFile()) {
+      files.set(path, await fileSignature(path));
+    }
+  }
+  return files;
+}
+
+async function fileSignature(path: string): Promise<string> {
+  const metadata = await stat(path, { bigint: true });
+  return `${metadata.size}:${metadata.mtimeNs}`;
 }
 
 // ─── Custom Copilot backend (--output-format json) ───────────────────────────
@@ -349,6 +462,7 @@ function spawnAgent(command: string, args: string[], opts: { cwd: string; env: R
       detached: true,
     });
     trackProcess(child);
+    trackActiveProcess(child);
     child.unref();
 
     const stdoutChunks: Buffer[] = [];
@@ -423,23 +537,6 @@ export function buildScenarioInvocationRequest(
   ].join('\n');
 }
 
-function buildAgentEnv(
-  invocation: FrameworkInvocation,
-  worktreePath: string,
-  extraPath: readonly string[],
-): Record<string, string | undefined> {
-  const env = stripVSCodeEnv({ ...process.env });
-  env['CADRE_WORK_ITEM_ID'] = invocation.workItemId;
-  env['CADRE_WORKTREE_PATH'] = worktreePath;
-  env['CADRE_PHASE'] = String(invocation.phase);
-  if (invocation.sessionId) env['CADRE_SESSION_ID'] = invocation.sessionId;
-  if (extraPath.length > 0) {
-    const separator = process.platform === 'win32' ? ';' : ':';
-    env['PATH'] = [...extraPath, env['PATH'] ?? ''].join(separator);
-  }
-  return env;
-}
-
 function getAuthorizedMcpServers(
   capabilities: readonly ScenarioCapability[],
   servers: FrameworkInvocation['mcpServers'],
@@ -500,7 +597,7 @@ async function runBackendInvocation(options: RunBackendInvocationOptions): Promi
 
   const result = await spawnAgent(options.cliCommand, options.args, {
     cwd: options.worktreePath,
-    env: buildAgentEnv(invocation, options.worktreePath, options.extraPath),
+    env: buildBackendEnv(invocation, options.worktreePath, [...options.extraPath]),
     timeout: options.timeout,
   });
   const backendError = options.detectBackendError?.(result);
@@ -559,13 +656,13 @@ class AamfCopilotBackend implements AgentBackend {
     private readonly logger: BackendLoggerLike,
     private readonly catalog: ScenarioPromptCatalog,
   ) {
-    const copilotOptions = config.agent.copilot as Record<string, unknown> | undefined;
-    this.cliCommand = (typeof copilotOptions?.cliCommand === 'string' && copilotOptions.cliCommand.trim()) || 'copilot';
+    const options = config.agent.copilot as Record<string, unknown> | undefined;
+    this.cliCommand = (typeof options?.cliCommand === 'string' && options.cliCommand.trim()) || 'copilot';
     this.defaultTimeout = config.agent.timeout ?? 120_000;
     this.defaultModel = config.agent.model;
-    this.allowAllTools = (copilotOptions?.allowAllTools as boolean) ?? false;
-    this.allowAllPaths = (copilotOptions?.allowAllPaths as boolean) ?? false;
-    this.effort = copilotOptions?.effort as string | undefined;
+    this.allowAllTools = (options?.allowAllTools as boolean) ?? false;
+    this.allowAllPaths = (options?.allowAllPaths as boolean) ?? false;
+    this.effort = options?.effort as string | undefined;
     this.extraPath = config.environment.extraPath ?? [];
   }
 
@@ -574,8 +671,7 @@ class AamfCopilotBackend implements AgentBackend {
   }
 
   async invoke(invocation: FrameworkInvocation, worktreePath: string): Promise<FrameworkResult> {
-    const agent = requireAgentName(invocation.agent);
-    const scenario = this.catalog.get(agent);
+    const scenario = this.catalog.get(requireAgentName(invocation.agent));
     const request = buildScenarioInvocationRequest(invocation, worktreePath);
     const args: string[] = [
       '-p', `${scenario.instructions}\n\n---\n\n${request}`,
@@ -584,18 +680,15 @@ class AamfCopilotBackend implements AgentBackend {
       '--disable-builtin-mcps',
       '--output-format', 'json',
     ];
-
     if (this.allowAllTools) args.push('--allow-all-tools');
     if (this.allowAllPaths) args.push('--allow-all-paths');
-    const excludedTools = getCopilotExcludedTools(scenario.capabilities);
-    args.push(`--excluded-tools=${excludedTools.join(',')}`);
+    args.push(`--excluded-tools=${getCopilotExcludedTools(scenario.capabilities).join(',')}`);
     if (!scenario.capabilities.includes('write')) args.push('--deny-tool=write');
     if (!scenario.capabilities.includes('execute')) args.push('--deny-tool=shell');
 
     const model = invocation.modelOverride ?? this.defaultModel;
     if (model) args.push('--model', model);
     if (this.effort) args.push('--effort', this.effort);
-
     const mcpServers = getAuthorizedMcpServers(scenario.capabilities, invocation.mcpServers);
     if (mcpServers) {
       for (const [name, config] of Object.entries(mcpServers)) {
@@ -633,8 +726,8 @@ class AamfClaudeBackend implements AgentBackend {
     private readonly logger: BackendLoggerLike,
     private readonly catalog: ScenarioPromptCatalog,
   ) {
-    const claudeOptions = config.agent.claude as Record<string, unknown> | undefined;
-    this.cliCommand = (typeof claudeOptions?.cliCommand === 'string' && claudeOptions.cliCommand.trim()) || 'claude';
+    const options = config.agent.claude as Record<string, unknown> | undefined;
+    this.cliCommand = (typeof options?.cliCommand === 'string' && options.cliCommand.trim()) || 'claude';
     this.defaultTimeout = config.agent.timeout ?? 120_000;
     this.defaultModel = config.agent.model;
     this.extraPath = config.environment.extraPath ?? [];
@@ -645,8 +738,7 @@ class AamfClaudeBackend implements AgentBackend {
   }
 
   async invoke(invocation: FrameworkInvocation, worktreePath: string): Promise<FrameworkResult> {
-    const agent = requireAgentName(invocation.agent);
-    const scenario = this.catalog.get(agent);
+    const scenario = this.catalog.get(requireAgentName(invocation.agent));
     const builtInTools = getClaudeBuiltInTools(scenario.capabilities);
     const mcpServers = getAuthorizedMcpServers(scenario.capabilities, invocation.mcpServers);
     const allowedTools = [
@@ -661,7 +753,6 @@ class AamfClaudeBackend implements AgentBackend {
       '--allowedTools', allowedTools.join(','),
       '--disallowedTools', CLAUDE_DELEGATION_TOOLS.join(','),
     ];
-
     const model = invocation.modelOverride ?? this.defaultModel;
     if (model) args.push('--model', model);
     if (mcpServers) {
@@ -688,6 +779,23 @@ class AamfClaudeBackend implements AgentBackend {
   }
 }
 
+function buildBackendEnv(
+  invocation: FrameworkInvocation,
+  worktreePath: string,
+  extraPath: string[],
+): Record<string, string | undefined> {
+  const env = stripVSCodeEnv({ ...process.env });
+  env['CADRE_WORK_ITEM_ID'] = invocation.workItemId;
+  env['CADRE_WORKTREE_PATH'] = worktreePath;
+  env['CADRE_PHASE'] = String(invocation.phase);
+  if (invocation.sessionId) env['CADRE_SESSION_ID'] = invocation.sessionId;
+  if (extraPath.length > 0) {
+    const separator = process.platform === 'win32' ? ';' : ':';
+    env['PATH'] = [...extraPath, env['PATH'] ?? ''].join(separator);
+  }
+  return env;
+}
+
 /** Register AAMF-owned prompt-injection backends with immutable catalog closures. */
 export function registerAamfAgentBackends(catalog: ScenarioPromptCatalog): void {
   registerAgentBackendFactory('copilot', (config, logger) => new AamfCopilotBackend(config, logger, catalog));
@@ -702,7 +810,7 @@ export function buildBackendRuntimeConfig(config: MigrationConfig): BackendRunti
   return {
     agent: {
       backend: backendName,
-      model: config.models?.default ?? config.agentBackend.model,
+      model: config.models.default,
       timeout: config.agentBackend.timeout,
       copilot: {
         cliCommand: backendName === 'copilot' ? config.agentBackend.cliCommand : undefined,
@@ -814,17 +922,48 @@ function finaliseResult(
   let structuredTokenUsage: AgentResult['tokenUsage'] = null;
   if (parseResult.parsed) {
     const parsedData = parseResult.data as Record<string, unknown>;
+    const status = parsedData.status as 'completed' | 'failed' | 'needs-review';
     agentResult.extensions.structuredOutput = parsedData;
     agentResult.extensions.outputParsed = true;
+    agentResult.extensions.structuredStatus = status;
     structuredTokenUsage = normalizeStructuredTokenUsage(parsedData.tokenUsage);
-  } else if (parseResult.error === MISSING_BLOCK_ERROR) {
-    logger.warn(`Agent ${agentResult.agent} did not emit an aamf-json block`);
-    agentResult.extensions.outputParsed = false;
+
+    if (status === 'failed') {
+      agentResult.success = false;
+      agentResult.extensions.failureKind = 'structured-output';
+      agentResult.error = 'Agent reported status "failed"';
+    } else if (status === 'needs-review') {
+      agentResult.success = false;
+      agentResult.extensions.failureKind = 'review-required';
+      agentResult.extensions.reviewRequired = true;
+      agentResult.error = 'Agent reported status "needs-review"';
+    } else if (!agentResult.success) {
+      agentResult.extensions.failureKind = 'process';
+    } else if (
+      AGENT_REGISTRY[agentResult.agent].artifactPolicy === 'required' &&
+      (agentResult.extensions.outputFiles?.length ?? 0) === 0
+    ) {
+      agentResult.success = false;
+      agentResult.extensions.failureKind = 'required-artifact';
+      agentResult.error = `Agent ${agentResult.agent} produced no required filesystem artifact`;
+    }
   } else {
     agentResult.extensions.outputParsed = false;
     agentResult.extensions.parseError = parseResult.error;
     agentResult.success = false;
-    agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
+    if (agentResult.exitCode !== 0 || agentResult.timedOut || agentResult.extensions.failureKind === 'process') {
+      agentResult.extensions.failureKind = 'process';
+      const processError = agentResult.error ?? stderr.trim();
+      agentResult.error = processError
+        ? `${processError}; aamf-json parse failed: ${parseResult.error}`
+        : `Agent process failed; aamf-json parse failed: ${parseResult.error}`;
+    } else {
+      agentResult.extensions.failureKind = 'structured-output';
+      agentResult.error = `aamf-json parse failed: ${parseResult.error}`;
+    }
+    if (parseResult.error === MISSING_BLOCK_ERROR) {
+      logger.warn(`Agent ${agentResult.agent} did not emit an aamf-json block`);
+    }
   }
 
   if (!hasMeaningfulTokenUsage(agentResult.tokenUsage)) {
@@ -880,8 +1019,6 @@ export class AgentLauncher {
     private readonly logger: Logger,
     private readonly promptCatalog: ScenarioPromptCatalog,
   ) {
-    // Factories capture this immutable catalog; no mutable process-global prompt
-    // lookup is used after the framework constructs its selected backend.
     registerAamfAgentBackends(promptCatalog);
     const runtimeConfig = buildBackendRuntimeConfig(config);
     this.frameworkLauncher = new FrameworkAgentLauncher(runtimeConfig, adaptLogger(logger));
@@ -925,6 +1062,8 @@ export class AgentLauncher {
     if (invocation.workItemId) invLogger.setTaskId(invocation.workItemId);
     invLogger.setPhase(invocation.phase);
 
+    const outputBaseline = await snapshotOutputFiles(invocation.contextPath);
+
     // Delegate to framework launcher
     const fwInvocation = toFrameworkInvocation(invocation);
     const fwResult = await this.frameworkLauncher.launchAgent(fwInvocation, this.projectRoot);
@@ -949,8 +1088,7 @@ export class AgentLauncher {
     const parsedClaude = isCopilot ? undefined : parseClaudeJsonEnvelope(stdout);
     const stdoutForParsing = parsedCopilot?.textContent || parsedClaude?.textContent || stdout;
 
-    // Persist the original backend output. Claude's complete JSON envelope and
-    // Copilot's complete JSONL stream remain available for auditing.
+    // Write agent log
     await writeAgentLog(
       this.logDir,
       invocation.agent,
@@ -971,7 +1109,16 @@ export class AgentLauncher {
     }
 
     // Detect output files
-    agentResult.extensions.outputFiles = await detectOutputFiles(invocation.contextPath);
+    const detectedOutputFiles = await detectOutputFiles(
+      invocation.contextPath,
+      outputBaseline,
+    );
+    agentResult.extensions.outputFiles = await attributeDeclaredTestOutputs(
+      invocation.contextPath,
+      invocation.agent,
+      stdoutForParsing,
+      detectedOutputFiles,
+    );
 
     // Copilot event summary
     if (parsedCopilot && parsedCopilot.events.length > 0) {

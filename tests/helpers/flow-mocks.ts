@@ -20,6 +20,7 @@ import { ReportGenerator } from '../../src/observability/report-generator.js';
 import { buildRuntimePaths } from '../../src/core/runtime-paths.js';
 import { ContextBuilder } from '../../src/agents/context-builder.js';
 import { ensureDir } from '../../src/util/fs.js';
+import { TargetChangeSetManager } from '../../src/core/target-change-set.js';
 import {
   createMockConfig,
   createMockLauncher,
@@ -192,7 +193,13 @@ export async function setupFlowTest(
   configOverrides?: Parameters<typeof createMockConfig>[0],
 ): Promise<FlowTestEnv> {
   const tempDir = await mkdtemp(join(tmpdir(), 'aamf-flow-test-'));
-  const config = createMockConfig(configOverrides);
+  const config = createMockConfig({
+    ...configOverrides,
+    target: {
+      ...configOverrides?.target,
+      outputPath: configOverrides?.target?.outputPath ?? join(tempDir, 'target'),
+    },
+  });
   const logger = createSilentLogger(tempDir);
   const paths = buildRuntimePaths(tempDir, config.projectName);
 
@@ -227,6 +234,7 @@ export async function setupFlowTest(
     projectRoot: tempDir,
     runId: 'test-run-id',
     paths,
+    signal: new AbortController().signal,
     checkpoint,
     launcher: mockLauncher,
     progress,
@@ -238,6 +246,8 @@ export async function setupFlowTest(
     contextBuilder,
     buildLimiter: pLimit(1),
     gitLimiter: pLimit(1),
+    targetChanges: new TargetChangeSetManager(config.target.outputPath, paths.stateDir, logger),
+    terminateActiveProcesses: async () => undefined,
     kbServer: undefined,
     embedder: undefined,
     phase1TaskGraphResult: undefined,
@@ -256,7 +266,7 @@ export async function setupFlowTest(
     executionId: 'aamf-migration/test-node',
     executionPath: ['aamf-migration', 'test-node'],
     attempt: 1,
-    startedAt: '2026-01-01T00:00:00.000Z',
+    startedAt: new Date().toISOString(),
     signal: new AbortController().signal,
     outputs: {},
     executionOutputs: {},

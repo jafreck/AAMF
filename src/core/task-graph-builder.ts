@@ -89,7 +89,7 @@ export async function buildDependencySummary(
       fileId: s.file_id, startLine: s.start_line, endLine: s.end_line,
     }));
     const callRefs = convertResolvedEdges(lore.listResolvedEdges(db, { resolvedOnly: true }));
-    const typeRefs = queryTypeRefs(db);
+    const typeRefs = queryTypeRefs(db, lore.storageLineToPresentation);
 
     // Cluster symbols
     const clusters = clusterSymbols(symInfos, callRefs, typeRefs, maxLinesPerModule, fileIdToPath);
@@ -216,7 +216,7 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
     }
 
     const callRefs = convertResolvedEdges(lore.listResolvedEdges(db, { resolvedOnly: true }));
-    const typeRefs = queryTypeRefs(db);
+    const typeRefs = queryTypeRefs(db, lore.storageLineToPresentation);
 
     // Cluster symbols into tasks
     const linesPerStub = estimateLinesPerStub(targetLanguage);
@@ -1497,16 +1497,20 @@ function estimateLinesPerStub(targetLanguage: string): number {
   }
 }
 
-function queryTypeRefs(db: import('better-sqlite3').Database): TypeRefRow[] {
+function queryTypeRefs(
+  db: import('better-sqlite3').Database,
+  storageLineToPresentation: (line: number) => number,
+): TypeRefRow[] {
   const rows = db.prepare(`
-    SELECT file_id, symbol_id, type_name, ref_line FROM type_refs
+    SELECT file_id, symbol_id, type_name, ref_line FROM effective_type_refs
   `).all() as Array<{
     file_id: number; symbol_id: number | null;
     type_name: string; ref_line: number;
   }>;
   return rows.map(r => ({
     fileId: r.file_id, symbolId: r.symbol_id,
-    typeName: r.type_name, refLine: r.ref_line,
+    typeName: r.type_name,
+    refLine: storageLineToPresentation(r.ref_line),
   }));
 }
 

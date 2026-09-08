@@ -1,5 +1,6 @@
-import { isAbsolute, join } from 'node:path';
-import { AgentName, AgentContext } from './types.js';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { AgentName, AgentContext, type AgentPayloadByName } from './types.js';
+import { AGENT_CONTEXT_SCHEMAS } from './contracts.js';
 import { MigrationConfig } from '../config/schema.js';
 import { writeJson, ensureDir } from '../util/fs.js';
 import type { RuntimePaths } from '../core/runtime-paths.js';
@@ -37,13 +38,13 @@ export class ContextBuilder {
    * @param payload - Optional additional data for the agent.
    * @returns The context path and output path for the invocation.
    */
-  async buildContext(
-    agent: AgentName,
+  async buildContext<A extends AgentName>(
+    agent: A,
     phase: PhaseId,
     taskId?: string,
-    payload?: Record<string, unknown>,
+    payload?: AgentPayloadByName[A] | object,
   ): Promise<{ contextPath: string; outputPath: string }> {
-    const context = this.createContext(agent, phase, taskId, payload);
+    const context = this.createContext(agent, phase, taskId, payload as Record<string, unknown> | undefined);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${agent}-${taskId ?? 'main'}-${timestamp}.json`;
     const contextDir = join(this.progressDir, 'artifacts', 'contexts');
@@ -134,7 +135,8 @@ export class ContextBuilder {
     const mergedPayload = payload || agentPayload
       ? { ...(payload ?? {}), ...(agentPayload ?? {}) }
       : undefined;
-    return { ...base, inputFiles: Array.from(new Set(inputFiles)), outputPath, payload: mergedPayload };
+    const context = { ...base, inputFiles: Array.from(new Set(inputFiles)), outputPath, payload: mergedPayload };
+    return AGENT_CONTEXT_SCHEMAS[agent].parse(context) as AgentContext;
   }
 
   /**
@@ -229,9 +231,12 @@ export class ContextBuilder {
           const brief = payload!.e2eSuiteBrief as Record<string, unknown>;
           const targetFiles = Array.isArray(brief.targetFiles) ? (brief.targetFiles as string[]) : [];
           const kbRefs = Array.isArray(brief.kbReferences) ? (brief.kbReferences as string[]) : [];
+          const outputPath = brief.outputLocation && typeof brief.outputLocation === 'string'
+            ? this.resolveInsideTarget(brief.outputLocation)
+            : out;
           return {
             inputFiles: [...targetFiles, ...kbRefs],
-            outputPath: brief.outputLocation && typeof brief.outputLocation === 'string' ? brief.outputLocation : out,
+            outputPath,
             agentPayload: { taskId, testType: 'e2e', e2eSuiteBrief: brief },
           };
         }
@@ -340,6 +345,20 @@ export class ContextBuilder {
 
   private resolveTargetPath(path: string): string {
     return isAbsolute(path) ? path : join(this.config.target.outputPath, path);
+  }
+
+  private resolveInsideTarget(path: string): string {
+    const targetRoot = resolve(this.config.target.outputPath);
+    const outputPath = resolve(targetRoot, path);
+    const relativePath = relative(targetRoot, outputPath);
+    if (
+      relativePath === '..' ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      throw new Error(`E2E suite outputLocation escapes target.outputPath: ${path}`);
+    }
+    return outputPath;
   }
 
   /**

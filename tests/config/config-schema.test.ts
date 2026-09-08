@@ -2,6 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { MigrationConfigSchema } from '../../src/config/schema.js';
 
 describe('MigrationConfigSchema', () => {
+  it('temporarily rejects reuseKb until Lore identity validation is available', () => {
+    const result = MigrationConfigSchema.safeParse({
+      projectName: 'test-project',
+      source: { path: '/src', language: 'python' },
+      target: { language: 'typescript', outputPath: '/target' },
+      options: { reuseKb: true },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some(issue => issue.message.includes('reuseKb is temporarily disabled'))).toBe(true);
+    }
+  });
+
   const validConfig = {
     projectName: 'test-project',
     source: { path: './src', language: 'python' },
@@ -22,19 +36,17 @@ describe('MigrationConfigSchema', () => {
     expect(result.options.executionMode).toBe('per-task');
     expect(result.options.waveControl?.maxConvergenceIterations).toBe(3);
     expect(result.options.continueOnBlocked).toBe(true);
-    expect(result.options.maxBlockedTasks).toBe(1);
+    expect(result.options.maxBlockedTasks).toBe(0);
     expect(result.options.qualityPolicy).toBe('strict');
     expect(result.options.maxInfraRetries).toBe(3);
     expect(result.options.git?.enabled).toBe(true);
     expect(result.options.git?.autoInit).toBe(true);
-    expect(result.options.git?.commitByAgent).toBe(true);
     expect(result.options.git?.commitPerTask).toBe(true);
     expect(result.options.git?.allowEmptyTaskCommits).toBe(true);
     expect(result.models.default).toBeUndefined();
     expect(result.models.failureRecovery).toBeUndefined();
     expect(result.agentBackend.cliCommand).toBe('copilot');
     expect(result.agentBackend.timeout).toBe(300000);
-    expect(result.agentBackend.failureRecoveryModel).toBeUndefined();
   });
 
   it('should accept git automation overrides', () => {
@@ -44,7 +56,6 @@ describe('MigrationConfigSchema', () => {
         git: {
           enabled: false,
           autoInit: false,
-          commitByAgent: false,
           commitPerTask: true,
           authorName: 'Custom Bot',
           authorEmail: 'custom@example.com',
@@ -54,7 +65,6 @@ describe('MigrationConfigSchema', () => {
 
     expect(result.options.git?.enabled).toBe(false);
     expect(result.options.git?.autoInit).toBe(false);
-    expect(result.options.git?.commitByAgent).toBe(false);
     expect(result.options.git?.commitPerTask).toBe(true);
     expect(result.options.git?.authorName).toBe('Custom Bot');
     expect(result.options.git?.authorEmail).toBe('custom@example.com');
@@ -120,6 +130,24 @@ describe('MigrationConfigSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('normalizes directory names, nested paths, and explicit source globs once', () => {
+    const result = MigrationConfigSchema.parse({
+      ...validConfig,
+      source: {
+        ...validConfig.source,
+        excludePatterns: ['node_modules', './vendor/generated/', 'tests/**', 'node_modules'],
+      },
+    });
+
+    expect(result.source.excludePatterns).toEqual([
+      '**/node_modules',
+      '**/node_modules/**',
+      'tests/**',
+      'vendor/generated',
+      'vendor/generated/**',
+    ]);
+  });
+
   it('should accept optional formatCommand and lintCommand', () => {
     const result = MigrationConfigSchema.parse({
       ...validConfig,
@@ -148,12 +176,12 @@ describe('MigrationConfigSchema', () => {
       expect(result.models.failureRecovery).toBe('gpt-4.1');
     });
 
-    it('should continue accepting agentBackend.failureRecoveryModel as a compatibility alias', () => {
-      const result = MigrationConfigSchema.parse({
+    it('should reject agentBackend.failureRecoveryModel compatibility configuration', () => {
+      const result = MigrationConfigSchema.safeParse({
         ...validConfig,
         agentBackend: { runtime: 'claude-code', failureRecoveryModel: 'claude-sonnet-4.5' },
       });
-      expect(result.agentBackend.failureRecoveryModel).toBe('claude-sonnet-4.5');
+      expect(result.success).toBe(false);
     });
 
     it('should reject maxRetriesPerTask above 10', () => {
@@ -369,7 +397,6 @@ describe('MigrationConfigSchema', () => {
       expect(result.agentBackend.cliCommand).toBe('copilot');
       expect(result.agentBackend.timeout).toBe(300000);
       expect(result.models.default).toBeUndefined();
-      expect(result.agentBackend.model).toBeUndefined();
       expect(result.agentBackend.phaseTimeouts).toBeUndefined();
     });
 
@@ -398,12 +425,11 @@ describe('MigrationConfigSchema', () => {
       expect(result.agentBackend.timeout).toBe(600000);
     });
 
-    it('strips the removed agentBackend.agentDir key without a compatibility field', () => {
-      const result = MigrationConfigSchema.parse({
+    it('rejects the removed agentBackend.agentDir key without a compatibility field', () => {
+      expect(() => MigrationConfigSchema.parse({
         ...validConfig,
         agentBackend: { runtime: 'copilot', agentDir: '.github/agents' },
-      });
-      expect('agentDir' in result.agentBackend).toBe(false);
+      })).toThrow(/agentDir/);
     });
 
     it('should accept executionMode of wave-barrier', () => {
@@ -491,13 +517,22 @@ describe('MigrationConfigSchema', () => {
         expect(result.models.routing?.criticalTaskPatterns).toEqual(['task-00*']);
       });
 
-      it('should continue accepting options.modelRouting as a compatibility alias', () => {
-        const result = MigrationConfigSchema.parse({
+      it('should reject options.modelRouting compatibility configuration', () => {
+        const result = MigrationConfigSchema.safeParse({
           ...validConfig,
           options: { modelRouting: { enabled: true, heavyModel: 'claude-opus-4.5' } },
         });
-        expect(result.options.modelRouting?.enabled).toBe(true);
-        expect(result.options.modelRouting?.heavyModel).toBe('claude-opus-4.5');
+        expect(result.success).toBe(false);
+      });
+
+      it('should reject mixed canonical and legacy model configuration', () => {
+        const result = MigrationConfigSchema.safeParse({
+          ...validConfig,
+          models: { default: 'gpt-5', routing: { enabled: true } },
+          agentBackend: { runtime: 'copilot', model: 'legacy-model' },
+          options: { modelRouting: { enabled: true } },
+        });
+        expect(result.success).toBe(false);
       });
 
     });

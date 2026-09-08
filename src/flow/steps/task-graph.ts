@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
 import type { MigrationFlowContext } from '../context.js';
 import type { PhaseResult, MigrationTask, CompilationUnit } from '../../agents/types.js';
-import { fileExists, atomicWrite, ensureDir, readJson } from '../../util/fs.js';
+import { fileExists, atomicWrite, ensureDir } from '../../util/fs.js';
 import { assertPhaseSuccess } from './shared.js';
 import { buildTaskGraph, buildDependencySummary } from '../../core/task-graph-builder.js';
 
@@ -28,38 +28,6 @@ export async function buildTaskGraphStep(
   const planningDir = ctx.paths.artifactsPlanningDir;
   const mergedTasksFile = join(planningDir, 'tasks-merged.json');
   await ensureDir(planningDir);
-
-  // Resume path
-  if (await fileExists(mergedTasksFile)) {
-    ctx.logger.info('Phase 1: loading existing tasks-merged.json (prior run)');
-    const allTasks = await readJson<MigrationTask[]>(mergedTasksFile);
-    let taskGraphSCCs: string[][] = [];
-    const sccsFile = join(planningDir, 'sccs.json');
-    if (await fileExists(sccsFile)) {
-      try { taskGraphSCCs = await readJson<string[][]>(sccsFile); } catch { /* ignore */ }
-    }
-    let compilationUnits: CompilationUnit[] = [];
-    const compilationUnitsFile = join(planningDir, 'compilation-units.json');
-    if (await fileExists(compilationUnitsFile)) {
-      try { compilationUnits = await readJson<CompilationUnit[]>(compilationUnitsFile); } catch { /* ignore */ }
-    }
-    ctx.phase1TaskGraphResult = {
-      agent: 'migration-planner', exitCode: 0, success: true,
-      workItemId: '', timedOut: false, duration: Date.now() - start,
-      stdout: '', stderr: '', tokenUsage: null,
-      outputPath: mergedTasksFile, outputExists: true,
-      extensions: {
-        outputFiles: [mergedTasksFile],
-        outputParsed: true,
-        structuredOutput: { tasks: allTasks, sccs: taskGraphSCCs, compilationUnits },
-      },
-    };
-    return {
-      phase: 1, name: 'Task Graph Construction', success: true,
-      outputPath: mergedTasksFile, duration: Date.now() - start,
-      tasks: allTasks, sccs: taskGraphSCCs, compilationUnits,
-    };
-  }
 
   // Verify KB exists
   if (!(await fileExists(ctx.paths.kbDbFile))) {
@@ -111,13 +79,13 @@ export async function buildTaskGraphStep(
 
     await atomicWrite(mergedTasksFile, JSON.stringify(allTasks, null, 2));
     const sccsFile = join(planningDir, 'sccs.json');
+    await atomicWrite(sccsFile, JSON.stringify(taskGraphSCCs, null, 2));
     if (taskGraphSCCs.length > 0) {
-      await atomicWrite(sccsFile, JSON.stringify(taskGraphSCCs, null, 2));
       ctx.logger.info(`Persisted ${taskGraphSCCs.length} SCC(s) → ${sccsFile}`);
     }
     const compilationUnitsFile = join(planningDir, 'compilation-units.json');
+    await atomicWrite(compilationUnitsFile, JSON.stringify(compilationUnits, null, 2));
     if (compilationUnits.length > 0) {
-      await atomicWrite(compilationUnitsFile, JSON.stringify(compilationUnits, null, 2));
       ctx.logger.info(`Persisted ${compilationUnits.length} compilation unit(s)`);
     }
 

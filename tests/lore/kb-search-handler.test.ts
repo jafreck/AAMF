@@ -6,43 +6,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import Database from 'better-sqlite3';
 import { handler, type SearchArgs, type SearchResult } from '@jafreck/lore/server/tools/search';
-import type { EmbeddingProvider } from '@jafreck/lore';
+import { openDb, type Database, type EmbeddingProvider } from '@jafreck/lore';
 
 /**
  * Build a minimal in-memory KB database with FTS5 tables for testing search.
  */
 function buildTestDb(): Database.Database {
-  const db = new Database(':memory:');
+  const db = openDb(':memory:');
   db.exec(`
-    CREATE TABLE files (
-      id INTEGER PRIMARY KEY,
-      path TEXT NOT NULL,
-      branch TEXT NOT NULL DEFAULT '',
-      language TEXT NOT NULL,
-      size_bytes INTEGER DEFAULT 0,
-      last_hash TEXT,
-      indexed_at INTEGER DEFAULT 0
-    );
+    INSERT OR IGNORE INTO baseline_generations (branch, generation) VALUES ('', 0);
     INSERT INTO files (id, path, language) VALUES (1, '/src/main.ts', 'typescript');
     INSERT INTO files (id, path, language) VALUES (2, '/src/util.ts', 'typescript');
 
-    CREATE TABLE symbols (
-      id INTEGER PRIMARY KEY,
-      file_id INTEGER NOT NULL REFERENCES files(id),
-      name TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      start_line INTEGER DEFAULT 0,
-      end_line INTEGER DEFAULT 0,
-      signature TEXT,
-      doc_comment TEXT
-    );
-    INSERT INTO symbols (id, file_id, name, kind, start_line, end_line) VALUES (1, 1, 'main', 'function', 1, 10);
-    INSERT INTO symbols (id, file_id, name, kind, start_line, end_line) VALUES (2, 1, 'init', 'function', 12, 20);
-    INSERT INTO symbols (id, file_id, name, kind, start_line, end_line) VALUES (3, 2, 'helper', 'function', 1, 5);
+    INSERT INTO symbols (id, file_id, name, kind, start_line, end_line) VALUES (1, 1, 'main', 'function', 0, 9);
+    INSERT INTO symbols (id, file_id, name, kind, start_line, end_line) VALUES (2, 1, 'init', 'function', 11, 19);
+    INSERT INTO symbols (id, file_id, name, kind, start_line, end_line) VALUES (3, 2, 'helper', 'function', 0, 4);
 
-    CREATE VIRTUAL TABLE symbols_fts USING fts5 (name, kind, content=symbols, content_rowid=id);
     INSERT INTO symbols_fts (rowid, name, kind) VALUES (1, 'main', 'function');
     INSERT INTO symbols_fts (rowid, name, kind) VALUES (2, 'init', 'function');
     INSERT INTO symbols_fts (rowid, name, kind) VALUES (3, 'helper', 'function');

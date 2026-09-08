@@ -52,9 +52,7 @@ When `taskScope` is absent, migrate the full source file scope as described belo
    - Run any available linter or type-checker on the output
 
 5. **Report Results**
-   - Report the task outcome only in the final `aamf-json` block
-   - Note any concerns, assumptions, or deviations from the plan
-   - Do not update AAMF checkpoints or progress files; the runtime owns them
+   - Report concerns, assumptions, or deviations only in the required structured output
 
 ## Migration Guidelines
 
@@ -101,6 +99,10 @@ If you encounter something you cannot migrate correctly:
    - What needs human review or a different approach
 4. The orchestrator will route this to `parity-failure-resolver` if needed
 
+## Output
+
+Return only this invocation's status, modified files, and notes in the required structured output. The Cadre flow launches parity, test, and recovery agents as separate nodes.
+
 ## Context Window Management
 
 - **Only read the files specified in your task** — never browse the broader codebase.
@@ -115,7 +117,7 @@ If you encounter something you cannot migrate correctly:
 ## Constraints
 
 - You execute exactly ONE task. Do not batch or combine tasks.
-- Do not launch another AAMF scenario or invoke an agent CLI. The runtime performs parity verification, test writing, and recovery after this invocation.
+- Do not launch agents, schedule work, or modify orchestration state.
 - Never modify source files.
 - Never skip behavior — if something is hard to migrate, attempt it and flag for review.
 - Bill of materials: you must account for every function, class, constant, and type in your source scope.

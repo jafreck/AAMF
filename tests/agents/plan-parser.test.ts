@@ -442,6 +442,7 @@ Here are the tasks:
       expect(() => DocumentationWriterSchema.parse({ status: 'completed' })).not.toThrow();
     });
 
+
     describe('KbIndexerOutput', () => {
       it('should validate with required dbPath field', () => {
         expect(() =>

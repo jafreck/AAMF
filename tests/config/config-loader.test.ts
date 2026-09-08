@@ -64,15 +64,14 @@ describe('Config Loader', () => {
     expect(config.target.outputPath).toBe(join(tempDir, 'out'));
   });
 
-  it('should strip the removed agentBackend.agentDir key', async () => {
+  it('should reject the removed agentBackend.agentDir key', async () => {
     const configPath = join(tempDir, 'migration.config.json');
     await writeFile(configPath, JSON.stringify({
       ...validConfig,
       agentBackend: { agentDir: './custom-agents' },
     }));
 
-    const config = await loadConfig(configPath);
-    expect('agentDir' in config.agentBackend).toBe(false);
+    await expect(loadConfig(configPath)).rejects.toThrow(/agentDir/);
   });
 
   it('should merge overrides correctly with applyOverrides', async () => {
@@ -141,5 +140,19 @@ describe('Config Loader', () => {
 
     const config = await loadConfig(configPath);
     expect(config.options.qualityPolicy).toBe('balanced');
+  });
+
+  it('deeply freezes normalized configuration and CLI overrides', async () => {
+    const configPath = join(tempDir, 'migration.config.json');
+    await writeFile(configPath, JSON.stringify(validConfig));
+    const config = await loadConfig(configPath);
+    const overridden = applyOverrides(config, { dryRun: true });
+
+    expect(Object.isFrozen(config)).toBe(true);
+    expect(Object.isFrozen(config.source)).toBe(true);
+    expect(Object.isFrozen(config.options)).toBe(true);
+    expect(Object.isFrozen(config.options.git)).toBe(true);
+    expect(Object.isFrozen(overridden)).toBe(true);
+    expect(Object.isFrozen(overridden.options)).toBe(true);
   });
 });

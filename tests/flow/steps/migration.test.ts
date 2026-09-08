@@ -19,6 +19,7 @@ import {
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
   makeTask,
+  makeAgentResult,
   withParityOutput,
 } from '../../helpers/flow-mocks.js';
 import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
@@ -93,6 +94,19 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       }
     });
 
+    it('registers fully qualified task scopes when built through the production subflow', async () => {
+      env = await setupFlowTestWithTasks(createMockLauncher(), [SINGLE_AUTH_TASK]);
+      (env.flowCtx as unknown as { executionPath: string[] }).executionPath = [
+        'aamf-migration', 'iterative-migration',
+      ];
+
+      await buildPhase4Subflow(env.flowCtx);
+
+      expect(
+        env.checkpoint.getState().phaseCursors?.['4']?.tasks['task-001']?.scopeExecutionPrefix,
+      ).toBe('aamf-migration/iterative-migration/phase-4-per-task/task-001/');
+    });
+
     it('should clear stale failure and blocked state when a task later succeeds', async () => {
       env = await setupFlowTestWithTasks(createMockLauncher(), [SINGLE_AUTH_TASK]);
       await env.checkpoint.failTask('task-001', 'prior attempt failed', 1, true);
@@ -157,7 +171,7 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       expect((task002Migrate as { dependsOn?: string[] }).dependsOn).toContain('task-001/complete');
     });
 
-    it('should not add overlap dependencies for distinct per-task targets', async () => {
+    it('should serialize distinct per-task targets at transaction boundaries', async () => {
       const tasks: MigrationTask[] = [
         { ...SINGLE_AUTH_TASK, id: 'task-001', targetFiles: ['src/one.ts'] },
         { ...makeTask('task-002'), targetFiles: ['src/two.ts'] },
@@ -170,7 +184,7 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       const task002Migrate = flow.nodes.find(node => node.id === 'task-002/migrate');
 
       expect(task002Migrate).toBeDefined();
-      expect((task002Migrate as { dependsOn?: string[] }).dependsOn ?? []).not.toContain('task-001/complete');
+      expect((task002Migrate as { dependsOn?: string[] }).dependsOn ?? []).toContain('task-001/complete');
     });
   });
 
@@ -326,6 +340,56 @@ describe('buildPhase4Subflow (Phase 4)', () => {
       );
       expect(migrators.length).toBeGreaterThanOrEqual(2);
       expect(parityRuns.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('should restore target files when a minor re-pass introduces a major regression', async () => {
+      let targetFile = '';
+      let migratorCalls = 0;
+      let parityCalls = 0;
+      const launcherFn = async (invocation: AgentInvocation): Promise<AgentResult> => {
+        if (invocation.agent === 'code-migrator') {
+          migratorCalls++;
+          await mkdir(join(targetFile, '..'), { recursive: true });
+          await writeFile(targetFile, migratorCalls === 1 ? 'accepted candidate\n' : 'regressive candidate\n');
+          return makeAgentResult({
+            agent: invocation.agent,
+            workItemId: invocation.workItemId,
+            extensions: { outputFiles: [targetFile], outputParsed: true, structuredOutput: { status: 'completed' } },
+          });
+        }
+        if (invocation.agent === 'parity-verifier') {
+          parityCalls++;
+          const severity = parityCalls === 1 ? 'minor' : 'major';
+          return makeAgentResult({
+            agent: invocation.agent,
+            workItemId: invocation.workItemId,
+            extensions: {
+              outputParsed: true,
+              structuredOutput: {
+                status: 'completed', parity: 'partial',
+                issues: [{
+                  severity,
+                  description: `${severity} issue`,
+                  details: 'details',
+                  sourceLocation: 'src/auth.py:1',
+                  targetLocation: 'src/auth.ts:1',
+                }],
+              },
+            },
+          });
+        }
+        return makeAgentResult({ agent: invocation.agent, workItemId: invocation.workItemId });
+      };
+      env = await setupFlowTestWithTasks(launcherFn, [SINGLE_AUTH_TASK]);
+      targetFile = join(env.ctx.config.target.outputPath, 'src', 'auth.ts');
+
+      const result = await runPhase4(env);
+
+      expect(result.status).toBe('completed');
+      expect(await readFile(targetFile, 'utf-8')).toBe('accepted candidate\n');
+      expect(env.ctx.parityResults.get('task-001')?.issues).toEqual([
+        expect.objectContaining({ severity: 'minor' }),
+      ]);
     });
   });
 

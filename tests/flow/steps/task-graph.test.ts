@@ -1,8 +1,15 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { writeFile } from 'node:fs/promises';
 import { buildTaskGraphStep } from '../../../src/flow/steps/task-graph.js';
 import { setupFlowTest, createMockLauncher, makeTask, type FlowTestEnv } from '../../helpers/flow-mocks.js';
+
+const graphMocks = vi.hoisted(() => ({
+  buildTaskGraph: vi.fn(),
+  buildDependencySummary: vi.fn(),
+}));
+
+vi.mock('../../../src/core/task-graph-builder.js', () => graphMocks);
 
 let env: FlowTestEnv | undefined;
 
@@ -12,27 +19,14 @@ afterEach(async () => {
 });
 
 describe('buildTaskGraphStep', () => {
-  it('loads all persisted graph artifacts on resume without opening a Lore database', async () => {
+  it('does not accept a stale task graph when the current Lore database is absent', async () => {
     env = await setupFlowTest(createMockLauncher());
     const tasks = [makeTask('task-001')];
-    const sccs = [['task-001']];
-    const compilationUnits = [{
-      id: 'unit-1', name: 'Core', targetPath: 'src', sourceFiles: ['src/task-001.py'],
-      dependsOn: [], rationale: 'single unit',
-    }];
-    await writeFile(join(env.ctx.paths.artifactsPlanningDir, 'tasks-merged.json'), JSON.stringify(tasks));
-    await writeFile(join(env.ctx.paths.artifactsPlanningDir, 'sccs.json'), JSON.stringify(sccs));
-    await writeFile(join(env.ctx.paths.artifactsPlanningDir, 'compilation-units.json'), JSON.stringify(compilationUnits));
+    await writeFile(env.ctx.paths.migrationPlanFile.replace('migration-plan.md', 'tasks-merged.json'), JSON.stringify(tasks));
 
-    const result = await buildTaskGraphStep(env.flowCtx);
-
-    expect(result.success).toBe(true);
-    expect(result.tasks).toEqual(tasks);
-    expect(result.sccs).toEqual(sccs);
-    expect(result.compilationUnits).toEqual(compilationUnits);
-    expect(env.ctx.phase1TaskGraphResult?.extensions.structuredOutput).toEqual({
-      tasks, sccs, compilationUnits,
-    });
+    await expect(buildTaskGraphStep(env.flowCtx)).rejects.toThrow(
+      'Lore KB database (kb.db) not found',
+    );
   });
 
   it('fails before graph construction when the Phase 0 database is absent', async () => {
@@ -40,5 +34,26 @@ describe('buildTaskGraphStep', () => {
     await expect(buildTaskGraphStep(env.flowCtx)).rejects.toThrow(
       'Lore KB database (kb.db) not found',
     );
+  });
+
+  it('overwrites stale graph sidecars when recomputation has no SCCs or compilation units', async () => {
+    env = await setupFlowTest(createMockLauncher());
+    await writeFile(env.ctx.paths.kbDbFile, 'current-kb');
+    await mkdir(env.ctx.paths.artifactsPlanningDir, { recursive: true });
+    const sccsFile = join(env.ctx.paths.artifactsPlanningDir, 'sccs.json');
+    const unitsFile = join(env.ctx.paths.artifactsPlanningDir, 'compilation-units.json');
+    await writeFile(sccsFile, JSON.stringify([['stale-a', 'stale-b']]));
+    await writeFile(unitsFile, JSON.stringify([{ id: 'stale-unit' }]));
+    graphMocks.buildDependencySummary.mockResolvedValue({
+      fileCount: 0, totalLines: 0, modules: [], connectedComponents: [], sccs: [], fileMetrics: {},
+    });
+    graphMocks.buildTaskGraph.mockResolvedValue({
+      tasks: [makeTask('current-task')], sccs: [], compilationUnits: [],
+    });
+
+    await buildTaskGraphStep(env.flowCtx);
+
+    expect(JSON.parse(await readFile(sccsFile, 'utf-8'))).toEqual([]);
+    expect(JSON.parse(await readFile(unitsFile, 'utf-8'))).toEqual([]);
   });
 });

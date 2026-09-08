@@ -115,7 +115,7 @@ export function assertPhaseSuccess(result: import('../../agents/types.js').Phase
 // ─── Helper Functions ──────────────────────────────────────────────────
 
 export function getConfiguredRuntimeModel(ctx: MigrationFlowContext): string {
-  return ctx.config.models?.default ?? ctx.config.agentBackend.model ?? 'cli-default';
+  return ctx.config.models?.default ?? 'cli-default';
 }
 
 export function getRuntimeTimeout(ctx: MigrationFlowContext): number {
@@ -139,40 +139,29 @@ export function isGitAutomationEnabled(ctx: MigrationFlowContext): boolean {
 }
 
 export function getFailureRecoveryModel(ctx: MigrationFlowContext): string | undefined {
-  return ctx.config.models?.failureRecovery ?? ctx.config.agentBackend.failureRecoveryModel;
+  return ctx.config.models?.failureRecovery;
 }
 
 export function getDefaultRoutingModel(ctx: MigrationFlowContext): string {
-  return ctx.config.models?.default
-    ?? ctx.config.options.modelRouting?.defaultModel
-    ?? ctx.config.agentBackend.model
-    ?? 'unknown';
+  return ctx.config.models?.default ?? 'unknown';
 }
 
 function getRoutingConfig(ctx: MigrationFlowContext) {
-  return ctx.config.models?.routing ?? ctx.config.options.modelRouting;
+  return ctx.config.models?.routing;
 }
 
 type RoutingConfig = NonNullable<ReturnType<typeof getRoutingConfig>>;
-type LegacyRoutingConfig = NonNullable<MigrationFlowContext['config']['options']['modelRouting']>;
-
-function isLegacyRoutingConfig(routing: RoutingConfig): routing is LegacyRoutingConfig {
-  return 'heavyModel' in routing || 'criticalModel' in routing || 'maxCriticalTasks' in routing;
-}
 
 function getRoutingHeavyModel(routing: ReturnType<typeof getRoutingConfig>): string | undefined {
-  if (!routing) return undefined;
-  return isLegacyRoutingConfig(routing) ? routing.heavyModel : routing.heavy;
+  return routing?.heavy;
 }
 
 function getRoutingCriticalModel(routing: ReturnType<typeof getRoutingConfig>): string | undefined {
-  if (!routing) return undefined;
-  return isLegacyRoutingConfig(routing) ? routing.criticalModel : routing.critical;
+  return routing?.critical;
 }
 
 function getRoutingMaxEscalatedTasks(routing: ReturnType<typeof getRoutingConfig>): number {
-  if (!routing) return 0;
-  return isLegacyRoutingConfig(routing) ? routing.maxCriticalTasks : routing.maxEscalatedTasks;
+  return routing?.maxEscalatedTasks ?? 0;
 }
 
 export function isTransientModelFailure(errorText: string): boolean {
@@ -345,6 +334,7 @@ export function applyRoutingCaps(
 export async function launchAgentWithEvents(
   ctx: MigrationFlowContext,
   invocation: AgentInvocation,
+  signal: AbortSignal = ctx.signal,
 ): Promise<AgentResult> {
   const invocationId = randomUUID();
   const taggedInvocation = { ...invocation, invocationId };
@@ -356,7 +346,21 @@ export async function launchAgentWithEvents(
     taskId, phase: invocation.phase, invocationId,
   });
 
-  const result = await ctx.launcher.launchAgent(taggedInvocation);
+  const onAbort = (): void => {
+    void Promise.resolve(ctx.terminateActiveProcesses()).catch(() => undefined);
+  };
+  if (signal.aborted) {
+    await Promise.resolve(ctx.terminateActiveProcesses()).catch(() => undefined);
+    throw new Error(`Agent ${invocation.agent} cancelled before launch`);
+  }
+  signal.addEventListener('abort', onAbort, { once: true });
+
+  let result: AgentResult;
+  try {
+    result = await ctx.launcher.launchAgent(taggedInvocation);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
 
   if (result.success) {
     ctx.logger.event({
@@ -507,17 +511,16 @@ async function commitIfDirty(
     await ensureGitRepositoryReady(ctx);
     const status = await runGit(ctx, ['status', '--porcelain']);
     if (!status.success) {
-      ctx.logger.warn(`Unable to inspect git status: ${status.stderr || status.stdout}`);
-      return;
+      throw new Error(`Unable to inspect git status: ${status.stderr || status.stdout}`);
     }
     const hasChanges = !!status.stdout.trim();
     if (!hasChanges && !allowEmpty) return;
     if (hasChanges) {
       const add = await runGit(ctx, ['add', '-A']);
-      if (!add.success) { ctx.logger.warn(`Unable to stage: ${add.stderr}`); return; }
+      if (!add.success) throw new Error(`Unable to stage target changes: ${add.stderr || add.stdout}`);
     }
     const staged = await runGit(ctx, ['diff', '--cached', '--name-only']);
-    if (!staged.success) return;
+    if (!staged.success) throw new Error(`Unable to inspect staged target changes: ${staged.stderr || staged.stdout}`);
     const stagedCount = staged.stdout.split('\n').filter(Boolean).length;
     if (stagedCount === 0 && !allowEmpty) return;
     const commitArgs = allowEmpty
@@ -525,8 +528,7 @@ async function commitIfDirty(
       : ['commit', '-m', message];
     const commit = await runGit(ctx, commitArgs);
     if (!commit.success) {
-      ctx.logger.warn(`Git commit failed: ${commit.stderr || commit.stdout}`);
-      return;
+      throw new Error(`Git commit failed: ${commit.stderr || commit.stdout}`);
     }
     ctx.logger.info(`Created git commit (${stagedCount} file(s)): ${message}`);
   });
@@ -546,11 +548,12 @@ export async function ensureGitRepositoryReady(ctx: MigrationFlowContext): Promi
   if (!alreadyInitialized) {
     const init = await runGit(ctx, ['init']);
     if (!init.success) {
-      ctx.logger.warn(`Failed to initialize git: ${init.stderr || init.stdout}`);
-      return;
+      throw new Error(`Failed to initialize target Git repository: ${init.stderr || init.stdout}`);
     }
-    await runGit(ctx, ['config', 'user.name', gitCfg.authorName]);
-    await runGit(ctx, ['config', 'user.email', gitCfg.authorEmail]);
+    const userName = await runGit(ctx, ['config', 'user.name', gitCfg.authorName]);
+    if (!userName.success) throw new Error(`Failed to configure target Git user.name: ${userName.stderr || userName.stdout}`);
+    const userEmail = await runGit(ctx, ['config', 'user.email', gitCfg.authorEmail]);
+    if (!userEmail.success) throw new Error(`Failed to configure target Git user.email: ${userEmail.stderr || userEmail.stdout}`);
     ctx.logger.info(`Initialized git repository at ${ctx.config.target.outputPath}`);
   }
   const gitignorePath = join(outputPath, '.gitignore');
@@ -565,11 +568,21 @@ export async function commitForAgent(
   ctx: MigrationFlowContext,
   agent: AgentName, phase: PhaseId, taskId?: string, detail?: string,
 ): Promise<void> {
-  if (!isGitAutomationEnabled(ctx) || !ctx.config.options.git?.commitByAgent) return;
-  if (ctx.deferGitCommits) return;
-  const scope = taskId ? `task ${taskId}` : `phase ${phase}`;
-  const suffix = detail ? ` (${detail})` : '';
-  await commitIfDirty(ctx, `aamf: ${agent} updated output for ${scope}${suffix}`);
+  // Intentionally retained as a compatibility no-op while phase call sites
+  // move to validated task/wave boundaries. Agents and individual attempts
+  // must never make target changes durable before their quality gates pass.
+  ctx.logger.debug(
+    `Deferred commit for ${agent} (${taskId ? `task ${taskId}` : `phase ${phase}`}${detail ? `: ${detail}` : ''})`,
+  );
+}
+
+export async function commitForPhase(
+  ctx: MigrationFlowContext,
+  phase: PhaseId,
+  description: string,
+): Promise<void> {
+  if (!isGitAutomationEnabled(ctx)) return;
+  await commitIfDirty(ctx, `aamf: phase ${phase} - ${description}`);
 }
 
 export async function commitForTask(ctx: MigrationFlowContext, task: MigrationTask): Promise<void> {
@@ -592,6 +605,7 @@ export async function runCommand(
   label: string,
   command: string,
   taskId: string,
+  signal: AbortSignal = ctx.signal,
 ): Promise<CommandExecutionResult> {
   if (ctx.phase4Snapshot) {
     if (label === 'build') ctx.phase4Snapshot.buildCommandRuns++;
@@ -608,6 +622,7 @@ export async function runCommand(
       const result = await spawnWithTimeout('sh', ['-c', command], {
         cwd: ctx.config.target.outputPath,
         timeout,
+        signal,
         env: { ...process.env, ...(resolvedPath ? { PATH: resolvedPath } : {}) },
       });
 
@@ -656,6 +671,7 @@ export async function runCommandWithRecovery(
     failureSummary?: string;
     expectedSuccessCondition?: string;
     suppressTerminalOnExhaustion?: boolean;
+    signal?: AbortSignal;
   },
 ): Promise<boolean> {
   const maxAttempts = ctx.config.options.maxRetriesPerTask;
@@ -664,7 +680,8 @@ export async function runCommandWithRecovery(
   const artifactPaths = options?.artifactPaths ?? [...task.sourceFiles, ...task.targetFiles];
   const expectedSuccessCondition = options?.expectedSuccessCondition ?? `${label} command succeeds for ${task.id}`;
 
-  let cmdResult = options?.initialFailure ?? await runCommand(ctx, label, command, task.id);
+  const signal = options?.signal ?? ctx.signal;
+  let cmdResult = options?.initialFailure ?? await runCommand(ctx, label, command, task.id, signal);
   if (cmdResult.success) return true;
   const recoveryLoopStartedAt = Date.now();
 
@@ -679,7 +696,7 @@ export async function runCommandWithRecovery(
       `infra retry ${infraAttempt}/${maxInfraRetries} (backoff ${backoffMs}ms)`,
     );
     await new Promise(resolve => setTimeout(resolve, backoffMs));
-    cmdResult = await runCommand(ctx, label, command, task.id);
+    cmdResult = await runCommand(ctx, label, command, task.id, signal);
     if (cmdResult.success) {
       if (ctx.phase4Snapshot) ctx.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
       ctx.logger.info(`${label} recovered for ${task.id} after infra retry ${infraAttempt}`);
@@ -717,8 +734,12 @@ export async function runCommandWithRecovery(
       },
     );
     const recoveryInv = buildInvocation(ctx, 'parity-failure-resolver', recoveryCtx, PHASE.MIGRATION, task.id);
-    const recoveryResult = await launchAgentWithEvents(ctx, recoveryInv);
+    const recoveryResult = await launchAgentWithEvents(ctx, recoveryInv, signal);
     recordTokens(ctx, recoveryResult, PHASE.MIGRATION);
+    await ctx.targetChanges.trackFiles(
+      ctx.targetChanges.scopeForTask(task.id),
+      recoveryResult.extensions.outputFiles ?? task.targetFiles,
+    );
     if (!recoveryResult.success) {
       ctx.logger.warn(`Parity-failure-resolver failed for ${task.id} on attempt ${attempt}`);
       continue;
@@ -734,15 +755,19 @@ export async function runCommandWithRecovery(
       },
     );
     const reMigrateInv = buildInvocation(ctx, 'code-migrator', reMigrateCtx, PHASE.MIGRATION, task.id);
-    const reMigrateResult = await launchAgentWithEvents(ctx, reMigrateInv);
+    const reMigrateResult = await launchAgentWithEvents(ctx, reMigrateInv, signal);
     recordTokens(ctx, reMigrateResult, PHASE.MIGRATION);
+    await ctx.targetChanges.trackFiles(
+      ctx.targetChanges.scopeForTask(task.id),
+      reMigrateResult.extensions.outputFiles ?? task.targetFiles,
+    );
     if (!reMigrateResult.success) {
       ctx.logger.warn(`Re-migration failed for ${task.id} on ${label} recovery attempt ${attempt}`);
       continue;
     }
     await commitForAgent(ctx, 'code-migrator', PHASE.MIGRATION, task.id, task.name);
 
-    cmdResult = await runCommand(ctx, label, command, task.id);
+    cmdResult = await runCommand(ctx, label, command, task.id, signal);
     if (cmdResult.success) {
       if (ctx.phase4Snapshot) ctx.phase4Snapshot.recoveryLoopTimeMs += Date.now() - recoveryLoopStartedAt;
       ctx.logger.info(`${label} recovered for ${task.id} on attempt ${attempt}`);
@@ -959,7 +984,7 @@ export async function markPhase4Substep(
 
 // Phase 5/6/7 cursors
 
-export function getPhase5Cursor(ctx: MigrationFlowContext): { iteration: number; fixIndex: number; lastSuccessfulStep?: string; hadUnresolvedFixes?: boolean } {
+export function getPhase5Cursor(ctx: MigrationFlowContext): import('../../core/checkpoint.js').Phase5Cursor {
   const phaseCursors = getPhaseCursors(ctx);
   phaseCursors['5'] ??= { iteration: 0, fixIndex: 0 };
   phaseCursors['5'].iteration ??= 0;
@@ -968,7 +993,7 @@ export function getPhase5Cursor(ctx: MigrationFlowContext): { iteration: number;
   return phaseCursors['5'];
 }
 
-export async function savePhase5Cursor(ctx: MigrationFlowContext, cursor: { iteration: number; fixIndex: number; lastSuccessfulStep?: string; hadUnresolvedFixes?: boolean }): Promise<void> {
+export async function savePhase5Cursor(ctx: MigrationFlowContext, cursor: import('../../core/checkpoint.js').Phase5Cursor): Promise<void> {
   getPhaseCursors(ctx)['5'] = cursor;
   await ctx.checkpoint.save(ctx.checkpoint.getState());
 }

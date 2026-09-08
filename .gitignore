@@ -51,5 +51,6 @@ lz4-src/
 .cache/
 .cadre/
 
-# Scenario prompts are bundled in memory; provider agent directories are not generated.
-
+# Scenario prompts are compiled in memory; provider agent directories are not generated.
+# Bundled templates under agents/templates remain tracked source files.
+# No generated prompt artifacts need ignore rules.

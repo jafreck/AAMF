@@ -9,13 +9,35 @@ import type { MigrationFlowContext } from '../context.js';
 import type { PhaseResult, CompilationUnit } from '../../agents/types.js';
 import {
   buildInvocation, launchAgentWithEvents, recordTokens, runCommand,
-  assertPhaseSuccess,
+  assertPhaseSuccess, commitForPhase,
 } from './shared.js';
 import { ensureDir, fileExists, readJson } from '../../util/fs.js';
 import { generateScaffold } from '../../core/scaffold.js';
 import { PHASE } from '../phases.js';
+import { recordAdvisoryFailure } from '../failure-policy.js';
+import { nodeIdToPhase } from '../phase-registry.js';
+
+const PHASE3_CHANGE_SCOPE = 'phase-3-scaffold';
 
 export async function launchMigrationPlanner(
+  flowCtx: FlowExecutionContext<MigrationFlowContext>,
+): Promise<PhaseResult> {
+  const ctx = flowCtx.context;
+  await ctx.targetChanges.begin(PHASE3_CHANGE_SCOPE, { mode: 'full' });
+  try {
+    const result = await launchMigrationPlannerCandidate(flowCtx);
+    await commitForPhase(ctx, PHASE.PLANNING, 'validated migration scaffold');
+    await ctx.targetChanges.accept(PHASE3_CHANGE_SCOPE);
+    return result;
+  } catch (error) {
+    await ctx.targetChanges.rollback(PHASE3_CHANGE_SCOPE);
+    if (ctx.targetIndexer) await ctx.targetIndexer.invalidate();
+    await ctx.checkpoint.invalidateExecutionFromPhase(PHASE.PLANNING, nodeIdToPhase);
+    throw error;
+  }
+}
+
+async function launchMigrationPlannerCandidate(
   flowCtx: FlowExecutionContext<MigrationFlowContext>,
 ): Promise<PhaseResult> {
   const ctx = flowCtx.context;
@@ -29,7 +51,7 @@ export async function launchMigrationPlanner(
   if (!checkpointState.phase3aComplete) {
     const planContext = await ctx.contextBuilder.buildContext('migration-planner', PHASE.PLANNING);
     const planInv = buildInvocation(ctx, 'migration-planner', planContext, PHASE.PLANNING);
-    const planResult = await launchAgentWithEvents(ctx, planInv);
+    const planResult = await launchAgentWithEvents(ctx, planInv, flowCtx.signal);
     recordTokens(ctx, planResult, PHASE.PLANNING);
 
     if (!planResult.success) {
@@ -47,8 +69,17 @@ export async function launchMigrationPlanner(
         competingStrategiesFile: adjudicationFile, decisionType: 'migration-strategy',
       });
       const adjInv = buildInvocation(ctx, 'adjudicator', adjCtx, PHASE.PLANNING);
-      const adjResult = await launchAgentWithEvents(ctx, adjInv);
+      const adjResult = await launchAgentWithEvents(ctx, adjInv, flowCtx.signal);
       recordTokens(ctx, adjResult, PHASE.PLANNING);
+      if (!adjResult.success) {
+        assertPhaseSuccess({
+          phase: 3, name: 'Migration Strategy', success: false,
+          duration: Date.now() - start,
+          error: adjResult.error ?? 'adjudicator failed',
+          exitCode: adjResult.exitCode ?? undefined,
+          stderr: adjResult.stderr,
+        });
+      }
     } else {
       try {
         const planningEntries = await readdir(planningDir);
@@ -89,16 +120,26 @@ export async function launchMigrationPlanner(
           }, ctx.logger);
           if (ctx.config.target.buildCommand && scaffoldResult.filesCreated > 0) {
             ctx.logger.info('Verifying scaffold compiles…');
-            const buildResult = await runCommand(ctx, 'build', ctx.config.target.buildCommand, 'scaffold-verify');
+            const buildResult = await runCommand(
+              ctx, 'build', ctx.config.target.buildCommand, 'scaffold-verify', flowCtx.signal,
+            );
             if (!buildResult.success) {
-              ctx.logger.warn(`Scaffold build verification failed: ${buildResult.error ?? 'unknown'} — proceeding`);
+              recordAdvisoryFailure(
+                ctx,
+                'scaffold-verification',
+                new Error(`Scaffold build verification failed: ${buildResult.error ?? 'unknown'}`),
+              );
             } else {
               ctx.logger.info('Scaffold builds successfully');
             }
           }
         }
       } catch (err) {
-        ctx.logger.warn(`Failed to generate scaffold: ${err instanceof Error ? err.message : String(err)}`);
+        assertPhaseSuccess({
+          phase: 3, name: 'Migration Strategy', success: false,
+          duration: Date.now() - start,
+          error: `Failed to generate required scaffold: ${err instanceof Error ? err.message : String(err)}`,
+        });
       }
     } else {
       ctx.logger.info('No compilation-units.json — skipping scaffold');

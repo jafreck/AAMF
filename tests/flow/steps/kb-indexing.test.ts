@@ -249,7 +249,18 @@ describe('buildKbIndex', () => {
     const expectedFingerprint = createHash('sha256').update(JSON.stringify({
       rootDir: sourceRoot,
       includeGlobs: [],
-      excludeGlobs: [],
+      excludeGlobs: [
+        '**/.git',
+        '**/.git/**',
+        '**/__pycache__',
+        '**/__pycache__/**',
+        '**/build',
+        '**/build/**',
+        '**/dist',
+        '**/dist/**',
+        '**/node_modules',
+        '**/node_modules/**',
+      ],
       embeddingModel: '',
     })).digest('hex');
     loreMocks.fingerprintApi = 'fallback';
@@ -307,7 +318,21 @@ describe('buildKbIndex', () => {
     expect(loreMocks.providerInit).toHaveBeenCalledOnce();
     expect(loreMocks.indexBuilderConstructor).toHaveBeenCalledWith(
       env.ctx.paths.kbDbFile,
-      { rootDir: join(env.tempDir, 'source') },
+      {
+        rootDir: join(env.tempDir, 'source'),
+        excludeGlobs: [
+          '**/.git',
+          '**/.git/**',
+          '**/__pycache__',
+          '**/__pycache__/**',
+          '**/build',
+          '**/build/**',
+          '**/dist',
+          '**/dist/**',
+          '**/node_modules',
+          '**/node_modules/**',
+        ],
+      },
       expect.objectContaining({ dims: 768, device: 'cpu' }),
       {
         lsp: {

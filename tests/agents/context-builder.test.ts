@@ -7,7 +7,7 @@ import { AgentContext } from '../../src/agents/types.js';
 import { createMockConfig, createSilentLogger } from '../helpers/mocks.js';
 import { ensureDir, fileExists, readJson } from '../../src/util/fs.js';
 import type { RuntimePaths } from '../../src/core/runtime-paths.js';
-import { ALL_AGENT_NAMES } from '../../src/agents/registry.js';
+import { AGENT_REGISTRY, ALL_AGENT_NAMES } from '../../src/agents/registry.js';
 
 describe('ContextBuilder', () => {
   let tempDir: string;
@@ -173,7 +173,7 @@ describe('ContextBuilder', () => {
           qualityPolicy: 'strict' as const,
           executionMode: 'wave-barrier' as const,
           waveControl: { maxConvergenceIterations: 5 },
-          git: { enabled: false, autoInit: true, commitByAgent: true, commitPerTask: true, authorName: 'AAMF Migration Bot', authorEmail: 'aamf@local.invalid' },
+          git: { enabled: false, autoInit: true, commitPerTask: true, authorName: 'AAMF Migration Bot', authorEmail: 'aamf@local.invalid' },
         },
       });
       const b = new ContextBuilder(config, progressDir, paths);
@@ -490,6 +490,26 @@ describe('ContextBuilder', () => {
       expect(context.outputPath).toBe('/tmp/target');
     });
 
+    it('should resolve relative E2E output locations inside target.outputPath', async () => {
+      const { contextPath } = await builder.buildContext('test-writer', 6, 'suite-relative', {
+        e2eSuiteBrief: {
+          id: 'suite-relative', name: 'Relative', targetFiles: [], kbReferences: [],
+          outputLocation: 'tests/e2e/relative.ts', scenarios: [],
+        },
+      });
+      const context = await readJson<AgentContext>(contextPath);
+      expect(context.outputPath).toBe('/tmp/target/tests/e2e/relative.ts');
+    });
+
+    it('should reject E2E output locations outside target.outputPath', async () => {
+      await expect(builder.buildContext('test-writer', 6, 'suite-escape', {
+        e2eSuiteBrief: {
+          id: 'suite-escape', name: 'Escape', targetFiles: [], kbReferences: [],
+          outputLocation: '../outside.ts', scenarios: [],
+        },
+      })).rejects.toThrow('escapes target.outputPath');
+    });
+
     it('should not change Phase 4 test-writer context when e2eSuiteBrief is absent', async () => {
       const { contextPath } = await builder.buildContext('test-writer', 4, 'task-001', {
         targetFiles: ['src/auth.ts'],
@@ -745,7 +765,7 @@ describe('ContextBuilder', () => {
     });
 
     it('should route idiomatic-reviewer to target output dir', async () => {
-      const { contextPath } = await builder.buildContext('idiomatic-reviewer', 7);
+      const { contextPath } = await builder.buildContext('idiomatic-reviewer', 7, 'all');
       const context = await readJson<AgentContext>(contextPath);
 
       expect(context.inputFiles).toContain('/tmp/target');
@@ -795,12 +815,14 @@ describe('ContextBuilder', () => {
       };
       const payload = {
         callerMarker: agent,
+        ...(agent === 'idiomatic-planner' ? { reviewFindings: { issues: [] } } : {}),
         ...(agent === 'idiomatic-refactorer' ? { task: { files: ['src/a.ts'] } } : {}),
       };
       const { contextPath } = await builder.buildContext(agent, phaseByAgent[agent] ?? 0, 'contract', payload);
       const context = await readJson<AgentContext>(contextPath);
       expect(context.agent).toBe(agent);
       expect(context.payload?.callerMarker).toBe(agent);
+      expect(() => AGENT_REGISTRY[agent].contextSchema.parse(context)).not.toThrow();
     });
 
   });

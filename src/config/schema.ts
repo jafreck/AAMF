@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeSourceExcludePatterns } from './source-scope.js';
 
 export const MigrationConfigSchema = z.object({
   projectName: z.string().min(1).regex(/^[a-z0-9-]+$/),
@@ -21,7 +22,7 @@ export const MigrationConfigSchema = z.object({
     entryPoints: z.array(z.string()).optional(),
     excludePatterns: z.array(z.string()).default([
       'node_modules', '.git', 'dist', 'build', '__pycache__'
-    ]),
+    ]).transform(normalizeSourceExcludePatterns),
   }),
   target: z.object({
     language: z.string(),
@@ -87,7 +88,9 @@ export const MigrationConfigSchema = z.object({
      * phases need to change.
      * Default: false.
      */
-    reuseKb: z.boolean().default(false),
+    reuseKb: z.boolean().default(false).refine(value => value === false, {
+      message: 'reuseKb is temporarily disabled until Lore provides authoritative index identity and artifact provenance validation',
+    }),
     invocationDelayMs: z.number().int().min(0).default(0),
     /**
      * Maximum number of concurrent build/test commands per output path.
@@ -164,7 +167,7 @@ export const MigrationConfigSchema = z.object({
      * Maximum number of blocked tasks before Phase 4 is halted.
      * Only applies when `continueOnBlocked` is `true`. Default: unlimited (0).
      */
-    maxBlockedTasks: z.number().int().min(0).default(1),
+    maxBlockedTasks: z.number().int().min(0).default(0),
     qualityPolicy: z.enum(['strict', 'balanced', 'deferred-strict']).default('strict'),
     /**
      * Maximum infrastructure-error retries before invoking parity-failure-resolver.
@@ -262,34 +265,6 @@ export const MigrationConfigSchema = z.object({
       }).optional(),
     }).strict().optional(),
     /**
-     * Deprecated compatibility alias for `models.routing`.
-     * Prefer the root-level `models` block for all model-selection policy.
-     */
-    modelRouting: z.object({
-      /** Enable model routing. When false, all tasks use the default model. */
-      enabled: z.boolean().default(false),
-      /** Model used for normal-tier tasks. */
-      defaultModel: z.string().optional(),
-      /** Model used for heavy-tier tasks (score >= heavyThreshold). */
-      heavyModel: z.string().optional(),
-      /** Model used for critical-tier tasks (score >= criticalThreshold). */
-      criticalModel: z.string().optional(),
-      /** Score threshold (0–100) at which a task is promoted to heavy tier. */
-      heavyThreshold: z.number().int().min(0).max(100).default(40),
-      /** Score threshold (0–100) at which a task is promoted to critical tier. */
-      criticalThreshold: z.number().int().min(0).max(100).default(70),
-      /** Agent names that always route to the critical model. */
-      criticalAgents: z.array(z.string()).optional(),
-      /** Task ID glob patterns (`*` and `?`) that always route to the critical model. */
-      criticalTaskPatterns: z.array(z.string()).optional(),
-      /** Max tasks routed to heavy/critical models per run. 0 = unlimited. */
-      maxCriticalTasks: z.number().int().min(0).default(0),
-      /** Max incremental cost (USD) for escalated invocations. 0 = unlimited. */
-      maxEscalationCostUsd: z.number().min(0).default(0),
-      /** Retry attempt number at which to escalate model tier. */
-      escalateOnRetryAttempt: z.number().int().min(1).default(2),
-    }).optional(),
-    /**
      * Git commit automation for migrated output.
      *
      * When enabled, AAMF ensures `target.outputPath` is a Git repository and
@@ -301,8 +276,6 @@ export const MigrationConfigSchema = z.object({
       enabled: z.boolean().default(true),
       /** Ensure `target.outputPath` is a git repository (initialise if needed). */
       autoInit: z.boolean().default(true),
-      /** Commit after successful code-modifying agent invocations. */
-      commitByAgent: z.boolean().default(true),
       /** Commit after each successfully completed Phase 4 task. */
       commitPerTask: z.boolean().default(true),
       /** Allow empty git commits for task-level markers when no files changed. */
@@ -332,14 +305,13 @@ export const MigrationConfigSchema = z.object({
       maxConvergenceIterations: 3,
     },
     continueOnBlocked: true,
-    maxBlockedTasks: 1,
+    maxBlockedTasks: 0,
     qualityPolicy: 'strict',
     maxInfraRetries: 3,
     commandTimeout: 300_000,
     git: {
       enabled: true,
       autoInit: true,
-      commitByAgent: true,
       commitPerTask: true,
       allowEmptyTaskCommits: true,
       authorName: 'AAMF Migration Bot',
@@ -357,10 +329,6 @@ export const MigrationConfigSchema = z.object({
     runtime: z.enum(['copilot', 'claude-code']).default('copilot'),
     /** CLI command to invoke. Defaults to `'copilot'` or `'claude'` based on `runtime`. */
     cliCommand: z.string().optional(),
-    /** Deprecated compatibility alias for `models.default`. */
-    model: z.string().optional(),
-    /** Deprecated compatibility alias for `models.failureRecovery`. */
-    failureRecoveryModel: z.string().optional(),
     /**
      * Reasoning effort level for the Copilot CLI (`--effort` flag).
      * Controls how much reasoning the model applies to each request.
@@ -371,7 +339,7 @@ export const MigrationConfigSchema = z.object({
     timeout: z.number().int().default(300_000),
     /** Per-phase timeout overrides in milliseconds, keyed by phase number. */
     phaseTimeouts: z.record(z.coerce.number(), z.number().int()).optional(),
-  }).default({
+  }).strict().default({
     runtime: 'copilot',
     timeout: 300_000,
   }).transform((val) => ({

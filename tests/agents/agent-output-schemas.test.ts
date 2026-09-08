@@ -10,11 +10,27 @@ import {
   FinalParityCheckerSchema,
   E2eTestCrafterSchema,
   DocumentationWriterSchema,
+  ALL_AGENT_NAMES,
+  getOutputSchema,
 } from '../../src/agents/registry.js';
+import { parseAamfOutput } from '../../src/agents/agent-output-schemas.js';
 
 const VALID_STATUS = 'completed' as const;
 
 describe('Per-agent output schemas', () => {
+  it.each(ALL_AGENT_NAMES)('round-trips a generated %s example through the runtime parser', agent => {
+    const example: Record<string, unknown> = { status: 'completed', outputFiles: [] };
+    if (agent === 'parity-verifier') Object.assign(example, { parity: 'pass', issues: [] });
+    if (agent === 'final-parity-checker') Object.assign(example, { fixes: [] });
+    if (agent === 'idiomatic-reviewer') Object.assign(example, { issues: [] });
+    if (agent === 'idiomatic-planner') Object.assign(example, { tasks: [] });
+    const output = `\`\`\`aamf-json\n${JSON.stringify(example)}\n\`\`\``;
+
+    const parsed = parseAamfOutput(output, getOutputSchema(agent));
+
+    expect(parsed.parsed).toBe(true);
+  });
+
   describe('KnowledgeBuilderSchema', () => {
     it('accepts valid output', () => {
       expect(() =>

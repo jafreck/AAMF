@@ -4,9 +4,10 @@
  */
 
 import type { FlowCheckpointAdapter, FlowCheckpointSnapshot } from '@cadre-dev/framework/flow';
-import type { CheckpointManager } from '../core/checkpoint.js';
+import { filterFlowCheckpointFromPhase, type CheckpointManager } from '../core/checkpoint.js';
 import type { MigrationFlowContext } from './context.js';
-import { PHASE_BOUNDARY_NODE_IDS } from './migration-flow.js';
+import { PHASE_BOUNDARY_NODE_IDS } from './phase-registry.js';
+import { nodeIdToPhase } from './phase-registry.js';
 
 /**
  * Wraps AAMF's existing {@link CheckpointManager} to satisfy the framework's
@@ -24,6 +25,15 @@ export class AamfFlowCheckpointAdapter implements FlowCheckpointAdapter<Migratio
     if (!stored || typeof stored !== 'object') return null;
     const snapshot = stored as FlowCheckpointSnapshot<MigrationFlowContext>;
     if (snapshot.flowId !== flowId) return null;
+    if (state.invalidatedFromPhase !== undefined) {
+      filterFlowCheckpointFromPhase(
+        snapshot as unknown as Record<string, unknown>,
+        state.invalidatedFromPhase,
+        nodeIdToPhase,
+      );
+      state.invalidatedFromPhase = undefined;
+      await this.checkpoint.save(state);
+    }
     return snapshot;
   }
 
@@ -42,6 +52,13 @@ export class AamfFlowCheckpointAdapter implements FlowCheckpointAdapter<Migratio
       // Do not persist context — it contains non-serialisable service references.
       // The context is reconstructed from the runtime on resume.
     };
+    if (state.invalidatedFromPhase !== undefined) {
+      filterFlowCheckpointFromPhase(
+        serialisable as unknown as Record<string, unknown>,
+        state.invalidatedFromPhase,
+        nodeIdToPhase,
+      );
+    }
     state.__flowCheckpoint = serialisable;
 
     // Sync completedPhases from flow execution IDs so that --from-phase
@@ -83,6 +100,13 @@ export class Phase4CheckpointAdapter implements FlowCheckpointAdapter<MigrationF
       executionOutputs: snapshot.executionOutputs,
       error: snapshot.error,
     };
+    if (state.invalidatedFromPhase !== undefined && state.invalidatedFromPhase <= 4) {
+      serialisable.completedExecutionIds = [];
+      serialisable.outputs = {};
+      serialisable.executionOutputs = {};
+      serialisable.status = 'running';
+      serialisable.error = undefined;
+    }
     state.__phase4FlowCheckpoint = serialisable;
     await this.checkpoint.save(state);
   }

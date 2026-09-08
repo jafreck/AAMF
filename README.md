@@ -503,7 +503,6 @@ AAMF can automatically initialize and commit to a git repository in the output d
 |-------|---------|-------------|
 | `enabled` | `true` | Enable git commit automation |
 | `autoInit` | `true` | Auto-initialize a git repo in `target.outputPath` if not already one |
-| `commitByAgent` | `true` | Create a commit after each agent invocation that modifies files |
 | `commitPerTask` | `true` | Create a commit after each Phase 4 task completes |
 | `allowEmptyTaskCommits` | `true` | Allow empty commits for tasks that produce no file changes |
 | `authorName` | `'AAMF Migration Bot'` | Git author name |
