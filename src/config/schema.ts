@@ -334,7 +334,9 @@ export const MigrationConfigSchema = z.object({
      * Controls how much reasoning the model applies to each request.
      * Only applies when `runtime` is `'copilot'`.
      */
-    effort: z.enum(['low', 'medium', 'high', 'xhigh']).optional(),
+    effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
+    /** Copilot CLI context mode (`--context` flag), such as `long_context`. */
+    context: z.string().trim().min(1).optional(),
     /** Default timeout per agent invocation in milliseconds. */
     timeout: z.number().int().default(300_000),
     /** Per-phase timeout overrides in milliseconds, keyed by phase number. */

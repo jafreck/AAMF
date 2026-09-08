@@ -425,6 +425,27 @@ describe('MigrationConfigSchema', () => {
       expect(result.agentBackend.timeout).toBe(600000);
     });
 
+    it('should accept Copilot max effort and long context', () => {
+      const result = MigrationConfigSchema.parse({
+        ...validConfig,
+        agentBackend: {
+          runtime: 'copilot',
+          effort: 'max',
+          context: 'long_context',
+        },
+      });
+      expect(result.agentBackend.effort).toBe('max');
+      expect(result.agentBackend.context).toBe('long_context');
+    });
+
+    it('should reject a blank Copilot context', () => {
+      const result = MigrationConfigSchema.safeParse({
+        ...validConfig,
+        agentBackend: { runtime: 'copilot', context: '  ' },
+      });
+      expect(result.success).toBe(false);
+    });
+
     it('rejects the removed agentBackend.agentDir key without a compatibility field', () => {
       expect(() => MigrationConfigSchema.parse({
         ...validConfig,

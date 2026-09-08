@@ -85,6 +85,8 @@ Create a `migration.config.json` file in your project root. Below is a full refe
   "agentBackend": {
     "runtime": "copilot",
     "cliCommand": "copilot",
+    "effort": "max",
+    "context": "long_context",
     "timeout": 300000
   }
 }
@@ -193,7 +195,8 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | `agentBackend.cliCommand` | `string` | `'copilot'` or `'claude'` | Path or name of the selected CLI binary. |
 | `agentBackend.timeout` | `integer` | `300000` | Per-agent invocation timeout in ms (5 minutes). |
 | `agentBackend.phaseTimeouts` | `Record<number, integer>` | — | Per-phase timeout overrides in ms, keyed by phase number. |
-| `agentBackend.effort` | `'low' \| 'medium' \| 'high' \| 'xhigh'` | — | Copilot reasoning effort level. |
+| `agentBackend.effort` | `'none' \| 'minimal' \| 'low' \| 'medium' \| 'high' \| 'xhigh' \| 'max'` | — | Copilot reasoning effort level passed through `--effort`. |
+| `agentBackend.context` | `string` | — | Copilot context mode passed through `--context`, such as `long_context`. |
 
 #### Environment
 

@@ -54,7 +54,7 @@
     "qualityPolicy": "strict",
     "maxParallelAgents": 8,
     "maxRetriesPerTask": 7,
-    "reuseKb": true,
+    "reuseKb": false,
     "maxLinesPerTask": 1000,
     "tokenBudget": 400000000,
     "executionMode": "sync-epoch",
@@ -80,13 +80,14 @@
     }
   },
   "models": {
-    "default": "gpt-5.4",
-    "failureRecovery": "gpt-5.4"
+    "default": "gpt-6-astra",
+    "failureRecovery": "gpt-6-astra"
   },
   "agentBackend": {
     "runtime": "copilot",
     "cliCommand": "copilot",
-    "effort": "xhigh",
+    "effort": "max",
+    "context": "long_context",
     "timeout": 3600000,
     "phaseTimeouts": { "0": 1800000 }
   }
