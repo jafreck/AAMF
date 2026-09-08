@@ -17,6 +17,7 @@ import {
   DEFAULT_PLANNING_TASKS,
   SINGLE_AUTH_TASK,
   withParityPassOutput,
+  withParityOutput,
   makeTask,
 } from '../../helpers/flow-mocks.js';
 import type { FlowTestEnv } from '../../helpers/flow-mocks.js';
@@ -74,6 +75,41 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
     } finally {
       spawnSpy.mockRestore();
     }
+  });
+
+  it('uses task-unique nested change sets for concurrent minor re-passes', async () => {
+    const tasks = [makeTask('task-a'), makeTask('task-b')];
+    const minorIssue = {
+      parity: 'partial',
+      issues: [{
+        severity: 'minor',
+        description: 'Minor difference',
+        details: 'The task needs one bounded re-pass.',
+        sourceLocation: 'source:1',
+        targetLocation: 'target:1',
+      }],
+    };
+    env = await setupFlowTestWithTasks(
+      withParityOutput(createMockLauncher(), {
+        'task-a': minorIssue,
+        'task-b': minorIssue,
+      }),
+      tasks,
+      { options: { executionMode: 'wave-barrier', qualityPolicy: 'balanced' } },
+    );
+    const begin = vi.spyOn(env.ctx.targetChanges, 'begin');
+
+    const result = await runPhase4(env);
+
+    expect(result.status).toBe('completed');
+    const nestedScopes = begin.mock.calls
+      .map(([scopeId]) => scopeId)
+      .filter(scopeId => scopeId.endsWith('/minor-repass'));
+    expect(nestedScopes).toEqual(expect.arrayContaining([
+      'phase-4-wave-0/task-a/minor-repass',
+      'phase-4-wave-0/task-b/minor-repass',
+    ]));
+    expect(new Set(nestedScopes).size).toBe(2);
   });
 
   it('should skip completed wave tasks after checkpoint reload', async () => {
@@ -201,7 +237,7 @@ describe('buildPhase4Subflow — wave-barrier mode', () => {
         executionMode: 'wave-barrier',
         waveControl: { maxConvergenceIterations: 1 },
         qualityPolicy: 'balanced',
-        git: { enabled: true, autoInit: false, commitByAgent: true, commitPerTask: true },
+        git: { enabled: true, autoInit: false, commitPerTask: true },
       },
     });
 

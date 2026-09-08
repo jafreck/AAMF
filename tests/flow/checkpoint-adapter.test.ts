@@ -180,7 +180,9 @@ describe('flow/index re-exports', () => {
 
   it('should export buildFlowUpToPhase', () => {
     expect(buildFlowUpToPhase).toBeDefined();
-    expect(buildFlowUpToPhase(9)).toBe(migrationFlow);
+    const flow = buildFlowUpToPhase(9);
+    expect(flow).not.toBe(migrationFlow);
+    expect(flow.nodes.map(node => node.id)).toEqual(migrationFlow.nodes.map(node => node.id));
   });
 
   it('should export nodeIdToPhase', () => {

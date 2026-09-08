@@ -5,6 +5,7 @@
 
 import type { MigrationFlowContext } from '../context.js';
 import { fileExists } from '../../util/fs.js';
+import { recordAdvisoryFailure } from '../failure-policy.js';
 
 /**
  * Start the source KB MCP server and attach it to the flow context.
@@ -27,8 +28,11 @@ export async function startKbServer(ctx: MigrationFlowContext): Promise<void> {
     await ctx.kbServer.start();
     ctx.logger.info(`KB server started (lore log: ${ctx.paths.loreLogFile})`);
   } catch (err) {
-    ctx.logger.warn(`KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
     ctx.kbServer = undefined;
+    throw new Error(
+      `Required source KB server failed to start: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
   }
 
   // Also start target KB server if the target index already exists (e.g. resume)
@@ -58,7 +62,7 @@ export async function startTargetKbServer(ctx: MigrationFlowContext): Promise<vo
     await ctx.targetKbServer.start();
     ctx.logger.info(`Target KB server started (lore log: ${ctx.paths.loreTargetLogFile})`);
   } catch (err) {
-    ctx.logger.warn(`Target KB server failed to start: ${err instanceof Error ? err.message : String(err)}`);
+    recordAdvisoryFailure(ctx, 'target-kb-server', err);
     ctx.targetKbServer = undefined;
   }
 }

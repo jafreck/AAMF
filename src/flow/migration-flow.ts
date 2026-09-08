@@ -17,13 +17,12 @@ import {
   subflow,
   type FlowDefinition,
   type FlowNode,
-  type FlowRunnerOptions,
 } from '@cadre-dev/framework/flow';
 
 import type { MigrationFlowContext } from './context.js';
 import type { TaskGraphOutput } from './steps/task-graph.js';
 import { checkBudget } from './steps/shared.js';
-import { MAX_PHASE } from './phases.js';
+import { MAX_PHASE, PHASE_BOUNDARY_NODE_IDS } from './phase-registry.js';
 
 // Step implementations
 import { buildKbIndex } from './steps/kb-indexing.js';
@@ -34,11 +33,13 @@ import { buildPhase4Subflow, computePhase4RunnerOptions } from './steps/migratio
 import {
   runFinalParityIteration,
   noFixesNeeded,
+  finalParityConverged,
 } from './steps/final-parity.js';
 import {
   launchE2eTestCrafter,
   launchE2eSuiteWriters,
   launchDocWriter,
+  promotePhase6Changes,
 } from './steps/finalization.js';
 import {
   runIdiomaticRefactorPipeline,
@@ -51,16 +52,6 @@ import { finalizeAndReport } from './steps/completion.js';
 function budgetOk(ctx: { context: MigrationFlowContext }): boolean {
   return checkBudget(ctx.context);
 }
-
-/**
- * Shared mutable ref for Phase 4 subflow runner options.
- *
- * Because `runnerOptions` on a subflow node is structurally static,
- * but the checkpoint adapter and concurrency must be derived from runtime
- * context, we use a shared object that the `flow` thunk populates before
- * the runner reads it (the thunk always runs first per the runner contract).
- */
-const _phase4RunnerOpts: FlowRunnerOptions<MigrationFlowContext> = {};
 
 /**
  * The AAMF migration pipeline expressed as a declarative flow.
@@ -78,7 +69,8 @@ const _phase4RunnerOpts: FlowRunnerOptions<MigrationFlowContext> = {};
  *   Phase 7  → Idiomatic Refactor (conditional → review → plan → parallel execute)
  *   Phase 8  → Completion
  */
-export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<MigrationFlowContext>(
+export function createMigrationFlow(): FlowDefinition<MigrationFlowContext> {
+  return defineFlow<MigrationFlowContext>(
   'aamf-migration',
   [
     // ── Phase 0 — KB Indexing (deterministic) ──
@@ -123,14 +115,12 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       id: 'iterative-migration',
       dependsOn: ['budget-check-3'],
       flow: async (ctx) => {
-        // Populate runner options dynamically before the runner reads them
-        Object.assign(_phase4RunnerOpts, computePhase4RunnerOptions(ctx.context));
         const taskGraphInput = ctx.getStepOutput<TaskGraphOutput>('task-graph-construction');
         return buildPhase4Subflow(ctx, taskGraphInput);
       },
       contextMap: (ctx) => ctx.context,
-      runnerOptions: _phase4RunnerOpts,
-    }) as unknown as FlowNode<MigrationFlowContext>,
+      runnerOptions: (ctx) => computePhase4RunnerOptions(ctx.context),
+    }),
     step<MigrationFlowContext>({
       id: 'phase-4-teardown',
       dependsOn: ['iterative-migration'],
@@ -147,6 +137,7 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       id: 'final-parity-loop',
       dependsOn: ['budget-check-4'],
       maxIterations: 3,
+      requireConvergence: true,
       do: [
         step<MigrationFlowContext>({
           id: 'final-parity-iteration',
@@ -155,11 +146,16 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
       ],
       until: noFixesNeeded,
     }),
+    gate<MigrationFlowContext>({
+      id: 'final-parity-convergence-gate',
+      dependsOn: ['final-parity-loop'],
+      evaluate: finalParityConverged,
+    }),
 
     // ── Phase 6 — E2E Testing & Documentation (parallel) ──
     step<MigrationFlowContext>({
       id: 'e2e-test-plan',
-      dependsOn: ['final-parity-loop'],
+      dependsOn: ['final-parity-convergence-gate'],
       run: launchE2eTestCrafter,
     }),
     parallel<MigrationFlowContext>({
@@ -180,11 +176,16 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
         ],
       },
     }),
+    step<MigrationFlowContext>({
+      id: 'phase-6-promote',
+      dependsOn: ['finalization'],
+      run: promotePhase6Changes,
+    }),
 
     // ── Phase 7 — Idiomatic Refactor (optional, task-graph approach) ──
     conditional<MigrationFlowContext>({
       id: 'idiomatic-refactor-gate',
-      dependsOn: ['finalization'],
+      dependsOn: ['phase-6-promote'],
       when: (ctx) => ctx.context.config.options.idiomaticRefactor?.enabled === true,
       then: [
         step<MigrationFlowContext>({
@@ -202,72 +203,34 @@ export const migrationFlow: FlowDefinition<MigrationFlowContext> = defineFlow<Mi
     }),
   ],
   'AAMF migration pipeline — 9 phases (0-8) from KB indexing through completion',
-);
-
-/**
- * Map a flow node ID to a phase number for logger.setPhase().
- */
-export function nodeIdToPhase(nodeId: string): number {
-  const map: Record<string, number> = {
-    'kb-index': 0,
-    'task-graph-construction': 1,
-    'kb-construction': 2,
-    'budget-check-2': 2,
-    'migration-planning': 3,
-    'budget-check-3': 3,
-    'iterative-migration': 4,
-    'phase-4-teardown': 4,
-    'budget-check-4': 4,
-    'final-parity-loop': 5,
-    'final-parity-iteration': 5,
-    'e2e-test-plan': 6,
-    'finalization': 6,
-    'e2e-suite-writers': 6,
-    'documentation-writer': 6,
-    'idiomatic-refactor-gate': 7,
-    'idiomatic-refactor-pipeline': 7,
-    'completion': 8,
-  };
-  return map[nodeId] ?? -1;
+  );
 }
 
-/**
- * Ordered list of phase boundary node IDs for `--phase` filtering.
- * Each entry is the last top-level node ID belonging to that phase.
- */
-export const PHASE_BOUNDARY_NODE_IDS: readonly string[] = [
-  'kb-index',                // Phase 0
-  'task-graph-construction', // Phase 1
-  'budget-check-2',         // Phase 2
-  'budget-check-3',         // Phase 3
-  'budget-check-4',         // Phase 4
-  'final-parity-loop',      // Phase 5
-  'finalization',           // Phase 6
-  'idiomatic-refactor-gate', // Phase 7
-  'completion',             // Phase 8
-];
-
-export { MAX_PHASE };
+/** Stable definition for visualization and static inspection only. */
+export const migrationFlow: FlowDefinition<MigrationFlowContext> = createMigrationFlow();
 
 /**
  * Build a flow definition truncated to include only phases 0..maxPhase.
  * Used to implement `--phase N` (run/resume up to and including phase N).
  */
-export function buildFlowUpToPhase(maxPhase: number): FlowDefinition<MigrationFlowContext> {
-  if (maxPhase >= 8) return migrationFlow;
+export function buildFlowUpToPhase(
+  maxPhase: number,
+  sourceFlow: FlowDefinition<MigrationFlowContext> = createMigrationFlow(),
+): FlowDefinition<MigrationFlowContext> {
+  if (maxPhase >= 8) return sourceFlow;
 
   const lastNodeId = PHASE_BOUNDARY_NODE_IDS[maxPhase];
-  if (!lastNodeId) return migrationFlow;
+  if (!lastNodeId) return sourceFlow;
 
   const truncated: FlowNode<MigrationFlowContext>[] = [];
-  for (const node of migrationFlow.nodes) {
+  for (const node of sourceFlow.nodes) {
     truncated.push(node);
     if (node.id === lastNodeId) break;
   }
 
   return defineFlow<MigrationFlowContext>(
-    migrationFlow.id,
+    sourceFlow.id,
     truncated,
-    migrationFlow.description,
+    sourceFlow.description,
   );
 }

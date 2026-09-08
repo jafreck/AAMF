@@ -23,7 +23,7 @@ export async function launchKnowledgeBuilder(
 
   const kbContext = await ctx.contextBuilder.buildContext('knowledge-builder', PHASE.KB_CONSTRUCTION);
   const kbInv = buildInvocation(ctx, 'knowledge-builder', kbContext, PHASE.KB_CONSTRUCTION);
-  const kbResult = await launchAgentWithEvents(ctx, kbInv);
+  const kbResult = await launchAgentWithEvents(ctx, kbInv, flowCtx.signal);
   recordTokens(ctx, kbResult, PHASE.KB_CONSTRUCTION);
 
   if (!kbResult.success) {

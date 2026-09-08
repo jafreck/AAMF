@@ -631,6 +631,7 @@ describe('CheckpointManager', () => {
       'budget-check-4': 4,
       'final-parity-loop': 5,
       'final-parity-iteration': 5,
+      'final-parity-convergence-gate': 5,
       'e2e-test-plan': 6,
       'finalization': 6,
       'e2e-suite-writers': 6,
@@ -641,6 +642,84 @@ describe('CheckpointManager', () => {
     };
     return map[id] ?? -1;
   };
+
+  it('invalidates rolled-back phase execution while preserving accounting', async () => {
+    const state = await manager.load('test-project');
+    state.completedPhases = [0, 1, 2, 3, 4, 5, 6, 7];
+    state.currentPhase = 8;
+    state.tokenUsage.total = 123;
+    state.phaseCursors = {
+      '5': { iteration: 2, fixIndex: 3 },
+      '6': { completedAgents: ['documentation-writer'] },
+      '7': { iteration: 0, issueIndex: 1, completedTaskIds: ['idiomatic-1'] },
+    };
+    state.__flowCheckpoint = {
+      flowId: 'aamf-migration', status: 'failed',
+      startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      completedExecutionIds: [
+        'aamf-migration/budget-check-4',
+        'aamf-migration/final-parity-loop/iteration-1/final-parity-iteration',
+        'aamf-migration/final-parity-convergence-gate',
+        'aamf-migration/finalization',
+      ],
+      outputs: {}, executionOutputs: {},
+    };
+    await manager.save(state);
+
+    await manager.invalidateExecutionFromPhase(5, testNodeIdToPhase);
+
+    const invalidated = manager.getState();
+    expect(invalidated.completedPhases).toEqual([0, 1, 2, 3, 4]);
+    expect(invalidated.currentPhase).toBe(5);
+    expect(invalidated.phaseCursors?.['5']).toEqual({ iteration: 0, fixIndex: 0 });
+    expect(invalidated.phaseCursors?.['6']).toEqual({ completedAgents: [], completedSuites: [] });
+    expect(invalidated.phaseCursors?.['7']).toEqual({ iteration: 0, issueIndex: 0 });
+    expect(invalidated.tokenUsage.total).toBe(123);
+    expect(invalidated.invalidatedFromPhase).toBe(5);
+    expect((invalidated.__flowCheckpoint as { completedExecutionIds: string[] }).completedExecutionIds)
+      .toEqual(['aamf-migration/budget-check-4']);
+  });
+
+  it('selectively invalidates rolled-back Phase 4 tasks', async () => {
+    const state = await manager.load('test-project');
+    state.completedPhases = [0, 1, 2, 3, 4];
+    state.currentPhase = 5;
+    state.completedTasks = ['task-accepted', 'task-rolled-back'];
+    state.phaseCursors = {
+      '4': {
+        tasks: {
+          'task-accepted': {
+            completedSubsteps: ['complete'],
+            scopeExecutionPrefix: 'aamf-migration/iterative-migration/phase-4-per-task/task-accepted/',
+          },
+          'task-rolled-back': {
+            completedSubsteps: ['complete'],
+            scopeExecutionPrefix: 'aamf-migration/iterative-migration/phase-4-per-task/task-rolled-back/',
+          },
+        },
+      },
+    };
+    state.__phase4FlowCheckpoint = {
+      flowId: 'aamf-migration/iterative-migration/phase-4-per-task',
+      status: 'completed', startedAt: '', updatedAt: '',
+      completedExecutionIds: [
+        'aamf-migration/iterative-migration/phase-4-per-task/task-accepted/complete',
+        'aamf-migration/iterative-migration/phase-4-per-task/task-rolled-back/complete',
+      ],
+      outputs: {}, executionOutputs: {},
+    };
+    await manager.save(state);
+
+    await manager.invalidatePhase4Tasks(['task-rolled-back'], testNodeIdToPhase);
+
+    expect(manager.getState().completedTasks).toEqual(['task-accepted']);
+    expect(manager.getState().phaseCursors?.['4']?.tasks['task-accepted']).toBeDefined();
+    expect(manager.getState().phaseCursors?.['4']?.tasks['task-rolled-back']).toBeUndefined();
+    expect((manager.getState().__phase4FlowCheckpoint as { completedExecutionIds: string[] }).completedExecutionIds)
+      .toEqual([
+        'aamf-migration/iterative-migration/phase-4-per-task/task-accepted/complete',
+      ]);
+  });
 
   it('resetFromPhase should clear phases >= N and preserve earlier', async () => {
     const state = await manager.load('test-project');
@@ -943,73 +1022,10 @@ describe('CheckpointManager', () => {
     ]);
   });
 
-  it('fresh start with reuseKb should preserve KB phases and reset everything else', async () => {
-    // Set up a prior run with phases 0-4 completed
-    const state = await manager.load('test-project');
-    for (let p = 0; p <= 4; p++) {
-      await manager.completePhase(p, `/out/${p}`);
-    }
-    state.phase0Fingerprint = 'abc123';
-    state.scaffoldComplete = true;
-    state.completedTasks = ['task-1'];
-    state.__flowCheckpoint = {
-      flowId: 'aamf-migration',
-      status: 'completed',
-      completedExecutionIds: [
-        'aamf-migration/kb-index',
-        'aamf-migration/task-graph-construction',
-        'aamf-migration/kb-construction',
-        'aamf-migration/budget-check-2',
-        'aamf-migration/migration-planning',
-        'aamf-migration/budget-check-3',
-      ],
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    await manager.save(state);
-
-    // Fresh start with reuseKb
-    const manager2 = new CheckpointManager(tempDir, logger);
-    const reused = await manager2.load('test-project', { fresh: true, reuseKb: true });
-
-    // KB phases preserved
-    expect(reused.completedPhases).toContain(0);
-    expect(reused.completedPhases).toContain(1);
-    expect(reused.completedPhases).toContain(2);
-    expect(reused.completedPhases).not.toContain(3);
-    expect(reused.completedPhases).not.toContain(4);
-    expect(reused.currentPhase).toBe(3);
-    expect(reused.phase0Fingerprint).toBe('abc123');
-    expect(reused.scaffoldComplete).toBe(true);
-
-    // Phase outputs preserved for KB phases only
-    expect(reused.phaseOutputs[0]).toBe('/out/0');
-    expect(reused.phaseOutputs[1]).toBe('/out/1');
-    expect(reused.phaseOutputs[2]).toBe('/out/2');
-    expect(reused.phaseOutputs[3]).toBeUndefined();
-    expect(reused.phaseOutputs[4]).toBeUndefined();
-
-    // Migration state reset
-    expect(reused.completedTasks).toEqual([]);
-    expect(reused.failedTasks).toEqual([]);
-    expect(reused.resumeCount).toBe(0);
-
-    // Flow checkpoint filtered to KB steps only
-    const fc = reused.__flowCheckpoint as Record<string, unknown>;
-    const completedIds = fc.completedExecutionIds as string[];
-    expect(completedIds).toContain('aamf-migration/kb-index');
-    expect(completedIds).toContain('aamf-migration/task-graph-construction');
-    expect(completedIds).toContain('aamf-migration/kb-construction');
-    expect(completedIds).toContain('aamf-migration/budget-check-2');
-    expect(completedIds).not.toContain('aamf-migration/migration-planning');
-    expect(completedIds).not.toContain('aamf-migration/budget-check-3');
-  });
-
-  it('fresh start with reuseKb but no prior checkpoint should start from scratch', async () => {
-    const state = await manager.load('test-project', { fresh: true, reuseKb: true });
-    expect(state.completedPhases).toEqual([]);
-    expect(state.currentPhase).toBe(0);
-    expect(state.phase0Fingerprint).toBeUndefined();
+  it('rejects reuseKb until authoritative Lore identity is available', async () => {
+    await expect(
+      manager.load('test-project', { fresh: true, reuseKb: true }),
+    ).rejects.toThrow('reuseKb is temporarily disabled');
   });
 
   it('fresh start without reuseKb should ignore prior state entirely', async () => {

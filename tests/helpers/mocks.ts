@@ -144,7 +144,6 @@ export function createMockConfig(overrides?: MockConfigOverrides): MigrationConf
       git: {
         enabled: false,
         autoInit: true,
-        commitByAgent: true,
         commitPerTask: true,
         authorName: 'AAMF Migration Bot',
         authorEmail: 'aamf@local.invalid',

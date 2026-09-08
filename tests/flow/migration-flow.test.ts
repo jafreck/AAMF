@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   migrationFlow,
+  createMigrationFlow,
   buildFlowUpToPhase,
   nodeIdToPhase,
   MigrationError,
@@ -121,14 +122,17 @@ describe('nodeIdToPhase', () => {
 // ─── buildFlowUpToPhase ──────────────────────────────────────────────────────
 
 describe('buildFlowUpToPhase', () => {
-  it('should return the full flow for maxPhase >= 9', () => {
+  it('should return a fresh full flow for maxPhase >= 9', () => {
     const flow = buildFlowUpToPhase(9);
-    expect(flow).toBe(migrationFlow);
+    expect(flow).not.toBe(migrationFlow);
+    expect(flow.nodes.map(node => node.id)).toEqual(migrationFlow.nodes.map(node => node.id));
   });
 
-  it('should return the full flow for maxPhase >= 10', () => {
+  it('should isolate independently constructed full flows', () => {
+    const first = createMigrationFlow();
     const flow = buildFlowUpToPhase(10);
-    expect(flow).toBe(migrationFlow);
+    expect(flow).not.toBe(first);
+    expect(flow.nodes).not.toBe(first.nodes);
   });
 
   it('should truncate to phase 0 (kb-index only)', () => {

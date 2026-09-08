@@ -161,6 +161,36 @@ describe('MigrationRuntime', () => {
       await runtime.logger.flush();
       await rm(root, { recursive: true, force: true });
     });
+
+    it('uses an injected agent launcher without initializing a live CLI backend', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'aamf-injected-launcher-'));
+      const sourceDir = join(root, 'source');
+      const configPath = join(root, 'migration.config.json');
+      await mkdir(sourceDir, { recursive: true });
+      await writeFile(join(sourceDir, 'main.py'), 'print("hello")\n', 'utf-8');
+      await writeFile(configPath, JSON.stringify({
+        projectName: 'injected-launcher',
+        source: { path: './source', language: 'python', entryPoints: ['main.py'] },
+        target: { language: 'typescript', outputPath: './target' },
+        agentBackend: { runtime: 'copilot', cliCommand: 'missing-agent-cli', agentDir: './agents' },
+      }));
+
+      const injectedLauncher = {
+        init: vi.fn().mockResolvedValue(undefined),
+        launchAgent: vi.fn(),
+        getResolvedPath: vi.fn().mockReturnValue(undefined),
+      };
+      const runtime = new MigrationRuntime({
+        createAgentLauncher: vi.fn().mockReturnValue(injectedLauncher),
+      });
+
+      await runtime.initialize({ configPath, logLevel: 'error' });
+
+      expect(injectedLauncher.init).toHaveBeenCalledTimes(1);
+      expect(injectedLauncher.launchAgent).not.toHaveBeenCalled();
+      await (runtime as any).logger.flush();
+      await rm(root, { recursive: true, force: true });
+    });
   });
 
   describe('printSummary', () => {
@@ -238,9 +268,9 @@ describe('MigrationRuntime', () => {
     it('should use claudeCode model when runtime is claude-code', () => {
       (runtime as any).config = {
         projectName: 'test-project',
+        models: { default: 'claude-test-model' },
         agentBackend: {
           runtime: 'claude-code',
-          model: 'claude-test-model',
         },
       };
 
@@ -256,6 +286,7 @@ describe('MigrationRuntime', () => {
       const runtime = new MigrationRuntime() as any;
       runtime.config = {
         projectName: 'test-project',
+        models: { default: 'claude-sonnet-4' },
         options: { resume: false, dryRun: true },
       };
       runtime.paths = {
@@ -441,7 +472,6 @@ describe('MigrationRuntime', () => {
         },
         agentBackend: {
           runtime: 'copilot',
-          model: 'claude-sonnet-4',
           timeout: 300_000,
           agentDir: '.github/agents',
         },
@@ -512,6 +542,9 @@ describe('MigrationRuntime', () => {
       expect(result.success).toBe(true);
       expect(result.projectName).toBe('test-project');
       expect(flowRunnerRunSpy).toHaveBeenCalledTimes(1);
+      expect(flowRunnerRunSpy.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      }));
       expect(runtime.logger.flush).toHaveBeenCalled();
       expect(printSummarySpy).toHaveBeenCalled();
 
@@ -801,6 +834,30 @@ describe('MigrationRuntime', () => {
   });
 
   describe('internal helpers', () => {
+    it('preserves accumulated accounting when automatic recovery invalidates Phase 6', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'aamf-recovery-accounting-'));
+      const logger = new Logger({ logDir: join(root, 'logs'), level: 'error', console: false });
+      const checkpoint = new CheckpointManager(root, logger);
+      const state = await checkpoint.load('demo');
+      state.completedPhases = [0, 1, 2, 3, 4, 5, 6];
+      state.currentPhase = 6;
+      state.tokenUsage = { total: 321, byPhase: { 4: 321 }, byAgent: { 'code-migrator': 321 } };
+      state.metricsCount = 12;
+      state.cumulativeDurationMs = 45_000;
+      await checkpoint.save(state);
+      const runtime = new MigrationRuntime() as any;
+      runtime.checkpoint = checkpoint;
+
+      await runtime.invalidateRecoveredChangeSet({ scopeId: 'phase-6-finalization', taskIds: [] });
+
+      const recovered = checkpoint.getState();
+      expect(recovered.completedPhases).toEqual([0, 1, 2, 3, 4, 5]);
+      expect(recovered.tokenUsage).toEqual(state.tokenUsage);
+      expect(recovered.metricsCount).toBe(12);
+      expect(recovered.cumulativeDurationMs).toBe(45_000);
+      await rm(root, { recursive: true, force: true });
+    });
+
     it('formats durations across seconds, minutes, and hours', () => {
       expect(formatDuration(5_000)).toBe('5s');
       expect(formatDuration(65_000)).toBe('1m 5s');
@@ -890,7 +947,7 @@ describe('MigrationRuntime', () => {
       await rm(root, { recursive: true, force: true });
     });
 
-    it('setupShutdownHandlers registers SIGINT/SIGTERM/SIGHUP handlers that flush and save state', async () => {
+    it('handles only the first concurrent shutdown signal', async () => {
       const runtime = new MigrationRuntime() as any;
       const onSpy = vi.spyOn(process, 'on').mockReturnValue(process);
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
@@ -922,16 +979,47 @@ describe('MigrationRuntime', () => {
       sighupHandler!();
       await new Promise(resolve => setTimeout(resolve, 0));
 
-      expect(runtime.logger.flush).toHaveBeenCalledTimes(3);
-      expect(runtime.checkpoint.save).toHaveBeenCalledTimes(3);
+      expect(runtime.logger.flush).toHaveBeenCalledTimes(1);
+      expect(runtime.checkpoint.save).toHaveBeenCalledTimes(1);
       expect(runtime.progress.appendEvent).toHaveBeenCalledWith('Migration interrupted by SIGINT');
-      expect(runtime.progress.appendEvent).toHaveBeenCalledWith('Migration interrupted by SIGTERM');
-      expect(runtime.progress.appendEvent).toHaveBeenCalledWith('Migration interrupted by SIGHUP');
       expect(exitSpy).toHaveBeenCalledWith(130);
-      expect(exitSpy).toHaveBeenCalledWith(143);
 
       onSpy.mockRestore();
       exitSpy.mockRestore();
+    });
+
+    it('does not accumulate process signal listeners across setup or disposal', async () => {
+      const runtime = new MigrationRuntime() as any;
+      runtime.logger = { warn: vi.fn() };
+      const baseline = process.listenerCount('SIGINT');
+
+      runtime.setupShutdownHandlers();
+      expect(process.listenerCount('SIGINT')).toBe(baseline + 1);
+      runtime.setupShutdownHandlers();
+      expect(process.listenerCount('SIGINT')).toBe(baseline + 1);
+
+      runtime.disposeShutdownHandlers();
+      expect(process.listenerCount('SIGINT')).toBe(baseline);
+    });
+
+    it('terminates active mutations before reverse-order resource teardown and is idempotent', async () => {
+      const order: string[] = [];
+      const runtime = new MigrationRuntime({
+        terminateActiveProcesses: async () => { order.push('processes'); },
+      }) as any;
+      runtime.flowContext = {
+        targetKbServer: { stop: async () => { order.push('target-server'); } },
+        kbServer: { stop: async () => { order.push('source-server'); } },
+        embedder: { dispose: async () => { order.push('embedder'); } },
+      };
+
+      await runtime.cleanupRuntimeResources();
+      await runtime.cleanupRuntimeResources();
+
+      expect(order).toEqual(['processes', 'target-server', 'source-server', 'embedder']);
+      expect(runtime.flowContext.targetKbServer).toBeUndefined();
+      expect(runtime.flowContext.kbServer).toBeUndefined();
+      expect(runtime.flowContext.embedder).toBeUndefined();
     });
   });
 });

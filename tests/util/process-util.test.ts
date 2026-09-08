@@ -133,23 +133,46 @@ describe('spawnWithTimeout', () => {
       // Give it a moment to spawn
       await new Promise(r => setTimeout(r, 200));
       // Kill all active — this should terminate the child
-      killAllActiveProcesses();
+      await killAllActiveProcesses();
       const result = await promise;
       expect(result.killed).toBe(false); // killed flag is set by timeout, not external kill
       expect(result.exitCode).not.toBe(0);
     });
 
-    it('should be a no-op when no processes are active', () => {
-      expect(() => killAllActiveProcesses()).not.toThrow();
+    it('should be a no-op when no processes are active', async () => {
+      await expect(killAllActiveProcesses()).resolves.toBeUndefined();
     });
 
     it('should clear the registry after killing', async () => {
       const promise = spawnWithTimeout('node', ['-e', 'setTimeout(() => {}, 60000)']);
       await new Promise(r => setTimeout(r, 200));
-      killAllActiveProcesses();
+      await killAllActiveProcesses();
       await promise;
       // Second call should be a no-op (registry was cleared)
-      expect(() => killAllActiveProcesses()).not.toThrow();
+      await expect(killAllActiveProcesses()).resolves.toBeUndefined();
+    });
+
+    it.skipIf(process.platform === 'win32')('should kill descendants that survive their group leader', async () => {
+      let resolveDescendantPid!: (pid: number) => void;
+      const descendantPid = new Promise<number>(resolve => { resolveDescendantPid = resolve; });
+      const script = [
+        "const { spawn } = require('node:child_process');",
+        "const child = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)\"], { stdio: 'ignore' });",
+        'console.log(child.pid);',
+        "process.on('SIGTERM', () => process.exit(0));",
+        'setInterval(() => {}, 1000);',
+      ].join(' ');
+      const promise = spawnWithTimeout('node', ['-e', script], {
+        onStdoutData: chunk => {
+          const pid = Number(chunk.toString().trim());
+          if (Number.isInteger(pid)) resolveDescendantPid(pid);
+        },
+      });
+      const pid = await descendantPid;
+
+      await expect(killAllActiveProcesses()).resolves.toBeUndefined();
+      await promise;
+      expect(() => process.kill(pid, 0)).toThrow();
     });
   });
 });

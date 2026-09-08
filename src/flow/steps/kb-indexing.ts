@@ -107,7 +107,10 @@ export async function buildKbIndex(
   const embCfg = ctx.config.options.kbIndex?.embeddings;
   const embeddingModelName = embCfg?.enabled
     ? (embCfg.model ?? 'Qwen/Qwen3-Embedding-0.6B') : undefined;
-  const walkerConfig = { rootDir: sourceRoot };
+  const walkerConfig = {
+    rootDir: sourceRoot,
+    excludeGlobs: ctx.config.source.excludePatterns,
+  };
   const currentFingerprint = computeSourceFingerprintCompat(
     lore, sourceRoot,
     walkerConfig as { includeGlobs?: string[]; excludeGlobs?: string[] },

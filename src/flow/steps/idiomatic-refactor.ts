@@ -9,7 +9,7 @@
  * checkpoint saves constant-size at any codebase scale.
  */
 
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { FlowExecutionContext } from '@cadre-dev/framework/flow';
 import type { MigrationFlowContext } from '../context.js';
 import type { PhaseResult, CompilationUnit } from '../../agents/types.js';
@@ -17,11 +17,12 @@ import { ParallelExecutor } from '../../execution/parallel-executor.js';
 import { readJson, writeJson, fileExists } from '../../util/fs.js';
 import {
   buildInvocation, launchAgentWithEvents, recordTokens,
-  commitForAgent, runCommand,
+  commitForAgent, commitForPhase, runCommand,
   getPhase7Cursor, savePhase7Cursor,
   assertPhaseSuccess,
 } from './shared.js';
 import { PHASE } from '../phases.js';
+import { nodeIdToPhase } from '../phase-registry.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,8 @@ interface IdiomaticTask {
   issues: Array<{ file: string; location: string; issue: string; suggestion: string }>;
   dependencies: string[];
 }
+
+const PHASE7_CHANGE_SCOPE = 'phase-7-idiomatic-refactor';
 
 // ─── Artifact Helpers ───────────────────────────────────────────────────────
 
@@ -106,6 +109,28 @@ export async function runIdiomaticRefactorPipeline(
   flowCtx: FlowExecutionContext<MigrationFlowContext>,
 ): Promise<{ tasksCompleted: number }> {
   const ctx = flowCtx.context;
+  await ctx.targetChanges.begin(PHASE7_CHANGE_SCOPE, { mode: 'full' });
+  try {
+    const result = await runIdiomaticRefactorPipelineCandidate(flowCtx);
+    await commitForPhase(ctx, PHASE.IDIOMATIC, 'validated idiomatic refactor');
+    await ctx.targetChanges.accept(PHASE7_CHANGE_SCOPE);
+    return result;
+  } catch (error) {
+    if (ctx.targetKbServer) {
+      await ctx.targetKbServer.stop();
+      ctx.targetKbServer = undefined;
+    }
+    await ctx.targetChanges.rollback(PHASE7_CHANGE_SCOPE);
+    if (ctx.targetIndexer) await ctx.targetIndexer.invalidate();
+    await ctx.checkpoint.invalidateExecutionFromPhase(PHASE.IDIOMATIC, nodeIdToPhase);
+    throw error;
+  }
+}
+
+async function runIdiomaticRefactorPipelineCandidate(
+  flowCtx: FlowExecutionContext<MigrationFlowContext>,
+): Promise<{ tasksCompleted: number }> {
+  const ctx = flowCtx.context;
   const cursor = getPhase7Cursor(ctx);
   const start = Date.now();
   const concurrency = ctx.config.options.maxParallelAgents ?? 3;
@@ -127,7 +152,7 @@ export async function runIdiomaticRefactorPipeline(
 
     const reviewExecutor = new ParallelExecutor(
       concurrency,
-      (inv) => launchAgentWithEvents(ctx, inv),
+      (inv) => launchAgentWithEvents(ctx, inv, flowCtx.signal),
       ctx.logger,
     );
 
@@ -151,14 +176,23 @@ export async function runIdiomaticRefactorPipeline(
       const result = reviewResults[i]!;
       recordTokens(ctx, result, PHASE.IDIOMATIC);
       if (!result.success) {
-        ctx.logger.warn(`Idiomatic review failed for chunk ${chunks[i]!.id}: ${result.error ?? 'unknown'} — skipping`);
-        continue;
+        assertPhaseSuccess({
+          phase: 7, name: 'Idiomatic Refactor', success: false,
+          duration: Date.now() - start,
+          error: `Idiomatic review failed for chunk ${chunks[i]!.id}: ${result.error ?? 'unknown'}`,
+          exitCode: result.exitCode ?? undefined,
+          stderr: result.stderr,
+        });
       }
       if (result.extensions.outputParsed && Array.isArray(result.extensions.structuredOutput?.['issues'])) {
         const chunkIssues = result.extensions.structuredOutput['issues'] as IdiomaticIssue[];
         issues.push(...chunkIssues);
       } else {
-        ctx.logger.warn(`No structured output from reviewer for chunk ${chunks[i]!.id}`);
+        assertPhaseSuccess({
+          phase: 7, name: 'Idiomatic Refactor', success: false,
+          duration: Date.now() - start,
+          error: `No structured output from reviewer for chunk ${chunks[i]!.id}`,
+        });
       }
     }
 
@@ -204,7 +238,7 @@ export async function runIdiomaticRefactorPipeline(
       reviewFindings: { issues },
     });
     const planInv = buildInvocation(ctx, 'idiomatic-planner', planCtx, PHASE.IDIOMATIC);
-    const planResult = await launchAgentWithEvents(ctx, planInv);
+    const planResult = await launchAgentWithEvents(ctx, planInv, flowCtx.signal);
     recordTokens(ctx, planResult, PHASE.IDIOMATIC);
 
     if (!planResult.success) {
@@ -276,45 +310,74 @@ export async function runIdiomaticRefactorPipeline(
       // Check if we still have unfinished tasks (cycle or unresolvable deps)
       const unfinished = tasks.filter(t => !completed.has(t.id));
       if (unfinished.length > 0) {
-        ctx.logger.warn(`${unfinished.length} idiomatic task(s) have unresolvable dependencies — skipping`);
+        assertPhaseSuccess({
+          phase: 7, name: 'Idiomatic Refactor', success: false,
+          duration: Date.now() - start,
+          error: `${unfinished.length} idiomatic task(s) have unresolvable dependencies: ${unfinished.map(task => task.id).join(', ')}`,
+        });
       }
       break;
     }
 
-    ctx.logger.info(`Idiomatic wave: ${ready.length} task(s) ready for parallel execution`);
-
-    const waveExecutor = new ParallelExecutor(
-      concurrency,
-      (inv) => launchAgentWithEvents(ctx, inv),
-      ctx.logger,
+    const batches = splitIntoNonOverlappingFileBatches(
+      ready,
+      ctx.config.target.outputPath,
+    );
+    ctx.logger.info(
+      `Idiomatic wave: ${ready.length} task(s) in ${batches.length} non-overlapping batch(es)`,
     );
 
-    const waveInvocations = await Promise.all(
-      ready.map(async (task) => {
+    for (const batch of batches) {
+      const waveExecutor = new ParallelExecutor(
+        concurrency,
+        (inv) => launchAgentWithEvents(ctx, inv, flowCtx.signal),
+        ctx.logger,
+      );
+
+      const waveInvocations = await Promise.all(
+        batch.map(async (task) => {
         const refactorCtx = await ctx.contextBuilder.buildContext(
           'idiomatic-refactorer', PHASE.IDIOMATIC, task.id, { task },
         );
         return buildInvocation(ctx, 'idiomatic-refactorer', refactorCtx, PHASE.IDIOMATIC, task.id);
-      }),
-    );
+        }),
+      );
 
-    const waveResults = await waveExecutor.executeAll(waveInvocations);
-    ctx.peakConcurrency = Math.max(ctx.peakConcurrency, waveExecutor.peakConcurrency);
+      const waveResults = await waveExecutor.executeAll(waveInvocations);
+      ctx.peakConcurrency = Math.max(ctx.peakConcurrency, waveExecutor.peakConcurrency);
 
-    for (let i = 0; i < waveResults.length; i++) {
-      const task = ready[i]!;
+      for (let i = 0; i < waveResults.length; i++) {
+      const task = batch[i]!;
       const result = waveResults[i]!;
       recordTokens(ctx, result, PHASE.IDIOMATIC);
 
       if (result.success) {
         if (ctx.config.target.formatCommand) {
-          const fmtResult = await runCommand(ctx, 'format', ctx.config.target.formatCommand, `phase7-${task.id}`);
-          if (!fmtResult.success) ctx.logger.warn(`Phase 7 format failed for ${task.id}: ${fmtResult.error ?? 'unknown'}`);
+          const fmtResult = await runCommand(
+            ctx,
+            'format',
+            ctx.config.target.formatCommand,
+            `phase7-${task.id}`,
+            flowCtx.signal,
+          );
+          if (!fmtResult.success) {
+            assertPhaseSuccess({
+              phase: 7, name: 'Idiomatic Refactor', success: false,
+              duration: Date.now() - start,
+              error: `Phase 7 format failed for ${task.id}: ${fmtResult.error ?? 'unknown'}`,
+            });
+          }
         }
         await commitForAgent(ctx, 'idiomatic-refactorer', PHASE.IDIOMATIC, task.id, task.name);
         ctx.logger.info(`Completed idiomatic task ${task.id}: ${task.name}`);
       } else {
-        ctx.logger.warn(`Idiomatic refactorer failed for task ${task.id}: ${result.error ?? 'unknown'} — skipping`);
+        assertPhaseSuccess({
+          phase: 7, name: 'Idiomatic Refactor', success: false,
+          duration: Date.now() - start,
+          error: `Idiomatic refactorer failed for task ${task.id}: ${result.error ?? 'unknown'}`,
+          exitCode: result.exitCode ?? undefined,
+          stderr: result.stderr,
+        });
       }
 
       completed.add(task.id);
@@ -328,11 +391,37 @@ export async function runIdiomaticRefactorPipeline(
         taskArtifact: taskArtifactPath(ctx),
         completedTaskIds: [...completed],
       });
+      }
     }
   }
 
   ctx.logger.info(`Phase 7 complete: ${totalCompleted} idiomatic refactoring task(s) executed`);
   return { tasksCompleted: totalCompleted };
+}
+
+function splitIntoNonOverlappingFileBatches(
+  tasks: IdiomaticTask[],
+  targetRoot: string,
+): IdiomaticTask[][] {
+  const pending = [...tasks];
+  const batches: IdiomaticTask[][] = [];
+  while (pending.length > 0) {
+    const files = new Set<string>();
+    const batch: IdiomaticTask[] = [];
+    for (let index = 0; index < pending.length;) {
+      const task = pending[index]!;
+      const canonicalFiles = task.files.map(file => resolve(targetRoot, file));
+      if (canonicalFiles.some(file => files.has(file))) {
+        index++;
+        continue;
+      }
+      batch.push(task);
+      canonicalFiles.forEach(file => files.add(file));
+      pending.splice(index, 1);
+    }
+    batches.push(batch);
+  }
+  return batches;
 }
 
 // ─── Topological Sort ───────────────────────────────────────────────────────

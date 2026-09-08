@@ -51,14 +51,23 @@ export async function loadConfig(configPath: string): Promise<MigrationConfig> {
     );
   }
 
-  const config = result.data;
+    const config: MigrationConfig = {
+      ...result.data,
+      source: {
+        ...result.data.source,
+        path: resolve(baseDir, result.data.source.path),
+      },
+      target: {
+        ...result.data.target,
+        outputPath: resolve(baseDir, result.data.target.outputPath),
+      },
+      agentBackend: {
+        ...result.data.agentBackend,
+        agentDir: resolve(baseDir, result.data.agentBackend.agentDir),
+      },
+    };
 
-  // ---------- resolve relative paths ----------
-  config.source.path = resolve(baseDir, config.source.path);
-  config.target.outputPath = resolve(baseDir, config.target.outputPath);
-  config.agentBackend.agentDir = resolve(baseDir, config.agentBackend.agentDir);
-
-  return config;
+    return deepFreeze(config);
 }
 
 /**
@@ -69,12 +78,22 @@ export function applyOverrides(
   config: MigrationConfig,
   overrides: { dryRun?: boolean; resume?: boolean },
 ): MigrationConfig {
-  return {
+    return deepFreeze({
     ...config,
     options: {
       ...config.options,
       ...(overrides.dryRun !== undefined && { dryRun: overrides.dryRun }),
       ...(overrides.resume !== undefined && { resume: overrides.resume }),
     },
-  };
+  });
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      deepFreeze(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
 }
