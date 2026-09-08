@@ -1163,12 +1163,13 @@ describe('registerAamfAgentBackends', () => {
     process.env.ORIGINAL_XDG_CURRENT_DESKTOP = 'vscode';
 
     const config = createMockConfig({
-      models: { default: 'gpt-5.4' },
+      models: { default: 'gpt-6-astra' },
       agentBackend: {
         runtime: 'copilot',
         cliCommand: 'copilot-cli',
         timeout: 300_000,
-        effort: 'xhigh',
+        effort: 'max',
+        context: 'long_context',
       },
       environment: { extraPath: ['/opt/copilot/bin'] },
     });
@@ -1284,7 +1285,8 @@ describe('registerAamfAgentBackends', () => {
       '--allow-all-paths',
       '--excluded-tools=task,list_agents,read_agent,write_agent',
       '--model', 'gpt-5.6',
-      '--effort', 'xhigh',
+      '--effort', 'max',
+      '--context', 'long_context',
     ]));
     expect(args).not.toContain('--agent');
     expect(args).not.toContain('--available-tools');
@@ -1314,7 +1316,7 @@ describe('registerAamfAgentBackends', () => {
     expect(options.env.ORIGINAL_XDG_CURRENT_DESKTOP).toBeUndefined();
 
     const defaultArgs = spawnMock.mock.calls[1]![1];
-    expect(defaultArgs).toEqual(expect.arrayContaining(['--model', 'gpt-5.4']));
+    expect(defaultArgs).toEqual(expect.arrayContaining(['--model', 'gpt-6-astra']));
 
     const invocationErrorOptions = spawnMock.mock.calls[2]![2];
     expect(invocationErrorOptions.env.CADRE_SESSION_ID).toBe('session-123');
@@ -1334,6 +1336,7 @@ describe('registerAamfAgentBackends', () => {
     expect(minimalArgs).not.toContain('--allow-all-paths');
     expect(minimalArgs).not.toContain('--model');
     expect(minimalArgs).not.toContain('--effort');
+    expect(minimalArgs).not.toContain('--context');
     expect(minimalArgs).not.toContain('--additional-mcp-config');
   });
 
@@ -1436,20 +1439,27 @@ describe('registerAamfAgentBackends', () => {
   });
 });
 
-describe('buildBackendRuntimeConfig effort passthrough', () => {
-  it('should include effort in copilot config when set', () => {
+describe('buildBackendRuntimeConfig Copilot option passthrough', () => {
+  it('should include effort and context in copilot config when set', () => {
     const config = createMockConfig({
-      agentBackend: { runtime: 'copilot', timeout: 300_000, effort: 'xhigh' },
+      agentBackend: {
+        runtime: 'copilot',
+        timeout: 300_000,
+        effort: 'max',
+        context: 'long_context',
+      },
     });
     const rtConfig = buildBackendRuntimeConfig(config);
-    expect((rtConfig.agent.copilot as any)?.effort).toBe('xhigh');
+    expect((rtConfig.agent.copilot as any)?.effort).toBe('max');
+    expect((rtConfig.agent.copilot as any)?.context).toBe('long_context');
   });
 
-  it('should not include effort when not set', () => {
+  it('should not include effort or context when not set', () => {
     const config = createMockConfig({
       agentBackend: { runtime: 'copilot', timeout: 300_000 },
     });
     const rtConfig = buildBackendRuntimeConfig(config);
     expect((rtConfig.agent.copilot as any)?.effort).toBeUndefined();
+    expect((rtConfig.agent.copilot as any)?.context).toBeUndefined();
   });
 });

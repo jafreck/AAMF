@@ -649,6 +649,7 @@ class AamfCopilotBackend implements AgentBackend {
   private readonly allowAllTools: boolean;
   private readonly allowAllPaths: boolean;
   private readonly effort: string | undefined;
+  private readonly context: string | undefined;
   private readonly extraPath: string[];
 
   constructor(
@@ -663,6 +664,7 @@ class AamfCopilotBackend implements AgentBackend {
     this.allowAllTools = (options?.allowAllTools as boolean) ?? false;
     this.allowAllPaths = (options?.allowAllPaths as boolean) ?? false;
     this.effort = options?.effort as string | undefined;
+    this.context = options?.context as string | undefined;
     this.extraPath = config.environment.extraPath ?? [];
   }
 
@@ -689,6 +691,7 @@ class AamfCopilotBackend implements AgentBackend {
     const model = invocation.modelOverride ?? this.defaultModel;
     if (model) args.push('--model', model);
     if (this.effort) args.push('--effort', this.effort);
+    if (this.context) args.push('--context', this.context);
     const mcpServers = getAuthorizedMcpServers(scenario.capabilities, invocation.mcpServers);
     if (mcpServers) {
       for (const [name, config] of Object.entries(mcpServers)) {
@@ -816,7 +819,8 @@ export function buildBackendRuntimeConfig(config: MigrationConfig): BackendRunti
         cliCommand: backendName === 'copilot' ? config.agentBackend.cliCommand : undefined,
         allowAllPaths: true,
         allowAllTools: true,
-        effort: config.agentBackend.effort,
+        effort: config.agentBackend.effort as NonNullable<BackendRuntimeConfig['agent']['copilot']>['effort'],
+        context: config.agentBackend.context,
       },
       claude: {
         cliCommand: backendName === 'claude' ? config.agentBackend.cliCommand : undefined,
