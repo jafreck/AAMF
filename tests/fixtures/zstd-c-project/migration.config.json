@@ -57,9 +57,9 @@
     "reuseKb": false,
     "maxLinesPerTask": 1000,
     "tokenBudget": 400000000,
-    "executionMode": "sync-epoch",
+    "executionMode": "wave-barrier",
     "waveControl": {
-      "maxConvergenceIterations": 7
+      "maxConvergenceIterations": 3
     },
     "dryRun": false,
     "resume": false,
