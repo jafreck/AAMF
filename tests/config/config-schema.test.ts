@@ -2,17 +2,114 @@ import { describe, it, expect } from 'vitest';
 import { MigrationConfigSchema } from '../../src/config/schema.js';
 
 describe('MigrationConfigSchema', () => {
-  it('temporarily rejects reuseKb until Lore identity validation is available', () => {
-    const result = MigrationConfigSchema.safeParse({
+  it('accepts reuseKb for validation-gated index reuse', () => {
+    const result = MigrationConfigSchema.parse({
       projectName: 'test-project',
       source: { path: '/src', language: 'python' },
       target: { language: 'typescript', outputPath: '/target' },
       options: { reuseKb: true },
     });
 
+    expect(result.options.reuseKb).toBe(true);
+  });
+
+  it('rejects LSP enablement because Phase 0 is SCIP-only', () => {
+    const result = MigrationConfigSchema.safeParse({
+      projectName: 'test-project',
+      source: { path: '/src', language: 'c' },
+      target: { language: 'rust', outputPath: '/target' },
+      options: { kbIndex: { lsp: { enabled: true } } },
+    });
+
     expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues.some(issue => issue.message.includes('reuseKb is temporarily disabled'))).toBe(true);
+  });
+
+  it('defaults source scope and keeps Lore execution denied', () => {
+    const result = MigrationConfigSchema.parse({
+      projectName: 'test-project',
+      source: { path: '/src', language: 'python' },
+      target: { language: 'typescript', outputPath: '/target' },
+      options: { kbIndex: {} },
+    });
+
+    expect(result.source).toMatchObject({
+      branch: 'main',
+      includePatterns: ['**/*'],
+    });
+    expect(result.source.languages).toBeUndefined();
+    expect(result.options.kbIndex?.execution).toEqual({
+      allowSubprocessExecution: false,
+      allowBuildExecution: false,
+      allowCustomIndexerCommands: false,
+      allowCustomLspCommands: false,
+      allowAutoInstall: false,
+      allowedCwdRoots: [],
+    });
+  });
+
+  it('accepts trusted source scope, execution, and required index facts', () => {
+    const result = MigrationConfigSchema.parse({
+      projectName: 'test-project',
+      source: {
+        path: '/src',
+        language: 'c',
+        branch: 'dev',
+        languages: ['c', 'cpp'],
+        includePatterns: ['lib/**/*.{c,h}'],
+      },
+      target: { language: 'rust', outputPath: '/target' },
+      options: {
+        kbIndex: {
+          execution: { allowSubprocessExecution: true },
+          validation: {
+            profile: 'migration-grade',
+            thresholds: { minCallRefs: 1 },
+            requiredSymbols: [{ name: 'create', path: 'lib/create.c', kind: 'function' }],
+            requiredCalls: [{
+              caller: { name: 'create', path: 'lib/create.c' },
+              callee: { name: 'create_advanced', path: 'lib/create.c' },
+              resolutionMethod: 'scip_definition',
+            }],
+          },
+        },
+      },
+    });
+
+    expect(result.source).toMatchObject({
+      branch: 'dev',
+      languages: ['c', 'cpp'],
+      includePatterns: ['lib/**/*.{c,h}'],
+    });
+    expect(result.options.kbIndex?.execution.allowSubprocessExecution).toBe(true);
+    expect(result.options.kbIndex?.execution.allowBuildExecution).toBe(false);
+    expect(result.options.kbIndex?.validation?.requiredCalls?.[0]?.resolutionMethod)
+      .toBe('scip_definition');
+  });
+
+  it('rejects attempts to downgrade Lore certification', () => {
+    const result = MigrationConfigSchema.safeParse({
+      projectName: 'test-project',
+      source: { path: '/src', language: 'c' },
+      target: { language: 'rust', outputPath: '/target' },
+      options: { kbIndex: { validation: { profile: 'standard' } } },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects relaxed global migration coverage thresholds', () => {
+    for (const thresholds of [
+      { minCallRefs: 0 },
+      { maxSymbolLessFiles: 1 },
+    ]) {
+      const result = MigrationConfigSchema.safeParse({
+        projectName: 'test-project',
+        source: { path: '/src', language: 'c' },
+        target: { language: 'rust', outputPath: '/target' },
+        options: { kbIndex: { validation: { thresholds } } },
+      });
+
+      expect(result.success).toBe(false);
     }
   });
 

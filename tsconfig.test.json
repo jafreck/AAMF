@@ -9,5 +9,10 @@
     "sourceMap": false
   },
   "include": ["tests/**/*.ts", "vitest.config.ts"],
-  "exclude": ["node_modules", "dist", "dist-test"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist-test",
+    "tests/fixtures/zstd-c-project/zstd-src/**"
+  ]
 }

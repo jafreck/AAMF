@@ -484,6 +484,53 @@ describe('buildTaskGraph', () => {
     expect(result.tasks[0]!.knowledgeBaseRef).toContain('src/macro.c');
   });
 
+  it('should retain work when every task is below the micro-task threshold', async () => {
+    const dbPath = join(tempDir, 'kb.db');
+    const db = createTestDb(dbPath);
+    const helperFile = insertFile(db, 'src/helper.c');
+    const helper = insertSymbol(db, helperFile, 'helper', 'function', 1, 5);
+    const mainFile = insertFile(db, 'src/main.c');
+    const main = insertSymbol(db, mainFile, 'main', 'function', 1, 10);
+    insertRef(db, main, 'helper', 4, helper);
+    db.close();
+
+    const result = await buildTaskGraph({ ...DEFAULT_OPTIONS, kbDbPath: dbPath });
+
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks.flatMap(task => task.sourceFiles).sort()).toEqual([
+      'src/helper.c',
+      'src/main.c',
+    ]);
+  });
+
+  it('should preserve transitive dependencies and references through nested elision', async () => {
+    const dbPath = join(tempDir, 'kb.db');
+    const db = createTestDb(dbPath);
+    const foundationFile = insertFile(db, 'base/foundation.c');
+    const foundation = insertSymbol(db, foundationFile, 'foundation', 'function', 1, 80);
+    const outerFile = insertFile(db, 'outer/outer.c');
+    const outer = insertSymbol(db, outerFile, 'outer', 'function', 1, 5);
+    const innerFile = insertFile(db, 'inner/inner.c');
+    const inner = insertSymbol(db, innerFile, 'inner', 'function', 1, 5);
+    const firstConsumerFile = insertFile(db, 'first/consumer.c');
+    const firstConsumer = insertSymbol(db, firstConsumerFile, 'first_consumer', 'function', 1, 80);
+    const secondConsumerFile = insertFile(db, 'second/consumer.c');
+    const secondConsumer = insertSymbol(db, secondConsumerFile, 'second_consumer', 'function', 1, 80);
+    insertRef(db, outer, 'inner', 3, inner);
+    insertRef(db, inner, 'foundation', 3, foundation);
+    insertRef(db, firstConsumer, 'outer', 10, outer);
+    insertRef(db, secondConsumer, 'inner', 10, inner);
+    db.close();
+
+    const result = await buildTaskGraph({ ...DEFAULT_OPTIONS, kbDbPath: dbPath });
+    const foundationTask = result.tasks.find(task => task.sourceFiles.includes('base/foundation.c'))!;
+    const firstConsumerTask = result.tasks.find(task => task.sourceFiles.includes('first/consumer.c'))!;
+
+    expect(firstConsumerTask.dependencies).toContain(foundationTask.id);
+    expect(firstConsumerTask.knowledgeBaseRef).toContain('outer/outer.c#L1-L5');
+    expect(firstConsumerTask.knowledgeBaseRef).toContain('inner/inner.c#L1-L5');
+  });
+
   it('should not elide micro-tasks depended on by many consumers (>10)', async () => {
     const dbPath = join(tempDir, 'kb.db');
     const db = createTestDb(dbPath);

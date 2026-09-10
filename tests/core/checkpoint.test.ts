@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { CheckpointManager } from '../../src/core/checkpoint.js';
 import { Logger } from '../../src/logging/logger.js';
@@ -1022,10 +1022,18 @@ describe('CheckpointManager', () => {
     ]);
   });
 
-  it('rejects reuseKb until authoritative Lore identity is available', async () => {
-    await expect(
-      manager.load('test-project', { fresh: true, reuseKb: true }),
-    ).rejects.toThrow('reuseKb is temporarily disabled');
+  it('preserves only the KB fingerprint on a fresh start with reuseKb', async () => {
+    const state = await manager.load('test-project');
+    await manager.completePhase(0, '/out/kb.db');
+    state.phase0Fingerprint = 'abc123';
+    await manager.save(state);
+
+    const manager2 = new CheckpointManager(tempDir, logger);
+    const fresh = await manager2.load('test-project', { fresh: true, reuseKb: true });
+
+    expect(fresh.completedPhases).toEqual([]);
+    expect(fresh.currentPhase).toBe(0);
+    expect(fresh.phase0Fingerprint).toBe('abc123');
   });
 
   it('fresh start without reuseKb should ignore prior state entirely', async () => {
@@ -1043,6 +1051,24 @@ describe('CheckpointManager', () => {
     expect(fresh.completedPhases).toEqual([]);
     expect(fresh.currentPhase).toBe(0);
     expect(fresh.phase0Fingerprint).toBeUndefined();
+  });
+
+  it('falls back to the fresh backup rather than prior executable state', async () => {
+    const state = await manager.load('test-project');
+    await manager.completePhase(0, '/out/kb.db');
+    state.phase0Fingerprint = 'old-fingerprint';
+    await manager.save(state);
+
+    const freshManager = new CheckpointManager(tempDir, logger);
+    await freshManager.load('test-project', { fresh: true });
+    await writeFile(join(tempDir, 'state', 'checkpoint.json'), '{corrupt');
+
+    const fallbackManager = new CheckpointManager(tempDir, logger);
+    const fallback = await fallbackManager.load('test-project');
+
+    expect(fallback.completedPhases).toEqual([]);
+    expect(fallback.currentPhase).toBe(0);
+    expect(fallback.phase0Fingerprint).toBeUndefined();
   });
 
   // ─── resume preparation (prepareForResume) ────────────────────────

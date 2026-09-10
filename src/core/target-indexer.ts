@@ -32,7 +32,7 @@ interface PendingIndexRequest {
 
 const createLoreBuilder: TargetIndexBuilderFactory = async (dbPath, rootDir) => {
   const lore = await import('@jafreck/lore');
-  return new lore.IndexBuilder(dbPath, { rootDir });
+  return new lore.IndexBuilder(dbPath, { rootDir }, undefined, { lsp: false });
 };
 
 export class TargetIndexer {

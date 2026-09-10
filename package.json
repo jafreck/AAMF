@@ -12,6 +12,7 @@
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
+    "test:zstd-scip": "node tests/fixtures/zstd-c-project/prepare-scip-index.mjs && RUN_ZSTD_SCIP_INDEXING=1 vitest run tests/e2e/zstd-scip-indexing.test.ts --reporter=verbose",
     "test:watch": "vitest",
     "typecheck:prod": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
@@ -23,7 +24,7 @@
   },
   "dependencies": {
     "@cadre-dev/framework": "^0.3.0",
-    "@jafreck/lore": "^0.4.1",
+    "@jafreck/lore": "0.4.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/better-sqlite3": "^9.6.0",
     "better-sqlite3": "^13.0.3",

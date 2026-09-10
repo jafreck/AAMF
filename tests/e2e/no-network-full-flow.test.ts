@@ -32,10 +32,24 @@ async function createFixture(options: { git?: boolean; executionMode?: 'per-task
   );
   await writeFile(
     join(sourceDir, 'main.py'),
-    'from calculator import add\n\nprint(add(2, 3))\n',
+    [
+      'from calculator import add',
+      '',
+      'def main() -> None:',
+      '    print(add(2, 3))',
+      '',
+      'if __name__ == "__main__":',
+      '    main()',
+      '',
+    ].join('\n'),
     'utf-8',
   );
   await writeFile(join(sourceDir, 'excluded', 'generated.py'), 'SECRET = "ignored"\n', 'utf-8');
+  execFileSync('git', ['init', '--quiet'], { cwd: sourceDir });
+  execFileSync('git', ['config', 'user.name', 'AAMF Test'], { cwd: sourceDir });
+  execFileSync('git', ['config', 'user.email', 'aamf-test@local.invalid'], { cwd: sourceDir });
+  execFileSync('git', ['add', '-A'], { cwd: sourceDir });
+  execFileSync('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: sourceDir });
 
   const configPath = join(root, 'migration.config.json');
   await writeFile(configPath, JSON.stringify({
@@ -74,6 +88,7 @@ async function createFixture(options: { git?: boolean; executionMode?: 'per-task
         logLevel: 'error',
         embeddings: { enabled: false },
         lsp: { enabled: false },
+        execution: { allowSubprocessExecution: true },
       },
     },
     agentBackend: {
@@ -218,6 +233,31 @@ describe('deterministic no-network full flow', () => {
     expect(resumedLauncher.invocations.every(invocation => invocation.phase >= 4)).toBe(true);
     expect(git(fixture.targetDir, 'rev-parse', 'HEAD')).not.toBe(baselineHead);
     expect(git(fixture.targetDir, 'status', '--porcelain')).toBe('');
+  }, 60_000);
+
+  it('rejects resume when source changes after the cached KB was checkpointed', async () => {
+    const fixture = await createFixture();
+    const planningRuntime = new MigrationRuntime({
+      createAgentLauncher: () => new ScriptedAgentLauncher(),
+    });
+    await planningRuntime.initialize({ configPath: fixture.configPath, phase: 3, logLevel: 'error' });
+    await expect(planningRuntime.run()).resolves.toMatchObject({ success: true });
+
+    await writeFile(
+      join(fixture.root, 'source', 'calculator.py'),
+      'def add(left: int, right: int) -> int:\n    return left + right + 1\n',
+      'utf-8',
+    );
+    const resumeLauncher = new ScriptedAgentLauncher();
+    const resumeRuntime = new MigrationRuntime({ createAgentLauncher: () => resumeLauncher });
+    await resumeRuntime.initialize({
+      configPath: fixture.configPath,
+      resume: true,
+      logLevel: 'error',
+    });
+
+    await expect(resumeRuntime.run()).rejects.toThrow('Resume KB validation failed');
+    expect(resumeLauncher.invocations).toEqual([]);
   }, 60_000);
 
   it.each([

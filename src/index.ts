@@ -84,7 +84,7 @@ indexCmd
   .requiredOption('--db <path>', 'Path to the SQLite knowledge-base file')
   .action(async (opts) => {
     try {
-      const builder = new IndexBuilder(opts.db, { rootDir: opts.root });
+      const builder = new IndexBuilder(opts.db, { rootDir: opts.root }, undefined, { lsp: false });
       await builder.build();
       console.log(chalk.green('Index build complete.'));
     } catch (err) {
@@ -101,7 +101,7 @@ indexCmd
   .argument('[files...]', 'Changed file paths to re-process')
   .action(async (files: string[], opts) => {
     try {
-      const builder = new IndexBuilder(opts.db, { rootDir: opts.root });
+      const builder = new IndexBuilder(opts.db, { rootDir: opts.root }, undefined, { lsp: false });
       await builder.update(files);
       console.log(chalk.green(`Index updated for ${files.length} file(s).`));
     } catch (err) {

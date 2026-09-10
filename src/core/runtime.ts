@@ -252,7 +252,9 @@ export class MigrationRuntime {
       }
     }
     if (!this.config.options.dryRun && !this.config.options.resume && !impliedResume) {
-      await clearFreshRunArtifacts(this.paths);
+      await clearFreshRunArtifacts(this.paths, {
+        preserveKb: true,
+      });
     }
     await this.checkpoint.load(this.config.projectName, {
       fresh: !this.config.options.resume && !impliedResume,
@@ -372,9 +374,9 @@ export class MigrationRuntime {
 
     // Start KB server for resume if Phase 0 already completed
     const resumePoint = this.checkpoint.getResumePoint();
-    if (resumePoint.phase > 0 && (await fileExists(this.paths.kbDbFile))) {
-      const { startKbServer } = await import('../flow/steps/kb-server-lifecycle.js');
-      await startKbServer(flowContext);
+    if (resumePoint.phase > 0) {
+      const { prepareExistingKbForUse } = await import('../flow/steps/kb-indexing.js');
+      await prepareExistingKbForUse(flowContext);
     }
 
     const startTime = Date.now();
@@ -681,7 +683,7 @@ export class MigrationRuntime {
       this.logger.warn(`Received ${signal} — shutting down gracefully`);
 
       // Kill child processes FIRST — the orchestrator holds references to
-      // the KB server (clangd LSP) and embedding provider (Python/PyTorch).
+      // the in-process KB server and embedding provider.
       // Without this, interrupted runs leave orphaned processes that each
       // consume 2-4 GB of RAM, leading to 60+ GB memory spikes when
       // multiple interrupted runs accumulate.

@@ -59,7 +59,17 @@ AAMF now consumes the released `@cadre-dev/framework@0.3.0` package. The integra
 
 Custom executors remain only where the corresponding phase has not yet been converted into named Cadre nodes.
 
-Validation at this boundary used Node 22.22.1:
+### Lore 0.4.2 scoped SCIP integration update (2026-09-09)
+
+- Phase 0 derives a host-owned `scipScope` from source languages and source file globs, intersects it with the Lore walker, and passes the same scope, walker, branch, and migration-grade policy during build and revalidation. Repository `.lore.config` files cannot grant scope or execution.
+- LSP is explicitly disabled. Built-in subprocesses, build-system execution, custom commands, installation, and additional working-directory roots are independent operator permissions and default to denied.
+- KB reuse uses a v2 identity covering Lore 0.4.2, source content and Git revision, walker/scope selection, validation facts, embeddings, execution policy, compilation database, and compiler/indexer executable content identities. Immutable inputs are checked across the build, generated identities are stabilized around validation, schema compatibility alone no longer permits reuse, and every candidate is revalidated.
+- Rebuilds occur in a separate candidate database. AAMF promotes only a certified candidate, preserving the previous valid KB and failed-run diagnostics when indexing or required-fact validation fails.
+- The zstd fixture regenerates a current-root CMake compdb with the macOS SDK and an extra `programs/lorem.c` variant that includes `programs/windres/verrsrc.h`. Scoped native verification covers every declared file, runs only scip-clang, records complete zero-error compiler diagnostics, and resolves the required `ZSTD_createCCtx` call via `scip_definition`.
+
+Run the native acceptance check under Node 22 with `npm run test:zstd-scip`.
+
+Earlier validation at this boundary used Node 22.22.1:
 
 - `npm run ci:local`: passed; 55 files and 1,599 tests passed, 10 files and 211 tests skipped.
 - Coverage: 89.87% statements, 77.09% branches, 92.51% functions, and 91.59% lines.

@@ -449,48 +449,54 @@ export async function buildTaskGraph(options: TaskGraphBuilderOptions): Promise<
       // because those are shared infrastructure (e.g. a key typedef used
       // everywhere) — worth keeping as an explicit task so the agent
       // migrates it intentionally rather than duplicating it.
-      const elisionIds = new Set<string>();
+      const microTaskIds = new Set<string>();
       for (const t of tasks) {
         if (t.name.startsWith('[stubs]')) continue;
         const tLines = t.totalLines ?? 0;
         if (tLines > MICRO_ELISION_LINES || tLines === 0) continue;
         const numDependants = dependants.get(t.id)?.size ?? 0;
         if (numDependants > 10) continue;
-        elisionIds.add(t.id);
+        microTaskIds.add(t.id);
+      }
+      const elisionIds = new Set<string>();
+      for (const task of tasks) {
+        if (microTaskIds.has(task.id)) continue;
+        const pending = task.dependencies.filter(dependency => microTaskIds.has(dependency));
+        while (pending.length > 0) {
+          const dependency = pending.pop()!;
+          if (elisionIds.has(dependency)) continue;
+          elisionIds.add(dependency);
+          const nested = taskIdx.get(dependency)?.dependencies ?? [];
+          pending.push(...nested.filter(candidate => microTaskIds.has(candidate)));
+        }
       }
 
       if (elisionIds.size > 0) {
-        // Rewire edges and fold KB refs
-        for (const elidedId of elisionIds) {
-          const elided = taskIdx.get(elidedId)!;
-          const elidedKbRefs = elided.sourceFiles.map(f => `kb/${f}`);
-          const elidedDeps = elided.dependencies.filter(d => !elisionIds.has(d));
+        for (const consumer of tasks) {
+          if (elisionIds.has(consumer.id)) continue;
+          const expandedDependencies = new Set<string>();
+          const absorbedRefs = new Set<string>();
+          const visited = new Set<string>();
+          const expand = (dependency: string): void => {
+            if (!elisionIds.has(dependency)) {
+              if (dependency !== consumer.id) expandedDependencies.add(dependency);
+              return;
+            }
+            if (visited.has(dependency)) return;
+            visited.add(dependency);
+            const elided = taskIdx.get(dependency);
+            if (!elided) return;
+            for (const symbol of elided.symbols ?? []) {
+              absorbedRefs.add(`kb/${symbol.file}#L${symbol.startLine}-L${symbol.endLine}`);
+            }
+            for (const nestedDependency of elided.dependencies) expand(nestedDependency);
+          };
 
-          // For each task that depended on the elided task:
-          const consumers = dependants.get(elidedId);
-          if (consumers) {
-            for (const consumerId of consumers) {
-              const consumer = taskIdx.get(consumerId);
-              if (!consumer) continue;
-
-              // Remove the elided dep and add the elided task's own deps
-              consumer.dependencies = consumer.dependencies.filter(d => d !== elidedId);
-              for (const d of elidedDeps) {
-                if (d !== consumerId && !consumer.dependencies.includes(d)) {
-                  consumer.dependencies.push(d);
-                }
-              }
-
-              // Add specific symbol line references so the agent can look up
-              // exactly the elided definitions rather than scanning entire files.
-              const lineRefs = (elided.symbols ?? []).map(s =>
-                `kb/${s.file}#L${s.startLine}-L${s.endLine}`,
-              );
-              for (const ref of lineRefs) {
-                if (!consumer.knowledgeBaseRef.includes(ref)) {
-                  consumer.knowledgeBaseRef += ', ' + ref;
-                }
-              }
+          for (const dependency of consumer.dependencies) expand(dependency);
+          consumer.dependencies = [...expandedDependencies].sort();
+          for (const ref of [...absorbedRefs].sort()) {
+            if (!consumer.knowledgeBaseRef.includes(ref)) {
+              consumer.knowledgeBaseRef += ', ' + ref;
             }
           }
         }

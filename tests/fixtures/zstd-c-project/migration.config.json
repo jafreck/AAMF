@@ -10,6 +10,12 @@
   "source": {
     "path": "./zstd-src/zstd-1.5.7",
     "language": "c",
+    "branch": "main",
+    "languages": ["c", "cpp"],
+    "includePatterns": [
+      "lib/**/*.{c,h}",
+      "programs/**/*.{c,h}"
+    ],
     "entryPoints": [
       "lib/compress/zstd_compress.c",
       "programs/zstdcli.c"
@@ -18,6 +24,7 @@
       ".git",
       ".build",
       ".cache",
+      ".lore-compdb",
       "build",
       "obj",
       "CMakeFiles",
@@ -72,10 +79,43 @@
         "enabled": false
       },
       "lsp": {
-        "enabled": true,
-        "servers": {
-          "c": { "command": "clangd", "args": ["--compile-commands-dir=zstd-src/zstd-1.5.7/build"] }
-        }
+        "enabled": false
+      },
+      "execution": {
+        "allowSubprocessExecution": true
+      },
+      "validation": {
+        "profile": "migration-grade",
+        "thresholds": {
+          "minCallRefs": 1
+        },
+        "requiredSymbols": [
+          {
+            "name": "ZSTD_createCCtx",
+            "path": "lib/compress/zstd_compress.c",
+            "kind": "function"
+          },
+          {
+            "name": "ZSTD_createCCtx_advanced",
+            "path": "lib/compress/zstd_compress.c",
+            "kind": "function"
+          }
+        ],
+        "requiredCalls": [
+          {
+            "caller": {
+              "name": "ZSTD_createCCtx",
+              "path": "lib/compress/zstd_compress.c",
+              "kind": "function"
+            },
+            "callee": {
+              "name": "ZSTD_createCCtx_advanced",
+              "path": "lib/compress/zstd_compress.c",
+              "kind": "function"
+            },
+            "resolutionMethod": "scip_definition"
+          }
+        ]
       }
     }
   },
