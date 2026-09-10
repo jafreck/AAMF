@@ -4,16 +4,23 @@ import type { RuntimePaths } from './runtime-paths.js';
 
 /**
  * Remove artifacts whose provenance cannot be established for a fresh run.
- * Logs are retained, but no executable checkpoint input, index, task graph,
- * target index, metric, or report is allowed to leak into the new run.
+ * Logs are retained. A caller may preserve the source KB as a validation
+ * candidate; every other executable artifact is removed. Fresh migration runs
+ * preserve it even when reuse is disabled so a forced rebuild can replace it
+ * atomically only after certification.
  */
-export async function clearFreshRunArtifacts(paths: RuntimePaths): Promise<void> {
+export async function clearFreshRunArtifacts(
+  paths: RuntimePaths,
+  options: { preserveKb?: boolean } = {},
+): Promise<void> {
   const candidates = [
     paths.artifactsDir,
     paths.knowledgeBaseDir,
-    paths.kbDbFile,
-    `${paths.kbDbFile}-wal`,
-    `${paths.kbDbFile}-shm`,
+    ...(!options.preserveKb ? [
+      paths.kbDbFile,
+      `${paths.kbDbFile}-wal`,
+      `${paths.kbDbFile}-shm`,
+    ] : []),
     paths.kbTargetDbFile,
     `${paths.kbTargetDbFile}-wal`,
     `${paths.kbTargetDbFile}-shm`,

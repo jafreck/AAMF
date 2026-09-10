@@ -155,11 +155,6 @@ export class CheckpointManager {
     projectName: string,
     options: { fresh?: boolean; reuseKb?: boolean; readOnly?: boolean } = {},
   ): Promise<CheckpointState> {
-    if (options.reuseKb) {
-      throw new Error(
-        'reuseKb is temporarily disabled until Lore index identity and artifact provenance can be validated',
-      );
-    }
     if (options.readOnly) {
       const stored = await this.readStoredState();
       this.state = stored ?? this.buildInitialState(projectName);
@@ -169,9 +164,15 @@ export class CheckpointManager {
     await ensureDir(this.stateDir);
 
     if (options.fresh) {
+      const previousState = options.reuseKb ? await this.readStoredState() : undefined;
       this.logger.info('Fresh start requested (resume=false) — ignoring prior checkpoint state');
       this.state = this.buildInitialState(projectName);
+      if (previousState?.phase0Fingerprint) {
+        this.state.phase0Fingerprint = previousState.phase0Fingerprint;
+        this.logger.info('Preserved prior KB fingerprint for validated reuse');
+      }
       await this.save(this.state);
+      await this.syncBackupToCurrent();
       return this.state;
     }
 

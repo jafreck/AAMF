@@ -258,10 +258,12 @@ AAMF defines 13 specialized scenarios. Each is compiled from a bundled template 
 
 The runtime always uses `@jafreck/lore` in Phase 0 to build a SQLite knowledge-base index from the source codebase. This phase:
 
-1. Computes a source fingerprint and skips rebuilding if the hash matches a previous run.
-2. Walks the source tree with tree-sitter parsing (C, C++, C#, Go, Java, JavaScript, Python, Rust, TypeScript).
-3. Optionally initializes embeddings (requires Python + sentence-transformers) when `kbIndex.embeddings.enabled` is set.
-4. Starts an HTTP MCP server on a random local port, making the KB queryable by all downstream agents.
+1. Derives a trusted SCIP scope from `source.languages`, `source.includePatterns`, and `source.excludePatterns`, intersected with the Lore walker.
+2. Runs structural indexing with LSP explicitly disabled and only the execution capabilities granted in `kbIndex.execution`.
+3. Enforces a migration-grade policy, including configured required symbols and calls, then repeats the same walker, branch, scope, and policy during revalidation.
+4. Reuses a KB only when its v2 content/configuration/toolchain identity matches and revalidation succeeds. Rebuilds use a candidate database so failure preserves the last valid KB.
+5. Optionally initializes embeddings (requires Python + sentence-transformers) when `kbIndex.embeddings.enabled` is set.
+6. Starts an HTTP MCP server on a random local port, making the KB queryable by all downstream agents.
 
 The MCP server runs for the lifetime of the migration and is shut down in a `finally` block.
 

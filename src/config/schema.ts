@@ -1,6 +1,61 @@
 import { z } from 'zod';
 import { normalizeSourceExcludePatterns } from './source-scope.js';
 
+const IndexCoverageThresholdsSchema = z.object({
+  minFiles: z.number().int().min(0).optional(),
+  minSymbols: z.number().int().min(0).optional(),
+  minCallRefs: z.number().int().min(0).optional(),
+  minTypeRefs: z.number().int().min(0).optional(),
+  minImports: z.number().int().min(0).optional(),
+  minSymbolCoverage: z.number().min(0).max(1).optional(),
+  minCallResolutionRate: z.number().min(0).max(1).optional(),
+  minTypeResolutionRate: z.number().min(0).max(1).optional(),
+  minImportResolutionRate: z.number().min(0).max(1).optional(),
+  maxSymbolLessFiles: z.number().int().min(0).optional(),
+  maxInvalidSpans: z.number().int().min(0).optional(),
+  maxDuplicateSymbols: z.number().int().min(0).optional(),
+  maxUnresolvedInternalRefs: z.number().int().min(0).optional(),
+}).strict();
+
+const MigrationIndexThresholdsSchema = IndexCoverageThresholdsSchema.extend({
+  minCallRefs: z.number().int().min(1).optional(),
+  maxSymbolLessFiles: z.literal(0).optional(),
+});
+
+const RequiredIndexSymbolSchema = z.object({
+  name: z.string().min(1),
+  path: z.string().min(1).optional(),
+  kind: z.string().min(1).optional(),
+}).strict();
+
+const ResolutionMethodSchema = z.enum([
+  'scip_definition',
+  'lsp_definition',
+  'name_same_file',
+  'name_single_file',
+  'name_unique',
+  'external_definition',
+  'ambiguous_definition',
+  'overlay_stale',
+  'unresolved',
+]);
+
+const KbValidationSchema = z.object({
+  profile: z.literal('migration-grade').default('migration-grade'),
+  requiredGlobs: z.array(z.string().min(1)).optional(),
+  requiredSymbols: z.array(RequiredIndexSymbolSchema).optional(),
+  requiredCalls: z.array(z.object({
+    caller: RequiredIndexSymbolSchema,
+    callee: RequiredIndexSymbolSchema,
+    resolutionMethod: ResolutionMethodSchema.optional(),
+  }).strict()).optional(),
+  thresholds: MigrationIndexThresholdsSchema.optional(),
+  languages: z.record(z.string(), IndexCoverageThresholdsSchema).optional(),
+  failOnWarnings: z.boolean().optional(),
+  maxBaselineAgeSeconds: z.number().min(0).optional(),
+  maxDirtyFiles: z.number().int().min(0).optional(),
+}).strict();
+
 export const MigrationConfigSchema = z.object({
   projectName: z.string().min(1).regex(/^[a-z0-9-]+$/),
   /**
@@ -19,6 +74,12 @@ export const MigrationConfigSchema = z.object({
   source: z.object({
     path: z.string(),
     language: z.string(),
+    /** Branch identity persisted in Lore and repeated during validation. */
+    branch: z.string().min(1).default('main'),
+    /** Lore language names used for source SCIP selection; defaults to `language`. */
+    languages: z.array(z.string().min(1)).min(1).optional(),
+    /** Source files eligible for both walking and SCIP indexing. */
+    includePatterns: z.array(z.string().min(1)).min(1).default(['**/*']),
     entryPoints: z.array(z.string()).optional(),
     excludePatterns: z.array(z.string()).default([
       'node_modules', '.git', 'dist', 'build', '__pycache__'
@@ -88,9 +149,7 @@ export const MigrationConfigSchema = z.object({
      * phases need to change.
      * Default: false.
      */
-    reuseKb: z.boolean().default(false).refine(value => value === false, {
-      message: 'reuseKb is temporarily disabled until Lore provides authoritative index identity and artifact provenance validation',
-    }),
+    reuseKb: z.boolean().default(false),
     invocationDelayMs: z.number().int().min(0).default(0),
     /**
      * Maximum number of concurrent build/test commands per output path.
@@ -225,31 +284,28 @@ export const MigrationConfigSchema = z.object({
         /** Path to the Python binary with sentence-transformers installed. */
         pythonBin: z.string().default('python3'),
       }).optional(),
-      /**
-       * LSP integration for the Lore indexer.
-       * When enabled, Lore starts language servers (e.g. clangd for C/C++,
-       * typescript-language-server for TS) to resolve cross-file symbol
-       * references, type definitions, and call targets with full semantic
-       * accuracy — beyond what tree-sitter can provide alone.
-       */
+      /** AAMF Phase 0 is SCIP-only; this marker documents explicit LSP disablement. */
       lsp: z.object({
-        /** Enable LSP-powered symbol resolution during indexing. Default: false. */
-        enabled: z.boolean().default(false),
-        /** Timeout in ms for each LSP request (hover, definition, references). */
-        requestTimeoutMs: z.number().int().min(500).default(5000),
-        /**
-         * Override default language server commands.
-         * Keys are language identifiers (e.g. 'c', 'typescript').
-         * Values specify the command and args to launch the server.
-         * For C/C++ with clangd, pass --compile-commands-dir in args
-         * to point to the directory containing compile_commands.json.
-         * Example: `{ "c": { "command": "clangd", "args": ["--compile-commands-dir=/path/to/build"] } }`
-         */
-        servers: z.record(z.string(), z.object({
-          command: z.string(),
-          args: z.array(z.string()).default([]),
-        })).optional(),
-      }).optional(),
+        enabled: z.literal(false).default(false),
+      }).strict().optional(),
+      /** Host-owned Lore execution grants. Repository config cannot set these. */
+      execution: z.object({
+        allowSubprocessExecution: z.boolean().default(false),
+        allowBuildExecution: z.boolean().default(false),
+        allowCustomIndexerCommands: z.boolean().default(false),
+        allowCustomLspCommands: z.boolean().default(false),
+        allowAutoInstall: z.boolean().default(false),
+        allowedCwdRoots: z.array(z.string().min(1)).default([]),
+      }).strict().default({
+        allowSubprocessExecution: false,
+        allowBuildExecution: false,
+        allowCustomIndexerCommands: false,
+        allowCustomLspCommands: false,
+        allowAutoInstall: false,
+        allowedCwdRoots: [],
+      }),
+      /** Host-owned migration certification requirements. */
+      validation: KbValidationSchema.optional(),
       /** Bounds for the in-process KB MCP HTTP server. */
       server: z.object({
         /** Maximum buffered POST body size. Default: 4 MiB. */

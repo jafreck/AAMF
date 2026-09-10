@@ -28,6 +28,9 @@ Create a `migration.config.json` file in your project root. Below is a full refe
   "source": {
     "path": "../legacy-app",
     "language": "python",
+    "branch": "main",
+    "languages": ["python"],
+    "includePatterns": ["src/**/*.py"],
     "entryPoints": ["main.py"],
     "excludePatterns": ["__pycache__", ".git", "venv"]
   },
@@ -54,6 +57,14 @@ Create a `migration.config.json` file in your project root. Below is a full refe
     "qualityPolicy": "strict",
     "maxInfraRetries": 3,
     "kbIndex": {
+      "lsp": { "enabled": false },
+      "execution": {
+        "allowSubprocessExecution": true
+      },
+      "validation": {
+        "profile": "migration-grade",
+        "thresholds": { "minCallRefs": 1 }
+      },
       "embeddings": {
         "enabled": false,
         "model": "Qwen/Qwen3-Embedding-0.6B",
@@ -108,6 +119,9 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 |-------|------|---------|-------------|
 | `source.path` | `string` | *required* | Relative or absolute path to the source codebase. |
 | `source.language` | `string` | *required* | Source language (e.g. `python`, `java`, `c`, `ruby`). |
+| `source.branch` | `string` | `'main'` | Branch identity persisted in the Lore baseline and repeated during validation. |
+| `source.languages` | `string[]` | `[source.language]` | Lore language names allowed in the source SCIP scope. This is independent of `target.language`. |
+| `source.includePatterns` | `string[]` | `['**/*']` | Source globs intersected with the walker and SCIP scope. Scope cannot expand this selection. |
 | `source.entryPoints` | `string[]` | — | List of top-level entry files to begin analysis from. |
 | `source.excludePatterns` | `string[]` | `['node_modules', '.git', 'dist', 'build', '__pycache__']` | Glob patterns to exclude from scanning. |
 
@@ -145,6 +159,14 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `options.kbIndex.logLevel` | `'debug' \| 'info' \| 'warn' \| 'error' \| 'silent'` | `'debug'` | Lore index/server logging level. KB indexing always runs in Phase 0. |
+| `options.kbIndex.lsp.enabled` | `false` | `false` | Documents that migration indexing is structural-only. LSP fallback cannot be enabled. |
+| `options.kbIndex.execution.allowSubprocessExecution` | `boolean` | `false` | Host authorization to start built-in SCIP indexers. Required for native indexing. |
+| `options.kbIndex.execution.allowBuildExecution` | `boolean` | `false` | Separate host authorization for configure/build tools that generate a compdb. |
+| `options.kbIndex.execution.allowCustomIndexerCommands` | `boolean` | `false` | Separate host authorization for custom SCIP commands and arguments. |
+| `options.kbIndex.execution.allowCustomLspCommands` | `boolean` | `false` | Separate host authorization for custom LSP commands; LSP remains disabled in Phase 0. |
+| `options.kbIndex.execution.allowAutoInstall` | `boolean` | `false` | Separate host authorization for indexer installation. |
+| `options.kbIndex.execution.allowedCwdRoots` | `string[]` | `[]` | Additional operator-approved command roots, resolved relative to the migration config. |
+| `options.kbIndex.validation` | `object` | migration-grade defaults | Targeted required globs, symbols, calls, language thresholds, and warning policy. `profile` cannot be downgraded. |
 | `options.kbIndex.embeddings.enabled` | `boolean` | `false` | Enable embedding-based semantic search (requires Python + sentence-transformers). |
 | `options.kbIndex.embeddings.model` | `string` | `'Qwen/Qwen3-Embedding-0.6B'` | Sentence-transformers model for embeddings. |
 | `options.kbIndex.embeddings.pythonBin` | `string` | `'python3'` | Path to Python binary. |
@@ -153,6 +175,31 @@ Create a `migration.config.json` file in your project root. Below is a full refe
 | `options.kbIndex.server.sessionSweepIntervalMs` | `integer` | `60000` | Idle-session scan interval; `0` disables scanning. |
 | `options.kbIndex.server.maxSessions` | `integer` | `64` | Maximum retained MCP sessions. |
 | `options.kbIndex.server.stopTimeoutMs` | `integer` | `5000` | Bound for session and server shutdown. |
+
+The migration config is the trusted operator boundary for `source.languages`,
+source globs, validation facts, and execution grants. A repository-owned
+`.lore.config` cannot expand this scope or grant execution. AAMF passes the same
+walker, branch, SCIP scope, and policy to index creation and every reuse/resume
+validation.
+
+Build execution, custom commands, and installation are additional permissions;
+none authorizes an indexer process by itself. Set `allowSubprocessExecution`
+too when that process launch is intended. AAMF rejects an effective Lore policy
+that widens process execution from one of the secondary grants. When embeddings
+are configured, provider initialization failure is fatal rather than silently
+producing a differently configured KB.
+
+Reusable KBs carry an AAMF v2 identity over Lore 0.4.2, source content and Git
+revision, walker and scope selection, validation requirements, embeddings,
+execution policy, compilation database, and compiler/indexer executable content
+identities. Schema compatibility alone is insufficient. Immutable source,
+revision, configuration, and non-generated tool inputs must match before and
+after indexing. Explicitly authorized compdb generation and indexer installation
+may add their generated identities; AAMF then stabilizes the complete identity
+around validation. A matching KB is revalidated before reuse, and replacements
+are built in a candidate database so failure leaves the last valid KB intact.
+Fresh runs retain that rollback baseline even when `reuseKb` is false; disabling
+reuse forces a certified rebuild but does not delete the previous KB first.
 
 #### Model Policy
 

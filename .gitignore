@@ -45,6 +45,7 @@ tmp/
 sqlite-src/
 jq-src/
 lz4-src/
+tests/fixtures/zstd-c-project/zstd-src/
 
 # Misc
 *.tgz
